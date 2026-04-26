@@ -1,0 +1,253 @@
+
+=== 260412006003002 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    return parse_json_strict(text)
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 5 column 27 (char 203)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    result = call_one(client, row)
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    raise RuntimeError(
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 5 column 27 (char 203); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/260412006003002_bad_json.txt (stop_reason=end_turn)
+
+=== 260409006006012 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    return parse_json_strict(text)
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 5 column 23 (char 166)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    result = call_one(client, row)
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    raise RuntimeError(
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 5 column 23 (char 166); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/260409006006012_bad_json.txt (stop_reason=end_turn)
+
+=== 260413006003004 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    return parse_json_strict(text)
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 2 column 96 (char 97)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    result = call_one(client, row)
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    raise RuntimeError(
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 2 column 96 (char 97); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/260413006003004_bad_json.txt (stop_reason=end_turn)
+
+=== 260414006003004 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    return parse_json_strict(text)
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 2 column 130 (char 131)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    result = call_one(client, row)
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    raise RuntimeError(
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 2 column 130 (char 131); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/260414006003004_bad_json.txt (stop_reason=end_turn)
+
+=== 260415006006002 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    "extracted_logics": {
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 153 column 169 (char 8068)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    "anti_pattern": {"type": "string"},
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    "required": [
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 153 column 169 (char 8068); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/260415006006002_bad_json.txt (stop_reason=end_turn)
+
+=== CC008128 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    "extracted_logics": {
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 5 column 27 (char 172)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    "anti_pattern": {"type": "string"},
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    "required": [
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 5 column 27 (char 172); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/CC008128_bad_json.txt (stop_reason=end_turn)
+
+=== cc000378 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    "extracted_logics": {
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 5 column 24 (char 172)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    "anti_pattern": {"type": "string"},
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    "required": [
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 5 column 24 (char 172); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/cc000378_bad_json.txt (stop_reason=end_turn)
+
+=== 260422006004003 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    "extracted_logics": {
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 9 column 24 (char 390)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    "anti_pattern": {"type": "string"},
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    "required": [
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 9 column 24 (char 390); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/260422006004003_bad_json.txt (stop_reason=end_turn)
+
+=== CD668079 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    "extracted_logics": {
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 5 column 27 (char 182)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    "anti_pattern": {"type": "string"},
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    "required": [
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 5 column 27 (char 182); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/CD668079_bad_json.txt (stop_reason=end_turn)
+
+=== CD177597 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    "extracted_logics": {
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 2 column 73 (char 74)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    "anti_pattern": {"type": "string"},
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    "required": [
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 2 column 73 (char 74); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/CD177597_bad_json.txt (stop_reason=end_turn)
+
+=== 250213006003001 ===
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 226, in call_one
+    "extracted_logics": {
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 169, in parse_json_strict
+    return json.loads(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+  File "/opt/homebrew/anaconda3/lib/python3.10/json/decoder.py", line 353, in raw_decode
+    obj, end = self.scan_once(s, idx)
+json.decoder.JSONDecodeError: Expecting ',' delimiter: line 5 column 23 (char 134)
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 253, in process_row
+    "anti_pattern": {"type": "string"},
+  File "/Users/ginlater/code/persist创业/sm身美/gp/v1/analyze.py", line 231, in call_one
+    "required": [
+RuntimeError: JSON parse failed at Expecting ',' delimiter: line 5 column 23 (char 134); raw response saved to /Users/ginlater/code/persist创业/sm身美/gp/v1/output/debug/250213006003001_bad_json.txt (stop_reason=end_turn)

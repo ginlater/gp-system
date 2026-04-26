@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(python3)",
+      "Skill(claude-api)",
+      "Bash(python3 extract_data.py)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('analyze.py'\\).read\\(\\)\\); ast.parse\\(open\\('aggregate.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('analyze.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python aggregate.py)",
+      "Bash(python -c ' *)",
+      "Bash(python3 -c \"import flask; print\\(flask.__version__\\)\")",
+      "Bash(python3 -c \"import anthropic; print\\(anthropic.__version__\\)\")",
+      "Bash(python3 -c \"import server; print\\('import ok'\\); print\\('library size:', len\\(server.LIBRARY\\)\\); print\\('library text bytes:', len\\(server.LIBRARY_TEXT\\)\\); print\\('ours system bytes:', len\\(server.OURS_SYSTEM\\)\\)\")",
+      "Bash(PORT=5057 python3 server.py)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://127.0.0.1:5057/api/library/stats)",
+      "Bash(curl -s \"http://127.0.0.1:5057/api/demo?idx=0\")",
+      "Bash(curl -sv http://127.0.0.1:5057/api/library/stats)",
+      "Bash(curl -s --noproxy '*' http://127.0.0.1:5057/api/library/stats)",
+      "Bash(curl -s --noproxy '*' \"http://127.0.0.1:5057/api/demo?idx=0\")",
+      "Bash(curl -sN --noproxy '*' -X POST http://127.0.0.1:5057/api/analyze -H 'Content-Type: application/json' --max-time 90 -d '{\"before\":\"开始时间：00:00:00\\\\n王姐你回来啦，最近忙不忙？跑了好几天医院给我妈查血。\\\\n结束时间：00:00:08\",\"mid\":\"开始时间：00:01:00\\\\n您看皮肤这块儿是不是干？我给您调下手法。\\\\n结束时间：00:01:06\",\"after\":\"开始时间：00:02:00\\\\n那个之前的赠品您还没用呢，今天要不要带走？\\\\n好的我考虑一下下次再说吧。\\\\n结束时间：00:02:10\"}')",
+      "Bash(echo \"exit=$?\")",
+      "Read(//tmp/**)",
+      "Bash(kill 67168)",
+      "Bash(curl -s --noproxy '*' \"http://127.0.0.1:5057/api/demo?pool=without_boss&idx=5\")",
+      "Bash(curl -s --noproxy '*' \"http://127.0.0.1:5057/api/demo?pool=foo\")",
+      "Bash(kill 74404)",
+      "Bash(curl -s --noproxy '*' \"http://127.0.0.1:5057/api/demo?pool=without_boss&idx=99\")",
+      "Bash(curl -s --noproxy '*' http://127.0.0.1:5057/)"
+    ]
+  }
+}
