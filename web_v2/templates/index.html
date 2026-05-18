@@ -74,11 +74,19 @@
         <h3>共 <span id="sess-count">0</span> 次接诊</h3>
       </div>
       <div class="filter-bar">
-        <input type="search" id="filter-input" placeholder="按顾问、顾客筛选…">
+        <input type="search" id="filter-customer" placeholder="顾客">
+        <input type="search" id="filter-advisor" placeholder="顾问">
+        <input type="date" id="filter-date" title="服务日期（精确到天）">
+        <button type="button" id="filter-reset" class="btn-ghost">重置</button>
       </div>
     </div>
     <div id="sess-list" class="rec-list">
       <div class="empty">加载中…</div>
+    </div>
+    <div id="sess-pager" class="pager" style="display:none">
+      <button type="button" id="pg-prev" class="pg-btn">‹ 上一页</button>
+      <span id="pg-info" class="pg-info"></span>
+      <button type="button" id="pg-next" class="pg-btn">下一页 ›</button>
     </div>
   </section>
 </main>

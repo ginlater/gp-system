@@ -35,28 +35,63 @@ async function api(path, opts = {}) {
 }
 
 /* ============ 列表页 ============ */
-let _allSessions = [];
+const PAGE_SIZE = 10;
+let _sessions = [];
+let _page = 1;
+let _total = 0;
+
+function _filterParams() {
+  const params = new URLSearchParams();
+  const customer = (document.getElementById("filter-customer")?.value || "").trim();
+  const advisor = (document.getElementById("filter-advisor")?.value || "").trim();
+  const date = (document.getElementById("filter-date")?.value || "").trim();
+  if (customer) params.set("customer", customer);
+  if (advisor) params.set("advisor", advisor);
+  if (date) params.set("date", date);
+  params.set("page", String(_page));
+  params.set("page_size", String(PAGE_SIZE));
+  return params.toString();
+}
+
+function _hasActiveFilter() {
+  return ["filter-customer", "filter-advisor", "filter-date"]
+    .some(id => (document.getElementById(id)?.value || "").trim());
+}
 
 async function loadSessions() {
-  const r = await api("/api/sessions");
+  const r = await api("/api/sessions?" + _filterParams());
   const data = await r.json();
-  _allSessions = data.sessions || [];
-  document.getElementById("sess-count").textContent = _allSessions.length;
+  _sessions = data.sessions || [];
+  _total = data.total || 0;
+  _page = data.page || 1;
+  document.getElementById("sess-count").textContent = _total;
   renderSessions();
+  renderPager();
+}
+
+function renderPager() {
+  const pager = document.getElementById("sess-pager");
+  const totalPages = Math.max(1, Math.ceil(_total / PAGE_SIZE));
+  if (_total <= PAGE_SIZE) {
+    pager.style.display = "none";
+    return;
+  }
+  pager.style.display = "";
+  document.getElementById("pg-info").textContent = `第 ${_page} / ${totalPages} 页`;
+  document.getElementById("pg-prev").disabled = _page <= 1;
+  document.getElementById("pg-next").disabled = _page >= totalPages;
 }
 
 function renderSessions() {
   const list = document.getElementById("sess-list");
-  const q = (document.getElementById("filter-input").value || "").trim().toLowerCase();
-  const filtered = _allSessions.filter(s => {
-    if (!q) return true;
-    return [s.advisor, s.customer].some(x => x && x.toLowerCase().includes(q));
-  });
-  if (!filtered.length) {
-    list.innerHTML = `<div class="empty">${_allSessions.length ? "没有匹配的接诊" : "暂无接诊。点击右上角「上传录音」开始。"}</div>`;
+  if (!_sessions.length) {
+    const hint = _total === 0 && _hasActiveFilter()
+      ? "没有匹配的接诊"
+      : (_total === 0 ? "暂无接诊。点击右上角「上传录音」开始。" : "本页无数据");
+    list.innerHTML = `<div class="empty">${hint}</div>`;
     return;
   }
-  list.innerHTML = filtered.map(s => {
+  list.innerHTML = _sessions.map(s => {
     let scoreHtml = "";
     if (s.analysis_scores) {
       try {
@@ -96,7 +131,30 @@ function initIndexPage() {
   loadSessions();
   setInterval(loadSessions, 10000);  // 每 10s 自动刷新（后台流水线进度）
 
-  document.getElementById("filter-input").addEventListener("input", renderSessions);
+  let _filterTimer = null;
+  function onFilterChange() {
+    clearTimeout(_filterTimer);
+    _filterTimer = setTimeout(() => { _page = 1; loadSessions(); }, 250);
+  }
+  ["filter-customer", "filter-advisor"].forEach(id => {
+    document.getElementById(id).addEventListener("input", onFilterChange);
+  });
+  document.getElementById("filter-date").addEventListener("change", () => {
+    _page = 1; loadSessions();
+  });
+  document.getElementById("filter-reset").addEventListener("click", () => {
+    document.getElementById("filter-customer").value = "";
+    document.getElementById("filter-advisor").value = "";
+    document.getElementById("filter-date").value = "";
+    _page = 1; loadSessions();
+  });
+  document.getElementById("pg-prev").addEventListener("click", () => {
+    if (_page > 1) { _page -= 1; loadSessions(); }
+  });
+  document.getElementById("pg-next").addEventListener("click", () => {
+    const totalPages = Math.max(1, Math.ceil(_total / PAGE_SIZE));
+    if (_page < totalPages) { _page += 1; loadSessions(); }
+  });
 
   document.getElementById("btn-scan").addEventListener("click", async (e) => {
     e.target.disabled = true; e.target.textContent = "同步中…";
@@ -240,15 +298,40 @@ function tsTag(ts) {
     return m > 0 ? `${m}′${String(sec).padStart(2,'0')}″` : `${Math.floor(s)}s`;
   };
   return `<span class="ts-tag" data-seg="${ts.segment}" data-start="${ts.startSec}"
-    title="点击跳转播放">🕐 段${ts.segment} · ${fmtSec(ts.startSec)}–${fmtSec(ts.endSec)}
-    <span class="ts-play-icon">▶</span></span>`;
+    title="点击跳转播放 / 再次点击暂停">🕐 段${ts.segment} · ${fmtSec(ts.startSec)}–${fmtSec(ts.endSec)}
+    <span class="ts-play-icon"></span></span>`;
 }
 
-// ─── 跳转播放 ────────────────────────────────────────────────────────
+// ─── 跳转播放 / 切换暂停 ──────────────────────────────────────────────
+let _lastJump = null;  // { seg, start } — 上一次跳转的片段，用于切换暂停
+
+function _markPlayingTag(segment, startSec) {
+  document.querySelectorAll(".ts-tag.ts-playing").forEach(t => t.classList.remove("ts-playing"));
+  if (segment == null) return;
+  document.querySelectorAll(".ts-tag").forEach(t => {
+    if (Number(t.dataset.seg) === segment && Math.abs(Number(t.dataset.start) - startSec) < 0.6) {
+      t.classList.add("ts-playing");
+    }
+  });
+}
+
 function jumpToTimestamp(segment, startSec) {
   const idx = segment - 1;  // 段编号从 1 开始
   const audio = document.getElementById("main-audio");
   if (!audio) return;
+
+  // 同一个片段再次点击 → 切换 暂停 / 续播
+  const sameClip = _lastJump
+    && _lastJump.seg === segment
+    && Math.abs(_lastJump.start - startSec) < 0.6;
+  if (sameClip && idx === _currentSegIdx) {
+    if (!audio.paused) {
+      audio.pause();
+    } else {
+      audio.play().catch(() => {});
+    }
+    return;
+  }
 
   if (idx !== _currentSegIdx && _recordings[idx]) {
     // 切换段
@@ -265,6 +348,8 @@ function jumpToTimestamp(segment, startSec) {
     audio.currentTime = startSec;
     audio.play().catch(() => {});
   }
+  _lastJump = { seg: segment, start: startSec };
+  _markPlayingTag(segment, startSec);
 
   // 高亮短暂闪烁
   document.querySelectorAll(".ts-tag").forEach(t => {
@@ -596,6 +681,16 @@ function initSessionPage() {
   _sid = document.querySelector(".workbench").dataset.sid;
   // 模型列表先于 session 加载，确保 session 拿到时下拉已就绪
   loadModels().then(loadSession);
+
+  // 音频播放状态变化时同步时间戳标签的"播放中"高亮
+  const mainAudio = document.getElementById("main-audio");
+  if (mainAudio) {
+    mainAudio.addEventListener("pause", () => _markPlayingTag(null));
+    mainAudio.addEventListener("ended", () => _markPlayingTag(null));
+    mainAudio.addEventListener("play", () => {
+      if (_lastJump) _markPlayingTag(_lastJump.seg, _lastJump.start);
+    });
+  }
 
   // 模型下拉：用户改动后标记 touched，loadSession 不再覆盖
   const modelSel = document.getElementById("model-select");

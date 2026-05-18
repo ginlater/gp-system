@@ -122,11 +122,30 @@ code { background: #f1f2f4; padding: 1px 5px; border-radius: 4px; font-size: 13p
 }
 .card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
 .head-actions { display: flex; gap: 10px; align-items: center; }
+.filter-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .filter-bar input {
   padding: 7px 11px;
   border: 1px solid var(--border); border-radius: 6px;
-  font-size: 13px; width: 240px;
+  font-size: 13px;
 }
+.filter-bar input[type="search"] { width: 130px; }
+.filter-bar input[type="date"] { width: 150px; }
+.filter-bar input:focus { outline: none; border-color: var(--primary); }
+
+.pager {
+  display: flex; justify-content: center; align-items: center;
+  gap: 14px; margin-top: 16px;
+}
+.pg-btn {
+  padding: 6px 14px;
+  background: #fff; color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px;
+  cursor: pointer; font-size: 13px;
+  transition: all .15s;
+}
+.pg-btn:hover:not(:disabled) { border-color: var(--primary); color: var(--primary); }
+.pg-btn:disabled { opacity: .45; cursor: not-allowed; }
+.pg-info { font-size: 13px; color: var(--muted); min-width: 80px; text-align: center; }
 
 /* ============ 上传面板 ============ */
 .upload-panel {
@@ -628,7 +647,11 @@ code { background: #f1f2f4; padding: 1px 5px; border-radius: 4px; font-size: 13p
 }
 .ts-tag:hover { background: #dbe9ff; color: #1a55b0; }
 .ts-play-icon { font-size: 9px; }
+.ts-play-icon::before { content: "▶"; }
 .ts-flash { background: #ffe9c0 !important; color: #a05c00 !important; }
+.ts-tag.ts-playing { background: #2e9a55; color: #fff; }
+.ts-tag.ts-playing .ts-play-icon { font-size: 10px; }
+.ts-tag.ts-playing .ts-play-icon::before { content: "⏸"; }
 
 .aic-body { font-size: 13px; color: var(--text); line-height: 1.6; margin-bottom: 8px; }
 .aic-field { display: flex; gap: 8px; margin-bottom: 6px; font-size: 13px; line-height: 1.5; }

@@ -63,18 +63,20 @@ DB_PATH = os.environ.get("DB_PATH", str(Path(__file__).parent / "recordings.db")
 KB_PATH = os.environ.get("KNOWLEDGE_BASE_PATH",
                          str(Path(__file__).parent / "output" / "logic_library.json"))
 
-DEFAULT_MODEL = os.environ.get("ANALYSIS_MODEL", "deepseek-chat")
+DEFAULT_MODEL = os.environ.get("ANALYSIS_MODEL", "deepseek-v4-pro")
 ANTHROPIC_PROXY = os.environ.get("ANTHROPIC_PROXY", "http://127.0.0.1:7890")
 
 # 可选分析模型表（前端下拉用）
 # provider: anthropic 走代理；deepseek 直连国内不走代理
 SUPPORTED_MODELS = [
-    {"id": "deepseek-chat",     "provider": "deepseek",
-     "label": "DeepSeek V3（国内直连，快/便宜，默认）"},
+    {"id": "deepseek-v4-pro",   "provider": "deepseek",
+     "label": "DeepSeek V4 Pro（国内直连，含深度思考，默认）"},
     {"id": "claude-sonnet-4-6", "provider": "anthropic",
      "label": "Claude Sonnet 4.6（更强但贵且慢）"},
 ]
+# 兼容历史数据库中遗留的 deepseek-chat 模型 id
 MODEL_PROVIDER = {m["id"]: m["provider"] for m in SUPPORTED_MODELS}
+MODEL_PROVIDER.setdefault("deepseek-chat", "deepseek")
 
 _oss_auth = oss2.Auth(OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET)
 oss_bucket = oss2.Bucket(_oss_auth, OSS_ENDPOINT, OSS_BUCKET_NAME)
@@ -634,6 +636,7 @@ def _call_deepseek(model, system_prompt, user_prompt):
         },
     }
 
+    is_v4 = "v4" in model.lower()
     payload = {
         "model": model,
         "messages": [
@@ -641,15 +644,25 @@ def _call_deepseek(model, system_prompt, user_prompt):
             {"role": "user", "content": user_prompt},
         ],
         "tools": [openai_tool],
-        "tool_choice": {"type": "function",
-                        "function": {"name": SCORE_TOOL["name"]}},
+        # V4 思考模式只支持 "auto"，不支持指定具体 function；V3 仍可强制
+        "tool_choice": "auto" if is_v4 else {
+            "type": "function",
+            "function": {"name": SCORE_TOOL["name"]},
+        },
         "max_tokens": 8000,
         "temperature": 0.3,
     }
+    # V4 系列开启深度思考（reasoning_effort + thinking），按官方示例
+    if is_v4:
+        payload["reasoning_effort"] = "high"
+        payload["thinking"] = {"type": "enabled"}
+        # 思考 token 计入 max_tokens，需要给宽
+        payload["max_tokens"] = 32000
     # trust_env=False 关键：服务器有 http_proxy=7890，DeepSeek 不能走代理
+    # 深度思考耗时较长，read timeout 上调到 20 分钟
     with httpx.Client(
         trust_env=False,
-        timeout=httpx.Timeout(connect=15.0, read=600.0, write=60.0, pool=15.0),
+        timeout=httpx.Timeout(connect=15.0, read=1200.0, write=60.0, pool=15.0),
     ) as client:
         resp = client.post(
             f"{DEEPSEEK_API_BASE.rstrip('/')}/chat/completions",
@@ -877,14 +890,24 @@ def scan_oss_bucket():
 # ============ 分析文本解析（纯正则，不调 LLM）============
 
 def _strip_l_codes(s):
-    """剥离 [L0001]、[L0001/L0008] 以及裸露的 L0001 引用"""
-    s = re.sub(r'\[L\d+(?:/L\d+)*\]', '', s)
-    # ——L0108/L0274 是本次最大短板
-    s = re.sub(r'——L\d+(?:/L\d+)*[^。\n]*', '', s)
-    # （含 L code 的括号注释）如：（违反L0002精神）
-    s = re.sub(r'（[^）]*L\d+[^）]*）', '', s)
-    s = re.sub(r'，?违反L\d+[^，。]*', '', s)
-    s = re.sub(r'，?命中L\d+[^，。]*', '', s)
+    """剥离所有 L 编号知识库引用：[L0001]、【L0001/L0008】、（违反L0001）、命中L0001/L0002 等"""
+    if not s:
+        return s
+    # 中英方括号：[L0001] [L0001/L0002] 【L0001】【L0001/L0002】
+    s = re.sub(r'[\[【]\s*L\d+(?:\s*[/／、]\s*L\d+)*\s*[\]】]', '', s)
+    # 圆括号（中英）内含 L code：(违反L0002精神) （命中L0072/L0150）
+    s = re.sub(r'[（(][^）)\n]*L\d+[^）)\n]*[）)]', '', s)
+    # 破折号引出 L 码到句末：——L0108/L0274 是本次最大短板
+    s = re.sub(r'[—–]{1,2}\s*L\d+(?:\s*[/／、]\s*L\d+)*[^。\n]*', '', s)
+    # 关键词 + L 码 + 后续修饰到下一个标点：，命中L0072/L0150 这条逻辑
+    s = re.sub(
+        r'[，、,；;]?\s*(?:命中|违反|参考|对应|引用|遵循)\s*L\d+(?:\s*[/／、]\s*L\d+)*[^，。；！？\n]*',
+        '', s)
+    # 兜底：残留的裸 L 码（如 L0089）以及斜杠连号 L0087/L0081
+    s = re.sub(r'(?<![A-Za-z0-9])L\d{3,4}(?:\s*[/／、]\s*L\d{3,4})*', '', s)
+    # 收尾：清掉空的括号壳与多余空格
+    s = re.sub(r'[（(]\s*[）)]|[\[【]\s*[\]】]', '', s)
+    s = re.sub(r'[ \t]+', ' ', s)
     return s.strip()
 
 
@@ -895,8 +918,14 @@ def _clean(s):
 
 
 def _extract_timestamps(s):
-    """提取 '段N [XXXs-YYYs]' → [{segment, startSec, endSec}]"""
-    pat = re.compile(r'段\s*(\d+)\s*\[(\d+(?:\.\d+)?)s\s*[-–]\s*(\d+(?:\.\d+)?)s\]')
+    """提取 '段N [XXXs-YYYs]' 等多种格式 → [{segment, startSec, endSec}]
+
+    兼容：段1 [XXs-YYs]、段1的[XXs-YYs]、段1的 [XXs - YYs]、【录音段1的 0.64s-5.20s】、段1，XXs~YYs
+    """
+    pat = re.compile(
+        r'段\s*(\d+)[^\d\n]{0,8}?'
+        r'(\d+(?:\.\d+)?)\s*s\s*[-–~至到]\s*(\d+(?:\.\d+)?)\s*s'
+    )
     return [
         {'segment': int(m.group(1)),
          'startSec': float(m.group(2)),
@@ -950,41 +979,80 @@ def parse_analysis(text):
 
         # ── 做错/遗漏 ──
         elif '做错' in title or '遗漏' in title:
-            # body 可能直接以 "### 1." 开头，用 re.MULTILINE 处理
-            for chunk in re.split(r'(?:^|\n)###\s*', body, flags=re.MULTILINE):
-                if not chunk.strip():
-                    continue
-                first_nl = chunk.find('\n')
-                if first_nl == -1:
-                    continue
-                raw_title = re.sub(r'^\d+\.\s*', '', chunk[:first_nl]).strip()
-                chunk_body = chunk[first_nl + 1:]
+            # 兼容两种格式：
+            #   V3: `### 1. **[L...] 标题**\n - **位置**:...\n - **影响**:...\n - **正确做法**:...`
+            #   V4: `- **[L...] 标题**：内容 **影响**：x **正确做法**：x`（全部内联）
+            # 顶层入口标记 = `### N. ` 或 `- ` 后紧跟 `**[L或【L`（带 L 码的标题）
+            entry_split = re.compile(
+                r'(?:^|\n)(?:###\s*\d*\.?\s*|-\s+)(?=\*\*\s*[\[【]\s*L\d+)'
+            )
+            chunks = entry_split.split(body)
 
-                def _extract_field(pattern, text):
-                    m = re.search(pattern, text, re.DOTALL)
-                    return _clean(m.group(1)) if m else ''
+            def _extract_inline_field(field_pat, text):
+                m = re.search(
+                    rf'\*\*\s*(?:{field_pat})\s*\*\*\s*[：:]\s*'
+                    r'(.*?)(?=\*\*\s*(?:影响|风险|正确做法|位置)\s*\*\*\s*[：:]|\Z)',
+                    text, re.DOTALL,
+                )
+                return _clean(m.group(1)) if m else ''
 
+            for chunk in chunks:
+                chunk = chunk.strip()
+                if not chunk.startswith('**'):
+                    continue
+                m = re.match(r'\*\*(.*?)\*\*\s*[：:]\s*(.*)', chunk, re.DOTALL)
+                if not m:
+                    continue
+                raw_title = m.group(1)
+                rest = m.group(2)
+                # 第一个子字段之前的部分 → problem（V4 内联）
+                first_field = re.search(
+                    r'\*\*\s*(?:影响|风险|位置|正确做法)\s*\*\*\s*[：:]', rest,
+                )
+                inline_problem = rest[:first_field.start()] if first_field else rest
+                risk = _extract_inline_field('影响|风险', rest)
+                correct = _extract_inline_field('正确做法', rest)
+                position = _extract_inline_field('位置', rest)
+                # V3 格式有 **位置** 字段；V4 没有，把开头描述当作 problem
+                problem = position or _clean(inline_problem)
                 result['weaknesses'].append({
                     'title': _clean(raw_title),
-                    'problem': _extract_field(r'\*\*位置\*\*[：:](.*?)(?=\n\s*-\s*\*\*|$)', chunk_body),
-                    'risk': _extract_field(r'\*\*影响\*\*[：:](.*?)(?=\n\s*-\s*\*\*|$)', chunk_body),
-                    'correctAction': _extract_field(r'\*\*正确做法\*\*[：:](.*?)(?=\n\s*-\s*\*\*|\n###|$)', chunk_body),
-                    'timestamps': _extract_timestamps(chunk_body),
+                    'problem': problem,
+                    'risk': risk,
+                    'correctAction': correct,
+                    'timestamps': _extract_timestamps(chunk),
                 })
 
         # ── 阶段流程检查 ──
         elif '阶段流程' in title or '阶段' in title:
             key_map = {'进房前': 'before', '房中': 'during', '房后': 'after'}
-            for stage_chunk in re.split(r'\n###\s*', body):
+            # 兼容两种格式：
+            #   V3: `### 进房前\n - ✅ x\n - ❌ y\n - ⚠️ z`
+            #   V4: `- **进房前**：xxx 叙述段落...\n- **房中**：...`
+            stage_split = re.compile(
+                r'(?:^|\n)(?:###\s*|-\s+\*\*\s*)(?=进房前|房中|房后)'
+            )
+            for stage_chunk in stage_split.split(body):
                 if not stage_chunk.strip():
                     continue
+                # 取首行作为阶段标题，余下作为内容
                 first_nl = stage_chunk.find('\n')
-                stage_title = stage_chunk[:first_nl] if first_nl != -1 else stage_chunk
+                head = stage_chunk[:first_nl] if first_nl != -1 else stage_chunk
                 stage_body = stage_chunk[first_nl + 1:] if first_nl != -1 else ''
-                key = next((v for k, v in key_map.items() if k in stage_title), None)
+                # V4 头部形如 `进房前**（...）：内容...`，截到第一个 ** 或 ：
+                key = next((v for k, v in key_map.items() if k in head), None)
                 if not key:
                     continue
+                # V4 情况：head 后半段已经包含正文，把它合并回 stage_body
+                # 兼容 `进房前**：xxx` 和 `进房前**（注解）：xxx` 两种
+                tail_match = re.search(
+                    r'\*\*\s*(?:[（(][^）)\n]*[）)])?\s*[：:]\s*(.*)',
+                    head, re.DOTALL,
+                )
+                if tail_match:
+                    stage_body = (tail_match.group(1) + '\n' + stage_body).strip()
                 items = []
+                # 先尝试按 ✅/❌/⚠️ 解析（V3）
                 for line in stage_body.splitlines():
                     line = line.strip().lstrip('- ')
                     if not line:
@@ -995,6 +1063,13 @@ def parse_analysis(text):
                         items.append({'type': 'bad',  'text': _clean(line[1:])})
                     elif line.startswith('⚠️'):
                         items.append({'type': 'warn', 'text': _clean(line[2:])})
+                # 没有标记 → V4 叙述段落，按句号切分为多条 'warn' 项
+                if not items and stage_body.strip():
+                    clean_text = _clean(stage_body.replace('\n', ' '))
+                    for sent in re.split(r'(?<=[。！？])\s*', clean_text):
+                        sent = sent.strip()
+                        if len(sent) >= 4:
+                            items.append({'type': 'warn', 'text': sent})
                 result['stageCheck'][key] = items
 
         # ── 关键改进建议 ──
@@ -1084,7 +1159,41 @@ def session_detail(sid):
 @app.route("/api/sessions")
 @login_required
 def api_sessions():
-    rows = db_fetchall("""
+    """接诊列表，支持按顾问/顾客模糊筛选 + 按服务日期精确筛选 + 分页。"""
+    advisor = (request.args.get("advisor") or "").strip()
+    customer = (request.args.get("customer") or "").strip()
+    date = (request.args.get("date") or "").strip()  # YYYY-MM-DD，精确到天
+
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except ValueError:
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", 10))
+    except ValueError:
+        page_size = 10
+    page_size = max(1, min(page_size, 100))
+
+    where = []
+    params = []
+    if advisor:
+        where.append("s.advisor LIKE ?")
+        params.append(f"%{advisor}%")
+    if customer:
+        where.append("s.customer LIKE ?")
+        params.append(f"%{customer}%")
+    if date:
+        where.append("s.service_date = ?")
+        params.append(date)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+
+    total_row = db_fetchone(
+        f"SELECT COUNT(*) AS c FROM sessions s {where_sql}", tuple(params)
+    )
+    total = total_row["c"] if total_row else 0
+
+    offset = (page - 1) * page_size
+    rows = db_fetchall(f"""
         SELECT s.id, s.advisor, s.customer, s.service_date,
                s.analysis_status, s.analysis_scores, s.has_evaluation, s.created_at,
                COUNT(r.id) AS recording_count,
@@ -1093,10 +1202,17 @@ def api_sessions():
                SUM(CASE WHEN r.asr_status='failed' THEN 1 ELSE 0 END) AS asr_failed_count
         FROM sessions s
         LEFT JOIN recordings r ON r.session_id = s.id
+        {where_sql}
         GROUP BY s.id
         ORDER BY s.service_date DESC, s.id DESC
-    """)
-    return jsonify({"sessions": [dict(r) for r in rows]})
+        LIMIT ? OFFSET ?
+    """, tuple(params) + (page_size, offset))
+    return jsonify({
+        "sessions": [dict(r) for r in rows],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    })
 
 
 @app.route("/api/session/<int:sid>")
@@ -1122,6 +1238,19 @@ def api_session_get(sid):
     out["evaluation"] = dict(ev) if ev else None
     # 解析结构化分析（纯字符串处理，不调 LLM）
     out["parsed_analysis"] = parse_analysis(out.get("analysis_result") or "")
+    # 评分 JSON 里的 evaluation/improvement/highlights/weaknesses 也清掉知识库 L 码
+    if out.get("analysis_scores"):
+        try:
+            sc = json.loads(out["analysis_scores"])
+            sc["highlights"] = _strip_l_codes(sc.get("highlights", ""))
+            sc["weaknesses"] = _strip_l_codes(sc.get("weaknesses", ""))
+            for dim, dv in (sc.get("dimensions") or {}).items():
+                if isinstance(dv, dict):
+                    dv["evaluation"] = _strip_l_codes(dv.get("evaluation", ""))
+                    dv["improvement"] = _strip_l_codes(dv.get("improvement", ""))
+            out["analysis_scores"] = json.dumps(sc, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            pass
     return jsonify(out)
 
 
