@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}录音库 · 工牌接诊分析系统{% endblock %}
+{% block title %}接诊库 · 工牌接诊分析系统{% endblock %}
 {% block body %}
 <header class="topbar">
   <div class="topbar-left">
@@ -16,8 +16,8 @@
   <section class="card">
     <div class="card-head">
       <div>
-        <h2>录音库</h2>
-        <p class="muted">选择一条录音查看分析与点评，或上传一条新的录音。</p>
+        <h2>接诊库</h2>
+        <p class="muted">每条 = 一次完整接诊（同顾问·同顾客·同日，可能有多段录音）。上传录音后系统自动转录并分析。</p>
       </div>
       <div class="head-actions">
         <button id="btn-scan" class="btn-ghost">🔄 同步云端</button>
@@ -26,19 +26,39 @@
     </div>
 
     <div id="upload-panel" class="upload-panel hidden">
-      <h3>上传新录音</h3>
+      <h3>上传录音（支持多文件 / 整个文件夹，自动归并到同一接诊）</h3>
       <form id="upload-form" enctype="multipart/form-data">
-        <div class="grid-2">
-          <label>顾问 <input type="text" name="advisor" placeholder="例：代素英"></label>
-          <label>顾客 <input type="text" name="customer" placeholder="例：伏琳"></label>
-          <label>录音时间 <input type="datetime-local" name="recorded_at"></label>
-          <label>时长（可选）<input type="text" name="duration_label" placeholder="例：11分钟17秒"></label>
+        <div class="upload-pickers">
+          <label class="picker-btn">
+            📄 选择文件
+            <input type="file" id="pick-files" multiple
+              accept=".mp3,.wav,.m4a,.flac,.aac,.ogg,.opus,audio/*">
+          </label>
+          <label class="picker-btn">
+            📁 选择文件夹
+            <input type="file" id="pick-dir" webkitdirectory directory multiple>
+          </label>
+          <button type="button" id="btn-clear-files" class="btn-ghost" style="display:none">清空</button>
         </div>
-        <label class="block">
-          录音文件（mp3 / wav / m4a 等，最大 300MB）
-          <input type="file" name="file" accept=".mp3,.wav,.m4a,.flac,.aac,.ogg,.opus,audio/*" required>
-        </label>
-        <p class="hint">小提示：如果文件名已经是 <code>顾问-顾客-录音YYYYMMDDHHMMSS-XX分钟XX秒.mp3</code> 的格式，元数据会自动识别，不填也行。</p>
+        <div id="picked-info" class="picked-info hint" style="display:none"></div>
+        <ul id="picked-list" class="picked-list" style="display:none"></ul>
+        <p class="hint">
+          推荐文件名格式：<code>顾客-顾问-录音YYYYMMDDHHMMSS-时长.mp3</code>，<br>
+          例：<code>吕女士-刘佳玲-录音20260510114613_01分钟56秒.mp3</code>。<br>
+          按这个格式命名时，系统会自动识别顾客/顾问/日期，并把同一天同顾问同顾客的多段录音自动归入同一次接诊。<br>
+          <b>选择文件夹时</b>：系统会自动跳过非音频文件，单次上传总大小上限 1 GB（超过请分批）。
+        </p>
+
+        <details class="upload-fallback">
+          <summary>文件名不规范？手动填元数据（可选）</summary>
+          <div class="grid-2">
+            <label>顾客 <input type="text" name="customer" placeholder="例：吕女士"></label>
+            <label>顾问 <input type="text" name="advisor" placeholder="例：刘佳玲"></label>
+            <label>录音时间 <input type="datetime-local" name="recorded_at"></label>
+            <label>时长 <input type="text" name="duration_label" placeholder="例：11分钟17秒"></label>
+          </div>
+        </details>
+
         <div class="actions">
           <button type="button" id="btn-cancel-upload" class="btn-ghost">取消</button>
           <button type="submit" class="btn-primary">开始上传</button>
@@ -51,13 +71,13 @@
   <section class="card">
     <div class="card-head">
       <div>
-        <h3>共 <span id="rec-count">0</span> 条录音</h3>
+        <h3>共 <span id="sess-count">0</span> 次接诊</h3>
       </div>
       <div class="filter-bar">
-        <input type="search" id="filter-input" placeholder="按顾问、顾客、文件名筛选…">
+        <input type="search" id="filter-input" placeholder="按顾问、顾客筛选…">
       </div>
     </div>
-    <div id="rec-list" class="rec-list">
+    <div id="sess-list" class="rec-list">
       <div class="empty">加载中…</div>
     </div>
   </section>

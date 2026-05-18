@@ -1,108 +1,154 @@
 {% extends "base.html" %}
-{% block title %}录音详情 · 工牌接诊分析系统{% endblock %}
+{% block title %}复盘工作台 · {{ sess.advisor }} × {{ sess.customer }}{% endblock %}
 {% block body %}
-<header class="topbar">
-  <div class="topbar-left">
-    <a class="logo-mini" href="{{ url_for('index') }}">身美</a>
-    <a class="link back" href="{{ url_for('index') }}">← 返回录音库</a>
+<div class="workbench" data-sid="{{ sess.id }}">
+
+  <!-- ① 顶部信息条 -->
+  <header class="wb-topbar">
+    <div class="wb-topbar-left">
+      <a href="{{ url_for('index') }}" class="wb-back">←</a>
+      <div class="wb-title">
+        <span class="wb-advisor">{{ sess.advisor }}</span>
+        <span class="wb-sep">接诊</span>
+        <span class="wb-customer">{{ sess.customer }}</span>
+        <span class="wb-date">{{ sess.service_date }}</span>
+      </div>
+    </div>
+    <div class="wb-topbar-right">
+      <div class="wb-model-bar">
+        <label class="wb-model-label" for="model-select">分析模型</label>
+        <select id="model-select" class="wb-model-select" disabled>
+          <option>加载中…</option>
+        </select>
+        <button id="btn-reanalyze" class="wb-reanalyze-btn" title="用所选模型重新分析" disabled>重新分析</button>
+      </div>
+      <button class="wb-info-btn" id="btn-info" title="详情">ⓘ</button>
+    </div>
+  </header>
+
+  <!-- 折叠详情（默认隐藏）-->
+  <div id="info-panel" class="wb-info-panel hidden">
+    <div id="info-content" class="wb-info-content"></div>
   </div>
-  <div class="topbar-right">
-    <span class="user-chip">👤 {{ username }}</span>
-    <a class="link" href="{{ url_for('logout') }}">退出</a>
-  </div>
-</header>
 
-<main class="container detail-page" data-rid="{{ rec.id }}">
-  <section class="card">
-    <div class="rec-meta">
-      <div>
-        <div class="meta-label">顾问</div>
-        <div class="meta-value" id="meta-advisor">—</div>
-      </div>
-      <div>
-        <div class="meta-label">顾客</div>
-        <div class="meta-value" id="meta-customer">—</div>
-      </div>
-      <div>
-        <div class="meta-label">录音时间</div>
-        <div class="meta-value" id="meta-time">—</div>
-      </div>
-      <div>
-        <div class="meta-label">时长</div>
-        <div class="meta-value" id="meta-duration">—</div>
-      </div>
-      <div>
-        <div class="meta-label">文件</div>
-        <div class="meta-value meta-mono" id="meta-key">—</div>
-      </div>
+  <!-- ② 录音播放器 -->
+  <section class="wb-card" id="player-card">
+    <div class="player-top">
+      <select id="seg-select" class="seg-select"></select>
+      <span id="seg-duration" class="seg-duration"></span>
     </div>
-
-    <div class="player-wrap">
-      <audio id="audio" controls preload="metadata"></audio>
-      <div class="player-tips">
-        <span>键盘：空格 播放/暂停　←/→ 后退/前进 5 秒</span>
-        <span id="player-speed">
-          倍速：
-          <button data-speed="0.75" class="speed-btn">0.75×</button>
-          <button data-speed="1" class="speed-btn active">1×</button>
-          <button data-speed="1.25" class="speed-btn">1.25×</button>
-          <button data-speed="1.5" class="speed-btn">1.5×</button>
-          <button data-speed="2" class="speed-btn">2×</button>
-        </span>
-      </div>
-    </div>
+    <audio id="main-audio" controls preload="metadata"></audio>
+    <details id="transcript-details">
+      <summary>查看转录文本</summary>
+      <div id="transcript-text" class="transcript-body"></div>
+    </details>
   </section>
 
-  <section class="card">
-    <div class="card-head">
-      <h3>① ASR 语音转录（含说话人分离）</h3>
-      <div class="head-actions">
-        <span id="asr-status-chip" class="chip">未开始</span>
-        <button id="btn-asr" class="btn-primary">开始转录</button>
+  <!-- ③ 综合评分卡 -->
+  <section class="wb-card" id="score-section" style="display:none">
+    <div class="score-summary">
+      <div class="score-big-wrap">
+        <div id="score-big-circle" class="score-big-circle">—</div>
+        <div class="score-big-label">综合 / 10</div>
+      </div>
+      <div class="score-highlights-col">
+        <div class="score-hl-row"><span class="hl-dot good"></span><span id="sc-highlights"></span></div>
+        <div class="score-hl-row"><span class="hl-dot bad"></span><span id="sc-weaknesses"></span></div>
       </div>
     </div>
-    <div id="asr-content" class="transcript">尚未转录。</div>
+    <div id="score-stages-new" class="score-stages-new"></div>
   </section>
 
-  <section class="card">
-    <div class="card-head">
-      <h3>② 知识库 AI 复盘点评</h3>
-      <div class="head-actions">
-        <span id="ana-status-chip" class="chip">未开始</span>
-        <button id="btn-analyze" class="btn-primary">开始分析</button>
-      </div>
-    </div>
-    <div id="ana-content" class="analysis">尚未生成。需要先完成 ASR 转录。</div>
-  </section>
+  <!-- ④ AI 复盘内容 -->
+  <div id="ai-section" style="display:none">
 
-  <section class="card">
-    <div class="card-head">
-      <h3>③ 老板点评（人工标注）</h3>
-      <div class="head-actions">
-        <span id="eval-chip" class="chip">未填写</span>
+    <!-- 4a. 总体评价 -->
+    <section class="wb-card wb-card-overall" id="card-overall">
+      <div class="wb-card-head">
+        <span class="wb-card-icon">📋</span>
+        <span class="wb-card-title">总体评价</span>
       </div>
+      <p id="overall-text" class="overall-text"></p>
+      <button class="quote-btn" data-quote-from="overall-text" data-review-target="ta-wrong">📌 引用到点评</button>
+    </section>
+
+    <!-- 4b. 做得好的点 -->
+    <section class="wb-card-group" id="strengths-group">
+      <div class="wb-group-head good">
+        <span>✅ 做得好的点</span>
+        <span id="strengths-count" class="group-count"></span>
+      </div>
+      <div id="strengths-list" class="item-list"></div>
+    </section>
+
+    <!-- 4c. 做错/遗漏 -->
+    <section class="wb-card-group" id="weaknesses-group">
+      <div class="wb-group-head bad">
+        <span>❌ 做错 / 遗漏的点</span>
+        <span id="weaknesses-count" class="group-count"></span>
+      </div>
+      <div id="weaknesses-list" class="item-list"></div>
+    </section>
+
+    <!-- 4d. 阶段流程检查 -->
+    <section class="wb-card" id="stage-check-card">
+      <div class="wb-card-head">
+        <span class="wb-card-icon">🗺️</span>
+        <span class="wb-card-title">阶段流程检查</span>
+      </div>
+      <div id="stage-grid" class="stage-grid"></div>
+    </section>
+
+    <!-- 4e. 关键改进建议 -->
+    <section class="wb-card-group" id="suggestions-group">
+      <div class="wb-group-head suggest">
+        <span>💡 关键改进建议</span>
+      </div>
+      <div id="suggestions-list" class="item-list"></div>
+    </section>
+
+  </div><!-- /ai-section -->
+
+  <!-- ⑤ 老板点评 -->
+  <section class="wb-card" id="review-card">
+    <div class="wb-card-head">
+      <span class="wb-card-icon">✏️</span>
+      <span class="wb-card-title">老板点评</span>
+      <span id="review-chip" class="chip review-chip">未填写</span>
     </div>
-    <form id="eval-form" class="eval-form">
-      <label class="block">
-        <span class="lbl">错的点</span>
-        <textarea name="wrong_points" rows="4" placeholder="哪里说错了、做错了？例如：顾客提到照顾老人，顾问没有共情，直接转项目。"></textarea>
-      </label>
-      <label class="block">
-        <span class="lbl">改进建议</span>
-        <textarea name="improvement" rows="4" placeholder="顾问应该怎么调整？例如：先接住情绪 1-2 句，再过渡到项目。"></textarea>
-      </label>
-      <label class="block">
-        <span class="lbl">正确做法</span>
-        <textarea name="correct_practice" rows="4" placeholder="标准做法 / 你期望看到的话术示范。"></textarea>
-      </label>
-      <div class="actions">
-        <button type="submit" class="btn-primary">提交点评</button>
+    <form id="eval-form">
+      <div class="review-field">
+        <div class="review-field-label">❌ 错的点</div>
+        <div class="review-textarea-wrap">
+          <textarea id="ta-wrong" name="wrong_points" rows="3" placeholder="哪里说错了、做错了？（也可点 AI 卡片右下角📌引用）"></textarea>
+          <button type="button" class="voice-btn" data-target="ta-wrong" title="语音输入">🎙️</button>
+        </div>
+      </div>
+      <div class="review-field">
+        <div class="review-field-label">💬 改进建议</div>
+        <div class="review-textarea-wrap">
+          <textarea id="ta-improve" name="improvement" rows="3" placeholder="顾问应该怎么调整？"></textarea>
+          <button type="button" class="voice-btn" data-target="ta-improve" title="语音输入">🎙️</button>
+        </div>
+      </div>
+      <div class="review-field">
+        <div class="review-field-label">✅ 正确做法</div>
+        <div class="review-textarea-wrap">
+          <textarea id="ta-correct" name="correct_practice" rows="3" placeholder="标准做法 / 你期望看到的话术示范"></textarea>
+          <button type="button" class="voice-btn" data-target="ta-correct" title="语音输入">🎙️</button>
+        </div>
+      </div>
+      <div class="review-actions">
+        <button type="submit" class="btn-primary btn-submit-review" id="btn-submit-review">提交点评</button>
         <span id="eval-msg" class="form-msg"></span>
       </div>
     </form>
   </section>
-</main>
+
+  <!-- 底部留白 -->
+  <div style="height:32px"></div>
+</div>
 
 <script src="{{ url_for('static', filename='app.js') }}"></script>
-<script>initDetailPage();</script>
+<script>initSessionPage();</script>
 {% endblock %}
