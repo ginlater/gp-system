@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}登录 · 工牌接诊分析系统{% endblock %}
+{% block body %}
+<div class="login-wrap">
+  <div class="login-card">
+    <div class="brand">
+      <div class="brand-logo">身美</div>
+      <div class="brand-title">工牌接诊分析系统</div>
+      <div class="brand-sub">语音录音 · 知识库点评 · 老板复盘</div>
+    </div>
+    <form method="post" class="login-form">
+      <label>用户名
+        <input type="text" name="username" autofocus autocomplete="username" required>
+      </label>
+      <label>密码
+        <input type="password" name="password" autocomplete="current-password" required>
+      </label>
+      {% if error %}<div class="form-error">{{ error }}</div>{% endif %}
+      <button type="submit" class="btn-primary btn-block">登 录</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

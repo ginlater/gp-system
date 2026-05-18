@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}录音库 · 工牌接诊分析系统{% endblock %}
+{% block body %}
+<header class="topbar">
+  <div class="topbar-left">
+    <div class="logo-mini">身美</div>
+    <div class="title">工牌接诊分析系统</div>
+  </div>
+  <div class="topbar-right">
+    <span class="user-chip">👤 {{ username }}</span>
+    <a class="link" href="{{ url_for('logout') }}">退出</a>
+  </div>
+</header>
+
+<main class="container">
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2>录音库</h2>
+        <p class="muted">选择一条录音查看分析与点评，或上传一条新的录音。</p>
+      </div>
+      <div class="head-actions">
+        <button id="btn-scan" class="btn-ghost">🔄 同步云端</button>
+        <button id="btn-show-upload" class="btn-primary">＋ 上传录音</button>
+      </div>
+    </div>
+
+    <div id="upload-panel" class="upload-panel hidden">
+      <h3>上传新录音</h3>
+      <form id="upload-form" enctype="multipart/form-data">
+        <div class="grid-2">
+          <label>顾问 <input type="text" name="advisor" placeholder="例：代素英"></label>
+          <label>顾客 <input type="text" name="customer" placeholder="例：伏琳"></label>
+          <label>录音时间 <input type="datetime-local" name="recorded_at"></label>
+          <label>时长（可选）<input type="text" name="duration_label" placeholder="例：11分钟17秒"></label>
+        </div>
+        <label class="block">
+          录音文件（mp3 / wav / m4a 等，最大 300MB）
+          <input type="file" name="file" accept=".mp3,.wav,.m4a,.flac,.aac,.ogg,.opus,audio/*" required>
+        </label>
+        <p class="hint">小提示：如果文件名已经是 <code>顾问-顾客-录音YYYYMMDDHHMMSS-XX分钟XX秒.mp3</code> 的格式，元数据会自动识别，不填也行。</p>
+        <div class="actions">
+          <button type="button" id="btn-cancel-upload" class="btn-ghost">取消</button>
+          <button type="submit" class="btn-primary">开始上传</button>
+        </div>
+        <div id="upload-msg" class="form-msg"></div>
+      </form>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h3>共 <span id="rec-count">0</span> 条录音</h3>
+      </div>
+      <div class="filter-bar">
+        <input type="search" id="filter-input" placeholder="按顾问、顾客、文件名筛选…">
+      </div>
+    </div>
+    <div id="rec-list" class="rec-list">
+      <div class="empty">加载中…</div>
+    </div>
+  </section>
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+<script>initIndexPage();</script>
+{% endblock %}

@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% block title %}工牌接诊分析系统{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<script>window.URL_PREFIX = "{{ request.script_root }}";</script>
+{% block body %}{% endblock %}
+</body>
+</html>
