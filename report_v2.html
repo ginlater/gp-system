@@ -1,0 +1,1314 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>刘佳佳接诊全维度分析报告</title>
+<style>
+:root {
+  --navy:      #1c3461;
+  --navy-mid:  #2d5594;
+  --blue:      #4a90d9;
+  --teal:      #16a085;
+  --red:       #e74c3c;
+  --green:     #27ae60;
+  --orange:    #e67e22;
+  --purple:    #8e44ad;
+  --bg:        #ffffff;
+  --bg-light:  #f4f6f9;
+  --bg-blue:   #eaf3fb;
+  --bg-red:    #fdedec;
+  --bg-green:  #eafaf1;
+  --bg-orange: #fef9e7;
+  --border:    #d5dce8;
+  --text:      #1a1a2e;
+  --text-mid:  #4a5568;
+  --text-mute: #8a95a3;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:var(--bg);color:var(--text);font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px;line-height:1.7}
+a{color:inherit;text-decoration:none}
+
+/* ─── NAV ─── */
+.nav{position:sticky;top:0;z-index:100;background:rgba(255,255,255,.95);backdrop-filter:blur(10px);border-bottom:1px solid var(--border);padding:0 40px}
+.nav-inner{max-width:1100px;margin:0 auto;height:54px;display:flex;align-items:center;justify-content:space-between;gap:16px}
+.nav-title{font-size:14px;font-weight:600;color:var(--navy);display:flex;align-items:center;gap:10px}
+.nav-title .dot{width:8px;height:8px;background:var(--blue);border-radius:50%}
+.nav-right{display:flex;align-items:center;gap:10px}
+.nav-tag{font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:99px;color:var(--text-mid);display:flex;align-items:center;gap:5px}
+.nav-tag .circle{width:6px;height:6px;border-radius:50%;background:var(--green)}
+/* recording toggle */
+.rec-btn{display:flex;align-items:center;gap:6px;padding:6px 14px;background:var(--navy);color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;font-family:inherit}
+.rec-btn svg{flex-shrink:0}
+.rec-panel{display:none;position:absolute;right:40px;top:60px;width:380px;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:200;padding:16px}
+.rec-panel.open{display:block}
+.rec-seg-label{font-size:11px;color:var(--text-mute);margin-bottom:6px;font-weight:500}
+.rec-seg-select{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-family:inherit;font-size:13px;color:var(--text);margin-bottom:10px;outline:none;background:#fff}
+.rec-audio{width:100%;height:36px;margin-bottom:8px}
+.rec-transcript details summary{font-size:12px;color:var(--text-mute);cursor:pointer;padding:4px 0}
+.rec-transcript-body{max-height:200px;overflow-y:auto;font-size:12px;line-height:1.8;color:var(--text-mid);padding:10px;background:var(--bg-light);border-radius:4px;margin-top:6px}
+
+/* ─── MAIN WRAP ─── */
+.wrap{max-width:1100px;margin:0 auto;padding:40px 40px 80px}
+
+/* ─── COVER ─── */
+.cover{margin-bottom:48px}
+.cover-box{background:var(--navy);color:#fff;padding:40px 48px;border-radius:2px 2px 0 0}
+.cover-box h1{font-size:32px;font-weight:700;letter-spacing:.02em;margin-bottom:4px}
+.cover-subtitle{background:var(--navy-mid);color:rgba(255,255,255,.9);padding:12px 48px;font-size:14px;letter-spacing:.05em;margin-top:2px}
+.cover-meta{border:1px solid var(--border);border-top:none}
+.cover-meta-row{display:grid;grid-template-columns:100px 1fr;border-bottom:1px solid var(--border)}
+.cover-meta-row:last-child{border-bottom:none}
+.cover-meta-row .k{padding:12px 20px;background:var(--bg-light);color:var(--text-mute);font-size:13px;border-right:1px solid var(--border)}
+.cover-meta-row .v{padding:12px 20px;font-size:13px;font-weight:500;color:var(--navy)}
+.cover-note{text-align:center;padding:28px 0 8px;font-size:13px;color:var(--text-mute);line-height:2}
+
+/* ─── SECTION ─── */
+.section{margin-bottom:52px}
+.part-label{font-size:12px;font-weight:600;color:var(--blue);letter-spacing:.15em;margin-bottom:8px}
+.section-title{font-size:24px;font-weight:700;color:var(--navy);padding-bottom:12px;border-bottom:2px solid var(--border);margin-bottom:20px}
+.section-lead{font-size:14px;color:var(--text-mid);margin-bottom:18px;line-height:1.8}
+
+/* ─── CALLOUT BOXES ─── */
+.box{padding:16px 20px;border-radius:4px;margin-bottom:16px;font-size:13.5px;line-height:1.8}
+.box-blue{background:var(--bg-blue);border-left:4px solid var(--blue);color:#1a4a7a}
+.box-red{background:var(--bg-red);border-left:4px solid var(--red);color:#922b21}
+.box-green{background:var(--bg-green);border-left:4px solid var(--green);color:#1a6b3a}
+.box-orange{background:var(--bg-orange);border-left:4px solid var(--orange);color:#784212}
+.box-navy{background:var(--navy);color:#fff;padding:20px 24px}
+.box-navy .b-line{font-size:14px;line-height:1.9}
+.box strong{font-weight:700}
+
+/* ─── TABLES ─── */
+.tbl{width:100%;border-collapse:collapse;font-size:13.5px}
+.tbl thead tr{background:var(--navy);color:#fff}
+.tbl thead th{padding:12px 16px;text-align:left;font-weight:600;font-size:13px}
+.tbl tbody tr{border-bottom:1px solid var(--border)}
+.tbl tbody tr:last-child{border-bottom:none}
+.tbl tbody td{padding:13px 16px;vertical-align:top;line-height:1.75}
+.tbl tbody tr:hover{background:var(--bg-light)}
+.tbl .td-label{color:var(--text-mute);font-weight:500;width:110px}
+.tbl .td-signal{font-style:italic;color:var(--navy)}
+.tbl .td-signal::before{content:'"';color:var(--blue)}
+.tbl .td-signal::after{content:'"';color:var(--blue)}
+.tbl .td-interp{color:var(--blue);font-weight:600}
+/* colored text in tables */
+.c-red{color:var(--red);font-weight:600}
+.c-green{color:var(--green);font-weight:600}
+.c-blue{color:var(--blue);font-weight:600}
+.c-orange{color:var(--orange);font-weight:600}
+.c-teal{color:var(--teal);font-weight:600}
+
+/* ─── PART 01: OV TABLE ─── */
+.ov-tbl{width:100%;border-collapse:collapse;border:1px solid var(--border)}
+.ov-tbl .ov-head{background:var(--navy);color:#fff}
+.ov-tbl .ov-head th{padding:11px 18px;font-size:12px;letter-spacing:.1em;font-weight:600}
+.ov-tbl tr{border-bottom:1px solid var(--border)}
+.ov-tbl tr:last-child{border-bottom:none}
+.ov-tbl td{padding:16px 18px;vertical-align:top;line-height:1.8}
+.ov-tbl .ov-dim{width:110px;font-weight:600;color:var(--navy);font-size:13px;vertical-align:top}
+.ov-tbl .ov-content{font-size:13.5px}
+.ov-tag{display:inline-block;padding:3px 10px;border-radius:3px;font-size:12px;font-weight:700;letter-spacing:.05em}
+.ov-tag.c-level{background:var(--navy);color:#fff}
+.ov-tag.warn{background:var(--orange);color:#fff}
+.ov-tag.bad{background:var(--red);color:#fff}
+.ov-tag.good{background:var(--green);color:#fff}
+
+/* ─── PART 03: COMPARE ─── */
+.compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid var(--border)}
+.compare-col{padding:0}
+.compare-col-head{padding:12px 18px;font-weight:700;font-size:13px;color:#fff}
+.compare-col-head.bad{background:var(--red)}
+.compare-col-head.good{background:var(--green)}
+.compare-item{padding:14px 18px;border-top:1px solid var(--border);font-size:13px;line-height:1.75;font-style:italic}
+.compare-item.bad{color:#7b241c}
+.compare-item.good{color:#145a32}
+
+/* ─── PART 04: PAIN POINTS ─── */
+.pp-section{margin-bottom:32px}
+.pp-title{font-size:18px;font-weight:700;color:var(--navy);margin-bottom:6px;display:flex;align-items:center;gap:8px}
+.pp-title .sep{color:var(--border)}
+.pp-badge{display:inline-block;padding:2px 10px;background:var(--red);color:#fff;font-size:11px;border-radius:2px;font-weight:600;letter-spacing:.08em;vertical-align:middle;margin-left:6px}
+.pp-badge.b2{background:var(--blue)}
+.pp-badge.b3{background:var(--navy-mid)}
+.pp-lead{font-size:13px;color:var(--text-mute);margin-bottom:16px;line-height:1.7}
+.step-rows{display:flex;flex-direction:column;gap:0;border:1px solid var(--border)}
+.step-row{display:grid;grid-template-columns:120px 1fr}
+.step-row:not(:last-child){border-bottom:1px solid var(--border)}
+.step-label{display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;text-align:center;padding:16px 10px}
+.step-label.s1{background:#1c3461}
+.step-label.s2{background:#2d5594}
+.step-label.s3{background:#16a085}
+.step-label.s4{background:#e67e22}
+.step-label.s5{background:#e74c3c}
+.step-body{padding:16px 20px;font-size:13.5px;line-height:1.8;color:var(--text)}
+.step-body em{font-style:italic;color:var(--navy)}
+
+/* PART 04 strategy table for pain point 3 */
+.strategy-tbl{width:100%;border-collapse:collapse;border:1px solid var(--border)}
+.strategy-tbl thead tr{background:var(--navy-mid);color:#fff}
+.strategy-tbl thead th{padding:10px 16px;font-size:13px;font-weight:600}
+.strategy-tbl td{padding:14px 16px;font-size:13.5px;line-height:1.75;border-bottom:1px solid var(--border);vertical-align:top}
+.strategy-tbl tr:last-child td{border-bottom:none}
+.strategy-tbl .strat-name{color:var(--teal);font-weight:700;width:100px}
+.strategy-tbl tbody tr:hover{background:var(--bg-light)}
+
+/* ─── PART 05: HARVEST STEPS ─── */
+.harvest-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:0;border:1px solid var(--border)}
+.harvest-step{padding:20px 16px;border-right:1px solid var(--border);position:relative}
+.harvest-step:last-child{border-right:none}
+.hs-badge{display:inline-block;padding:4px 10px;color:#fff;font-size:11px;font-weight:700;border-radius:3px;margin-bottom:12px;letter-spacing:.05em}
+.hs-badge.h1{background:var(--teal)}
+.hs-badge.h2{background:var(--green)}
+.hs-badge.h3{background:var(--orange)}
+.hs-badge.h4{background:var(--red)}
+.hs-title{font-size:14px;font-weight:700;color:var(--navy);margin-bottom:8px}
+.hs-body{font-size:12.5px;line-height:1.75;color:var(--text-mid)}
+.hs-body em{font-style:italic;color:var(--navy);font-weight:600}
+
+/* ─── PART 06: QUALITY SCORE ─── */
+.score-header{background:var(--navy);color:#fff;padding:18px 24px;border-radius:4px 4px 0 0;display:flex;align-items:center;gap:24px;margin-bottom:0}
+.score-big{font-size:48px;font-weight:700;line-height:1;color:#fff}
+.score-of{font-size:13px;color:rgba(255,255,255,.55);margin-left:4px}
+.score-divider{width:1px;height:48px;background:rgba(255,255,255,.2);flex-shrink:0}
+.score-hl{display:flex;flex-direction:column;gap:6px}
+.score-hl-item{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:1.5;color:rgba(255,255,255,.85)}
+.score-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;margin-top:4px}
+.score-dot.good{background:#2ecc71}
+.score-dot.bad{background:#e74c3c}
+
+.stages-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border:1px solid var(--border);border-top:none}
+.stage-col{padding:18px 16px;border-right:1px solid var(--border)}
+.stage-col:last-child{border-right:none}
+.stage-col-head{display:flex;justify-content:space-between;align-items:baseline;padding-bottom:12px;border-bottom:1px solid var(--border);margin-bottom:12px}
+.stage-col-name{font-size:14px;font-weight:700;color:var(--navy)}
+.stage-col-score{font-size:24px;font-weight:700;line-height:1}
+.stage-col-score.sc-ok{color:var(--green)}
+.stage-col-score.sc-warn{color:var(--orange)}
+.stage-col-score.sc-bad{color:var(--red)}
+
+.sub-item{padding:7px 6px;border-radius:3px;cursor:pointer;transition:background .15s}
+.sub-item:hover{background:var(--bg-light)}
+.sub-item-row{display:flex;align-items:center;gap:0}
+.sub-name{font-size:12px;color:var(--text-mid);width:108px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:4px}
+.sub-arrow{font-size:9px;color:var(--text-mute);transition:transform .2s;margin-right:2px}
+.sub-item.open .sub-arrow{transform:rotate(90deg)}
+.sub-bar-wrap{flex:1;height:5px;background:var(--bg-light);border-radius:99px;margin:0 7px;overflow:hidden;min-width:30px}
+.sub-bar{height:100%;border-radius:99px;transition:width .4s}
+.bar-good{background:var(--green)}
+.bar-warn{background:var(--orange)}
+.bar-bad{background:var(--red)}
+.sub-pts{font-size:12px;font-weight:700;flex-shrink:0;width:22px;text-align:right}
+.pt-good{color:var(--green)}
+.pt-warn{color:var(--orange)}
+.pt-bad{color:var(--red)}
+
+.sub-detail{max-height:0;overflow:hidden;transition:max-height .3s ease,padding .2s,opacity .2s;opacity:0;font-size:12px;line-height:1.65;color:var(--text-mid);background:var(--bg-light);border-radius:3px;margin:0 2px}
+.sub-detail.open{max-height:160px;padding:8px 10px;margin-top:4px;opacity:1}
+
+/* ─── PART 07: LOGIC ─── */
+.logic-chain{padding:18px 20px;border-radius:4px;margin-bottom:12px;font-size:13.5px;line-height:2}
+.logic-chain.bad{background:var(--bg-red);color:#7b241c}
+.logic-chain.good{background:var(--bg-green);color:#145a32}
+.logic-label{font-size:11px;font-weight:700;letter-spacing:.1em;margin-bottom:4px;display:block}
+.logic-label.bad{color:var(--red)}
+.logic-label.good{color:var(--green)}
+
+.cap-tbl{width:100%;border-collapse:collapse;border:1px solid var(--border)}
+.cap-tbl thead tr{background:var(--navy);color:#fff}
+.cap-tbl thead th{padding:11px 16px;font-size:13px;font-weight:600}
+.cap-tbl td{padding:13px 16px;border-bottom:1px solid var(--border);font-size:13px;line-height:1.7;vertical-align:top}
+.cap-tbl tr:last-child td{border-bottom:none}
+.cap-tbl .cap-stage{font-weight:700;color:var(--navy);width:90px}
+.cap-tbl .cap-issue{color:var(--red)}
+.cap-tbl .cap-train{color:var(--text)}
+.cap-tbl .cap-train strong{color:var(--navy-mid);font-weight:700}
+.cap-tbl tbody tr:hover{background:var(--bg-light)}
+
+/* ─── PART 08: CASES 3-COL ─── */
+.case-card{border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:16px}
+.case-card.cc-good{border-left:4px solid var(--green)}
+.case-card.cc-miss{border-left:4px solid var(--red)}
+.case-head{display:flex;align-items:center;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);background:var(--bg-light)}
+.case-num{width:44px;height:44px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;font-weight:700;flex-shrink:0;line-height:1}
+.case-num.cn1{background:var(--blue)}
+.case-num.cn2{background:var(--teal)}
+.case-num.cn3{background:var(--green)}
+.case-num.cn4{background:var(--purple)}
+.case-num.cn5{background:var(--orange)}
+.case-num.cna{background:var(--green)}
+.case-num.cnb{background:#16a085}
+.case-head-title{font-size:15px;font-weight:700;color:var(--navy)}
+.case-head-sub{font-size:12px;color:var(--text-mute);margin-top:2px}
+.case-badge{font-size:10px;padding:2px 8px;border-radius:3px;font-weight:700;margin-left:8px;vertical-align:middle;letter-spacing:.05em}
+.case-badge.good{background:var(--green);color:#fff}
+.case-badge.miss{background:var(--red);color:#fff}
+/* 3-col body */
+.case-body-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0;border-top:none}
+.case-col{padding:15px 18px;border-right:1px solid var(--border)}
+.case-col:last-child{border-right:none}
+.case-col .clbl{font-size:10px;letter-spacing:.18em;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:6px;text-transform:uppercase}
+.case-col .clbl::before{content:"";width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.case-col.surface .clbl{color:var(--text-mute)}.case-col.surface .clbl::before{background:var(--text-mute)}
+.case-col.keep .clbl{color:var(--green)}.case-col.keep .clbl::before{background:var(--green)}
+.case-col.improve .clbl{color:var(--navy)}.case-col.improve .clbl::before{background:var(--navy)}
+.case-col .ctxt{font-size:13px;line-height:1.8;color:var(--text-mid)}
+.case-col.improve .ctxt{color:var(--navy);font-weight:500}
+.case-col.improve .ctxt em{font-style:italic;color:var(--teal)}
+.case-summary{margin-top:4px;padding:16px 22px;background:var(--navy);color:#fff;font-size:13.5px;line-height:1.9;border-radius:0 0 4px 4px}
+
+/* timestamp play buttons in case cards */
+.ts-btn{
+  display:inline-flex;align-items:center;gap:4px;
+  padding:2px 10px;font-size:11px;font-family:monospace;
+  background:rgba(39,174,96,.1);color:var(--green);
+  border:1px solid rgba(39,174,96,.3);border-radius:99px;
+  cursor:pointer;white-space:nowrap;transition:all .15s;
+}
+.ts-btn:hover{background:rgba(39,174,96,.2);border-color:var(--green)}
+.ts-btn.ts-bad{background:rgba(231,76,60,.08);color:var(--red);border-color:rgba(231,76,60,.3)}
+.ts-btn.ts-bad:hover{background:rgba(231,76,60,.15);border-color:var(--red)}
+.ts-btn.ts-miss{background:rgba(230,126,34,.08);color:var(--orange);border-color:rgba(230,126,34,.3)}
+.ts-btn.ts-miss:hover{background:rgba(230,126,34,.15);border-color:var(--orange)}
+
+/* ─── PART 10: 逐句点评 ─── */
+.annotate{border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.ann-head{background:var(--navy);color:#fff;padding:14px 22px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.ann-head-ttl{font-size:15px;font-weight:700}
+.ann-legend{display:flex;gap:14px;font-size:11px;color:rgba(255,255,255,.8)}
+.ann-legend span{display:flex;align-items:center;gap:5px}
+.ann-legend i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.li-good{background:#4caf50}.li-bad{background:#e57373}.li-miss{background:#ffb74d}
+.ann-body{padding:4px 0}
+.ann-line{display:grid;grid-template-columns:80px 1fr;padding:8px 22px;gap:16px;align-items:flex-start;border-bottom:1px solid var(--bg-light)}
+.ann-line:last-child{border-bottom:none}
+.ann-line.cust-line .ann-text{color:var(--text-mute);font-style:italic;background:transparent!important;border-left-color:transparent!important;cursor:default}
+.ann-time{font-size:10.5px;font-family:monospace;color:var(--text-mute);padding-top:8px;line-height:1.6}
+.ann-time .who{display:block;font-size:10px;color:var(--blue);margin-top:2px;font-style:normal}
+.ann-text{font-size:13.5px;line-height:1.75;color:var(--text);padding:6px 12px;border-radius:3px;border-left:3px solid transparent;transition:background .15s}
+.ann-text.has-note{cursor:pointer}
+.ann-text.has-note:hover{opacity:.9}
+.ann-text.good{border-left-color:var(--green);background:rgba(39,174,96,.06)}
+.ann-text.bad{border-left-color:var(--red);background:rgba(231,76,60,.06)}
+.ann-text.miss{border-left-color:var(--orange);background:rgba(230,126,34,.07)}
+.ann-note{display:none;margin-top:8px;padding:13px 16px;background:#f8f9fa;border:1px solid var(--border);border-radius:4px;font-size:12.5px;line-height:1.8}
+.ann-note.open{display:block}
+.ann-note-head{font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.ann-note-head::before{content:"";width:4px;height:14px;border-radius:2px;display:inline-block}
+.ann-note.bad .ann-note-head{color:var(--red)}.ann-note.bad .ann-note-head::before{background:var(--red)}
+.ann-note.miss .ann-note-head{color:var(--orange)}.ann-note.miss .ann-note-head::before{background:var(--orange)}
+.ann-note.good .ann-note-head{color:var(--green)}.ann-note.good .ann-note-head::before{background:var(--green)}
+.ann-note .nbody{color:var(--text-mid);margin-bottom:10px}
+.ann-note .suggest{padding:10px 14px;background:#fff;border-left:3px solid var(--green);border-radius:0 4px 4px 0;font-size:13.5px;color:var(--navy);line-height:1.75}
+.ann-note .suggest::before{content:"建议这样说：";display:block;font-size:10px;color:var(--text-mute);letter-spacing:.12em;margin-bottom:4px;font-weight:700}
+
+/* ─── PART 09: NEXT STEPS ─── */
+.next-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.next-card{border:1px solid var(--border);border-radius:4px;overflow:hidden}
+.next-card-head{padding:12px 18px;font-weight:700;font-size:13px;color:#fff;display:flex;align-items:center;gap:8px}
+.next-card-head.nc1{background:var(--navy)}
+.next-card-head.nc2{background:var(--teal)}
+.next-card-head.nc3{background:var(--blue)}
+.next-card-body{padding:16px 18px;font-size:13px;line-height:1.85;color:var(--text)}
+.next-qa{margin-bottom:14px}
+.next-qa:last-child{margin-bottom:0}
+.next-q{font-weight:700;color:var(--red);margin-bottom:4px}
+.next-a{color:var(--text-mid);border-left:3px solid var(--border);padding-left:10px}
+.next-priority{display:flex;align-items:flex-start;gap:10px;margin-bottom:10px}
+.np-num{width:22px;height:22px;background:var(--navy);color:#fff;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;margin-top:2px}
+.np-body .np-name{font-weight:700;color:var(--navy)}
+.np-body .np-desc{font-size:12px;color:var(--text-mute);margin-top:2px}
+
+/* ─── BOSS COMMENT ─── */
+.boss-section{background:var(--bg-light);border:1px solid var(--border);border-radius:4px;padding:24px 28px;margin-bottom:32px}
+.boss-header{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.boss-avatar{width:36px;height:36px;background:var(--navy);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;font-weight:700}
+.boss-name{font-size:15px;font-weight:700;color:var(--navy)}
+.boss-time{font-size:12px;color:var(--text-mute);margin-left:auto}
+.boss-text{font-size:14px;line-height:2;color:var(--text);white-space:pre-wrap;padding:16px 0;border-top:1px solid var(--border);border-bottom:1px solid var(--border);margin-bottom:16px}
+.boss-input-label{font-size:12px;color:var(--text-mute);margin-bottom:8px}
+.boss-textarea{width:100%;border:1px solid var(--border);border-radius:4px;padding:12px 14px;font-size:13.5px;font-family:inherit;line-height:1.8;color:var(--text);min-height:100px;resize:vertical;outline:none;transition:border-color .2s}
+.boss-textarea:focus{border-color:var(--blue)}
+.boss-submit{margin-top:10px;padding:8px 20px;background:var(--navy);color:#fff;border:none;border-radius:4px;font-family:inherit;font-size:13px;cursor:pointer;font-weight:600}
+.boss-submit:hover{background:var(--navy-mid)}
+
+/* ─── UTILITIES ─── */
+.mt8{margin-top:8px}
+.mt16{margin-top:16px}
+.mb16{margin-bottom:16px}
+.italic{font-style:italic}
+.bold{font-weight:700}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav" style="position:relative">
+  <div class="nav-inner">
+    <div class="nav-title">
+      <span class="dot"></span>
+      朱朱 × 刘佳佳 · 接诊全维度分析报告
+    </div>
+    <div class="nav-right">
+      <div class="nav-tag"><span class="circle"></span> 2026-04-04</div>
+      <div class="nav-tag">销售复盘 · 内部机密</div>
+      <button class="rec-btn" onclick="document.getElementById('recPanel').classList.toggle('open')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10,8 16,12 10,16"/></svg>
+        原始录音
+      </button>
+    </div>
+  </div>
+  <!-- Recording dropdown -->
+  <div class="rec-panel" id="recPanel">
+    <div class="rec-seg-label">选择录音段落</div>
+    <select class="rec-seg-select" id="segSelect" onchange="switchSeg()">
+      <option value="0">第一段（00:00:40 - 00:07:53，约7分钟）</option>
+      <option value="1">第二段（00:00:40 - 00:03:58，约3分钟）</option>
+    </select>
+    <audio class="rec-audio" id="audioPlayer" controls>
+      <source src="" type="audio/mpeg">
+      <p style="font-size:12px;color:#999">暂无音频文件，请上传录音后刷新</p>
+    </audio>
+    <div class="rec-transcript">
+      <details>
+        <summary>▶ 查看文字转录</summary>
+        <div class="rec-transcript-body" id="transcriptBody">
+          <strong>【00:00:40】</strong> 要不我们待会借把伞，然后你打过去没劲嘛，就冲过去，就是斜对面……<br>
+          <strong>【00:00:49】</strong> 嗯，你平时很注重防晒哈，我已经有很多斑了……<br>
+          <strong>【00:02:12】</strong> 要要的可以吧，那就选主要是你是肩膀好像有点凸起来哈……<br>
+          <strong>【00:02:27】</strong> 睡眠都还可以。嗯嗯，最近看来春天呢都还可以，气血生发的一个季节……<br>
+          <strong>【00:05:45】</strong> 你是不是眼睛有点累？我感觉老是眨眨的泪，你眼睛会不会累啊？……<br>
+          <strong>【00:06:04】</strong> 但是你近视还是我近视我也想你其实可以那个啥，你如果那个以后后面有机会哈……<br>
+          <strong>【00:07:23】</strong> 你今天要不要做个眼部护理嘛？给你缓解一下眼部压力啊？……<br>
+          <strong>【00:07:42】</strong> 然后欢欢老师，你给姐姐把这个地方啊，她的比较在乎这个地方啊……
+        </div>
+      </details>
+    </div>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- COVER -->
+<div class="cover">
+  <div class="cover-box">
+    <h1>刘佳佳接诊全维度分析报告</h1>
+  </div>
+  <div class="cover-subtitle">专家点评 · 深度销售诊断 · 可执行改进方案</div>
+  <div class="cover-meta">
+    <div class="cover-meta-row"><span class="k">顾客</span><span class="v">刘佳佳</span></div>
+    <div class="cover-meta-row"><span class="k">接诊顾问</span><span class="v">朱朱</span></div>
+    <div class="cover-meta-row"><span class="k">接诊日期</span><span class="v">2026-04-04</span></div>
+    <div class="cover-meta-row"><span class="k">报告级别</span><span class="v" style="color:var(--red);font-weight:700">销售复盘·内部机密</span></div>
+  </div>
+  <div class="cover-note">
+    本报告综合原始录音对话及专家点评，<br>
+    从销售转化视角进行全维度复盘，提供可落地执行的改进方案。
+  </div>
+</div>
+
+<!-- PART 01 -->
+<div class="section">
+  <div class="part-label">PART 01</div>
+  <div class="section-title">全维度评估总览</div>
+
+  <table class="ov-tbl">
+    <thead class="ov-head">
+      <tr><th style="width:110px">维度</th><th>我方分析判断</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="ov-dim">顾客价值评级</td>
+        <td class="ov-content">
+          <span class="ov-tag c-level">C 级潜力客户</span>
+          <div class="mt8" style="font-size:13px;color:var(--text-mid)">竞对评为E级是严重误判。刘佳佳是<strong>专业信任驱动型</strong>消费者，有持续医美投入，愿意为有效的事付费。真实潜力：高价值沉睡客户。</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="ov-dim">痛点识别</td>
+        <td class="ov-content">
+          <span class="ov-tag warn">3个核心可攻破点</span>
+          <div class="mt8" style="font-size:13px;line-height:1.8">
+            <span class="c-red">● 肩颈筋膜粘连</span>（顾客主动提及3次+，有明显体征）<br>
+            <span class="c-blue">● 干眼症 + 长期戴美瞳</span>（顾客未意识到严重性）<br>
+            <span class="c-teal">● 医美未解决的底层问题</span>（皮肤再生能力衰退）
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td class="ov-dim">销售问题诊断</td>
+        <td class="ov-content">
+          <span class="ov-tag bad">根因：无诊断思维</span>
+          <div class="mt8" style="font-size:13px;color:var(--text-mid)">朱朱始终在<strong>产品维度</strong>对话（介绍功能/成分），而刘佳佳需要的是<strong>问题维度</strong>对话（为什么你的问题在这里能被真正解决）。三大痛点一个都没有深入推进，被顾客赶时间的节奏带走。</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="ov-dim">质检评分</td>
+        <td class="ov-content">
+          <span class="ov-tag bad" style="font-size:18px;padding:5px 14px">5.2 / 10</span>
+          <div class="mt8" style="font-size:13px;color:var(--text-mid)">销售转化视角评分。全程缺少体态检测、效果对比、价值收割环节；报价环节未触发（0分）。</div>
+        </td>
+      </tr>
+      <tr>
+        <td class="ov-dim">可操作建议</td>
+        <td class="ov-content" style="font-size:13px;line-height:2">
+          ① 本报告提供每个痛点的完整话术和推进逻辑<br>
+          ② 重点训练：提问式破冰 · 诊断式需求挖掘 · 价值收割四步流程<br>
+          ③ 下次回店优先从<strong>干眼症</strong>切入，埋下长期信任钩子
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- PART 02 -->
+<div class="section">
+  <div class="part-label">PART 02</div>
+  <div class="section-title">顾客真实画像重建</div>
+  <div class="section-lead">竞对给了标签，老板给了方向，但两者都没有把刘佳佳这个人说透。</div>
+
+  <div style="font-size:15px;font-weight:700;color:var(--blue);margin-bottom:12px">关键信号提取</div>
+  <table class="tbl mb16">
+    <thead>
+      <tr><th style="width:45%">对话信号</th><th>解读</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="td-signal">其实我也区别不了（精油）</td>
+        <td class="td-interp">不是专业型顾客，靠感觉决策</td>
+      </tr>
+      <tr>
+        <td class="td-signal">我觉得医生手法比较重要</td>
+        <td class="td-interp">重视人，不只重视产品</td>
+      </tr>
+      <tr>
+        <td class="td-signal">你们东西好多</td>
+        <td class="td-interp">信息过载会产生防御</td>
+      </tr>
+      <tr>
+        <td class="td-signal">对童颜针效果有独立判断</td>
+        <td class="td-interp">有主见，不轻易被说服</td>
+      </tr>
+      <tr>
+        <td class="td-signal">慢热、话不多、被夸了不接</td>
+        <td class="td-interp">低调务实型，反感表演式销售</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="box box-navy">
+    <div class="b-line"><strong>综合判断：</strong>刘佳佳是"专业信任驱动型"消费者。她不会因为你说得好听就买，她会因为"你真的懂我的问题"而买。竞对将其评为E级是严重误判——她的真实潜力是高价值沉睡客户。</div>
+  </div>
+</div>
+
+<!-- PART 03 -->
+<div class="section">
+  <div class="part-label">PART 03</div>
+  <div class="section-title">接诊失分根因定位</div>
+  <div class="section-lead">老板指出了5个问题，但这5个问题背后只有1个根因：</div>
+
+  <div class="box box-red" style="font-size:15px;font-weight:700;margin-bottom:20px">
+    朱朱始终在"产品维度"对话，而刘佳佳需要的是"问题维度"对话。
+  </div>
+
+  <div class="compare-grid mb16">
+    <div class="compare-col">
+      <div class="compare-col-head bad">产品维度（朱朱实际做的）</div>
+      <div class="compare-item bad">"迷迭香可以改善肩颈"</div>
+      <div class="compare-item bad">"眼部护理做完干涩改善50%"</div>
+      <div class="compare-item bad">"我们是生活美容，延缓衰老"</div>
+    </div>
+    <div class="compare-col" style="border-left:1px solid var(--border)">
+      <div class="compare-col-head good">问题维度（刘佳佳需要听到的）</div>
+      <div class="compare-item good">"你肩颈是筋膜粘连不是单纯肌肉紧，普通按摩只管当天，根本没碰到问题所在"</div>
+      <div class="compare-item good">"你干眼症还戴美瞳，泪膜在受损，这个问题早处理代价比晚处理小得多"</div>
+      <div class="compare-item good">"你打童颜针是对的，但有没有发现打完一段时间皮肤底层还是在走下坡？"</div>
+    </div>
+  </div>
+
+  <div class="box box-orange">
+    <strong>差距的本质：</strong>朱朱在介绍解决方案，但从来未让顾客感受到"我的问题被人真正看见了"。
+  </div>
+</div>
+
+<!-- PART 04 -->
+<div class="section">
+  <div class="part-label">PART 04</div>
+  <div class="section-title">三大可攻破痛点 · 完整作战方案</div>
+
+  <!-- 痛点一 -->
+  <div class="pp-section">
+    <div class="pp-title">
+      痛点一：肩颈<span class="pp-badge">最强突破口</span>
+    </div>
+    <div class="pp-lead">顾客主动提及3次以上，有明显体征（斜方肌凸起），是天然的信任建立切入点。</div>
+    <div class="step-rows">
+      <div class="step-row">
+        <div class="step-label s1">第一步<br>建立专业<br>诊断感</div>
+        <div class="step-body">
+          <em>"佳佳，我看你这个斜方肌位置，凸起来的程度不只是肌肉紧，这个形态说明筋膜已经开始粘连了。你这个情况多久了？"</em>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-label s2">第二步<br>放大连锁<br>影响</div>
+        <div class="step-body">
+          <em>"筋膜粘连会影响颈部血液和淋巴循环，往上导致头部供血不足，往下影响背部姿态。你做医美这么认真，但循环不通畅，打进去的东西吸收效果也会打折扣。"</em>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-label s3">第三步<br>说出为何<br>未解决</div>
+        <div class="step-body">
+          <em>"你之前用仪器做过，当时舒服，但为什么过两三天又回来了？因为仪器的热能放松肌肉，但触碰不到筋膜层，筋膜粘连只有特定手法才能真正松解。"</em>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-label s4">第四步<br>给系统<br>方案+预期</div>
+        <div class="step-body">
+          <em>"我们的手法专门针对筋膜层，配合迷迭香精油渗透，第一次做完你会感觉明显松了，但要真正改变这个形态，建议一个月内做3到4次。今天先体验一次，做完自己感受再决定后面怎么安排。"</em>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 痛点二 -->
+  <div class="pp-section">
+    <div class="pp-title">
+      痛点二：干眼症<span class="pp-badge b2">最佳情感连接点</span>
+    </div>
+    <div class="pp-lead">顾客没觉得是大问题，但朱朱细心观察到了——这是建立"你比她更懂她的身体"这个信任感的最佳时机。</div>
+    <div class="step-rows">
+      <div class="step-row">
+        <div class="step-label s1">观察<br>切入</div>
+        <div class="step-body">
+          <em>"佳佳，我注意到你刚才一直在眨眼，你平时眼睛容易干涩、有异物感吗？"</em>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-label s2">放大<br>影响</div>
+        <div class="step-body">
+          <em>"干眼症加上戴美瞳，泪膜在持续受损。眼周是最容易暴露年龄的地方，而且这个问题靠打针解决不了，得从根本改善眼部循环和泪膜质量。"</em>
+        </div>
+      </div>
+      <div class="step-row">
+        <div class="step-label s3">今日<br>行动</div>
+        <div class="step-body">
+          <em>"今天你做SPA之后完全来得及加一个眼部护理，大概加30分钟，做完你睁开眼睛自己能感觉到干涩减轻，这种感觉比我说多少遍都直接。"</em>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 痛点三 -->
+  <div class="pp-section">
+    <div class="pp-title">
+      痛点三：医美未解决的问题<span class="pp-badge b3">最高价值突破口</span>
+    </div>
+    <div class="pp-lead">顾客在医美上已有持续投入，说明她愿意为有效的事付费。让她相信"我们解决医美解决不了的问题"，是培养品牌忠诚度的核心机会。</div>
+    <table class="strategy-tbl">
+      <thead><tr><th style="width:90px">策略</th><th>核心话术逻辑</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="strat-name">先认可<br>医美</td>
+          <td>"你打童颜针这个判断很对，紧致提升这块童颜针确实有效果，你的脸的轮廓现在在保持得这么好，跟你这些年的保养是分不开的。"</td>
+        </tr>
+        <tr>
+          <td class="strat-name">指出<br>医美局限</td>
+          <td>"但医美解决的是结构问题，解决不了皮肤自己的再生能力。就像一栋楼，医美做的是修缮外立面，但如果地基的钢筋在锈蚀，修多少次外立面都没用。"</td>
+        </tr>
+        <tr>
+          <td class="strat-name">定位<br>品牌价值</td>
+          <td>"我们激活的是你皮肤自己的修复系统，让你身体自己产生胶原，自己对抗氧化损伤。坚持做我们项目的顾客，去打针的频次在降低，因为底层状态越来越好了。"</td>
+        </tr>
+        <tr>
+          <td class="strat-name">建立<br>协同关系</td>
+          <td>"医美和我们不是非此即彼，是配合的关系。我们把底层状态维护好，让你打针的效果持续更久，让你花在医美上的钱更值。"</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- PART 05 -->
+<div class="section">
+  <div class="part-label">PART 05</div>
+  <div class="section-title">项目后价值收割 · 黄金窗口标准流程</div>
+
+  <div class="box box-blue mb16">
+    项目结束后的<strong>10分钟</strong>是整个接诊流程中成交概率最高的窗口。顾客身体放松，防御心最低，情绪最正向，这时候说的话记忆留存率最高。
+  </div>
+
+  <div class="harvest-steps">
+    <div class="harvest-step">
+      <div class="hs-badge h1">STEP 1</div>
+      <div class="hs-title">引导顾客说出效果</div>
+      <div class="hs-body"><em>"佳佳，你感受一下肩膀这边，跟进来之前有没有不一样？"</em> → 等她说，不要替她说。让顾客自己说出"有效果"，比你说一百遍都有力量。</div>
+    </div>
+    <div class="harvest-step">
+      <div class="hs-badge h2">STEP 2</div>
+      <div class="hs-title">解释今天效果的原理</div>
+      <div class="hs-body"><em>"今天轻松的感觉，是因为我们把表层的筋膜做了第一次松解。你这个粘连的程度，大概3到5次会有真正持续的改善，今天是打开了一个口，后面会越来越好。"</em></div>
+    </div>
+    <div class="harvest-step">
+      <div class="hs-badge h3">STEP 3</div>
+      <div class="hs-title">埋下下次的钩子</div>
+      <div class="hs-body"><em>"下次你来，我想把你的眼部也一起做。今天时间来不及，但你干眼症加上这么注重抗衰，眼部是一定要提上日程的。"</em></div>
+    </div>
+    <div class="harvest-step" style="border-right:none">
+      <div class="hs-badge h4">STEP 4</div>
+      <div class="hs-title">自然过渡到方案</div>
+      <div class="hs-body"><em>"你现在大概多久来一次？我帮你看一下，如果做一个系统的周期，肩颈加上面部底层维护，效果会比单次叠加很多，我给你大概说一下我的建议……"</em></div>
+    </div>
+  </div>
+</div>
+
+<!-- PART 06: QUALITY SCORE -->
+<div class="section">
+  <div class="part-label">PART 06</div>
+  <div class="section-title">质检评分 · 三大接诊阶段</div>
+
+  <div class="score-header">
+    <div>
+      <div style="font-size:12px;letter-spacing:.15em;color:rgba(255,255,255,.55);margin-bottom:4px">综合评分</div>
+      <div style="display:flex;align-items:baseline;gap:4px">
+        <span class="score-big">5.2</span>
+        <span class="score-of">/ 10</span>
+      </div>
+    </div>
+    <div class="score-divider"></div>
+    <div class="score-hl">
+      <div class="score-hl-item"><span class="score-dot good"></span>破冰流程自然，赞美顾客气色得到回应，专业词汇（筋膜粘连）使用得当</div>
+      <div class="score-hl-item"><span class="score-dot bad"></span>三大痛点无一深入推进；效果验证全程缺失；报价环节未触发（0分）</div>
+    </div>
+  </div>
+
+  <div class="stages-grid">
+
+    <!-- 壹 -->
+    <div class="stage-col">
+      <div class="stage-col-head">
+        <div class="stage-col-name">壹 &nbsp;一咨找需求</div>
+        <div class="stage-col-score sc-warn">5.8</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>1.1 档案掌握与破冰</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-warn" style="width:65%"></div></div>
+          <div class="sub-pts pt-warn">6.5</div>
+        </div>
+        <div class="sub-detail">破冰自然，赞美顾客气色得到回应。但顾客慢热不接梗，赞美没有转换成信息收集，错过了开场后30秒的诊断切入。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>1.2 快速找到痛点</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-warn" style="width:50%"></div></div>
+          <div class="sub-pts pt-warn">5.0</div>
+        </div>
+        <div class="sub-detail">顾客主动给出三个痛点（肩颈、干眼、医美未解决），但顾问只接住了"肩颈"，且没有展开追问。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>1.3 做检测</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-bad" style="width:30%"></div></div>
+          <div class="sub-pts pt-bad">3.0</div>
+        </div>
+        <div class="sub-detail">本次没有做任何形式的体态/皮肤检测，没有让顾客通过自己的身体看见问题。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>1.4 解决原理与方向</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-warn" style="width:60%"></div></div>
+          <div class="sub-pts pt-warn">6.0</div>
+        </div>
+        <div class="sub-detail">说出了"筋膜粘连"和"无痛散结"两个专业词，但没有把"为什么之前没解决"和"我们能解决"两条逻辑串联起来。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>1.5 解决方案</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-warn" style="width:65%"></div></div>
+          <div class="sub-pts pt-warn">6.5</div>
+        </div>
+        <div class="sub-detail">提到眼部护理、面部减配定制、SPA等方案，但被顾客"东西好多"打断后没有收缩，没有锁定本次最该深入的一个突破口。</div>
+      </div>
+    </div>
+
+    <!-- 贰 -->
+    <div class="stage-col">
+      <div class="stage-col-head">
+        <div class="stage-col-name">贰 &nbsp;确认加大意愿</div>
+        <div class="stage-col-score sc-bad">4.5</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>2.1 重述痛点原理</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-warn" style="width:50%"></div></div>
+          <div class="sub-pts pt-warn">5.0</div>
+        </div>
+        <div class="sub-detail">本次顾问未进入房中操作，对斜方肌粘连的原理只有片段提及，没有完整说出"为什么会粘连/不处理会怎样/我们怎么处理"的完整逻辑。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>2.2 效果对比感受</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-bad" style="width:30%"></div></div>
+          <div class="sub-pts pt-bad">3.0</div>
+        </div>
+        <div class="sub-detail">没有拍照对比、没有引导顾客做拉筋活动、没有镜子前提拉对照。顾客的"舒服"停留在感觉层，没有落地为视觉证据。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>2.3 提供情绪价值</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-warn" style="width:55%"></div></div>
+          <div class="sub-pts pt-warn">5.5</div>
+        </div>
+        <div class="sub-detail">表达了"延缓衰老"的理念，但没有把这个理念转化为对顾客个人的承诺（"交给我们能在多久内实现什么"）。</div>
+      </div>
+    </div>
+
+    <!-- 叁 -->
+    <div class="stage-col">
+      <div class="stage-col-head">
+        <div class="stage-col-name">叁 &nbsp;成交阶段</div>
+        <div class="stage-col-score sc-bad">3.5</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>3.1 效果确认</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-bad" style="width:30%"></div></div>
+          <div class="sub-pts pt-bad">3.0</div>
+        </div>
+        <div class="sub-detail">项目结束后没有引导顾客主动说出今天身体上的变化，对比感受完全缺失。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>3.2 当下结论评估</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-bad" style="width:25%"></div></div>
+          <div class="sub-pts pt-bad">2.5</div>
+        </div>
+        <div class="sub-detail">没有给出"今天我帮你确认了什么/你现在处于什么状态"的诊断结论。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>3.3 本店方向方案</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-bad" style="width:35%"></div></div>
+          <div class="sub-pts pt-bad">3.5</div>
+        </div>
+        <div class="sub-detail">没有形成"系统方案"的概念，单点的护理推荐被顾客的赶时间打断后就放弃了。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>3.4 报价（监测）</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-bad" style="width:0%"></div></div>
+          <div class="sub-pts pt-bad">0</div>
+        </div>
+        <div class="sub-detail">本次接诊未触发报价环节。说明顾客的需求强度还没被推到成交临界点。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>3.5 异议处理</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-warn" style="width:50%"></div></div>
+          <div class="sub-pts pt-warn">5.0</div>
+        </div>
+        <div class="sub-detail">顾客说"东西好多"是软异议，顾问做了一些品牌价值的解释，但没有收缩到只主推一个突破口，也没有给出明确的"我不全推给你"的回应。</div>
+      </div>
+
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>3.6 好评+返邀约</div>
+          <div class="sub-bar-wrap"><div class="sub-bar bar-bad" style="width:25%"></div></div>
+          <div class="sub-pts pt-bad">2.5</div>
+        </div>
+        <div class="sub-detail">送顾客离店时只有"周末愉快"，没有埋下一次到店的钩子（"下次来给你加上眼部护理"），也没有引导好评。</div>
+      </div>
+    </div>
+
+  </div><!-- /stages-grid -->
+</div>
+
+<!-- PART 07 -->
+<div class="section">
+  <div class="part-label">PART 07</div>
+  <div class="section-title">逻辑总结 · 顾问能力训练路径</div>
+
+  <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">接诊失败的底层逻辑链</div>
+
+  <div class="logic-chain bad" style="margin-bottom:8px">
+    <span class="logic-label bad">朱朱的思维模式（实际）</span>
+    顾客来了 → 了解需求 → 介绍产品 → 希望成交<br>
+    <span style="font-size:12px;color:var(--red)">↳ 卡在"介绍产品→成交"之间，缺少关键一步</span>
+  </div>
+  <div class="logic-chain good mb16">
+    <span class="logic-label good">正确的思维模式</span>
+    顾客来了 → 了解需求 → 诊断问题 → 放大痛点 → 说出根因 → 给出系统方案 → 建立信心 → 自然成交
+  </div>
+
+  <div class="box box-orange mb16">
+    <strong>缺失的那一步是：</strong>让顾客相信"我的问题在这里能被真正解决"。<br>
+    没有这个信念，顾客永远只是来做一次性放松的。
+  </div>
+
+  <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">朱朱能力提升训练路径</div>
+  <table class="cap-tbl">
+    <thead>
+      <tr><th style="width:90px">接待阶段</th><th style="width:40%">当前问题</th><th>需要训练的能力</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="cap-stage">破冰</td>
+        <td class="cap-issue">赞美式破冰，慢热顾客防备增强</td>
+        <td class="cap-train"><strong>提问式破冰</strong>，让顾客多说，用提问代替赞美</td>
+      </tr>
+      <tr>
+        <td class="cap-stage">需求挖掘</td>
+        <td class="cap-issue">听到需求直接推产品</td>
+        <td class="cap-train"><strong>诊断式分析：</strong>确认根源 → 连锁影响 → 为何未解决 → 方案</td>
+      </tr>
+      <tr>
+        <td class="cap-stage">产品推荐</td>
+        <td class="cap-issue">介绍功能和成分</td>
+        <td class="cap-train"><strong>放大痛点 + 说出根因 + 给系统方案 + 建立信心</strong></td>
+      </tr>
+      <tr>
+        <td class="cap-stage">处理异议</td>
+        <td class="cap-issue">顾客说不就放弃</td>
+        <td class="cap-train"><strong>识别真假异议</strong>，主动收缩反而建立信任</td>
+      </tr>
+      <tr>
+        <td class="cap-stage">项目结束后</td>
+        <td class="cap-issue">随顾客走，没有收割</td>
+        <td class="cap-train">固定的<strong>价值收割四步流程</strong>，5分钟决定下次是否成交</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- PART 08: Case 复盘 + 逐句点评（合并版） -->
+<div class="section">
+  <div class="part-label">PART 08</div>
+  <div class="section-title">关键 Case 复盘 · 逐句点评</div>
+  <div class="section-lead" style="margin-bottom:20px">
+    每个关键时刻都包含：<strong>时间戳 + 原话</strong> → 三层分析 → 正确话术。点击 <span style="display:inline-flex;align-items:center;gap:4px;padding:1px 8px;background:rgba(39,174,96,.1);border-radius:3px;font-size:12px;color:var(--green)">▶ 0:01:34</span> 可跳转录音。
+  </div>
+
+  <!-- CASE A: 做得好 -->
+  <div class="case-card cc-good">
+    <div class="case-head">
+      <div class="case-num cna" style="font-size:14px">✓</div>
+      <div>
+        <div class="case-head-title">破冰自然 · 主动关注细节 <span class="case-badge good">做到</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="ts-btn" onclick="seekAudio(0)" title="跳转录音">▶ 0:00:14</button>
+          <span style="color:var(--text-mute);font-style:italic">"你的气色好好哦""你的形体保持的还是挺好的"</span>
+        </div>
+      </div>
+    </div>
+    <div class="case-body-3">
+      <div class="case-col surface">
+        <div class="clbl">表层做法</div>
+        <div class="ctxt">赞美顾客气色好、形体好；察觉到顾客一直眨眼，主动提问是否干涩——观察力在线</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">值得保留</div>
+        <div class="ctxt">气氛轻松友好，顾客没有明显防御。观察到身体细节让顾客感受到被关注，这是信任的好起点</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">可优化方向</div>
+        <div class="ctxt">赞美后立即转化为信息收集：<em>"我看你身材保持得真好，是经常运动吗？还是有做什么调理？"</em> 让赞美成为诊断切入的开关，而不是结束</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CASE B: 做得好 -->
+  <div class="case-card cc-good">
+    <div class="case-head">
+      <div class="case-num cnb" style="font-size:14px">✓</div>
+      <div>
+        <div class="case-head-title">识别到斜方肌凸起 · 说出专业词汇 <span class="case-badge good">做到</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="ts-btn" onclick="seekAudio(132)" title="跳转录音">▶ 0:02:12</button>
+          <span style="color:var(--text-mute);font-style:italic">"你这个地方黏连的是不是比较久了""无痛化解"</span>
+        </div>
+      </div>
+    </div>
+    <div class="case-body-3">
+      <div class="case-col surface">
+        <div class="clbl">表层做法</div>
+        <div class="ctxt">主动观察到斜方肌凸起，说出了"筋膜粘连""无痛散结"专业词汇，方向正确</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">值得保留</div>
+        <div class="ctxt">身体观察能力没问题，专业词汇使用得当。顾客没有抵触，说明有基础信任</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">可优化方向</div>
+        <div class="ctxt">说出来了但没串联逻辑，需要补：<em>"为什么你之前的方式没解决 → 我们的原理 → 一个具体的预期"</em> 这三条才构成完整说服链</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CASE 1: 精油选择 -->
+  <div class="case-card cc-miss">
+    <div class="case-head">
+      <div class="case-num cn1">1</div>
+      <div>
+        <div class="case-head-title">精油选择拖了3分钟 · 失去主导权 <span class="case-badge miss">遗漏</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="ts-btn ts-bad" onclick="seekAudio(94)" title="跳转录音">▶ 0:01:34</button>
+          <span style="color:var(--red);font-style:italic">"闻不出来吗？要不我给你讲一下它的功能？"</span>
+        </div>
+      </div>
+    </div>
+    <div class="case-body-3">
+      <div class="case-col surface">
+        <div class="clbl">表层问题</div>
+        <div class="ctxt">让顾客在多款精油间自行选择，顾问在旁边讲功效。顾客说"其实我也区别不了"——这是<strong>授权给你做决定</strong>的信号，不是让你继续教学</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">深层问题</div>
+        <div class="ctxt">没有主导权，把决策权完全交给了顾客。对慢热型顾客来说，选择太多 = 焦虑增加 = 信任降低</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">正确做法</div>
+        <div class="ctxt">顾客说肩颈痛的瞬间，直接主导：<em>"没关系，那我帮你选——你刚才说肩颈不舒服，迷迭香最适合你现在的状态，我们用它。"</em></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CASE 2: 痛点没接住 -->
+  <div class="case-card cc-miss">
+    <div class="case-head">
+      <div class="case-num cn2">2</div>
+      <div>
+        <div class="case-head-title">顾客主动给痛点 · 没接住 <span class="case-badge miss">遗漏</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="ts-btn ts-miss" onclick="seekAudio(131)" title="跳转录音">▶ 0:02:11</button>
+          <span style="color:var(--orange);font-style:italic">"那也可以选迷迭香，你喜欢闻这个迷迭香不？"</span>
+        </div>
+      </div>
+    </div>
+    <div class="case-body-3">
+      <div class="case-col surface">
+        <div class="clbl">表层问题</div>
+        <div class="ctxt">顾客主动说"睡眠还好，我主要是肩颈痛"——给出了第一个核心痛点，但朱朱只是把它接成了"那选迷迭香"，<strong>把痛点降级成选品依据</strong></div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">深层问题</div>
+        <div class="ctxt">这是天然的诊断切入点，应该立刻进入"识别 → 命名 → 解释机制"的诊断逻辑，但顾问完全错过了</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">正确做法</div>
+        <div class="ctxt"><em>"肩颈痛多久了？我看你斜方肌凸起的程度，不只是肌肉紧，是筋膜已经开始粘连了。你之前做过按摩是不是当天舒服，过几天又回来了？"</em></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CASE 3: 东西好多 -->
+  <div class="case-card cc-miss">
+    <div class="case-head">
+      <div class="case-num cn3">3</div>
+      <div>
+        <div class="case-head-title">"你们东西好多" · 信任危机信号 <span class="case-badge miss">遗漏</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="ts-btn ts-bad" onclick="seekAudio(390)" title="跳转录音">▶ 0:06:30</button>
+          <span style="color:var(--red);font-style:italic">"洗脸，我们有面部，脸部，身体都有……"（继续介绍更多）</span>
+        </div>
+      </div>
+    </div>
+    <div class="case-body-3">
+      <div class="case-col surface">
+        <div class="clbl">表层问题</div>
+        <div class="ctxt">顾客说"东西好多"，朱朱没有收缩，反而继续介绍更多项目——触发了顾客的防御反应</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">深层问题</div>
+        <div class="ctxt">"东西好多"是<strong>信任危机信号</strong>：前面的铺垫没有建立足够的专业感，顾客已经进入"被推销"的心理状态</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">正确做法</div>
+        <div class="ctxt">听到这句立刻收缩：<em>"佳佳你放心，我不会都推给你。我就觉得你今天肩颈这个问题最需要解决，其他的先不说——等你做完这次感受到了，我们再聊别的。"</em></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CASE 4: 眼部被拒 -->
+  <div class="case-card cc-miss">
+    <div class="case-head">
+      <div class="case-num cn4">4</div>
+      <div>
+        <div class="case-head-title">眼部护理被拒"还没睡醒" · 假异议被当真 <span class="case-badge miss">做错</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="ts-btn ts-bad" onclick="seekAudio(443)" title="跳转录音">▶ 0:07:23</button>
+          <span style="color:var(--red);font-style:italic">"你今天要不要做个眼部护理嘛？" → 被拒 → "那你下次来可以尝试一下"</span>
+        </div>
+      </div>
+    </div>
+    <div class="case-body-3">
+      <div class="case-col surface">
+        <div class="clbl">表层问题</div>
+        <div class="ctxt">用"要不要"这种给顾客退路的句式提议，顾客说"还没睡醒"就直接放弃了。<strong>两个连续失误</strong>：提议方式太弱 + 接受假异议</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">深层问题</div>
+        <div class="ctxt">"还没睡醒"是<strong>模糊借口</strong>，不是真实拒绝。顾客没说"不要/没钱/不感兴趣"，只给了一个不疼不痒的理由。这种软拒绝是可以推破的</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">正确做法</div>
+        <div class="ctxt"><em>"正因为还没睡醒，做完你会更清醒——眼睛舒服了整个人状态都不一样。就加30分钟，今天正好试一次，做完你自己感受一下，做了之后你会谢我的。"</em></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CASE 5: 医美消费习惯 -->
+  <div class="case-card cc-miss">
+    <div class="case-head">
+      <div class="case-num cn5">5</div>
+      <div>
+        <div class="case-head-title">顾客提到医美消费习惯 · 最大信号没接住 <span class="case-badge miss">遗漏</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="ts-btn ts-miss" onclick="seekAudio(300)" title="跳转录音">▶ 0:05:01</button>
+          <span style="color:var(--orange);font-style:italic">顾客提到打除皱针、童颜针，朱朱只是简单回应</span>
+        </div>
+      </div>
+    </div>
+    <div class="case-body-3">
+      <div class="case-col surface">
+        <div class="clbl">表层问题</div>
+        <div class="ctxt">顾客主动提及医美消费经历（除皱针、童颜针、超皮秒、英诺小棕瓶），这是<strong>高消费意愿 + 待解决问题</strong>的最大信号</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">深层问题</div>
+        <div class="ctxt">这是最佳的大卡铺垫时机——顾客愿意为有效果的事付费，但朱朱没有深入，错过了品牌价值植入的黄金机会</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">正确做法</div>
+        <div class="ctxt">立刻切入：<em>"你打童颜针判断很对，但有没有发现效果持续的时间越来越短？其实医美做的是修缮外立面，我们做的是加固地基——两个配合，你花在医美上的钱才更值。"</em></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CASE 6: 黄金窗口丢失 -->
+  <div class="case-card cc-miss">
+    <div class="case-head">
+      <div class="case-num" style="background:var(--red)">6</div>
+      <div>
+        <div class="case-head-title">项目结束 · 黄金窗口完全丢失 <span class="case-badge miss">做错</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <button class="ts-btn ts-bad">▶ 项目后</button>
+          <span style="color:var(--red);font-style:italic">"谢谢，拜拜哈，周末愉快哈"——直接送走</span>
+        </div>
+      </div>
+    </div>
+    <div class="case-body-3">
+      <div class="case-col surface">
+        <div class="clbl">表层问题</div>
+        <div class="ctxt">顾客做完项目出来，朱朱只是闲聊了几句"周末愉快"就送走了，没有做任何价值确认或后续铺垫</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">深层问题</div>
+        <div class="ctxt">项目结束后的10分钟是成交概率最高的窗口：顾客身体放松、防御最低。<strong>这5分钟决定下次是否成交</strong>，朱朱完全放弃了</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">正确做法</div>
+        <div class="ctxt">四步收割：<em>① "佳佳，你感受一下肩膀，跟进来之前有没有不一样？"（等她说） ② 解释原理 ③ 埋下次钩子（干眼症） ④ 自然过渡方案</em></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 一句话总结 -->
+  <div class="case-summary">
+    <div style="font-size:11px;letter-spacing:.12em;color:rgba(255,255,255,.5);margin-bottom:8px;text-transform:uppercase">一句话总结整个 Case</div>
+    刘佳佳是一个愿意花钱、消费成熟、专业信任驱动的高潜力顾客。<br>
+    朱朱用了一套"好服务员"思维接待了一个需要"顾问式销售"的顾客。<br>
+    <span style="color:rgba(255,255,255,.75)">两者之间的错位，导致顾客满意但不成交。满意不等于信任，信任才能带来成交。</span>
+  </div>
+</div>
+
+<!-- PART 09 -->
+<div class="section">
+  <div class="part-label">PART 09</div>
+  <div class="section-title">下一步动作 · 回店规划</div>
+
+  <div class="next-grid">
+
+    <!-- 回店切入话术 -->
+    <div class="next-card">
+      <div class="next-card-head nc1">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        回店切入话术
+      </div>
+      <div class="next-card-body">
+        <div style="margin-bottom:14px">
+          <div style="font-weight:700;color:var(--navy);margin-bottom:6px">优先从干眼症切入：</div>
+          <div style="font-style:italic;color:var(--text-mid);border-left:3px solid var(--border);padding-left:10px;line-height:1.9">
+            "佳佳，我还记得上次你说眼睛容易干涩，这几天好一点没有？我这两天一直在想这个问题，你戴美瞳加上干眼症，泪膜在持续受损，你其实现在就是最佳干预时机，今天我想给你做一个眼部护理，做完你自己感受一下。"
+          </div>
+        </div>
+        <div>
+          <div style="font-weight:700;color:var(--navy);margin-bottom:6px">肩颈第二次到店：</div>
+          <div style="font-style:italic;color:var(--text-mid);border-left:3px solid var(--border);padding-left:10px;line-height:1.9">
+            "上次第一次做完之后，你自己感觉怎么样？有没有比做之前轻一点？我跟你说，第一次是打开通道，真正的改变从第三次开始，我们来继续做吧。"
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 优先推荐项目 -->
+    <div class="next-card">
+      <div class="next-card-head nc2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        优先推荐项目
+      </div>
+      <div class="next-card-body">
+        <div class="next-priority">
+          <div class="np-num">1</div>
+          <div class="np-body">
+            <div class="np-name">眼部护理（干眼症缓解）</div>
+            <div class="np-desc">先体验建立信任，低门槛切入，成功率最高</div>
+          </div>
+        </div>
+        <div class="next-priority">
+          <div class="np-num">2</div>
+          <div class="np-body">
+            <div class="np-name">肩颈深层筋膜疗程</div>
+            <div class="np-desc">顾客已有认知，第一次体验后开3次疗程</div>
+          </div>
+        </div>
+        <div class="next-priority">
+          <div class="np-num">3</div>
+          <div class="np-body">
+            <div class="np-name">面部底层修复（医美协同）</div>
+            <div class="np-desc">待信任建立后，作为第三阶段开发项目</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 预设异议应答 -->
+    <div class="next-card">
+      <div class="next-card-head nc3">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        预设异议应答库
+      </div>
+      <div class="next-card-body">
+        <div class="next-qa">
+          <div class="next-q">Q: "你们又不是医院，能治干眼症？"</div>
+          <div class="next-a">我们不是治病，我们是改善底层循环和泪膜质量。医院治的是病变级别，我们调理的是亚健康状态，两个是不同维度，互补不冲突。</div>
+        </div>
+        <div class="next-qa">
+          <div class="next-q">Q: "你们东西好多，我搞不清楚。"</div>
+          <div class="next-a">佳佳你放心，我今天就只给你推荐一个——先把眼部这个问题解决，其他的等你看到效果，你自己会想来的。</div>
+        </div>
+        <div class="next-qa">
+          <div class="next-q">Q: "上次做完感觉还行，但我不确定效果。"</div>
+          <div class="next-a">我们第一次做就是打开通道，你的粘连积累了这么久，真正的改变从第三次开始显现，我们给自己一个3次的机会好不好？</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- 老板点评 -->
+<div class="section">
+  <div class="part-label">老板点评</div>
+  <div class="section-title">专家点评记录</div>
+
+  <div class="boss-section">
+    <div class="boss-header">
+      <div class="boss-name">老板点评</div>
+      <div class="boss-time">2026-04-04</div>
+    </div>
+    <div class="boss-text">朱朱接待的刘佳佳，做的好的破冰流程是有，但这个顾客性格慢热可能不适合表扬赞美太多，反而防备。
+
+召需求顾客说肩颈、上半身紧，可以帮助顾客诊断分析一下，怎么调理，之前是不是只管一会儿，效果不连续，分析说出咱们品牌的解决方案。
+
+顾客是个医美爱好者，喜欢医美解决，可以和顾客互动了解有没有医美没有解决的问题，不诋毁但是一定要突出我们品牌价值——无伤害美学和医美的区别。
+
+就是顾客说我们项目多的时候，这个时候对于前面推销建议的两三个项目感觉是在推销，这个时候要通过选品和结构方案给顾客信心，讲一下我们的品牌核心技术。
+
+顾客出来没有对于今天做的项目价值塑造，问顾客感觉引导效果，自然就被顾客牵着走随便闲聊赶时间就走了，丢失了铺垫种草的机会，没有这些机会就很难有下次成交。
+
+整个过程顾客干眼症、顾客抗皱、顾客肩颈不舒服几个痛点都没有一个抓住给顾客解决的信心，方案和原理都很表面被顾客牵着走，所以很难成交方案大卡。必须抓住一个点深入给顾客带来价值，才能有后续的其他项目机会，否则就是放松简单组个项目，顾客很难培养品牌性。</div>
+
+    <div class="boss-input-label">补充点评（输入后回车保存）</div>
+    <textarea class="boss-textarea" id="bossInput" placeholder="在这里输入新的点评……"></textarea>
+    <div>
+      <button class="boss-submit" onclick="submitComment()">提交点评</button>
+    </div>
+    <div id="extraComments" style="margin-top:16px"></div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+function toggleSub(el) {
+  el.classList.toggle('open');
+  const detail = el.querySelector('.sub-detail');
+  detail.classList.toggle('open');
+}
+
+function seekAudio(seconds) {
+  const audio = document.getElementById('audioPlayer');
+  const panel = document.getElementById('recPanel');
+  panel.classList.add('open');
+  audio.currentTime = seconds;
+  audio.play().catch(function(){});
+}
+
+function toggleNote(textEl) {
+  const note = textEl.nextElementSibling;
+  if (!note || !note.classList.contains('ann-note')) return;
+  note.classList.toggle('open');
+  // close others in same block
+  const allNotes = textEl.closest('.ann-body').querySelectorAll('.ann-note.open');
+  allNotes.forEach(n => { if (n !== note) n.classList.remove('open'); });
+}
+
+function switchSeg() {
+  // placeholder for segment switching
+  const idx = document.getElementById('segSelect').value;
+  const transcriptBody = document.getElementById('transcriptBody');
+  if (idx === '1') {
+    transcriptBody.innerHTML = '<strong>【00:00:40】</strong> 要不我们待会借把伞……<br><strong>【00:00:49】</strong> 嗯，你平时很注重防晒哈……<br><strong>【00:01:21】</strong> 之前打过，但是打完我觉得又又会长……<br><strong>【00:02:06】</strong> 第一个可能晒，第二个可能是因为打了之后……<br><strong>【00:03:21】</strong> 嗯，你的形体好好，你去有经常那个吗？……<br><strong>【00:03:55】</strong> 谢谢，拜拜哈，周末愉快哈。';
+  } else {
+    transcriptBody.innerHTML = '<strong>【00:02:12】</strong> 要要的可以吧，那就选……<br><strong>【00:02:27】</strong> 睡眠都还可以……<br><strong>【00:05:45】</strong> 你是不是眼睛有点累？……<br><strong>【00:07:23】</strong> 你今天要不要做个眼部护理嘛？……<br><strong>【00:07:42】</strong> 然后欢欢老师，你给姐姐……';
+  }
+}
+
+function submitComment() {
+  const input = document.getElementById('bossInput');
+  const text = input.value.trim();
+  if (!text) return;
+  const container = document.getElementById('extraComments');
+  const now = new Date();
+  const timeStr = now.toLocaleString('zh-CN');
+  const div = document.createElement('div');
+  div.style.cssText = 'border-top:1px solid #d5dce8;padding-top:14px;margin-top:14px';
+  div.innerHTML = `<div style="font-size:12px;color:#8a95a3;margin-bottom:6px">${timeStr}</div><div style="font-size:14px;line-height:2;color:#1a1a2e;white-space:pre-wrap">${text}</div>`;
+  container.appendChild(div);
+  input.value = '';
+}
+
+// Close recording panel when clicking outside
+document.addEventListener('click', function(e) {
+  const panel = document.getElementById('recPanel');
+  const btn = document.querySelector('.rec-btn');
+  if (!panel.contains(e.target) && !btn.contains(e.target)) {
+    panel.classList.remove('open');
+  }
+});
+</script>
+</body>
+</html>

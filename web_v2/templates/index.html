@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>接诊列表 · 工牌接诊分析系统</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}">
+<style>
+.list-wrap{max-width:1280px;margin:0 auto;padding:30px 40px 80px}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
+.toolbar input{border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-family:inherit;font-size:13px;outline:none}
+.toolbar input:focus{border-color:var(--blue)}
+.toolbar button{background:var(--navy);color:#fff;border:none;border-radius:4px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit}
+.toolbar button.sec{background:#fff;color:var(--navy);border:1px solid var(--border)}
+.toolbar button:hover{opacity:.9}
+.sess-tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff;border:1px solid var(--border)}
+.sess-tbl th{background:var(--navy);color:#fff;text-align:left;padding:11px 14px;font-size:12px;font-weight:600;letter-spacing:.05em}
+.sess-tbl td{padding:13px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+.sess-tbl tr:hover td{background:var(--bg-light)}
+.sess-tbl tr:last-child td{border-bottom:none}
+.status-tag{display:inline-block;padding:2px 10px;border-radius:99px;font-size:11px;font-weight:600}
+.s-done{background:rgba(39,174,96,.12);color:var(--green)}
+.s-running{background:rgba(74,144,217,.12);color:var(--blue)}
+.s-running::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--blue);margin-right:5px;vertical-align:middle;animation:blink 1.2s infinite}
+.s-pending{background:rgba(230,126,34,.12);color:var(--orange)}
+.s-idle{background:rgba(138,149,163,.12);color:var(--text-mute)}
+.s-failed{background:rgba(231,76,60,.12);color:var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+.score-cell{font-size:18px;font-weight:700;color:var(--navy)}
+.score-cell.warn{color:var(--orange)}
+.score-cell.bad{color:var(--red)}
+.score-cell.good{color:var(--green)}
+.empty{text-align:center;padding:60px;color:var(--text-mute)}
+.pagi{margin-top:16px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-mid)}
+.pagi button{background:#fff;color:var(--navy);border:1px solid var(--border);border-radius:4px;padding:5px 12px;font-size:13px;cursor:pointer;font-family:inherit}
+.pagi button:disabled{opacity:.4;cursor:not-allowed}
+.header-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.header-title{font-size:20px;font-weight:700;color:var(--navy)}
+.header-user{font-size:13px;color:var(--text-mute)}
+</style>
+</head>
+<body>
+<div class="list-wrap">
+  <div class="header-bar">
+    <div class="header-title">工牌接诊分析系统</div>
+    <div class="header-user">{{ username or '' }} · <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a></div>
+  </div>
+
+  <div class="toolbar">
+    <input id="qAdvisor" placeholder="顾问">
+    <input id="qCustomer" placeholder="顾客">
+    <input id="qDate" type="date">
+    <button onclick="loadList(1)">筛选</button>
+    <button class="sec" onclick="resetFilter()">重置</button>
+    <div style="flex:1"></div>
+    <button class="sec" onclick="scanOss()">扫描 OSS</button>
+    <button onclick="document.getElementById('uploadInput').click()">上传录音</button>
+    <input id="uploadInput" type="file" multiple accept="audio/*" style="display:none" onchange="uploadFiles()">
+  </div>
+
+  <table class="sess-tbl">
+    <thead>
+      <tr>
+        <th style="width:110px">服务日期</th>
+        <th style="width:100px">顾问</th>
+        <th style="width:120px">顾客</th>
+        <th style="width:90px">录音/ASR</th>
+        <th style="width:100px">综合分</th>
+        <th style="width:90px">分析状态</th>
+        <th style="width:60px">点评</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="listBody">
+      <tr><td colspan="8" class="empty">加载中…</td></tr>
+    </tbody>
+  </table>
+
+  <div class="pagi">
+    <button id="prevBtn" onclick="changePage(-1)">‹ 上一页</button>
+    <span id="pageInfo"></span>
+    <button id="nextBtn" onclick="changePage(1)">下一页 ›</button>
+    <span id="uploadMsg" style="margin-left:auto;color:var(--text-mute)"></span>
+  </div>
+</div>
+
+<script>
+const BASE = {{ request.script_root|tojson }};
+let curPage = 1;
+let totalPages = 1;
+const PAGE_SIZE = 20;
+
+function fmtScore(s) {
+  if (s == null) return '<span style="color:var(--text-mute)">—</span>';
+  const cls = s >= 7 ? 'good' : (s >= 5 ? 'warn' : 'bad');
+  return `<span class="score-cell ${cls}">${(+s).toFixed(1)}</span>`;
+}
+
+function fmtStatus(s, progress) {
+  const map = {
+    idle:    ['未分析',  's-idle'],
+    queued:  ['排队中',  's-pending'],
+    running: ['分析中',  's-running'],
+    done:    ['已完成',  's-done'],
+    failed:  ['失败',    's-failed'],
+  };
+  const [t, c] = map[s] || [s || '—', 's-idle'];
+  const tip = progress ? ` title="${progress.replace(/"/g,'&quot;')}"` : '';
+  return `<span class="status-tag ${c}"${tip}>${t}</span>`;
+}
+
+function loadList(page) {
+  curPage = page;
+  const adv = document.getElementById('qAdvisor').value.trim();
+  const cus = document.getElementById('qCustomer').value.trim();
+  const date = document.getElementById('qDate').value;
+  const params = new URLSearchParams({page: page, page_size: PAGE_SIZE});
+  if (adv) params.set('advisor', adv);
+  if (cus) params.set('customer', cus);
+  if (date) params.set('date', date);
+  fetch(BASE + '/api/sessions?' + params).then(r => r.json()).then(data => {
+    const tbody = document.getElementById('listBody');
+    if (!data.sessions || !data.sessions.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty">没有匹配的接诊</td></tr>';
+    } else {
+      tbody.innerHTML = data.sessions.map(s => {
+        let overall = null;
+        try { overall = s.analysis_scores ? JSON.parse(s.analysis_scores).overall : null; } catch(e){}
+        return `<tr>
+          <td>${s.service_date || '—'}</td>
+          <td>${s.advisor || '—'}</td>
+          <td>${s.customer || '—'}</td>
+          <td>${s.asr_done_count || 0}/${s.recording_count || 0}</td>
+          <td>${fmtScore(overall)}</td>
+          <td>${fmtStatus(s.display_status, s.analysis_progress)}</td>
+          <td>${s.has_evaluation ? '✓' : ''}</td>
+          <td><a href="${BASE}/session/${s.id}" style="color:var(--blue);font-weight:600">查看报告 →</a></td>
+        </tr>`;
+      }).join('');
+    }
+    totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
+    document.getElementById('pageInfo').textContent = `第 ${data.page} / ${totalPages} 页（共 ${data.total} 条）`;
+    document.getElementById('prevBtn').disabled = data.page <= 1;
+    document.getElementById('nextBtn').disabled = data.page >= totalPages;
+  });
+}
+
+function changePage(delta) {
+  const next = curPage + delta;
+  if (next < 1 || next > totalPages) return;
+  loadList(next);
+}
+
+function resetFilter() {
+  document.getElementById('qAdvisor').value = '';
+  document.getElementById('qCustomer').value = '';
+  document.getElementById('qDate').value = '';
+  loadList(1);
+}
+
+function scanOss() {
+  const msg = document.getElementById('uploadMsg');
+  msg.textContent = '正在扫描 OSS…';
+  fetch(BASE + '/api/scan', {method: 'POST'}).then(r => r.json()).then(d => {
+    msg.textContent = `扫描完成，新增 ${d.added} 个录音。`;
+    loadList(curPage);
+    setTimeout(() => msg.textContent = '', 4000);
+  });
+}
+
+function uploadFiles() {
+  const inp = document.getElementById('uploadInput');
+  if (!inp.files.length) return;
+  const fd = new FormData();
+  for (const f of inp.files) fd.append('files', f);
+  const msg = document.getElementById('uploadMsg');
+  msg.textContent = `上传中…(${inp.files.length} 个文件)`;
+  fetch(BASE + '/api/upload', {method: 'POST', body: fd}).then(r => r.json()).then(d => {
+    msg.textContent = `已上传 ${(d.created || []).length} 个文件，正在自动 ASR + 分析…`;
+    inp.value = '';
+    loadList(1);
+    setTimeout(() => msg.textContent = '', 6000);
+  }).catch(e => { msg.textContent = '上传失败：' + e; });
+}
+
+loadList(1);
+setInterval(() => loadList(curPage), 30000);  // 30s 自动刷新
+</script>
+</body>
+</html>

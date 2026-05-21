@@ -1,0 +1,815 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ sess.customer or '未知顾客' }} × {{ sess.advisor or '未知顾问' }} · 接诊全维度分析报告</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}">
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav" style="position:relative">
+  <div class="nav-inner">
+    <div class="nav-title">
+      <span class="dot"></span>
+      <a href="{{ url_for('index') }}" style="color:inherit">← 接诊列表</a>
+      &nbsp;|&nbsp; {{ sess.advisor or '未知顾问' }} × {{ sess.customer or '未知顾客' }} · 接诊全维度分析报告
+    </div>
+    <div class="nav-right">
+      <div class="nav-tag"><span class="circle"></span> {{ sess.service_date or '日期未知' }}</div>
+      <div class="nav-tag">销售复盘 · 内部机密</div>
+      <div class="nav-tag {% if sess.display_status == 'running' %}live{% endif %}" id="analysisStatusTag">
+        分析: {{ {'idle':'未分析','queued':'排队中','running':'分析中','done':'已完成','failed':'失败'}.get(sess.display_status, sess.display_status) }}
+        {% if sess.analysis_model %} · {{ sess.analysis_model }}{% endif %}
+      </div>
+      <button class="rec-btn" id="reanalyzeBtn" onclick="reanalyze()" title="强制重跑分析">⟳ 重跑</button>
+      {% if recordings %}
+      <button class="rec-btn" onclick="document.getElementById('recPanel').classList.toggle('open')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10,8 16,12 10,16"/></svg>
+        原始录音
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if recordings %}
+  <div class="rec-panel" id="recPanel">
+    <div class="rec-seg-label">选择录音段落（共 {{ recordings|length }} 段）</div>
+    <select class="rec-seg-select" id="segSelect" onchange="switchSeg()">
+      {% for r in recordings %}
+      <option value="{{ loop.index0 }}"
+              data-url="{{ r.audio_url }}"
+              data-transcript="{{ r.asr_transcript|e or '' }}">
+        第 {{ loop.index }} 段（{{ r.recorded_at or '时间未知' }}{% if r.duration_label %} · {{ r.duration_label }}{% endif %}）
+      </option>
+      {% endfor %}
+    </select>
+    <audio class="rec-audio" id="audioPlayer" controls>
+      <source id="audioSrc" src="{{ recordings[0].audio_url }}" type="audio/mpeg">
+    </audio>
+    <div class="rec-transcript">
+      <details>
+        <summary>▶ 查看文字转录</summary>
+        <div class="rec-transcript-body" id="transcriptBody"></div>
+      </details>
+    </div>
+  </div>
+  {% endif %}
+</nav>
+
+<div class="wrap">
+
+<!-- COVER -->
+<div class="cover">
+  <div class="cover-box">
+    <h1>{{ sess.customer or '顾客' }}接诊全维度分析报告</h1>
+  </div>
+  <div class="cover-subtitle">专家点评 · 深度销售诊断 · 可执行改进方案</div>
+  <div class="cover-meta">
+    <div class="cover-meta-row"><span class="k">顾客</span><span class="v">{{ sess.customer or '—' }}</span></div>
+    <div class="cover-meta-row"><span class="k">接诊顾问</span><span class="v">{{ sess.advisor or '—' }}</span></div>
+    <div class="cover-meta-row"><span class="k">接诊日期</span><span class="v">{{ sess.service_date or '—' }}</span></div>
+    <div class="cover-meta-row"><span class="k">报告级别</span><span class="v" style="color:var(--red);font-weight:700">销售复盘·内部机密</span></div>
+  </div>
+  <div class="cover-note">
+    本报告综合原始录音对话及专家点评，<br>
+    从销售转化视角进行全维度复盘，提供可落地执行的改进方案。
+  </div>
+</div>
+
+{% if not report %}
+  <!-- 还没有结构化报告 -->
+  <div class="section" id="emptyState">
+    {% if sess.display_status == 'running' or sess.display_status == 'queued' %}
+      <div class="progress-card">
+        <div class="progress-spinner"></div>
+        <div class="progress-title" id="progressTitle">
+          {{ '排队中…' if sess.display_status == 'queued' else '分析正在进行中…' }}
+        </div>
+        <div class="progress-detail" id="progressDetail">{{ sess.analysis_progress or '正在初始化…' }}</div>
+        <div class="progress-hint">
+          DeepSeek V4-Pro 深度思考通常需要 2-6 分钟，本页面会自动刷新进度，不要关闭。
+        </div>
+        <div class="progress-steps">
+          <div class="pstep done">✓ 录音 ASR 完成</div>
+          <div class="pstep" id="pstep-prep">拼接转录 / 加载知识库</div>
+          <div class="pstep" id="pstep-llm">LLM 深度思考</div>
+          <div class="pstep" id="pstep-parse">解析结构化报告</div>
+        </div>
+      </div>
+    {% elif sess.display_status == 'failed' %}
+      <div class="box box-red" style="padding:30px;font-size:14px;line-height:1.9">
+        <div style="font-size:16px;font-weight:700;margin-bottom:8px">分析失败</div>
+        <div style="font-size:12.5px;color:var(--text-mute);white-space:pre-wrap;font-family:monospace">{{ sess.analysis_error or '' }}</div>
+        <button class="boss-submit" style="margin-top:16px" onclick="reanalyze()">重新分析</button>
+      </div>
+    {% else %}
+      <div class="box box-orange" style="padding:30px;text-align:center;font-size:15px;line-height:2">
+        本接诊还没有生成结构化报告。
+        <div><button class="boss-submit" style="margin-top:16px" onclick="reanalyze()">立即分析</button></div>
+      </div>
+    {% endif %}
+  </div>
+{% else %}
+
+{# 给所有数据起短别名 #}
+{% set ov = report.overview %}
+{% set persona = report.persona %}
+{% set root = report.root_cause %}
+{% set pains = report.pain_points or [] %}
+{% set harvest = report.harvest %}
+{% set scoring = report.scoring %}
+{% set logic = report.logic_chain %}
+{% set cases = report.cases or [] %}
+{% set ns = report.next_steps %}
+
+<!-- PART 01 -->
+{% if ov %}
+<div class="section">
+  <div class="part-label">PART 01</div>
+  <div class="section-title">全维度评估总览</div>
+  <table class="ov-tbl">
+    <thead class="ov-head"><tr><th style="width:110px">维度</th><th>我方分析判断</th></tr></thead>
+    <tbody>
+      {% if ov.customer_value %}
+      <tr>
+        <td class="ov-dim">顾客价值评级</td>
+        <td class="ov-content">
+          <span class="ov-tag {{ ov.customer_value.tag_kind or 'level' }}">{{ ov.customer_value.tag }}</span>
+          <div class="mt8" style="font-size:13px;color:var(--text-mid)">{{ ov.customer_value.note|md_inline|safe }}</div>
+        </td>
+      </tr>
+      {% endif %}
+      {% if ov.pain_summary %}
+      <tr>
+        <td class="ov-dim">痛点识别</td>
+        <td class="ov-content">
+          <span class="ov-tag {{ ov.pain_summary.tag_kind or 'warn' }}">{{ ov.pain_summary.tag }}</span>
+          <div class="mt8" style="font-size:13px;line-height:1.8">
+            {% for it in ov.pain_summary['items'] or [] %}
+              <span class="c-{{ it.color }}">● {{ it.text|md_inline|safe }}</span>{% if not loop.last %}<br>{% endif %}
+            {% endfor %}
+          </div>
+        </td>
+      </tr>
+      {% endif %}
+      {% if ov.sales_diagnosis %}
+      <tr>
+        <td class="ov-dim">销售问题诊断</td>
+        <td class="ov-content">
+          <span class="ov-tag {{ ov.sales_diagnosis.tag_kind or 'bad' }}">{{ ov.sales_diagnosis.tag }}</span>
+          <div class="mt8" style="font-size:13px;color:var(--text-mid)">{{ ov.sales_diagnosis.note|md_inline|safe }}</div>
+        </td>
+      </tr>
+      {% endif %}
+      {% if ov.quality_score %}
+      <tr>
+        <td class="ov-dim">质检评分</td>
+        <td class="ov-content">
+          <span class="ov-tag {% if ov.quality_score.score >= 8 %}good{% elif ov.quality_score.score >= 6 %}warn{% else %}bad{% endif %}" style="font-size:18px;padding:5px 14px">{{ '%.1f'|format(ov.quality_score.score) }} / 10</span>
+          <div class="mt8" style="font-size:13px;color:var(--text-mid)">{{ ov.quality_score.note|md_inline|safe }}</div>
+        </td>
+      </tr>
+      {% endif %}
+      {% if ov.suggestions %}
+      <tr>
+        <td class="ov-dim">可操作建议</td>
+        <td class="ov-content" style="font-size:13px;line-height:2">
+          {% for s in ov.suggestions %}
+            {{ loop.index|chinese_num }} {{ s|md_inline|safe }}{% if not loop.last %}<br>{% endif %}
+          {% endfor %}
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- PART 02 -->
+{% if persona %}
+<div class="section">
+  <div class="part-label">PART 02</div>
+  <div class="section-title">顾客真实画像重建</div>
+  {% if persona.lead %}<div class="section-lead">{{ persona.lead }}</div>{% endif %}
+
+  {% if persona.signals %}
+  <div style="font-size:15px;font-weight:700;color:var(--blue);margin-bottom:12px">关键信号提取</div>
+  <table class="tbl mb16">
+    <thead><tr><th style="width:45%">对话信号</th><th>解读</th></tr></thead>
+    <tbody>
+      {% for s in persona.signals %}
+      <tr>
+        <td class="td-signal">{{ s.signal }}</td>
+        <td class="td-interp">{{ s.interpretation }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if persona.summary %}
+  <div class="box box-navy">
+    <div class="b-line"><strong>综合判断：</strong>{{ persona.summary|md_inline|safe }}</div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- PART 03 -->
+{% if root %}
+<div class="section">
+  <div class="part-label">PART 03</div>
+  <div class="section-title">接诊失分根因定位</div>
+  {% if root.lead %}<div class="section-lead">{{ root.lead }}</div>{% endif %}
+
+  {% if root.headline %}
+  <div class="box box-red" style="font-size:15px;font-weight:700;margin-bottom:20px">
+    {{ root.headline|md_inline|safe }}
+  </div>
+  {% endif %}
+
+  {% if root.product_dimension or root.problem_dimension %}
+  <div class="compare-grid mb16">
+    <div class="compare-col">
+      <div class="compare-col-head bad">产品维度（顾问实际做的）</div>
+      {% for x in root.product_dimension or [] %}
+        <div class="compare-item bad">"{{ x }}"</div>
+      {% endfor %}
+    </div>
+    <div class="compare-col" style="border-left:1px solid var(--border)">
+      <div class="compare-col-head good">问题维度（顾客需要听到的）</div>
+      {% for x in root.problem_dimension or [] %}
+        <div class="compare-item good">"{{ x }}"</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if root.gap_note %}
+  <div class="box box-orange">
+    <strong>差距的本质：</strong>{{ root.gap_note|md_inline|safe }}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- PART 04 -->
+{% if pains %}
+<div class="section">
+  <div class="part-label">PART 04</div>
+  <div class="section-title">可攻破痛点 · 完整作战方案</div>
+  {% set badge_class = {'最强突破口': '', '最佳情感连接点': 'b2', '最高价值突破口': 'b3', '其它': 'b2'} %}
+  {% for p in pains %}
+  <div class="pp-section">
+    <div class="pp-title">
+      痛点{{ ['一','二','三','四','五'][loop.index0] }}：{{ p.title }}
+      <span class="pp-badge {{ badge_class.get(p.badge, '') }}">{{ p.badge }}</span>
+    </div>
+    {% if p.lead %}<div class="pp-lead">{{ p.lead|md_inline|safe }}</div>{% endif %}
+
+    {% if p.steps %}
+    <div class="step-rows">
+      {% for st in p.steps %}
+      <div class="step-row">
+        <div class="step-label s{{ loop.index if loop.index <= 5 else 5 }}">
+          第{{ ['一','二','三','四','五'][loop.index0] }}步<br>{{ st.label }}
+        </div>
+        <div class="step-body"><em>{{ st.body|md_inline|safe }}</em></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if p.strategy_table %}
+    <table class="strategy-tbl">
+      <thead><tr><th style="width:120px">策略</th><th>核心话术逻辑</th></tr></thead>
+      <tbody>
+        {% for s in p.strategy_table %}
+        <tr>
+          <td class="strat-name">{{ s.strategy }}</td>
+          <td>{{ s.logic|md_inline|safe }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- PART 05 -->
+{% if harvest and harvest.steps %}
+<div class="section">
+  <div class="part-label">PART 05</div>
+  <div class="section-title">项目后价值收割 · 黄金窗口标准流程</div>
+  {% if harvest.intro %}
+  <div class="box box-blue mb16">{{ harvest.intro|md_inline|safe }}</div>
+  {% endif %}
+
+  <div class="harvest-steps" style="grid-template-columns:repeat({{ harvest.steps|length }},1fr)">
+    {% for st in harvest.steps %}
+    <div class="harvest-step"{% if loop.last %} style="border-right:none"{% endif %}>
+      <div class="hs-badge h{{ loop.index if loop.index <= 4 else 4 }}">STEP {{ loop.index }}</div>
+      <div class="hs-title">{{ st.title }}</div>
+      <div class="hs-body"><em>{{ st.body|md_inline|safe }}</em></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- PART 06 -->
+{% if scoring %}
+<div class="section">
+  <div class="part-label">PART 06</div>
+  <div class="section-title">质检评分 · 三大接诊阶段</div>
+
+  <div class="score-header">
+    <div>
+      <div style="font-size:12px;letter-spacing:.15em;color:rgba(255,255,255,.55);margin-bottom:4px">综合评分</div>
+      <div style="display:flex;align-items:baseline;gap:4px">
+        <span class="score-big">{{ '%.1f'|format(scoring.overall) }}</span>
+        <span class="score-of">/ 10</span>
+      </div>
+    </div>
+    <div class="score-divider"></div>
+    <div class="score-hl">
+      {% for g in scoring.good_highlights or [] %}
+      <div class="score-hl-item"><span class="score-dot good"></span>{{ g|md_inline|safe }}</div>
+      {% endfor %}
+      {% for b in scoring.bad_highlights or [] %}
+      <div class="score-hl-item"><span class="score-dot bad"></span>{{ b|md_inline|safe }}</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="stages-grid" style="grid-template-columns:repeat({{ (scoring.stages or [])|length or 3 }},1fr)">
+    {% for stg in scoring.stages or [] %}
+    {% set sclass = 'sc-ok' if stg.score >= 7 else ('sc-warn' if stg.score >= 5 else 'sc-bad') %}
+    <div class="stage-col">
+      <div class="stage-col-head">
+        <div class="stage-col-name">{{ stg.name }}</div>
+        <div class="stage-col-score {{ sclass }}">{{ '%.1f'|format(stg.score) }}</div>
+      </div>
+      {% for sub in stg.sub or [] %}
+      {% set bclass = 'bar-good' if sub.score >= 7 else ('bar-warn' if sub.score >= 5 else 'bar-bad') %}
+      {% set pclass = 'pt-good' if sub.score >= 7 else ('pt-warn' if sub.score >= 5 else 'pt-bad') %}
+      <div class="sub-item" onclick="toggleSub(this)">
+        <div class="sub-item-row">
+          <div class="sub-name"><span class="sub-arrow">▶</span>{{ sub.name }}</div>
+          <div class="sub-bar-wrap"><div class="sub-bar {{ bclass }}" style="width:{{ (sub.score * 10)|round }}%"></div></div>
+          <div class="sub-pts {{ pclass }}">{{ '%.1f'|format(sub.score) if sub.score % 1 else sub.score|int }}</div>
+        </div>
+        <div class="sub-detail">{{ sub.detail|md_inline|safe }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- PART 07 -->
+{% if logic %}
+<div class="section">
+  <div class="part-label">PART 07</div>
+  <div class="section-title">逻辑总结 · 顾问能力训练路径</div>
+
+  <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">接诊失败的底层逻辑链</div>
+
+  {% if logic.bad_chain %}
+  <div class="logic-chain bad" style="margin-bottom:8px">
+    <span class="logic-label bad">顾问的思维模式（实际）</span>
+    {{ logic.bad_chain|md_inline|safe }}
+    {% if logic.bad_chain_note %}<br><span style="font-size:12px;color:var(--red)">↳ {{ logic.bad_chain_note }}</span>{% endif %}
+  </div>
+  {% endif %}
+  {% if logic.good_chain %}
+  <div class="logic-chain good mb16">
+    <span class="logic-label good">正确的思维模式</span>
+    {{ logic.good_chain|md_inline|safe }}
+  </div>
+  {% endif %}
+
+  {% if logic.missing_step %}
+  <div class="box box-orange mb16">
+    <strong>缺失的那一步是：</strong>{{ logic.missing_step|md_inline|safe }}
+  </div>
+  {% endif %}
+
+  {% if logic.training %}
+  <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">顾问能力提升训练路径</div>
+  <table class="cap-tbl">
+    <thead><tr><th style="width:100px">接待阶段</th><th style="width:40%">当前问题</th><th>需要训练的能力</th></tr></thead>
+    <tbody>
+      {% for t in logic.training %}
+      <tr>
+        <td class="cap-stage">{{ t.stage }}</td>
+        <td class="cap-issue">{{ t.issue }}</td>
+        <td class="cap-train">{{ t.skill|md_inline|safe }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- PART 08 -->
+{% if cases %}
+<div class="section">
+  <div class="part-label">PART 08</div>
+  <div class="section-title">关键 Case 复盘 · 三层分析</div>
+  <div class="section-lead" style="margin-bottom:20px">
+    每个关键时刻都包含：<strong>时间戳 + 原话</strong> → 三层分析（表层做法 / 深层问题 / 正确做法）。点击 <span style="display:inline-flex;align-items:center;gap:4px;padding:1px 8px;background:rgba(39,174,96,.1);border-radius:3px;font-size:12px;color:var(--green)">▶ 0:01:34</span> 跳转录音。
+  </div>
+
+  {% for c in cases %}
+  {% set kind = c.kind or 'miss' %}
+  {% set cc_class = 'cc-good' if kind == 'good' else 'cc-miss' %}
+  {% set badge_kind = 'good' if kind == 'good' else 'miss' %}
+  {% set badge_txt = '做到' if kind == 'good' else ('做错' if kind == 'bad' else '遗漏') %}
+  {% set ts_class = 'ts-bad' if kind == 'bad' else ('ts-miss' if kind == 'miss' else '') %}
+  <div class="case-card {{ cc_class }}">
+    <div class="case-head">
+      <div class="case-num {% if kind == 'good' %}cna{% else %}cn{{ ((loop.index - 1) % 5) + 1 }}{% endif %}" style="font-size:{{ 14 if kind=='good' else 18 }}px">{{ '✓' if kind == 'good' else loop.index }}</div>
+      <div>
+        <div class="case-head-title">{{ c.title }} <span class="case-badge {{ badge_kind }}">{{ badge_txt }}</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          {% if c.timestamp_seconds is not none %}
+          <button class="ts-btn {{ ts_class }}" onclick="seekAudio({{ c.timestamp_seconds or 0 }}, {{ (c.segment or 1) - 1 }})" title="跳转录音">▶ {{ c.timestamp_label or '' }}</button>
+          {% endif %}
+          {% if c.quote %}<span style="color:var({{ '--red' if kind=='bad' else ('--orange' if kind=='miss' else '--text-mute') }});font-style:italic">"{{ c.quote }}"</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="case-body-3">
+      <div class="case-col surface">
+        <div class="clbl">{{ '表层做法' if kind=='good' else '表层问题' }}</div>
+        <div class="ctxt">{{ c.surface|md_inline|safe }}</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">{{ '值得保留' if kind=='good' else '深层问题' }}</div>
+        <div class="ctxt">{{ c.deep|md_inline|safe }}</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">{{ '可优化方向' if kind=='good' else '正确做法' }}</div>
+        <div class="ctxt">{{ c.improve|md_inline|safe }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if report.cases_summary %}
+  <div class="case-summary">
+    <div style="font-size:11px;letter-spacing:.12em;color:rgba(255,255,255,.5);margin-bottom:8px;text-transform:uppercase">一句话总结整个 Case</div>
+    {{ report.cases_summary|md_inline|safe }}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- PART 09 -->
+{% if ns %}
+<div class="section">
+  <div class="part-label">PART 09</div>
+  <div class="section-title">下一步动作 · 回店规划</div>
+
+  <div class="next-grid">
+
+    {% if ns.return_scripts %}
+    <div class="next-card">
+      <div class="next-card-head nc1">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        回店切入话术
+      </div>
+      <div class="next-card-body">
+        {% for s in ns.return_scripts %}
+        <div style="margin-bottom:14px">
+          <div style="font-weight:700;color:var(--navy);margin-bottom:6px">{{ s.title }}</div>
+          <div style="font-style:italic;color:var(--text-mid);border-left:3px solid var(--border);padding-left:10px;line-height:1.9">
+            {{ s.body|md_inline|safe }}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if ns.priority_projects %}
+    <div class="next-card">
+      <div class="next-card-head nc2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        优先推荐项目
+      </div>
+      <div class="next-card-body">
+        {% for p in ns.priority_projects %}
+        <div class="next-priority">
+          <div class="np-num">{{ loop.index }}</div>
+          <div class="np-body">
+            <div class="np-name">{{ p.name }}</div>
+            <div class="np-desc">{{ p.desc }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% set objections = ns.medical_objections or ns.objection_qa %}
+    {% if objections %}
+    <div class="next-card">
+      <div class="next-card-head nc3">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        泛医疗异议应答库
+      </div>
+      <div class="next-card-body">
+        {% for qa in objections %}
+        <div class="next-qa">
+          <div class="next-q">Q: {{ qa.objection or qa.q }}</div>
+          <div class="next-a">{{ (qa.answer or qa.a)|md_inline|safe }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+
+  {% if ns.pain_entry_scripts %}
+  <div style="margin-top:20px">
+    <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">痛点切入四步话术</div>
+    <table class="strategy-tbl">
+      <thead>
+        <tr>
+          <th style="width:120px">痛点</th>
+          <th style="width:30%">① 切入（含顾客名）</th>
+          <th>② 原理</th>
+          <th>③ 方向（医美 vs 我们）</th>
+          <th style="width:18%">④ 销售衔接</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in ns.pain_entry_scripts %}
+        <tr>
+          <td class="strat-name">{{ p.pain_name }}</td>
+          <td><em>{{ p.entry }}</em></td>
+          <td>{{ p.principle }}</td>
+          <td>{{ p.direction }}</td>
+          <td>{{ p.sales_link }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ── PART 10 外部信号 ── #}
+{% set ext = report.external_signals %}
+{% if ext and (ext.medical_aesthetics or ext.other_institutions or ext.lifestyle_habits or ext.self_care or ext.external_brands) %}
+<div class="section">
+  <div class="part-label">PART 10</div>
+  <div class="section-title">外部信号 · 顾客生态画像</div>
+  <div class="section-lead">顾客在录音里主动透露的医美/品牌/生活习惯等线索，用于后续个性化沟通</div>
+  <table class="tbl">
+    <thead><tr><th style="width:130px">类别</th><th style="width:40%">提及</th><th>对销售的洞察</th></tr></thead>
+    <tbody>
+      {% set cats = [
+        ('医美经历', ext.medical_aesthetics),
+        ('其它机构', ext.other_institutions),
+        ('生活习惯', ext.lifestyle_habits),
+        ('居家护理', ext.self_care),
+        ('外部品牌', ext.external_brands)
+      ] %}
+      {% for label, rows in cats %}{% for r in rows or [] %}
+      <tr>
+        <td class="td-label">{% if loop.first %}{{ label }}{% endif %}</td>
+        <td class="td-signal">{{ r.item }}</td>
+        <td class="td-interp">{{ r.insight }}</td>
+      </tr>
+      {% endfor %}{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{# ── PART 11 成交诊断 ── #}
+{% set diag = report.deal_diagnosis %}
+{% if diag and diag.dimensions %}
+<div class="section">
+  <div class="part-label">PART 11</div>
+  <div class="section-title">成交诊断 · 5 维度判断</div>
+  {% set dim_labels = {
+    'customer_moved':    '顾客被打动',
+    'customer_agreed':   '顾客认可方案',
+    'effect_satisfied':  '效果感受到位',
+    'price_matched':     '价格被匹配',
+    'urgency_built':     '紧迫感建立'
+  } %}
+  {% set status_class = {'ok':'good','partial':'warn','missing':'bad'} %}
+  {% set status_label = {'ok':'到位','partial':'部分','missing':'缺失'} %}
+  <table class="ov-tbl">
+    <thead class="ov-head"><tr><th style="width:130px">维度</th><th style="width:80px">判断</th><th>依据</th></tr></thead>
+    <tbody>
+      {% for k, label in dim_labels.items() %}
+      {% set dv = diag.dimensions[k] %}
+      {% if dv %}
+      <tr>
+        <td class="ov-dim">{{ label }}</td>
+        <td><span class="ov-tag {{ status_class.get(dv.status, 'warn') }}">{{ status_label.get(dv.status, dv.status) }}</span></td>
+        <td>{{ dv.note }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if diag.risk_alert %}
+  <div class="box box-red" style="margin-top:16px"><strong>⚠️ 差评/流失风险预警：</strong>{{ diag.risk_text|md_inline|safe }}</div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endif %}{# end if report #}
+
+<!-- 老板点评 -->
+<div class="section">
+  <div class="part-label">老板点评</div>
+  <div class="section-title">专家点评记录</div>
+
+  <div class="boss-section">
+    <div class="boss-header">
+      <div class="boss-avatar">老</div>
+      <div class="boss-name">老板点评</div>
+      <div class="boss-time" id="bossNow"></div>
+    </div>
+
+    <div class="boss-input-label">新增点评（提交后会追加到下方）</div>
+    <textarea class="boss-textarea" id="bossInput" placeholder="在这里输入新的点评……例如：刘佳佳这个顾客性格慢热，赞美式破冰其实不适合…"></textarea>
+    <div>
+      <button class="boss-submit" onclick="submitComment()">提交点评</button>
+      <span id="bossMsg" style="margin-left:12px;font-size:12px;color:var(--text-mute)"></span>
+    </div>
+
+    <div id="extraComments" style="margin-top:16px">
+      {% for e in evaluations %}
+      <div class="comment-item" data-id="{{ e.id }}">
+        <div class="comment-head">
+          <span class="comment-time">{{ e.created_at }}</span>
+          <button class="comment-del" onclick="deleteComment({{ e.id }})">删除</button>
+        </div>
+        <div class="comment-body">{{ (e.comment or e.wrong_points or e.improvement or e.correct_practice or '') }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+const SESSION_ID = {{ sess.id }};
+const RECORDINGS = {{ recordings|tojson }};
+const BASE = {{ request.script_root|tojson }};
+
+function toggleSub(el) {
+  el.classList.toggle('open');
+  const detail = el.querySelector('.sub-detail');
+  detail.classList.toggle('open');
+}
+
+function switchSeg() {
+  const sel = document.getElementById('segSelect');
+  const idx = parseInt(sel.value, 10) || 0;
+  const r = RECORDINGS[idx];
+  if (!r) return;
+  const audio = document.getElementById('audioPlayer');
+  audio.src = r.audio_url;
+  audio.load();
+  const body = document.getElementById('transcriptBody');
+  body.textContent = r.asr_transcript || '（暂无转录文本）';
+}
+
+function seekAudio(seconds, segIdx) {
+  segIdx = segIdx || 0;
+  const sel = document.getElementById('segSelect');
+  if (sel && parseInt(sel.value, 10) !== segIdx) {
+    sel.value = String(segIdx);
+    switchSeg();
+  }
+  const panel = document.getElementById('recPanel');
+  if (panel) panel.classList.add('open');
+  const audio = document.getElementById('audioPlayer');
+  if (audio) {
+    audio.currentTime = seconds;
+    audio.play().catch(()=>{});
+  }
+}
+
+function submitComment() {
+  const input = document.getElementById('bossInput');
+  const text = input.value.trim();
+  const msg = document.getElementById('bossMsg');
+  if (!text) { msg.textContent = '请填写内容'; return; }
+  msg.textContent = '提交中…';
+  fetch(`${BASE}/api/session/${SESSION_ID}/evaluate`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({comment: text})
+  }).then(r => r.json()).then(data => {
+    if (data.ok && data.evaluation) {
+      const c = document.createElement('div');
+      c.className = 'comment-item';
+      c.dataset.id = data.evaluation.id;
+      c.innerHTML = `<div class="comment-head"><span class="comment-time">${data.evaluation.created_at}</span><button class="comment-del" onclick="deleteComment(${data.evaluation.id})">删除</button></div><div class="comment-body"></div>`;
+      c.querySelector('.comment-body').textContent = data.evaluation.comment;
+      document.getElementById('extraComments').insertBefore(c, document.getElementById('extraComments').firstChild);
+      input.value = '';
+      msg.textContent = '✓ 已保存';
+      setTimeout(() => msg.textContent = '', 2000);
+    } else {
+      msg.textContent = data.error || '提交失败';
+    }
+  }).catch(e => { msg.textContent = '网络错误：' + e; });
+}
+
+function deleteComment(eid) {
+  if (!confirm('删除这条点评？')) return;
+  fetch(`${BASE}/api/evaluation/${eid}`, {method: 'DELETE'})
+    .then(r => r.json()).then(data => {
+      if (data.ok) {
+        const el = document.querySelector(`.comment-item[data-id="${eid}"]`);
+        if (el) el.remove();
+      } else alert(data.error || '删除失败');
+    });
+}
+
+function reanalyze() {
+  if (!confirm('重新分析这次接诊？预计 2-6 分钟，页面会显示实时进度。')) return;
+  const btn = document.getElementById('reanalyzeBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '触发中…'; }
+  fetch(`${BASE}/api/session/${SESSION_ID}/analyze`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({})
+  }).then(r => r.json()).then(data => {
+    if (data.status) {
+      // 直接刷新整页（会进入分析中视图）
+      location.reload();
+    } else {
+      alert(data.error || '触发失败');
+      if (btn) { btn.disabled = false; btn.textContent = '⟳ 重跑'; }
+    }
+  });
+}
+
+document.addEventListener('click', function(e) {
+  const panel = document.getElementById('recPanel');
+  const btn = document.querySelector('.rec-btn');
+  if (panel && !panel.contains(e.target) && btn && !btn.contains(e.target)) {
+    panel.classList.remove('open');
+  }
+});
+
+// 初始化录音第一段的转录文本
+if (RECORDINGS.length) {
+  const body = document.getElementById('transcriptBody');
+  if (body) body.textContent = RECORDINGS[0].asr_transcript || '（暂无转录文本）';
+}
+
+// 分析进行中/排队时，每 3s 轮询并更新进度文本
+{% if sess.display_status in ('running', 'queued') %}
+function highlightStep(progress) {
+  const p = progress || '';
+  const set = (id, on) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('active', on);
+  };
+  set('pstep-prep', /拼接|加载知识库/.test(p));
+  set('pstep-llm',  /深度思考|LLM|调用/.test(p));
+  set('pstep-parse', /解析|完成/.test(p));
+}
+setInterval(() => {
+  fetch(`${BASE}/api/session/${SESSION_ID}`).then(r => r.json()).then(d => {
+    if (d.display_status === 'done' || d.display_status === 'failed') {
+      location.reload();
+      return;
+    }
+    const title = document.getElementById('progressTitle');
+    const detail = document.getElementById('progressDetail');
+    if (title) title.textContent = (d.display_status === 'queued') ? '排队中…' : '分析正在进行中…';
+    if (detail) detail.textContent = d.analysis_progress || '正在初始化…';
+    highlightStep(d.analysis_progress);
+  }).catch(()=>{});
+}, 3000);
+// 立即高亮初始步骤
+highlightStep({{ (sess.analysis_progress or '')|tojson }});
+{% endif %}
+</script>
+</body>
+</html>
