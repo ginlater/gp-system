@@ -30,31 +30,133 @@ a{color:inherit;text-decoration:none}
 .nav-right{display:flex;align-items:center;gap:10px}
 .nav-tag{font-size:11px;padding:4px 10px;border:1px solid var(--border);border-radius:99px;color:var(--text-mid);display:flex;align-items:center;gap:5px}
 .nav-tag .circle{width:6px;height:6px;border-radius:50%;background:var(--green)}
-/* recording toggle */
-.rec-btn{display:flex;align-items:center;gap:6px;padding:6px 14px;background:var(--navy);color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;font-family:inherit}
+/* ─── NAV 录音快捷按钮 ─── */
+.rec-btn{display:flex;align-items:center;gap:6px;padding:6px 14px;background:var(--navy);color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;font-family:inherit;white-space:nowrap}
 .rec-btn svg{flex-shrink:0}
-.rec-panel{display:none;position:absolute;right:40px;top:60px;width:380px;background:#fff;border:1px solid var(--border);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:200;padding:16px}
+
+/* ─── 录音内联组件（PC + Mobile 共用） ─── */
+.rec-section-hd{display:flex;align-items:center;gap:12px;margin-bottom:20px}
+.rec-count-badge{font-size:11px;padding:3px 10px;background:var(--navy);color:#fff;border-radius:99px;font-weight:600;letter-spacing:.05em}
+
+/* 分段 tabs */
+.rec-tabs{
+  display:flex;gap:8px;
+  overflow-x:auto;-webkit-overflow-scrolling:touch;
+  scrollbar-width:none;padding-bottom:4px;margin-bottom:16px;
+}
+.rec-tabs::-webkit-scrollbar{display:none}
+.rec-tab{
+  flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:3px;
+  padding:9px 18px;border:1px solid var(--border);border-radius:6px;
+  background:#fff;cursor:pointer;font-family:inherit;transition:all .15s;
+}
+.rec-tab:hover{border-color:var(--blue);background:var(--bg-blue)}
+.rec-tab.active{border-color:var(--navy);background:var(--navy);color:#fff}
+.rec-tab-num{font-size:13px;font-weight:600;line-height:1.3}
+.rec-tab-dur{font-size:11px;opacity:.65;line-height:1}
+.rec-tab.active .rec-tab-dur{opacity:.8}
+
+/* 播放器容器 */
+.rec-player-area{
+  border:1px solid var(--border);border-radius:6px;overflow:hidden;
+}
+.rec-player-meta{
+  padding:9px 16px;background:var(--bg-light);
+  font-size:12px;color:var(--text-mute);
+  border-bottom:1px solid var(--border);
+}
+.rec-audio-player{width:100%;display:block;height:40px;background:#fff}
+
+/* 转录折叠 */
+.rec-transcript-details{border-top:1px solid var(--border)}
+.rec-transcript-summary{
+  padding:10px 16px;font-size:13px;color:var(--text-mid);cursor:pointer;
+  list-style:none;display:flex;align-items:center;gap:8px;
+  background:var(--bg-light);user-select:none;
+  border:none;outline:none;
+}
+.rec-transcript-summary::-webkit-details-marker{display:none}
+.rec-transcript-summary::before{
+  content:'▶';font-size:9px;color:var(--blue);
+  transition:transform .2s;flex-shrink:0;
+}
+details[open].rec-transcript-details .rec-transcript-summary::before{transform:rotate(90deg)}
+.rec-transcript-body{
+  padding:14px 16px;font-size:13px;line-height:1.9;
+  color:var(--text-mid);white-space:pre-wrap;
+  max-height:320px;overflow-y:auto;background:#fff;
+}
+
+/* ─── 录音面板（nav 下拉，.open 才显示） ─── */
+.rec-panel{
+  position:absolute;top:100%;right:40px;
+  width:min(440px, calc(100vw - 32px));
+  background:#fff;border:1px solid var(--border);border-radius:8px;
+  box-shadow:0 8px 28px rgba(0,0,0,.14);
+  padding:16px 18px;margin-top:6px;
+  z-index:120;
+  display:none;
+}
 .rec-panel.open{display:block}
-.rec-seg-label{font-size:11px;color:var(--text-mute);margin-bottom:6px;font-weight:500}
-.rec-seg-select{width:100%;border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-family:inherit;font-size:13px;color:var(--text);margin-bottom:10px;outline:none;background:#fff}
-.rec-audio{width:100%;height:36px;margin-bottom:8px}
-.rec-transcript details summary{font-size:12px;color:var(--text-mute);cursor:pointer;padding:4px 0}
-.rec-transcript-body{max-height:200px;overflow-y:auto;font-size:12px;line-height:1.8;color:var(--text-mid);padding:10px;background:var(--bg-light);border-radius:4px;margin-top:6px}
+.rec-seg-select{
+  width:100%;padding:9px 12px;font-size:13.5px;
+  border:1px solid var(--border);border-radius:6px;
+  background:#fff;font-family:inherit;color:var(--text);
+  margin-bottom:12px;cursor:pointer;outline:none;
+}
+.rec-seg-select:focus{border-color:var(--blue)}
+.rec-audio{width:100%;height:40px;display:block;margin-bottom:10px}
+.rec-transcript{border:1px solid var(--border);border-radius:6px;background:var(--bg-light)}
+.rec-transcript>summary{
+  padding:9px 14px;font-size:13px;color:var(--text-mid);
+  cursor:pointer;list-style:none;user-select:none;
+}
+.rec-transcript>summary::-webkit-details-marker{display:none}
+.rec-transcript[open]>summary{border-bottom:1px solid var(--border)}
+.rec-transcript-body{
+  padding:12px 14px;font-size:13px;line-height:1.85;
+  color:var(--text-mid);max-height:260px;overflow-y:auto;
+  background:#fff;border-radius:0 0 6px 6px;
+}
 
 /* ─── MAIN WRAP ─── */
 .wrap{max-width:1100px;margin:0 auto;padding:40px 40px 80px}
 
-/* ─── COVER ─── */
-.cover{margin-bottom:48px}
-.cover-box{background:var(--navy);color:#fff;padding:40px 48px;border-radius:2px 2px 0 0}
-.cover-box h1{font-size:32px;font-weight:700;letter-spacing:.02em;margin-bottom:4px}
-.cover-subtitle{background:var(--navy-mid);color:rgba(255,255,255,.9);padding:12px 48px;font-size:14px;letter-spacing:.05em;margin-top:2px}
-.cover-meta{border:1px solid var(--border);border-top:none}
-.cover-meta-row{display:grid;grid-template-columns:100px 1fr;border-bottom:1px solid var(--border)}
-.cover-meta-row:last-child{border-bottom:none}
-.cover-meta-row .k{padding:12px 20px;background:var(--bg-light);color:var(--text-mute);font-size:13px;border-right:1px solid var(--border)}
-.cover-meta-row .v{padding:12px 20px;font-size:13px;font-weight:500;color:var(--navy)}
-.cover-note{text-align:center;padding:28px 0 8px;font-size:13px;color:var(--text-mute);line-height:2}
+/* ─── SIGNAL CARDS (PART 02) ─── */
+.signal-list{margin-bottom:16px}
+.sig-card{
+  background:#fff;border:1px solid #E5EAF2;border-radius:12px;
+  padding:20px;margin-bottom:14px;
+  transition:box-shadow .15s, border-color .15s;
+}
+.sig-card:hover{border-color:#cfd9e8;box-shadow:0 4px 14px rgba(20,40,80,.06)}
+.sig-block{
+  display:flex;align-items:flex-start;gap:10px;
+  margin-bottom:10px;
+}
+.sig-block:last-of-type{margin-bottom:0}
+.sig-block-judge{margin-top:10px}
+.sig-tag{
+  flex-shrink:0;display:inline-block;font-size:11px;font-weight:700;
+  padding:3px 10px;border-radius:99px;letter-spacing:.04em;
+  line-height:1.5;margin-top:2px;white-space:nowrap;
+}
+.sig-tag-quote{background:#E8F1FB;color:#1565C0}
+.sig-tag-judge{background:#FDECE7;color:#D84315}
+.sig-quote{
+  flex:1;font-size:15px;line-height:1.7;color:#2c3e50;
+  border-left:3px solid #4A90D9;background:#F5F9FD;
+  padding:6px 12px;border-radius:0 8px 8px 0;
+}
+.sig-judge{flex:1;font-size:14.5px;line-height:1.7;color:#37424d;padding-top:3px}
+.sig-judge strong, .sig-judge b{color:#D84315;font-weight:700}
+.sig-toggle{
+  display:inline-block;margin-top:12px;background:none;
+  border:1px solid #E5EAF2;color:#4a5568;
+  padding:5px 12px;border-radius:99px;font-size:12px;
+  cursor:pointer;font-family:inherit;transition:all .15s;
+}
+.sig-toggle:hover{border-color:#4A90D9;color:#1565C0}
 
 /* ─── SECTION ─── */
 .section{margin-bottom:52px}
@@ -183,7 +285,7 @@ a{color:inherit;text-decoration:none}
 .sub-item{padding:7px 6px;border-radius:3px;cursor:pointer;transition:background .15s}
 .sub-item:hover{background:var(--bg-light)}
 .sub-item-row{display:flex;align-items:center;gap:0}
-.sub-name{font-size:12px;color:var(--text-mid);width:108px;flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:4px}
+.sub-name{font-size:12px;color:var(--text-mid);width:140px;flex-shrink:0;white-space:normal;word-break:break-all;line-height:1.5;display:flex;align-items:center;gap:4px}
 .sub-arrow{font-size:9px;color:var(--text-mute);transition:transform .2s;margin-right:2px}
 .sub-item.open .sub-arrow{transform:rotate(90deg)}
 .sub-bar-wrap{flex:1;height:5px;background:var(--bg-light);border-radius:99px;margin:0 7px;overflow:hidden;min-width:30px}
@@ -222,7 +324,15 @@ a{color:inherit;text-decoration:none}
 .case-card{border:1px solid var(--border);border-radius:4px;overflow:hidden;margin-bottom:16px}
 .case-card.cc-good{border-left:4px solid var(--green)}
 .case-card.cc-miss{border-left:4px solid var(--red)}
-.case-head{display:flex;align-items:center;gap:14px;padding:13px 20px;border-bottom:1px solid var(--border);background:var(--bg-light)}
+.case-head{display:flex;align-items:center;gap:14px;padding:13px 20px;background:var(--bg-light)}
+.case-card .case-body-3{border-top:1px solid var(--border)}
+.case-toggle{
+  flex-shrink:0;margin-left:auto;background:#fff;border:1px solid var(--border);
+  color:var(--navy);padding:5px 12px;border-radius:99px;font-size:12px;
+  cursor:pointer;font-family:inherit;transition:all .15s;white-space:nowrap;
+}
+.case-toggle:hover{border-color:var(--blue);color:var(--blue)}
+.case-toggle.open{background:var(--navy);color:#fff;border-color:var(--navy)}
 .case-num{width:44px;height:44px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:18px;font-weight:700;flex-shrink:0;line-height:1}
 .case-num.cn1{background:var(--blue)}
 .case-num.cn2{background:var(--teal)}
@@ -231,9 +341,9 @@ a{color:inherit;text-decoration:none}
 .case-num.cn5{background:var(--orange)}
 .case-num.cna{background:var(--green)}
 .case-num.cnb{background:#16a085}
-.case-head-title{font-size:15px;font-weight:700;color:var(--navy)}
+.case-head-title{font-size:15px;font-weight:700;color:var(--navy);line-height:1.45;word-break:break-all}
 .case-head-sub{font-size:12px;color:var(--text-mute);margin-top:2px}
-.case-badge{font-size:10px;padding:2px 8px;border-radius:3px;font-weight:700;margin-left:8px;vertical-align:middle;letter-spacing:.05em}
+.case-badge{display:inline-block;font-size:10px;padding:2px 8px;border-radius:3px;font-weight:700;margin-left:8px;vertical-align:middle;letter-spacing:.05em;white-space:nowrap;flex-shrink:0}
 .case-badge.good{background:var(--green);color:#fff}
 .case-badge.miss{background:var(--red);color:#fff}
 /* 3-col body */
@@ -356,3 +466,201 @@ a{color:inherit;text-decoration:none}
 
 /* nav 状态标 live 跳动 */
 .nav-tag.live .circle, .nav-tag.live::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--blue);margin-right:5px;vertical-align:middle;animation:blink 1.2s infinite}
+
+/* ─── 双渲染工具类（PC/Mobile 互斥显示） ─── */
+.hide-on-mobile { display: table; } /* default visible */
+.show-on-mobile { display: none; }  /* default hidden  */
+
+/* ─── Mobile Card 组件（宽表格的移动端替代） ─── */
+.m-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 14px;
+  background: #fff;
+}
+.m-card-head {
+  padding: 10px 14px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  word-break: break-all;
+}
+.m-card-row {
+  display: flex;
+  gap: 0;
+  border-top: 1px solid var(--border);
+  align-items: flex-start;
+}
+.m-card-label {
+  flex-shrink: 0;
+  width: 76px;
+  padding: 9px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--blue);
+  background: var(--bg-light);
+  border-right: 1px solid var(--border);
+  line-height: 1.5;
+  letter-spacing: .05em;
+}
+.m-card-val {
+  flex: 1;
+  padding: 9px 12px;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--text);
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.m-card-val em { font-style: italic; color: var(--navy); }
+.m-card-val.m-val-red { color: var(--red); }
+.m-card-val.td-signal { font-style: italic; color: var(--navy); }
+.m-card-val.td-interp { color: var(--blue); font-weight: 600; }
+
+/* ═══════════════════════════════════════════════
+   MOBILE RESPONSIVE  ≤ 768px
+   ═══════════════════════════════════════════════ */
+@media (max-width: 768px) {
+
+  /* ── Base typography ── */
+  html,body { font-size: 15px; line-height: 1.75; }
+
+  /* ── NAV ── */
+  .nav { padding: 0 12px; }
+  .nav-inner { height: auto; padding: 8px 0; flex-wrap: wrap; gap: 6px; }
+  .nav-title { font-size: 12px; flex: 1 1 100%; }
+  /* hide decorative tags, keep buttons */
+  .nav-tag { display: none; }
+  .nav-right { gap: 6px; flex-wrap: wrap; }
+  /* 移动端录音组件适配 */
+  .rec-tabs { gap: 6px; }
+  .rec-tab { padding: 8px 14px; }
+  .rec-transcript-body { max-height: 220px; font-size: 14px; }
+
+  /* ── WRAP ── */
+  .wrap { padding: 16px 14px 60px; max-width: 100%; }
+
+  /* ── 录音面板 mobile：占满宽度，吸顶下拉 ── */
+  .rec-panel{
+    position:fixed;top:auto;right:8px;left:8px;
+    width:auto;max-height:78vh;overflow-y:auto;
+    margin-top:6px;
+  }
+
+  /* ── SIGNAL CARDS mobile ── */
+  .sig-card { padding: 16px; border-radius: 12px; margin-bottom: 12px; }
+  .sig-quote { font-size: 15px; padding: 9px 12px; }
+  .sig-judge { font-size: 14.5px; }
+  .sig-tag { font-size: 11px; }
+
+  /* ── SECTION HEADINGS ── */
+  .section { margin-bottom: 32px; }
+  .part-label { font-size: 11px; }
+  .section-title { font-size: 19px; padding-bottom: 10px; margin-bottom: 16px; }
+  .section-lead { font-size: 14px; }
+
+  /* ── CALLOUT BOXES ── */
+  .box { font-size: 14px; padding: 13px 15px; }
+
+  /* ── 双渲染切换 ── */
+  .hide-on-mobile { display: none !important; }
+  .show-on-mobile { display: block !important; }
+
+  /* ── PART 01: ov-tbl (2-col) 保持 CSS card，列少不需要双渲染 ── */
+  .ov-tbl .ov-head { display: none; }
+  .ov-tbl tr {
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 10px;
+    overflow: hidden;
+  }
+  .ov-tbl td { display: block; padding: 10px 14px; width: 100% !important; }
+  .ov-tbl .ov-dim {
+    background: var(--bg-light);
+    font-size: 11px;
+    letter-spacing: .1em;
+    color: var(--blue);
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 14px;
+  }
+  .ov-tbl .ov-content { font-size: 14px; }
+
+  /* ── PART 02: .tbl (2-col signals) 保持 CSS card ── */
+  .tbl { display: block; }
+  .tbl thead { display: none; }
+  .tbl tbody { display: block; }
+  .tbl tbody tr {
+    display: block;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 10px;
+    padding: 12px 14px;
+    background: var(--bg-light);
+  }
+  .tbl tbody td { display: block; padding: 3px 0; font-size: 14px; border: none; line-height: 1.65; }
+  .tbl .td-label { font-size: 11px; color: var(--blue); font-weight: 700; width: auto; margin-bottom: 2px; }
+  .tbl .td-signal { font-size: 14px; color: var(--navy); }
+  .tbl .td-interp { font-size: 13px; color: var(--text-mid); margin-top: 4px; }
+  .tbl .td-label:empty { display: none; }
+
+  /* ── PART 03: compare-grid → single col ── */
+  .compare-grid { grid-template-columns: 1fr; }
+  .compare-col { border-left: none !important; }
+
+  /* ── PART 04: step-rows ── */
+  .step-row { grid-template-columns: 1fr; }
+  .step-label { padding: 10px 16px; text-align: left; justify-content: flex-start; font-size: 13px; min-height: unset; }
+  .step-body { font-size: 14px; padding: 14px 16px; }
+
+  /* ── PART 05: harvest steps → 2-col ── */
+  .harvest-steps { grid-template-columns: 1fr 1fr !important; }
+  .harvest-step { border-right: none !important; border-bottom: 1px solid var(--border); padding: 14px 12px; }
+  .harvest-step:last-child { border-bottom: none; }
+
+  /* ── PART 06: score ── */
+  .score-header { flex-direction: column; gap: 10px; align-items: flex-start; padding: 14px 16px; }
+  .score-big { font-size: 40px; }
+  .score-divider { width: 100%; height: 1px; flex-shrink: 0; }
+  .score-hl-item { font-size: 13px; }
+  .stages-grid { grid-template-columns: 1fr !important; }
+  .stage-col { border-right: none; border-bottom: 1px solid var(--border); padding: 14px 14px; }
+  .stage-col:last-child { border-bottom: none; }
+  .sub-name { width: 118px; font-size: 12px; white-space: normal; word-break: break-all; }
+
+  /* ── PART 08: cases 3-col → single col ── */
+  .case-body-3 { grid-template-columns: 1fr; }
+  .case-col { border-right: none; border-bottom: 1px solid var(--border); padding: 12px 14px; }
+  .case-col:last-child { border-bottom: none; }
+  .case-head { padding: 10px 12px; gap: 8px; }
+  .case-head-title { font-size: 14px; }
+  .case-head-sub { flex-wrap: wrap; font-size: 12px; }
+  .case-num { width: 36px; height: 36px; font-size: 16px; }
+  .case-col .ctxt { font-size: 14px; }
+
+  /* ── PART 09: next-grid → single col ── */
+  .next-grid { grid-template-columns: 1fr; gap: 12px; }
+  .next-card-body { font-size: 14px; }
+
+  /* ── Boss section ── */
+  .boss-section { padding: 14px 12px; }
+  .boss-textarea { font-size: 14px; }
+
+  /* ── Progress card ── */
+  .progress-card { padding: 28px 18px; }
+  .progress-title { font-size: 16px; }
+  .progress-detail { font-size: 14px; }
+
+  /* ── Logic chains ── */
+  .logic-chain { font-size: 14px; padding: 14px 14px; }
+
+  /* ── PP section ── */
+  .pp-title { font-size: 16px; }
+  .pp-badge { font-size: 10px; }
+
+} /* end @media 768px */

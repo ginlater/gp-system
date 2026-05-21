@@ -193,7 +193,24 @@
       "Bash(curl -s -b /tmp/c.txt 'http://127.0.0.1:5058/api/sessions?page=1&page_size=3')",
       "Bash(curl -s -b /tmp/c.txt 'http://127.0.0.1:5058/api/sessions?page=1&page_size=30')",
       "Bash(journalctl -u gongpai --since=\"20s ago\" --no-pager)",
-      "Bash(sudo -n systemctl reload gongpai)"
+      "Bash(sudo -n systemctl reload gongpai)",
+      "Bash(curl *)",
+      "Bash(pkill -HUP -f \"gunicorn webapp:app\")",
+      "Bash(kill -USR2 1756329)",
+      "Bash(kill -WINCH 1756329)",
+      "Bash(awk '{print $1, $2, $8, $11}')",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs kill -9)",
+      "Bash(nohup /usr/bin/python3 /home/ubuntu/.local/bin/gunicorn webapp:app -b 127.0.0.1:5058 -w 2 --timeout 300 --access-logfile /var/log/gongpai-access.log --error-logfile /var/log/gongpai-error.log --daemon)",
+      "Bash(sudo systemctl restart gp-system)",
+      "Bash(sudo systemctl list-units --type=service)",
+      "Bash(sudo systemctl cat gongpai)",
+      "Bash(sudo systemctl show gongpai -p ActiveEnterTimestamp)",
+      "Bash(sudo nginx -T)",
+      "Bash(sudo grep BOSS_USERNAME /app/gp-system/.env)",
+      "Bash(sudo ss -ltnp)",
+      "Bash(kill 1798124)",
+      "Bash(sudo kill 1798124)"
     ]
   }
 }

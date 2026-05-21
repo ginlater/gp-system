@@ -3,8 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>{{ sess.customer or '未知顾客' }} × {{ sess.advisor or '未知顾问' }} · 接诊全维度分析报告</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}?v=20260521q">
 </head>
 <body>
 
@@ -25,7 +28,7 @@
       </div>
       <button class="rec-btn" id="reanalyzeBtn" onclick="reanalyze()" title="强制重跑分析">⟳ 重跑</button>
       {% if recordings %}
-      <button class="rec-btn" onclick="document.getElementById('recPanel').classList.toggle('open')">
+      <button class="rec-btn" onclick="toggleRec()">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10,8 16,12 10,16"/></svg>
         原始录音
       </button>
@@ -35,48 +38,33 @@
 
   {% if recordings %}
   <div class="rec-panel" id="recPanel">
-    <div class="rec-seg-label">选择录音段落（共 {{ recordings|length }} 段）</div>
-    <select class="rec-seg-select" id="segSelect" onchange="switchSeg()">
-      {% for r in recordings %}
-      <option value="{{ loop.index0 }}"
-              data-url="{{ r.audio_url }}"
-              data-transcript="{{ r.asr_transcript|e or '' }}">
-        第 {{ loop.index }} 段（{{ r.recorded_at or '时间未知' }}{% if r.duration_label %} · {{ r.duration_label }}{% endif %}）
-      </option>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <span style="font-size:12px;color:#8a95a3;font-weight:500">选择录音段落</span>
+      <button onclick="document.getElementById('recPanel').classList.remove('open')"
+              style="background:none;border:none;cursor:pointer;font-size:16px;color:#8a95a3;line-height:1">✕</button>
+    </div>
+
+    <select id="segSelect" class="rec-seg-select" onchange="switchSeg(this.value)">
+      {% for rec in recordings %}
+      <option value="{{ loop.index0 }}">第{{ loop.index }}段{% if rec.recorded_at %}（{{ rec.recorded_at }}{% if rec.duration_label %} · 约{{ rec.duration_label }}{% endif %}）{% elif rec.duration_label %}（约{{ rec.duration_label }}）{% endif %}</option>
       {% endfor %}
     </select>
-    <audio class="rec-audio" id="audioPlayer" controls>
-      <source id="audioSrc" src="{{ recordings[0].audio_url }}" type="audio/mpeg">
+
+    <audio id="recAudio" controls class="rec-audio" preload="auto">
+      <source id="recAudioSrc" src="" type="audio/mpeg">
     </audio>
-    <div class="rec-transcript">
-      <details>
-        <summary>▶ 查看文字转录</summary>
-        <div class="rec-transcript-body" id="transcriptBody"></div>
-      </details>
-    </div>
+
+    <details class="rec-transcript" id="recTranscript">
+      <summary>▶ 查看文字转录</summary>
+      <div class="rec-transcript-body" id="recTranscriptBody">{{ (recordings[0].asr_transcript or '（暂无转录文本）')|replace('\n','<br>')|safe }}</div>
+    </details>
   </div>
   {% endif %}
+
 </nav>
 
 <div class="wrap">
 
-<!-- COVER -->
-<div class="cover">
-  <div class="cover-box">
-    <h1>{{ sess.customer or '顾客' }}接诊全维度分析报告</h1>
-  </div>
-  <div class="cover-subtitle">专家点评 · 深度销售诊断 · 可执行改进方案</div>
-  <div class="cover-meta">
-    <div class="cover-meta-row"><span class="k">顾客</span><span class="v">{{ sess.customer or '—' }}</span></div>
-    <div class="cover-meta-row"><span class="k">接诊顾问</span><span class="v">{{ sess.advisor or '—' }}</span></div>
-    <div class="cover-meta-row"><span class="k">接诊日期</span><span class="v">{{ sess.service_date or '—' }}</span></div>
-    <div class="cover-meta-row"><span class="k">报告级别</span><span class="v" style="color:var(--red);font-weight:700">销售复盘·内部机密</span></div>
-  </div>
-  <div class="cover-note">
-    本报告综合原始录音对话及专家点评，<br>
-    从销售转化视角进行全维度复盘，提供可落地执行的改进方案。
-  </div>
-</div>
 
 {% if not report %}
   <!-- 还没有结构化报告 -->
@@ -169,15 +157,61 @@
         <td class="ov-content">
           <span class="ov-tag {% if ov.quality_score.score >= 8 %}good{% elif ov.quality_score.score >= 6 %}warn{% else %}bad{% endif %}" style="font-size:18px;padding:5px 14px">{{ '%.1f'|format(ov.quality_score.score) }} / 10</span>
           <div class="mt8" style="font-size:13px;color:var(--text-mid)">{{ ov.quality_score.note|md_inline|safe }}</div>
+          {% if scoring and scoring.stages %}
+          <button onclick="toggleScoring()" id="scoring-toggle-btn"
+                  style="margin-top:12px;background:none;border:1px solid var(--border);
+                         border-radius:99px;padding:5px 14px;cursor:pointer;font-size:12px;
+                         color:var(--navy);font-family:inherit">
+            查看详细评分 ▾
+          </button>
+          <div id="scoring-detail" style="display:none;margin-top:14px">
+            <div class="stages-grid" style="grid-template-columns:repeat({{ scoring.stages|length or 3 }},1fr);border-top:1px solid var(--border)">
+              {% for stg in scoring.stages %}
+              {% set sclass = 'sc-ok' if stg.score >= 7 else ('sc-warn' if stg.score >= 5 else 'sc-bad') %}
+              <div class="stage-col">
+                <div class="stage-col-head">
+                  <div class="stage-col-name">{{ stg.name }}</div>
+                  <div class="stage-col-score {{ sclass }}">{{ '%.1f'|format(stg.score) }}</div>
+                </div>
+                {% for sub in stg.sub or [] %}
+                {% set bclass = 'bar-good' if sub.score >= 7 else ('bar-warn' if sub.score >= 5 else 'bar-bad') %}
+                {% set pclass = 'pt-good' if sub.score >= 7 else ('pt-warn' if sub.score >= 5 else 'pt-bad') %}
+                <div class="sub-item" onclick="toggleSub(this)">
+                  <div class="sub-item-row">
+                    <div class="sub-name"><span class="sub-arrow">▶</span>{{ sub.name }}</div>
+                    <div class="sub-bar-wrap"><div class="sub-bar {{ bclass }}" style="width:{{ (sub.score * 10)|round }}%"></div></div>
+                    <div class="sub-pts {{ pclass }}">{{ '%.1f'|format(sub.score) if sub.score % 1 else sub.score|int }}</div>
+                  </div>
+                  <div class="sub-detail">{{ sub.detail|md_inline|safe }}</div>
+                </div>
+                {% endfor %}
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
         </td>
       </tr>
       {% endif %}
       {% if ov.suggestions %}
       <tr>
         <td class="ov-dim">可操作建议</td>
-        <td class="ov-content" style="font-size:13px;line-height:2">
+        <td class="ov-content" style="padding:12px 18px">
           {% for s in ov.suggestions %}
-            {{ loop.index|chinese_num }} {{ s|md_inline|safe }}{% if not loop.last %}<br>{% endif %}
+          {% set colors = ['#1565C0','#E65100','#2E7D32','#6A1B9A'] %}
+          {% set bgs = ['rgba(21,101,192,0.07)','rgba(230,81,0,0.07)','rgba(46,125,50,0.07)','rgba(106,27,154,0.07)'] %}
+          {% set c = colors[loop.index0 % 4] %}
+          {% set bg = bgs[loop.index0 % 4] %}
+          <div style="display:flex;align-items:flex-start;gap:12px;
+                      background:{{ bg }};border-radius:8px;
+                      padding:12px 14px;margin-bottom:10px;">
+            <div style="flex-shrink:0;width:26px;height:26px;border-radius:50%;
+                        background:{{ c }};color:#fff;font-size:13px;font-weight:700;
+                        display:flex;align-items:center;justify-content:center;">
+              {{ loop.index }}
+            </div>
+            <div style="font-size:14px;line-height:1.7;color:#1a1a2e;">{{ s|md_inline|safe }}</div>
+          </div>
           {% endfor %}
         </td>
       </tr>
@@ -196,22 +230,25 @@
 
   {% if persona.signals %}
   <div style="font-size:15px;font-weight:700;color:var(--blue);margin-bottom:12px">关键信号提取</div>
-  <table class="tbl mb16">
-    <thead><tr><th style="width:45%">对话信号</th><th>解读</th></tr></thead>
-    <tbody>
-      {% for s in persona.signals %}
-      <tr>
-        <td class="td-signal">{{ s.signal }}</td>
-        <td class="td-interp">{{ s.interpretation }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="signal-list mb16">
+    {% for sig in persona.signals %}
+    <div class="sig-card">
+      <div class="sig-block">
+        <span class="sig-tag sig-tag-quote">顾客原话</span>
+        <div class="sig-quote">{{ sig.signal }}</div>
+      </div>
+      <div class="sig-block sig-block-judge">
+        <span class="sig-tag sig-tag-judge">销售判断</span>
+        <div class="sig-judge">{{ sig.interpretation }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
   {% endif %}
 
   {% if persona.summary %}
-  <div class="box box-navy">
-    <div class="b-line"><strong>综合判断：</strong>{{ persona.summary|md_inline|safe }}</div>
+  <div style="background:rgba(21,101,192,0.06);border-left:4px solid #1565C0;border-radius:6px;padding:16px 20px;margin-bottom:16px">
+    <strong style="color:#1565C0">综合判断：</strong><span style="color:#1565C0;font-size:14px;line-height:1.85">{{ persona.summary|md_inline|safe }}</span>
   </div>
   {% endif %}
 </div>
@@ -322,53 +359,57 @@
 {% endif %}
 
 <!-- PART 06 -->
-{% if scoring %}
+{% if cases %}
 <div class="section">
   <div class="part-label">PART 06</div>
-  <div class="section-title">质检评分 · 三大接诊阶段</div>
-
-  <div class="score-header">
-    <div>
-      <div style="font-size:12px;letter-spacing:.15em;color:rgba(255,255,255,.55);margin-bottom:4px">综合评分</div>
-      <div style="display:flex;align-items:baseline;gap:4px">
-        <span class="score-big">{{ '%.1f'|format(scoring.overall) }}</span>
-        <span class="score-of">/ 10</span>
-      </div>
-    </div>
-    <div class="score-divider"></div>
-    <div class="score-hl">
-      {% for g in scoring.good_highlights or [] %}
-      <div class="score-hl-item"><span class="score-dot good"></span>{{ g|md_inline|safe }}</div>
-      {% endfor %}
-      {% for b in scoring.bad_highlights or [] %}
-      <div class="score-hl-item"><span class="score-dot bad"></span>{{ b|md_inline|safe }}</div>
-      {% endfor %}
-    </div>
+  <div class="section-title">关键 Case 复盘 · 三层分析</div>
+  <div class="section-lead" style="margin-bottom:20px">
+    每个关键时刻都包含：<strong>时间戳 + 原话</strong> → 三层分析（表层做法 / 深层问题 / 正确做法）。点击 <span style="display:inline-flex;align-items:center;gap:4px;padding:1px 8px;background:rgba(39,174,96,.1);border-radius:3px;font-size:12px;color:var(--green)">▶ 0:01:34</span> 跳转录音；点击「查看详情」展开三层分析。
   </div>
 
-  <div class="stages-grid" style="grid-template-columns:repeat({{ (scoring.stages or [])|length or 3 }},1fr)">
-    {% for stg in scoring.stages or [] %}
-    {% set sclass = 'sc-ok' if stg.score >= 7 else ('sc-warn' if stg.score >= 5 else 'sc-bad') %}
-    <div class="stage-col">
-      <div class="stage-col-head">
-        <div class="stage-col-name">{{ stg.name }}</div>
-        <div class="stage-col-score {{ sclass }}">{{ '%.1f'|format(stg.score) }}</div>
-      </div>
-      {% for sub in stg.sub or [] %}
-      {% set bclass = 'bar-good' if sub.score >= 7 else ('bar-warn' if sub.score >= 5 else 'bar-bad') %}
-      {% set pclass = 'pt-good' if sub.score >= 7 else ('pt-warn' if sub.score >= 5 else 'pt-bad') %}
-      <div class="sub-item" onclick="toggleSub(this)">
-        <div class="sub-item-row">
-          <div class="sub-name"><span class="sub-arrow">▶</span>{{ sub.name }}</div>
-          <div class="sub-bar-wrap"><div class="sub-bar {{ bclass }}" style="width:{{ (sub.score * 10)|round }}%"></div></div>
-          <div class="sub-pts {{ pclass }}">{{ '%.1f'|format(sub.score) if sub.score % 1 else sub.score|int }}</div>
+  {% for c in cases %}
+  {% set kind = c.kind or 'miss' %}
+  {% set cc_class = 'cc-good' if kind == 'good' else 'cc-miss' %}
+  {% set badge_kind = 'good' if kind == 'good' else 'miss' %}
+  {% set badge_txt = '做到' if kind == 'good' else ('做错' if kind == 'bad' else '遗漏') %}
+  {% set ts_class = 'ts-bad' if kind == 'bad' else ('ts-miss' if kind == 'miss' else '') %}
+  <div class="case-card {{ cc_class }}">
+    <div class="case-head">
+      <div class="case-num {% if kind == 'good' %}cna{% else %}cn{{ ((loop.index - 1) % 5) + 1 }}{% endif %}" style="font-size:{{ 14 if kind=='good' else 18 }}px">{{ '✓' if kind == 'good' else loop.index }}</div>
+      <div style="flex:1;min-width:0">
+        <div class="case-head-title">{{ c.title }} <span class="case-badge {{ badge_kind }}">{{ badge_txt }}</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          {% if c.timestamp_seconds is not none %}
+          <button class="ts-btn {{ ts_class }}" onclick="seekAudio({{ c.timestamp_seconds or 0 }}, {{ (c.segment or 1) - 1 }})" title="跳转录音">▶ {{ c.timestamp_label or '' }}</button>
+          {% endif %}
+          {% if c.quote %}<span style="color:var({{ '--red' if kind=='bad' else ('--orange' if kind=='miss' else '--text-mute') }});font-style:italic">"{{ c.quote }}"</span>{% endif %}
         </div>
-        <div class="sub-detail">{{ sub.detail|md_inline|safe }}</div>
       </div>
-      {% endfor %}
+      <button type="button" class="case-toggle" onclick="toggleCase(this)">查看详情 ▾</button>
     </div>
-    {% endfor %}
+    <div class="case-body-3" style="display:none">
+      <div class="case-col surface">
+        <div class="clbl">{{ '表层做法' if kind=='good' else '表层问题' }}</div>
+        <div class="ctxt">{{ c.surface|md_inline|safe }}</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">{{ '值得保留' if kind=='good' else '深层问题' }}</div>
+        <div class="ctxt">{{ c.deep|md_inline|safe }}</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">{{ '可优化方向' if kind=='good' else '正确做法' }}</div>
+        <div class="ctxt">{{ c.improve|md_inline|safe }}</div>
+      </div>
+    </div>
   </div>
+  {% endfor %}
+
+  {% if report.cases_summary %}
+  <div class="case-summary">
+    <div style="font-size:11px;letter-spacing:.12em;color:rgba(255,255,255,.5);margin-bottom:8px;text-transform:uppercase">一句话总结整个 Case</div>
+    {{ report.cases_summary|md_inline|safe }}
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -402,7 +443,8 @@
 
   {% if logic.training %}
   <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">顾问能力提升训练路径</div>
-  <table class="cap-tbl">
+  <!-- Desktop table -->
+  <table class="cap-tbl hide-on-mobile">
     <thead><tr><th style="width:100px">接待阶段</th><th style="width:40%">当前问题</th><th>需要训练的能力</th></tr></thead>
     <tbody>
       {% for t in logic.training %}
@@ -414,68 +456,24 @@
       {% endfor %}
     </tbody>
   </table>
+  <!-- Mobile cards -->
+  <div class="show-on-mobile">
+    {% for t in logic.training %}
+    <div class="m-card">
+      <div class="m-card-head">{{ t.stage }}</div>
+      <div class="m-card-row"><span class="m-card-label">当前问题</span><span class="m-card-val m-val-red">{{ t.issue }}</span></div>
+      <div class="m-card-row"><span class="m-card-label">需要训练的能力</span><span class="m-card-val">{{ t.skill|md_inline|safe }}</span></div>
+    </div>
+    {% endfor %}
+  </div>
   {% endif %}
 </div>
 {% endif %}
 
 <!-- PART 08 -->
-{% if cases %}
-<div class="section">
-  <div class="part-label">PART 08</div>
-  <div class="section-title">关键 Case 复盘 · 三层分析</div>
-  <div class="section-lead" style="margin-bottom:20px">
-    每个关键时刻都包含：<strong>时间戳 + 原话</strong> → 三层分析（表层做法 / 深层问题 / 正确做法）。点击 <span style="display:inline-flex;align-items:center;gap:4px;padding:1px 8px;background:rgba(39,174,96,.1);border-radius:3px;font-size:12px;color:var(--green)">▶ 0:01:34</span> 跳转录音。
-  </div>
-
-  {% for c in cases %}
-  {% set kind = c.kind or 'miss' %}
-  {% set cc_class = 'cc-good' if kind == 'good' else 'cc-miss' %}
-  {% set badge_kind = 'good' if kind == 'good' else 'miss' %}
-  {% set badge_txt = '做到' if kind == 'good' else ('做错' if kind == 'bad' else '遗漏') %}
-  {% set ts_class = 'ts-bad' if kind == 'bad' else ('ts-miss' if kind == 'miss' else '') %}
-  <div class="case-card {{ cc_class }}">
-    <div class="case-head">
-      <div class="case-num {% if kind == 'good' %}cna{% else %}cn{{ ((loop.index - 1) % 5) + 1 }}{% endif %}" style="font-size:{{ 14 if kind=='good' else 18 }}px">{{ '✓' if kind == 'good' else loop.index }}</div>
-      <div>
-        <div class="case-head-title">{{ c.title }} <span class="case-badge {{ badge_kind }}">{{ badge_txt }}</span></div>
-        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          {% if c.timestamp_seconds is not none %}
-          <button class="ts-btn {{ ts_class }}" onclick="seekAudio({{ c.timestamp_seconds or 0 }}, {{ (c.segment or 1) - 1 }})" title="跳转录音">▶ {{ c.timestamp_label or '' }}</button>
-          {% endif %}
-          {% if c.quote %}<span style="color:var({{ '--red' if kind=='bad' else ('--orange' if kind=='miss' else '--text-mute') }});font-style:italic">"{{ c.quote }}"</span>{% endif %}
-        </div>
-      </div>
-    </div>
-    <div class="case-body-3">
-      <div class="case-col surface">
-        <div class="clbl">{{ '表层做法' if kind=='good' else '表层问题' }}</div>
-        <div class="ctxt">{{ c.surface|md_inline|safe }}</div>
-      </div>
-      <div class="case-col keep">
-        <div class="clbl">{{ '值得保留' if kind=='good' else '深层问题' }}</div>
-        <div class="ctxt">{{ c.deep|md_inline|safe }}</div>
-      </div>
-      <div class="case-col improve">
-        <div class="clbl">{{ '可优化方向' if kind=='good' else '正确做法' }}</div>
-        <div class="ctxt">{{ c.improve|md_inline|safe }}</div>
-      </div>
-    </div>
-  </div>
-  {% endfor %}
-
-  {% if report.cases_summary %}
-  <div class="case-summary">
-    <div style="font-size:11px;letter-spacing:.12em;color:rgba(255,255,255,.5);margin-bottom:8px;text-transform:uppercase">一句话总结整个 Case</div>
-    {{ report.cases_summary|md_inline|safe }}
-  </div>
-  {% endif %}
-</div>
-{% endif %}
-
-<!-- PART 09 -->
 {% if ns %}
 <div class="section">
-  <div class="part-label">PART 09</div>
+  <div class="part-label">PART 08</div>
   <div class="section-title">下一步动作 · 回店规划</div>
 
   <div class="next-grid">
@@ -542,7 +540,8 @@
   {% if ns.pain_entry_scripts %}
   <div style="margin-top:20px">
     <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">痛点切入四步话术</div>
-    <table class="strategy-tbl">
+    <!-- Desktop table -->
+    <table class="strategy-tbl hide-on-mobile">
       <thead>
         <tr>
           <th style="width:120px">痛点</th>
@@ -564,28 +563,41 @@
         {% endfor %}
       </tbody>
     </table>
+    <!-- Mobile cards -->
+    <div class="show-on-mobile">
+      {% for p in ns.pain_entry_scripts %}
+      <div class="m-card">
+        <div class="m-card-head">{{ p.pain_name }}</div>
+        <div class="m-card-row"><span class="m-card-label">① 切入</span><span class="m-card-val"><em>{{ p.entry }}</em></span></div>
+        <div class="m-card-row"><span class="m-card-label">② 原理</span><span class="m-card-val">{{ p.principle }}</span></div>
+        <div class="m-card-row"><span class="m-card-label">③ 方向</span><span class="m-card-val">{{ p.direction }}</span></div>
+        <div class="m-card-row"><span class="m-card-label">④ 销售衔接</span><span class="m-card-val">{{ p.sales_link }}</span></div>
+      </div>
+      {% endfor %}
+    </div>
   </div>
   {% endif %}
 </div>
 {% endif %}
 
-{# ── PART 10 外部信号 ── #}
+{# ── PART 09 外部信号 ── #}
 {% set ext = report.external_signals %}
 {% if ext and (ext.medical_aesthetics or ext.other_institutions or ext.lifestyle_habits or ext.self_care or ext.external_brands) %}
 <div class="section">
-  <div class="part-label">PART 10</div>
+  <div class="part-label">PART 09</div>
   <div class="section-title">外部信号 · 顾客生态画像</div>
   <div class="section-lead">顾客在录音里主动透露的医美/品牌/生活习惯等线索，用于后续个性化沟通</div>
-  <table class="tbl">
+  {% set cats = [
+    ('医美经历', ext.medical_aesthetics),
+    ('其它机构', ext.other_institutions),
+    ('生活习惯', ext.lifestyle_habits),
+    ('居家护理', ext.self_care),
+    ('外部品牌', ext.external_brands)
+  ] %}
+  <!-- Desktop table -->
+  <table class="tbl hide-on-mobile">
     <thead><tr><th style="width:130px">类别</th><th style="width:40%">提及</th><th>对销售的洞察</th></tr></thead>
     <tbody>
-      {% set cats = [
-        ('医美经历', ext.medical_aesthetics),
-        ('其它机构', ext.other_institutions),
-        ('生活习惯', ext.lifestyle_habits),
-        ('居家护理', ext.self_care),
-        ('外部品牌', ext.external_brands)
-      ] %}
       {% for label, rows in cats %}{% for r in rows or [] %}
       <tr>
         <td class="td-label">{% if loop.first %}{{ label }}{% endif %}</td>
@@ -595,14 +607,24 @@
       {% endfor %}{% endfor %}
     </tbody>
   </table>
+  <!-- Mobile cards -->
+  <div class="show-on-mobile">
+    {% for label, rows in cats %}{% for r in rows or [] %}
+    <div class="m-card">
+      <div class="m-card-head">{{ label }}</div>
+      <div class="m-card-row"><span class="m-card-label">提及</span><span class="m-card-val td-signal">{{ r.item }}</span></div>
+      <div class="m-card-row"><span class="m-card-label">洞察</span><span class="m-card-val td-interp">{{ r.insight }}</span></div>
+    </div>
+    {% endfor %}{% endfor %}
+  </div>
 </div>
 {% endif %}
 
-{# ── PART 11 成交诊断 ── #}
+{# ── PART 10 成交诊断 ── #}
 {% set diag = report.deal_diagnosis %}
 {% if diag and diag.dimensions %}
 <div class="section">
-  <div class="part-label">PART 11</div>
+  <div class="part-label">PART 10</div>
   <div class="section-title">成交诊断 · 5 维度判断</div>
   {% set dim_labels = {
     'customer_moved':    '顾客被打动',
@@ -613,7 +635,8 @@
   } %}
   {% set status_class = {'ok':'good','partial':'warn','missing':'bad'} %}
   {% set status_label = {'ok':'到位','partial':'部分','missing':'缺失'} %}
-  <table class="ov-tbl">
+  <!-- Desktop table -->
+  <table class="ov-tbl hide-on-mobile">
     <thead class="ov-head"><tr><th style="width:130px">维度</th><th style="width:80px">判断</th><th>依据</th></tr></thead>
     <tbody>
       {% for k, label in dim_labels.items() %}
@@ -628,6 +651,19 @@
       {% endfor %}
     </tbody>
   </table>
+  <!-- Mobile cards -->
+  <div class="show-on-mobile">
+    {% for k, label in dim_labels.items() %}
+    {% set dv = diag.dimensions[k] %}
+    {% if dv %}
+    <div class="m-card">
+      <div class="m-card-head">{{ label }}</div>
+      <div class="m-card-row"><span class="m-card-label">判断</span><span class="m-card-val"><span class="ov-tag {{ status_class.get(dv.status, 'warn') }}">{{ status_label.get(dv.status, dv.status) }}</span></span></div>
+      <div class="m-card-row"><span class="m-card-label">依据</span><span class="m-card-val">{{ dv.note }}</span></div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
   {% if diag.risk_alert %}
   <div class="box box-red" style="margin-top:16px"><strong>⚠️ 差评/流失风险预警：</strong>{{ diag.risk_text|md_inline|safe }}</div>
   {% endif %}
@@ -682,33 +718,110 @@ function toggleSub(el) {
   detail.classList.toggle('open');
 }
 
-function switchSeg() {
-  const sel = document.getElementById('segSelect');
-  const idx = parseInt(sel.value, 10) || 0;
-  const r = RECORDINGS[idx];
-  if (!r) return;
-  const audio = document.getElementById('audioPlayer');
-  audio.src = r.audio_url;
-  audio.load();
-  const body = document.getElementById('transcriptBody');
-  body.textContent = r.asr_transcript || '（暂无转录文本）';
+// ── 录音面板：toggle / 切段（按需签名）/ 时间戳跳转 ──
+let _currentSegIdx = -1;
+
+function toggleRec() {
+  const panel = document.getElementById('recPanel');
+  if (!panel) return;
+  panel.classList.toggle('open');
+  // 首次打开：自动加载第一段（按需签名）
+  if (panel.classList.contains('open') && _currentSegIdx < 0 && RECORDINGS.length > 0) {
+    switchSeg(0);
+  }
 }
 
-function seekAudio(seconds, segIdx) {
-  segIdx = segIdx || 0;
+// 防止 race condition：只让最后一次切段的结果生效
+let _segReqSeq = 0;
+
+// 按需向后端请求签名 URL（不再依赖页面加载时的预签名）
+async function switchSeg(idx) {
+  idx = parseInt(idx, 10);
+  const rec = RECORDINGS[idx];
+  if (!rec) return;
+  const myReq = ++_segReqSeq;
+  const audio = document.getElementById('recAudio');
+  const src = document.getElementById('recAudioSrc');
+  const tbody = document.getElementById('recTranscriptBody');
   const sel = document.getElementById('segSelect');
-  if (sel && parseInt(sel.value, 10) !== segIdx) {
-    sel.value = String(segIdx);
-    switchSeg();
-  }
-  const panel = document.getElementById('recPanel');
-  if (panel) panel.classList.add('open');
-  const audio = document.getElementById('audioPlayer');
-  if (audio) {
-    audio.currentTime = seconds;
-    audio.play().catch(()=>{});
+  if (sel && parseInt(sel.value, 10) !== idx) sel.value = String(idx);
+  if (tbody) tbody.innerHTML = (rec.asr_transcript || '（暂无转录文本）').replace(/\n/g, '<br>');
+  // 立即停止当前播放并清空，避免上一段继续响
+  try { audio.pause(); } catch (_) {}
+  const wasPlaying = !audio.paused && _currentSegIdx >= 0 && _currentSegIdx !== idx;
+  const prevSeg = _currentSegIdx;
+  _currentSegIdx = idx;
+  try {
+    const resp = await fetch(`${BASE}/api/recording/${rec.id}/url`, { credentials: 'same-origin' });
+    const data = await resp.json();
+    if (myReq !== _segReqSeq) return;  // 已被更新的请求覆盖，丢弃
+    if (!data.url) throw new Error(data.error || '获取播放链接失败');
+    src.src = data.url;
+    audio.src = data.url;  // 双保险：部分浏览器 source.src 不触发 reload
+    audio.load();
+    // 用户主动切段（不是初次自动打开）则继续自动播放，避免还要再点一次
+    if (prevSeg >= 0 && prevSeg !== idx) {
+      audio.play().catch(function(){});
+    }
+  } catch (e) {
+    if (myReq !== _segReqSeq) return;
+    src.src = '';
+    audio.removeAttribute('src');
+    audio.load();
+    alert('加载录音失败：' + e.message);
   }
 }
+
+// 点外部关闭面板
+document.addEventListener('click', function(e) {
+  const panel = document.getElementById('recPanel');
+  const btn = document.querySelector('.nav-right .rec-btn[onclick*="toggleRec"]');
+  if (panel && panel.classList.contains('open') &&
+      !panel.contains(e.target) && (!btn || !btn.contains(e.target))) {
+    panel.classList.remove('open');
+  }
+});
+
+// Case 时间戳跳转：seekAudio(seconds, segIdx)
+async function seekAudio(seconds, segIdx) {
+  segIdx = segIdx || 0;
+  const panel = document.getElementById('recPanel');
+  if (panel) panel.classList.add('open');
+  await switchSeg(segIdx);
+  const audio = document.getElementById('recAudio');
+  if (!audio) return;
+  function doSeek() {
+    audio.currentTime = seconds;
+    audio.play().catch(function(){});
+  }
+  if (audio.readyState >= 1) doSeek();
+  else audio.addEventListener('loadedmetadata', doSeek, { once: true });
+}
+
+// ── Case 卡片：展开/收起三层分析 ──
+function toggleCase(btn) {
+  const card = btn.closest('.case-card');
+  const body = card.querySelector('.case-body-3');
+  if (!body) return;
+  const expanded = body.style.display !== 'none';
+  body.style.display = expanded ? 'none' : '';
+  btn.textContent = expanded ? '查看详情 ▾' : '收起 ▴';
+  btn.classList.toggle('open', !expanded);
+}
+
+// ── 质检评分展开/收起 ──
+function toggleScoring() {
+  const detail = document.getElementById('scoring-detail');
+  const btn = document.getElementById('scoring-toggle-btn');
+  if (detail.style.display === 'none') {
+    detail.style.display = '';
+    btn.textContent = '收起详细评分 ▴';
+  } else {
+    detail.style.display = 'none';
+    btn.textContent = '查看详细评分 ▾';
+  }
+}
+
 
 function submitComment() {
   const input = document.getElementById('bossInput');
@@ -767,19 +880,7 @@ function reanalyze() {
   });
 }
 
-document.addEventListener('click', function(e) {
-  const panel = document.getElementById('recPanel');
-  const btn = document.querySelector('.rec-btn');
-  if (panel && !panel.contains(e.target) && btn && !btn.contains(e.target)) {
-    panel.classList.remove('open');
-  }
-});
-
-// 初始化录音第一段的转录文本
-if (RECORDINGS.length) {
-  const body = document.getElementById('transcriptBody');
-  if (body) body.textContent = RECORDINGS[0].asr_transcript || '（暂无转录文本）';
-}
+// 初始化：transcriptBody 已在 Jinja 里直接填入第一段内容，无需 JS 初始化
 
 // 分析进行中/排队时，每 3s 轮询并更新进度文本
 {% if sess.display_status in ('running', 'queued') %}

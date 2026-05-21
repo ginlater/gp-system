@@ -2212,14 +2212,7 @@ def session_detail(sid):
         FROM recordings WHERE session_id=?
         ORDER BY COALESCE(recorded_at, ''), id
     """, (sid,))
-    recordings = []
-    for r in recs:
-        d = dict(r)
-        try:
-            d["audio_url"] = oss_signed_url(r["oss_key"], expires=7200)
-        except Exception:
-            d["audio_url"] = ""
-        recordings.append(d)
+    recordings = [dict(r) for r in recs]
     evals = [dict(e) for e in db_fetchall(
         "SELECT * FROM evaluations WHERE session_id=? ORDER BY id DESC", (sid,)
     )]
@@ -2231,14 +2224,18 @@ def session_detail(sid):
         sess_d.get("analysis_status"), sess_d.get("analysis_progress"),
         bool(sess_d.get("analysis_result")),
     )
-    return render_template(
+    resp = app.make_response(render_template(
         "report.html",
         sess=sess_d,
         recordings=recordings,
         report=report,
         evaluations=evals,
         username=session.get("username"),
-    )
+    ))
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 
 # ============ API ============
@@ -2430,6 +2427,20 @@ def api_upload():
         created.append({"id": rid, "oss_key": oss_key, "session_id": rec["session_id"]})
 
     return jsonify({"created": created})
+
+
+@app.route("/api/recording/<int:rid>/url")
+@login_required
+def api_recording_url(rid):
+    """按需签名：返回新鲜的 OSS 播放 URL，1 小时有效。"""
+    rec = db_fetchone("SELECT oss_key FROM recordings WHERE id=?", (rid,))
+    if not rec or not rec["oss_key"]:
+        return jsonify({"error": "not found"}), 404
+    try:
+        url = oss_signed_url(rec["oss_key"], expires=3600)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"url": url})
 
 
 @app.route("/api/recording/<int:rid>/asr", methods=["POST"])
