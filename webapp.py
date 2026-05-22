@@ -1699,6 +1699,24 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
 }
 
 
+CALL_GROUPS = {
+    1: ["T1", "T2", "T3", "T4"],
+    2: ["T5", "T6", "T7", "T8"],
+    3: ["T9", "T10", "T11"],
+}
+
+
+def expand_to_call_group(task_ids):
+    """把任务列表扩展到各自所在 call 的完整任务组。
+    确保同一个 call 里的任务永远一起跑，不拆开。"""
+    expanded = set(task_ids)
+    for tid in list(task_ids):
+        call_no = TASK_REGISTRY[tid]["call"]
+        for t in CALL_GROUPS[call_no]:
+            expanded.add(t)
+    return list(expanded)
+
+
 # ─── 任务输出验证 ─────────────────────────────────────────
 _NONEMPTY_LIST_KEYS = {
     "customer_tags", "cases", "pain_points",
@@ -1829,13 +1847,78 @@ def _call_anthropic(model, system_prompt, user_prompt, tool=None, max_tokens=160
         tool_choice={"type": "tool", "name": tool["name"]},
         messages=[{"role": "user", "content": user_prompt}],
     )
-    tool_result = next(
-        (blk.input for blk in message.content if getattr(blk, "type", "") == "tool_use"),
-        None,
-    )
-    if not tool_result:
+    tool_blocks = [blk for blk in message.content if getattr(blk, "type", "") == "tool_use"]
+    if not tool_blocks:
         raise RuntimeError(f"Claude 未调用 {tool['name']} 工具")
-    return tool_result
+    # 合并所有 tool_use block（正常只有 1 个，防御多个）
+    merged = {}
+    for blk in tool_blocks:
+        if isinstance(blk.input, dict):
+            merged.update(blk.input)
+    return merged
+
+
+def _parse_tool_calls_arguments(tool_calls) -> dict:
+    """把 DeepSeek 返回的 tool_calls 列表合并成一个 dict。
+
+    兼容两种情况：
+    1. 多个 tool_call，每个 arguments 是完整 JSON object → 遍历全部，逐个 merge
+    2. 某个 arguments 字符串里被拼了多个 JSON object（{...}{...}）→ raw_decode 循环解析
+
+    合并规则：
+    - 不同 key 直接加入
+    - 同 key 都是 dict → 递归 merge
+    - 同 key 冲突 → 后面覆盖前面，打 warning
+    - 解析结果不是 dict → 打 warning，跳过，不让整体失败
+    """
+    def _merge(base: dict, patch: dict) -> dict:
+        for k, v in patch.items():
+            if k in base:
+                if isinstance(base[k], dict) and isinstance(v, dict):
+                    base[k] = _merge(base[k], v)
+                else:
+                    print(f"[parse_tool_calls] key 冲突，覆盖: {k}")
+                    base[k] = v
+            else:
+                base[k] = v
+        return base
+
+    def _raw_decode_all(s: str) -> list:
+        """从字符串里循环解析出所有 JSON object，兼容 {...}{...} 拼接情况。"""
+        decoder = json.JSONDecoder()
+        results = []
+        idx = 0
+        s = s.strip()
+        while idx < len(s):
+            # 跳过空白
+            while idx < len(s) and s[idx] in " \t\n\r":
+                idx += 1
+            if idx >= len(s):
+                break
+            try:
+                obj, end_idx = decoder.raw_decode(s, idx)
+                results.append(obj)
+                idx = end_idx
+            except json.JSONDecodeError as e:
+                print(f"[parse_tool_calls] raw_decode 失败 at {idx}: {e}")
+                break
+        return results
+
+    print(f"[parse_tool_calls] tool_calls 数量: {len(tool_calls)}")
+    merged = {}
+    for i, tc in enumerate(tool_calls):
+        args_str = tc.get("function", {}).get("arguments", "")
+        print(f"[parse_tool_calls] tool_call[{i}] arguments 长度: {len(args_str)}")
+        objs = _raw_decode_all(args_str)
+        for obj in objs:
+            if not isinstance(obj, dict):
+                print(f"[parse_tool_calls] tool_call[{i}] 解析结果不是 dict，跳过: {type(obj)}")
+                continue
+            print(f"[parse_tool_calls] tool_call[{i}] 解析出 keys: {list(obj.keys())}")
+            merged = _merge(merged, obj)
+
+    print(f"[parse_tool_calls] merge 后最终 keys: {list(merged.keys())}")
+    return merged
 
 
 def _deep_json_unwrap(node):
@@ -1855,7 +1938,7 @@ def _deep_json_unwrap(node):
     return node
 
 
-def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None):
+def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None, enable_thinking=False):
     """调用 DeepSeek（OpenAI 兼容），不走代理，返回 tool_calls[0].function.arguments dict。
 
     max_tokens 语义是"输出 token 预算"；对 V4 思考模式会在内部加 16K thinking buffer。
@@ -1893,18 +1976,17 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
         "max_tokens": out_budget,
         "temperature": 0.3,
     }
-    # V4 系列开启深度思考（reasoning_effort + thinking），按官方示例
-    if is_v4:
+    # V4 thinking 模式：只在显式开启时启用（默认关闭，避免 token 截断）
+    if is_v4 and enable_thinking:
         payload["reasoning_effort"] = "high"
         payload["thinking"] = {"type": "enabled"}
-        # V4 的 thinking token 计入 max_tokens：给思考预留 24K buffer
-        # （实测复杂 schema 时思考会吃 15-22K，预留 24K 留余量）
+        # thinking token 计入 max_tokens，预留 24K buffer
         payload["max_tokens"] = max(out_budget + 24000, 28000)
     # trust_env=False 关键：服务器有 http_proxy=7890，DeepSeek 不能走代理
-    # 深度思考耗时较长，read timeout 上调到 20 分钟
     with httpx.Client(
         trust_env=False,
-        timeout=httpx.Timeout(connect=15.0, read=1200.0, write=60.0, pool=15.0),
+        # thinking 开启时耗时长（~20min），关闭时普通超时即可
+        timeout=httpx.Timeout(connect=15.0, read=(1200.0 if enable_thinking else 600.0), write=60.0, pool=15.0),
     ) as client:
         resp = client.post(
             f"{DEEPSEEK_API_BASE.rstrip('/')}/chat/completions",
@@ -1916,14 +1998,21 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
         )
     if resp.status_code != 200:
         raise RuntimeError(f"DeepSeek HTTP {resp.status_code}: {resp.text[:500]}")
-    data = resp.json()
+    try:
+        data = resp.json()
+    except Exception as json_err:
+        raise RuntimeError(
+            f"DeepSeek 响应不是合法 JSON: {json_err}; "
+            f"HTTP {resp.status_code}; body_head={resp.text[:300]}"
+        )
     try:
         msg = data["choices"][0]["message"]
         tool_calls = msg.get("tool_calls") or []
         if not tool_calls:
             raise RuntimeError(f"DeepSeek 未返回 tool_calls；content={msg.get('content','')[:200]}")
-        args_str = tool_calls[0]["function"]["arguments"]
-        result = json.loads(args_str)
+        result = _parse_tool_calls_arguments(tool_calls)
+        if not result:
+            raise RuntimeError("DeepSeek tool_calls 解析后为空 dict")
         return _deep_json_unwrap(result)
     except (KeyError, IndexError, json.JSONDecodeError) as e:
         # 出错时把 finish_reason 显式带出来，方便判断是否是 length 截断
@@ -1938,7 +2027,7 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
         )
 
 
-def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None):
+def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None, enable_thinking=False):
     """统一入口：根据 model 的 provider 调 Claude 或 DeepSeek。"""
     provider = MODEL_PROVIDER.get(model)
     if provider == "anthropic":
@@ -1946,12 +2035,68 @@ def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None):
                                 max_tokens=max_tokens or 16000)
     if provider == "deepseek":
         return _call_deepseek(model, system_prompt, user_prompt, tool=tool,
-                              max_tokens=max_tokens)
+                              max_tokens=max_tokens, enable_thinking=enable_thinking)
     raise RuntimeError(f"未知 provider for model {model}")
 
 
 def _set_progress(session_id, msg):
     db_write("UPDATE sessions SET analysis_progress=? WHERE id=?", (msg, session_id))
+
+
+# ─── 任务状态管理 ─────────────────────────────────────────
+# task_status 字段是一个 JSON：{"T1":{"status":"done","updated_at":"...","error":null}, ...}
+# 单任务级别记录状态，独立于 analysis_status（session 总状态）
+
+def get_task_status(session_id):
+    """读取 task_status JSON。返回 dict（无数据则返回 {}）。"""
+    row = db_fetchone("SELECT task_status FROM sessions WHERE id=?", (session_id,))
+    if not row or not row["task_status"]:
+        return {}
+    try:
+        return json.loads(row["task_status"])
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
+def set_task_status(session_id, task_id, status, error=None):
+    """更新单个任务状态。status: pending / running / done / failed / missing。"""
+    ts = get_task_status(session_id)
+    ts[task_id] = {
+        "status": status,
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "error": (error[:300] if error else None),
+    }
+    db_write(
+        "UPDATE sessions SET task_status=? WHERE id=?",
+        (json.dumps(ts, ensure_ascii=False), session_id),
+    )
+
+
+def save_task_result(session_id, task_id, result):
+    """把任务输出合并写入 analysis_result JSON 的对应字段。
+    仅更新该任务声明的 result_keys，不动其它字段。"""
+    row = db_fetchone("SELECT analysis_result FROM sessions WHERE id=?", (session_id,))
+    try:
+        cur = json.loads(row["analysis_result"]) if row and row["analysis_result"] else {}
+    except (json.JSONDecodeError, TypeError):
+        cur = {}
+
+    task = TASK_REGISTRY[task_id]
+    for key in task["result_keys"]:
+        if key in result:
+            cur[key] = result[key]
+
+    db_write(
+        "UPDATE sessions SET analysis_result=? WHERE id=?",
+        (json.dumps(cur, ensure_ascii=False), session_id),
+    )
+
+
+def get_missing_tasks(session_id):
+    """返回未完成（status != 'done'）的任务 id 列表，按 TASK_REGISTRY 顺序。"""
+    ts = get_task_status(session_id)
+    return [tid for tid in TASK_REGISTRY.keys()
+            if ts.get(tid, {}).get("status") != "done"]
 
 
 def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
@@ -2002,11 +2147,15 @@ def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
             conn.close()
 
 
-def run_session_analysis(session_id, signature, model=None):
-    """整段接诊（多录音拼接）→ 三次 LLM tool_use 拆分 → 合并存库。
+def run_session_analysis(session_id, signature, model=None, only_tasks=None,
+                         enable_thinking=False, result_col="analysis_result",
+                         task_status_col="task_status"):
+    """整段接诊（多录音拼接）→ 三次 LLM tool_use 拆分 → 任务独立存盘。
 
-    调用1（顾客理解）+ 调用2（接诊评判）并行，调用3（综合输出）串行在后。
-    model: 模型 id（见 SUPPORTED_MODELS）；为 None 则用 DEFAULT_MODEL。
+    only_tasks: 指定只跑这些任务 id；None 表示全部。
+    enable_thinking: 是否开启 DeepSeek V4 thinking 模式（默认关）。
+    result_col: 结果写入的列名（保留为参数以便测试覆写，正式只用 analysis_result）。
+    task_status_col: 任务状态写入的列名。
     """
     import time as _t
     import concurrent.futures
@@ -2055,6 +2204,14 @@ def run_session_analysis(session_id, signature, model=None):
     customer_name = sess["customer"] or "未知顾客"
     advisor_name = sess["advisor"] or "未知顾问"
 
+    # 决定要跑哪些任务
+    target_tasks = list(TASK_REGISTRY.keys()) if only_tasks is None else only_tasks
+
+    # 按 call 分组
+    by_call = {1: [], 2: [], 3: []}
+    for tid in target_tasks:
+        by_call[TASK_REGISTRY[tid]["call"]].append(tid)
+
     # ── 心跳：实时进度反馈 ────────────────────────────
     stop_heartbeat = threading.Event()
     stage_label = {"v": "调用 1+2（并行）"}
@@ -2070,263 +2227,256 @@ def run_session_analysis(session_id, signature, model=None):
 
     threading.Thread(target=_heartbeat, daemon=True).start()
 
-    try:
-        _set_progress(session_id, "加载知识库…")
-        kb_text = build_kb_brief()
+    def build_subset_tool(call_no, schema_keys):
+        """从聚合 schema 抽取指定字段组成子集工具"""
+        full_tool = {1: TOOL_CALL1, 2: TOOL_CALL2, 3: TOOL_CALL3}[call_no]
+        full_props = full_tool["input_schema"]["properties"]
+        full_required = full_tool["input_schema"].get("required", [])
+        sub_props = {k: full_props[k] for k in schema_keys if k in full_props}
+        sub_required = [k for k in full_required if k in sub_props]
+        return {
+            "name": full_tool["name"],
+            "description": full_tool["description"],
+            "input_schema": {
+                "type": "object",
+                "required": sub_required,
+                "properties": sub_props,
+            },
+        }
 
-        # ── 调用1 user_prompt：仅录音 ──
-        user_prompt_1 = f"""顾客姓名：{customer_name}
-顾问姓名：{advisor_name}
-服务日期：{sess['service_date'] or '未知'}
-录音段数：{len(recs)} 段
+    def _ts_get():
+        row = db_fetchone(f"SELECT {task_status_col} FROM sessions WHERE id=?", (session_id,))
+        if not row or not row[task_status_col]:
+            return {}
+        try:
+            return json.loads(row[task_status_col])
+        except (json.JSONDecodeError, TypeError):
+            return {}
 
-### 接诊录音
-{full_transcript}
+    # 并行调用（call1+call2、call3 拆 T9 / T10+T11）时，多线程对同一 JSON 列
+    # 做 read-modify-write 会丢更新；用 session 内锁串行化
+    _save_lock = threading.Lock()
 
----
-请完成以下 4 个任务，调用 submit_call1 提交：
+    def _ts_set(task_id, status, error=None):
+        with _save_lock:
+            ts = _ts_get()
+            ts[task_id] = {
+                "status": status,
+                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "error": (error[:300] if error else None),
+            }
+            db_write(f"UPDATE sessions SET {task_status_col}=? WHERE id=?",
+                     (json.dumps(ts, ensure_ascii=False), session_id))
 
-【任务1】顾客真实画像
-从顾客发言中提取 5 条以上"对话信号→解读"（填入 persona.signals）。
-**persona.summary 字段必填**（不能省略！），写一句尖锐的综合判断：消费类型（主动/被动） + 决策驱动力（专业信任/价格/情感） + 当前状态评估。例如："被动决策型——给了三个痛点信号没有一个被顾问接住，处于'惯性回头客'状态，随时可能沉默流失。"
+    def _result_save(task_id, result):
+        with _save_lock:
+            row = db_fetchone(f"SELECT {result_col} FROM sessions WHERE id=?", (session_id,))
+            try:
+                cur = json.loads(row[result_col]) if row and row[result_col] else {}
+            except (json.JSONDecodeError, TypeError):
+                cur = {}
+            for key in TASK_REGISTRY[task_id]["result_keys"]:
+                if key in result:
+                    cur[key] = result[key]
+            db_write(f"UPDATE sessions SET {result_col}=? WHERE id=?",
+                     (json.dumps(cur, ensure_ascii=False), session_id))
 
-【任务2】可攻破痛点 + 完整作战方案
-从录音中识别 2-4 个可攻破痛点，三种 badge 尽量都覆盖：最强突破口 / 最佳情感连接点 / 最高价值突破口。
-每个痛点的四步话术（label 严格枚举）：
-  第一步 建立专业诊断感：说出顾客不知道的专业判断
-  第二步 放大连锁影响：这个问题不解决会引发什么
-  第三步 说出为什么之前没解决：区分我们和之前的方法
-  第四步 给系统方案 + 预期：几次、多久、什么效果
-每步 body 必须含"{customer_name}"，30-60 字。
+    def run_one_call(call_no, tids):
+        """执行一次 LLM 调用，覆盖 tids 中的所有任务，逐任务验证存盘"""
+        if not tids:
+            return
 
-【任务3】竞品提取 + 顾客标签（重要：竞品不要漏！）
+        system_prompt = {
+            1: SYSTEM_PROMPT_CALL1,
+            2: SYSTEM_PROMPT_CALL2,
+            3: SYSTEM_PROMPT_CALL3,
+        }[call_no]
 
-竞品定义：所有不是身美自家的、属于美容护肤/医美/养生**同行业**的外部品牌、项目、仪器、机构都是竞品。
-非同行业的（如大众点评、外卖、银行、餐厅、电商、社交平台等）不算竞品，不要提取。
-在同行业范围内，穷尽列出顾客在录音里提到的每一个，哪怕只是顺带一提也要列出来。
+        # 拼输入数据
+        if call_no == 1:
+            input_section = (
+                f"录音段数：{len(recs)} 段\n\n### 接诊录音\n{full_transcript}"
+            )
+        elif call_no == 2:
+            kb_text = build_kb_brief()
+            input_section = (
+                f"### 接诊录音\n{full_transcript}\n\n"
+                f"### 判断知识库（参考用，输出不带 L 编号；共 {len(load_kb())} 条）\n{kb_text}"
+            )
+        else:
+            row = db_fetchone(
+                f"SELECT {result_col} FROM sessions WHERE id=?", (session_id,))
+            try:
+                prev = json.loads(row[result_col]) if row and row[result_col] else {}
+            except (json.JSONDecodeError, TypeError):
+                prev = {}
+            # 检查依赖，把缺依赖的任务标 failed，其余正常继续
+            dep_failed = set()
+            for tid in list(tids):
+                for dep in TASK_REGISTRY[tid]["depends_on"]:
+                    for k in TASK_REGISTRY[dep]["result_keys"]:
+                        if k not in prev or not prev[k]:
+                            _ts_set(tid, "failed", error=f"依赖 {dep}（{k}）未完成")
+                            dep_failed.add(tid)
+                            break
+            tids = [tid for tid in tids if tid not in dep_failed]
+            if not tids:
+                return
+            c1_summary, c2_summary = build_call_summaries(prev, prev)
+            input_section = (
+                f"### 顾客理解结果摘要\n{c1_summary}\n\n"
+                f"### 接诊评判结果摘要\n{c2_summary}"
+            )
 
-竞品分三类提取：
-1. medical_aesthetics：别家医美项目（打针/激光/疗法/手术）
-2. other_institutions：别家美容院/医美机构/养生机构
-3. external_brands：别家护肤品牌/仪器品牌/产品名
+        # 拼任务说明 + 收集 schema_keys
+        task_prompts = []
+        all_schema_keys = []
+        for tid in tids:
+            t = TASK_REGISTRY[tid]
+            task_prompts.append(t["prompt_snippet"].format(customer_name=customer_name))
+            all_schema_keys.extend(t["schema_keys"])
 
-每条竞品必须包含：
-- item：竞品名（原词，如"活细胞""英诺""伊莱姿"）
-- type：竞品类型（医美项目/医美机构/护肤品牌/仪器品牌/养生机构）
-- customer_quote：顾客提到时的原话片段（10-20 字）
-- competitor_learn：顾问售后应了解什么（20 字以内，只说要学什么，不给具体应对方案）
-
-生活习惯和自我护理（不是竞品）单独提取：
-4. lifestyle_habits：生活习惯（熬夜/晒太阳/久坐/压力/饮食）
-5. self_care：自我护理（护肤品/运动/保健品/泡澡等自己做的事）
-这两类每条只需要：item + customer_tag（10 字以内的顾客标签）
-
-最后生成 customer_tags 数组（外层，不在 external_signals 里）：
-把顾客在录音里体现的所有特征提炼成标签（10 字以内），
-包括消费类型、生活习惯、身体状况、心理特征、品牌偏好，
-至少 3 个，越完整越好。
-
-特别强调：同行业范围内宁可多列竞品不要漏列，哪怕顾客只说了一次也要提取；非美容护肤医美行业的东西不要提取。
-
-【任务4】成交诊断 + 风险预警
-判断 5 维度（status 取 ok/partial/missing，note 引用原话）：
-customer_moved / customer_agreed / effect_satisfied / price_matched / urgency_built
-
-同时判断：
-- deal_amount：从录音里识别成交金额（如"6800元"），完全识别不到就填"未识别"
-- risk_level 按以下规则判断：
-  · 未成交 且 心动/认同/效果满意 三条都不是 ok → "high"
-  · 未成交 但 三条里有至少一条 partial → "medium"
-  · 已成交 → "low"
-
-规则：deal_result=false 且前三项都不是 ok → risk_alert=true，risk_text 写明风险点。
-"""
-
-        # ── 调用2 user_prompt：录音 + 知识库 ──
-        user_prompt_2 = f"""顾客姓名：{customer_name}
-顾问姓名：{advisor_name}
-服务日期：{sess['service_date'] or '未知'}
-
-### 接诊录音
-{full_transcript}
-
-### 判断知识库（参考用，输出不带 L 编号；共 {len(load_kb())} 条）
-{kb_text}
-
----
-请完成以下 3 个任务，调用 submit_call2 提交：
-
-【任务1】质检评分 · 三大接诊阶段
-综合评分 0-10，必须有区分度（差 2-3 分，一般 4-5 分，好 7-8 分，很好 9 分）。
-按以下固定子项评分，detail 只写一句本次事实（不写定义不写建议，20-40 字）：
-
-壹 一咨找需求：
-  1.1 档案掌握与破冰
-  1.2 快速找到痛点
-  1.3 做检测
-  1.4 解决原理和方向（不提项目）
-  1.5 解决方案
-
-贰 确认加大意愿：
-  2.1 重述痛点原理
-  2.2 客人做对比效果感受（图片/动作/拉筋/拍照）
-  2.3 提供情绪价值
-
-叁 成交阶段：
-  3.1 效果确认
-  3.2 顾客当下结论评估
-  3.3 本店解决方向和方案
-  3.4 报价（提到价格即算触发）
-  3.5 异议处理
-  3.6 好评 + 返邀约
-
-【任务2】关键 Case 复盘
-5-8 条，按时间顺序，good / miss / bad 都有。每条 kind / title / quote（「」15 字内）/ segment / timestamp_seconds / timestamp_label / surface / deep / improve。
-- deep：这个具体时刻的问题，只说这一句话错在哪，不要上升到整体根因，20-30 字
-- improve 必须含"{customer_name}"的具体话术。
-
-【任务3】接诊失分根因
-注意：不要重复 Case 复盘里已经说过的具体问题，要从所有 case 往上抽象一层，找到背后唯一的思维模式根因（不是某句话的问题，是整体思维缺陷）。
-
-headline（思维模式根因，整体抽象，如"始终在产品维度对话而非问题维度"）+ product_dimension（顾问实际说的 2-3 条）+ problem_dimension（顾客需要听到的，一一对应）+ gap_note（差距本质）。
-
-【任务4】项目后价值收割·黄金窗口标准流程（harvest）
-项目结束后的 10 分钟是成交概率最高的窗口（顾客身体放松、防御最低）。
-基于本次接诊的痛点和顾客状态，给出 3-5 步顾问应执行的标准收割动作。
-
-输出 harvest 对象：
-- intro：导语一句，强调黄金窗口为什么重要（蓝底卡片用）
-- steps：3-5 步，每步：
-  · title：步骤名（建议沿用经典四步——"引导顾客说出效果" / "解释今天效果的原理" / "埋下下次的钩子" / "自然过渡到方案"；可根据本次情况调整顺序或合并）
-  · body：具体话术 + 操作说明，话术部分用「」或斜体，必须含"{customer_name}"
-
-注意：harvest 是给顾问的"下次怎么做"指引，不是复盘本次做了什么。
-如果本次顾问已经做对了某一步，body 里可以肯定一下；如果完全没做就直接给标准动作。
-
-时间戳：录音转录每行 `[Xs - Ys] 说话人N: ...`。第 2 段的 [134s-142s] → segment=2, timestamp_seconds=134, timestamp_label="0:02:14"。
-"""
-
-        prompt12_kchars = (len(user_prompt_1) + len(user_prompt_2)
-                           + len(SYSTEM_PROMPT_CALL1) + len(SYSTEM_PROMPT_CALL2)) // 1000
-        _set_progress(
-            session_id,
-            f"调用 1+2 并行（输入 ~{prompt12_kchars}K 字符），{model} 深度思考中…",
+        tool_name = {1: "submit_call1", 2: "submit_call2", 3: "submit_call3"}[call_no]
+        user_prompt = (
+            f"顾客姓名：{customer_name}\n"
+            f"顾问姓名：{advisor_name}\n"
+            f"服务日期：{sess['service_date'] or '未知'}\n\n"
+            f"{input_section}\n\n"
+            f"---\n请完成以下 {len(tids)} 个任务，调用 {tool_name} 提交：\n\n"
+            + "\n\n".join(task_prompts)
         )
 
-        def _run_call1():
-            try:
-                return _call_llm(model, SYSTEM_PROMPT_CALL1, user_prompt_1,
-                                 tool=TOOL_CALL1, max_tokens=10000)
-            except Exception as e:
-                raise RuntimeError(f"[call1 顾客理解] {e}") from e
+        sub_tool = build_subset_tool(call_no, all_schema_keys)
 
-        def _run_call2():
-            try:
-                return _call_llm(model, SYSTEM_PROMPT_CALL2, user_prompt_2,
-                                 tool=TOOL_CALL2, max_tokens=10000)
-            except Exception as e:
-                raise RuntimeError(f"[call2 接诊评判] {e}") from e
+        for tid in tids:
+            _ts_set(tid, "running")
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            f1 = ex.submit(_run_call1)
-            f2 = ex.submit(_run_call2)
-            call1_result = f1.result()
-            call2_result = f2.result()
-
-        # 调用1完成 → 把顾客标签写入累积表（用于跨次接诊积累画像）
+        # call2 输出最重（质检14子项+Case复盘+根因+收割），给更大预算
+        call_max_tokens = {1: 12000, 2: 16000, 3: 12000}.get(call_no, 12000)
         try:
-            save_customer_tags(session_id, customer_name, advisor_name, call1_result)
-        except Exception as _tag_err:
-            # 标签写入失败不影响主流程
-            print(f"[save_customer_tags] {session_id}: {_tag_err}")
-
-        # ── 调用3：串行，仅用前两次结果摘要，不重传录音 ──
-        stage_label["v"] = "调用 3"
-        _set_progress(session_id, "汇总前两次结果，准备生成总览与下一步…")
-        c1_summary, c2_summary = build_call_summaries(call1_result, call2_result)
-
-        user_prompt_3 = f"""顾客姓名：{customer_name}
-顾问姓名：{advisor_name}
-服务日期：{sess['service_date'] or '未知'}
-
-### 调用1 的分析结果（顾客理解）
-{c1_summary}
-
-### 调用2 的分析结果（接诊评判）
-{c2_summary}
-
----
-请完成以下 3 个任务，调用 submit_call3 提交：
-
-【任务1】PART1 全维度评估总览
-- customer_value：顾客价值评级（tag 简短 + tag_kind + note 一句话引用关键信号）
-- pain_summary：痛点识别（tag 如"3 个核心可攻破点" + items 列每个痛点）
-- sales_diagnosis：销售问题诊断（tag 标签化根因 + note 复用 headline）
-- quality_score：质检评分（score 复用 overall + note 一句话）
-- suggestions：2-4 条可操作建议，指向报告具体内容
-
-【任务2】能力训练路径
-五个阶段固定：破冰 / 需求挖掘 / 产品推荐 / 异议处理 / 项目结束后
-每阶段：stage + issue（本次问题 20 字内）+ skill（需要训练的能力）
-另给：bad_chain（顾问实际思维链，用 → 连接）+ good_chain（正确思维链）+ missing_step（缺失关键一步）
-
-【任务3】下一步动作 · 回店规划
-- return_scripts：至少 2 条回店话术，含"{customer_name}"，以"上次你提到..."开头，50-80 字
-- priority_projects：按成交难度从低到高 2-3 条
-- pain_entry_scripts：针对每个痛点的四步话术（entry 含{customer_name} + principle 30 字 + direction 30 字 + sales_link 20 字）
-- medical_objections：至少 3 条泛医疗异议应答，60-100 字，严格遵循 ①承认医院 → ②分工边界 → ③我们位置 → ④互补不冲突
-"""
-
-        try:
-            call3_result = _call_llm(model, SYSTEM_PROMPT_CALL3, user_prompt_3,
-                                      tool=TOOL_CALL3, max_tokens=10000)
+            result = _call_llm(model, system_prompt, user_prompt,
+                               tool=sub_tool, max_tokens=call_max_tokens,
+                               enable_thinking=enable_thinking)
         except Exception as e:
-            raise RuntimeError(f"[call3 综合输出] {e}") from e
+            for tid in tids:
+                _ts_set(tid, "failed", error=str(e))
+            return
+
+        # 逐任务验证 + 立刻存盘
+        for tid in tids:
+            t = TASK_REGISTRY[tid]
+            sub_result = {k: result.get(k) for k in t["result_keys"] if k in result}
+            ok, reason = validate_task_output(tid, sub_result)
+            if ok:
+                _result_save(tid, sub_result)
+                _ts_set(tid, "done")
+            else:
+                _ts_set(tid, "failed", error=reason)
+
+        # T3 完成 → 写 customer_tags 累积表（只在主列时写，避免重复）
+        if "T3" in tids and result_col == "analysis_result":
+            ts_now = _ts_get()
+            if ts_now.get("T3", {}).get("status") == "done":
+                try:
+                    row = db_fetchone(
+                        f"SELECT {result_col} FROM sessions WHERE id=?", (session_id,))
+                    full = json.loads(row[result_col]) if row else {}
+                    save_customer_tags(session_id, customer_name, advisor_name, full)
+                except Exception as _tag_err:
+                    print(f"[save_customer_tags] {session_id}: {_tag_err}")
+
+    try:
+        call1_tasks = by_call[1]
+        call2_tasks = by_call[2]
+        call3_tasks = by_call[3]
+
+        # 第一波：call1 + call2 并行
+        if call1_tasks or call2_tasks:
+            _set_progress(session_id, "调用 1+2 并行启动…")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+                futures = []
+                if call1_tasks:
+                    futures.append(ex.submit(run_one_call, 1, call1_tasks))
+                if call2_tasks:
+                    futures.append(ex.submit(run_one_call, 2, call2_tasks))
+                for f in futures:
+                    f.result()
+
+        # 第二波：call3 串行（依赖前面结果）
+        if call3_tasks:
+            stage_label["v"] = "调用 3"
+            _set_progress(session_id, "汇总前两次结果，准备生成总览与下一步…")
+            ts_now = _ts_get()
+            valid_call3 = []
+            for tid in call3_tasks:
+                deps = TASK_REGISTRY[tid]["depends_on"]
+                missing_deps = [d for d in deps
+                                if ts_now.get(d, {}).get("status") != "done"]
+                if missing_deps:
+                    _ts_set(tid, "failed", error=f"依赖未完成: {missing_deps}")
+                else:
+                    valid_call3.append(tid)
+            if valid_call3:
+                # 拆成两个子调用并行：T9 单独一组、T10+T11 一组
+                # 原因：DeepSeek V4 tool_call 的 arguments 是字符串化 JSON，三任务合并输出
+                # 容易在 max_tokens 边界被截断，导致 logic_chain / next_steps 整段丢失
+                sub_a = [t for t in valid_call3 if t == "T9"]
+                sub_b = [t for t in valid_call3 if t in ("T10", "T11")]
+                sub_groups = [g for g in (sub_a, sub_b) if g]
+                if len(sub_groups) == 1:
+                    run_one_call(3, sub_groups[0])
+                else:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+                        futs = [ex.submit(run_one_call, 3, g) for g in sub_groups]
+                        for f in futs:
+                            f.result()
 
         stop_heartbeat.set()
-        _set_progress(session_id, "解析返回的结构化报告…")
 
-        # ── 合并三次结果 ──
-        full_report = {
-            # 调用 3
-            "overview":         call3_result.get("overview", {}),
-            "logic_chain":      call3_result.get("logic_chain", {}),
-            "next_steps":       call3_result.get("next_steps", {}),
-            # 调用 1
-            "persona":          call1_result.get("persona", {}),
-            "pain_points":      call1_result.get("pain_points", []),
-            "external_signals": call1_result.get("external_signals", {}),
-            "deal_diagnosis":   call1_result.get("deal_diagnosis", {}),
-            # 调用 2
-            "scoring":          call2_result.get("scoring", {}),
-            "cases":            call2_result.get("cases", []),
-            "cases_summary":    call2_result.get("cases_summary", ""),
-            "root_cause":       call2_result.get("root_cause", {}),
-            "harvest":          call2_result.get("harvest", {}),
-        }
-
-        report_json = json.dumps(full_report, ensure_ascii=False)
-        scoring = full_report["scoring"] or {}
-        scores_summary = {
-            "overall": scoring.get("overall"),
-            "stages": [
-                {"name": st.get("name"), "score": st.get("score")}
-                for st in (scoring.get("stages") or [])
-            ],
-            "good_highlights": scoring.get("good_highlights", []),
-            "bad_highlights":  scoring.get("bad_highlights", []),
-        }
+        # 汇总 session 总状态
+        ts = _ts_get()
+        all_task_ids = list(TASK_REGISTRY.keys())
+        done_count = sum(1 for tid in all_task_ids
+                         if ts.get(tid, {}).get("status") == "done")
+        any_done = done_count > 0
+        final_status = "done" if any_done else "failed"
 
         elapsed = int(_t.time() - t0)
         mm, ss = divmod(elapsed, 60)
         db_write(
-            """UPDATE sessions SET analysis_status='done',
-               analysis_result=?, analysis_scores=?, analysis_signature=?,
-               analysis_model=?, analysis_progress=?,
+            """UPDATE sessions SET analysis_status=?,
+               analysis_signature=?, analysis_model=?,
+               analysis_progress=?,
                analysis_finished_at=datetime('now','localtime') WHERE id=?""",
-            (report_json, json.dumps(scores_summary, ensure_ascii=False), signature,
-             model, f"完成（耗时 {mm}:{ss:02d}）", session_id),
+            (final_status, signature, model,
+             f"完成 {done_count}/{len(all_task_ids)} 任务（耗时 {mm}:{ss:02d}）",
+             session_id),
         )
+
+        # 重新计算 scoring 摘要（只在写主列时更新）
+        if any_done and result_col == "analysis_result":
+            row = db_fetchone(f"SELECT {result_col} FROM sessions WHERE id=?",
+                              (session_id,))
+            try:
+                full = json.loads(row[result_col]) if row else {}
+                scoring = full.get("scoring") or {}
+                if scoring:
+                    scores_summary = {
+                        "overall": scoring.get("overall"),
+                        "stages": [
+                            {"name": st.get("name"), "score": st.get("score")}
+                            for st in (scoring.get("stages") or [])
+                        ],
+                        "good_highlights": scoring.get("good_highlights", []),
+                        "bad_highlights": scoring.get("bad_highlights", []),
+                    }
+                    db_write(
+                        "UPDATE sessions SET analysis_scores=? WHERE id=?",
+                        (json.dumps(scores_summary, ensure_ascii=False), session_id),
+                    )
+            except (json.JSONDecodeError, TypeError):
+                pass
+
     except Exception as e:
         stop_heartbeat.set()
         db_write(
@@ -3030,6 +3180,73 @@ def api_session_evaluation_delete(eid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/session/<int:sid>/tasks")
+@login_required
+def api_session_tasks(sid):
+    """查询所有任务状态"""
+    ts = get_task_status(sid)
+    result = []
+    for tid, meta in TASK_REGISTRY.items():
+        s = ts.get(tid, {})
+        result.append({
+            "task_id": tid,
+            "name": meta["name"],
+            "call": meta["call"],
+            "status": s.get("status", "missing"),
+            "updated_at": s.get("updated_at"),
+            "error": s.get("error"),
+        })
+    return jsonify({"tasks": result})
+
+
+@app.route("/api/session/<int:sid>/task/<task_id>/rerun", methods=["POST"])
+@login_required
+def api_task_rerun(sid, task_id):
+    """单独重跑一个任务"""
+    if task_id not in TASK_REGISTRY:
+        return jsonify({"error": f"未知任务 {task_id}"}), 400
+    sess = db_fetchone("SELECT id FROM sessions WHERE id=?", (sid,))
+    if not sess:
+        return jsonify({"error": "session not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    model = (data.get("model") or "").strip() or DEFAULT_MODEL
+
+    threading.Thread(
+        target=run_session_analysis,
+        args=(sid, compute_session_signature(sid), model),
+        kwargs={"only_tasks": expand_to_call_group([task_id])},
+        daemon=True,
+    ).start()
+
+    return jsonify({"status": "started", "task_id": task_id})
+
+
+@app.route("/api/session/<int:sid>/tasks/fill-missing", methods=["POST"])
+@login_required
+def api_tasks_fill_missing(sid):
+    """补跑所有缺失/失败的任务"""
+    sess = db_fetchone("SELECT id FROM sessions WHERE id=?", (sid,))
+    if not sess:
+        return jsonify({"error": "session not found"}), 404
+
+    missing = get_missing_tasks(sid)
+    if not missing:
+        return jsonify({"status": "all_done", "missing": []})
+
+    data = request.get_json(silent=True) or {}
+    model = (data.get("model") or "").strip() or DEFAULT_MODEL
+
+    threading.Thread(
+        target=run_session_analysis,
+        args=(sid, compute_session_signature(sid), model),
+        kwargs={"only_tasks": expand_to_call_group(missing)},
+        daemon=True,
+    ).start()
+
+    return jsonify({"status": "started", "missing": missing})
+
+
 @app.route("/healthz")
 def healthz():
     return jsonify({"ok": True, "ts": datetime.now().isoformat()})
@@ -3068,6 +3285,102 @@ def startup_kick():
 
 # gunicorn 启动时也触发
 threading.Thread(target=startup_kick, daemon=True).start()
+
+
+def backfill_task_status():
+    """启动时回填：对 task_status 为空但 analysis_result 有数据的旧 session，
+    根据 analysis_result 里已有的字段把对应任务标为 done。"""
+    try:
+        rows = db_fetchall(
+            """SELECT id, analysis_result, task_status FROM sessions
+               WHERE analysis_status='done' AND analysis_result IS NOT NULL"""
+        )
+        count = 0
+        for r in rows:
+            # 已有 task_status 的跳过
+            if r["task_status"]:
+                try:
+                    ts = json.loads(r["task_status"])
+                    if ts:
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            try:
+                result = json.loads(r["analysis_result"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not result:
+                continue
+
+            ts = {}
+            now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            for tid, meta in TASK_REGISTRY.items():
+                # T3 特殊：external_signals 有数据即算 done（customer_tags 是新字段，旧数据可能没有）
+                if tid == "T3":
+                    keys_ok = result.get("external_signals") not in (None, {}, [])
+                else:
+                    keys_ok = all(
+                        result.get(k) not in (None, {}, [], "")
+                        for k in meta["result_keys"]
+                    )
+                if keys_ok:
+                    ts[tid] = {"status": "done", "updated_at": now_str, "error": None}
+
+            if ts:
+                db_write(
+                    "UPDATE sessions SET task_status=? WHERE id=?",
+                    (json.dumps(ts, ensure_ascii=False), r["id"]),
+                )
+                count += 1
+
+        print(f"[backfill_task_status] 回填完成，共处理 {count} 个 session")
+    except Exception as e:
+        print(f"[backfill_task_status] 出错: {e}")
+
+
+threading.Thread(target=backfill_task_status, daemon=True).start()
+
+
+def task_health_check_loop():
+    """每 15 分钟扫描一次，把卡死在 running 超过 30 分钟的任务标记 failed。
+    不自动补跑，避免意外烧钱，需要用户手动点补跑按钮。"""
+    import time as _time
+    while True:
+        try:
+            rows = db_fetchall(
+                "SELECT id, task_status FROM sessions WHERE analysis_status='done'"
+            )
+            for r in rows:
+                if not r["task_status"]:
+                    continue
+                try:
+                    ts = json.loads(r["task_status"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+                changed = False
+                now = datetime.now()
+                for tid, s in ts.items():
+                    if s.get("status") == "running":
+                        ts_str = s.get("updated_at", "")
+                        try:
+                            t = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                            if (now - t).total_seconds() > 1800:
+                                s["status"] = "failed"
+                                s["error"] = "卡在 running 状态超过 30 分钟，自动标记失败"
+                                changed = True
+                        except (ValueError, TypeError):
+                            pass
+                if changed:
+                    db_write(
+                        "UPDATE sessions SET task_status=? WHERE id=?",
+                        (json.dumps(ts, ensure_ascii=False), r["id"]),
+                    )
+        except Exception as e:
+            print(f"[task_health_check] {e}")
+        _time.sleep(900)
+
+
+threading.Thread(target=task_health_check_loop, daemon=True).start()
 
 
 if __name__ == "__main__":

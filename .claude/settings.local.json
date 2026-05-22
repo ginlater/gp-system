@@ -216,7 +216,13 @@
       "Bash(sudo -n systemctl is-active gongpai)",
       "Bash(sudo -n systemctl status gongpai --no-pager --lines=0)",
       "Bash(journalctl -u gongpai --since=\"30s ago\" --no-pager)",
-      "Bash(sudo -n tail -100 /var/log/gongpai-error.log)"
+      "Bash(sudo -n tail -100 /var/log/gongpai-error.log)",
+      "Bash(python -c \"import py_compile; py_compile.compile\\('webapp.py', doraise=True\\)\")",
+      "Bash(sudo tail *)",
+      "Bash(sudo journalctl -u gongpai --since \"14:58:00\" --no-pager)",
+      "Bash(awk -F: '$2>2080 && $2<2420 {print}')",
+      "Bash(awk -F: 'NR>1 {line=$2+0; if\\(line>2080 && line<2430\\) print}')",
+      "Bash(kill -HUP 2142163)"
     ]
   }
 }

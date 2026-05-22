@@ -101,7 +101,7 @@
   </div>
 {% else %}
 
-{# 给所有数据起短别名 #}
+{# 给所有数据起短别名 — 默认用主版本，JS 切换后会重新渲染 #}
 {% set ov = report.overview %}
 {% set persona = report.persona %}
 {% set root = report.root_cause %}
@@ -111,6 +111,21 @@
 {% set logic = report.logic_chain %}
 {% set cases = report.cases or [] %}
 {% set ns = report.next_steps %}
+
+<!-- 任务状态面板 -->
+<div class="task-panel" style="max-width:1100px;margin:0 auto;padding:12px 40px">
+  <details style="background:#f4f6f9;border:1px solid #d5dce8;border-radius:6px;padding:10px 14px">
+    <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#1c3461">
+      📋 任务执行状态 <span id="task-stat-summary" style="color:#8a95a3;font-weight:400">(加载中…)</span>
+    </summary>
+    <div id="task-stat-list" style="margin-top:12px;font-size:12.5px">
+      <!-- JS 渲染 -->
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="rec-btn" onclick="fillMissingTasks()" style="background:#27ae60">补齐所有缺失任务</button>
+    </div>
+  </details>
+</div>
 
 <!-- PART 01 -->
 {% if ov %}
@@ -689,10 +704,12 @@
         <span class="ov-tag bad">❌ 未成交</span>
       {% endif %}
     </div>
+    {% if diag.deal_result %}
     <div style="display:flex;align-items:center;gap:8px">
       <span style="font-size:13px;color:var(--text-mute)">成交金额</span>
       <span style="font-size:15px;font-weight:700;color:var(--navy)">{{ diag.deal_amount or '未识别' }}</span>
     </div>
+    {% endif %}
     <div style="display:flex;align-items:center;gap:8px">
       <span style="font-size:13px;color:var(--text-mute)">风险等级</span>
       {% if diag.risk_level == 'high' %}
@@ -784,12 +801,66 @@
   </div>
 </div>
 
+
 </div><!-- /wrap -->
 
 <script>
 const SESSION_ID = {{ sess.id }};
 const RECORDINGS = {{ recordings|tojson }};
 const BASE = {{ request.script_root|tojson }};
+async function loadTaskStatus() {
+  try {
+    const resp = await fetch(`${BASE}/api/session/${SESSION_ID}/tasks`);
+    const data = await resp.json();
+    const tasks = data.tasks || [];
+    const doneCount = tasks.filter(t => t.status === 'done').length;
+    document.getElementById('task-stat-summary').textContent =
+      `${doneCount}/${tasks.length} 完成`;
+    const statusEmoji = { done:'✅', running:'⏳', failed:'❌', missing:'⚪' };
+    const statusColor = { done:'#27ae60', running:'#3498db', failed:'#e74c3c', missing:'#95a5a6' };
+    document.getElementById('task-stat-list').innerHTML = tasks.map(t => `
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #e8ecf0">
+        <span style="width:24px">${statusEmoji[t.status] || '⚪'}</span>
+        <span style="width:32px;font-family:monospace;color:#8a95a3">${t.task_id}</span>
+        <span style="flex:1">${t.name}</span>
+        <span style="width:80px;color:${statusColor[t.status] || '#95a5a6'}">${t.status}</span>
+        <span style="width:110px;font-size:11px;color:#8a95a3">${t.updated_at || ''}</span>
+        <button class="rec-btn" style="font-size:11px;padding:3px 10px"
+                onclick="rerunTask('${t.task_id}')">重跑</button>
+      </div>
+      ${t.error ? `<div style="margin-left:34px;font-size:11px;color:#e74c3c;padding:2px 0">${t.error}</div>` : ''}
+    `).join('');
+  } catch(e) {
+    console.error('loadTaskStatus failed', e);
+  }
+}
+
+async function rerunTask(taskId) {
+  if (!confirm(`重跑任务 ${taskId}？`)) return;
+  const resp = await fetch(`${BASE}/api/session/${SESSION_ID}/task/${taskId}/rerun`,
+                           {method:'POST'});
+  const data = await resp.json();
+  alert(data.status === 'started'
+    ? `${taskId} 已开始重跑，预计 2-3 分钟，刷新查看`
+    : (data.error || '失败'));
+  setTimeout(loadTaskStatus, 2000);
+}
+
+async function fillMissingTasks() {
+  if (!confirm('补跑所有缺失/失败的任务？')) return;
+  const resp = await fetch(`${BASE}/api/session/${SESSION_ID}/tasks/fill-missing`,
+                           {method:'POST'});
+  const data = await resp.json();
+  if (data.status === 'all_done') {
+    alert('所有任务都已完成，无需补跑');
+  } else {
+    alert(`已开始补跑 ${(data.missing||[]).length} 个任务：${(data.missing||[]).join(', ')}`);
+  }
+  setTimeout(loadTaskStatus, 2000);
+}
+
+loadTaskStatus();
+setInterval(loadTaskStatus, 15000);
 
 function toggleSub(el) {
   el.classList.toggle('open');
