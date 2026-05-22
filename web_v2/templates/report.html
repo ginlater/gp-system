@@ -580,52 +580,131 @@
 </div>
 {% endif %}
 
-{# ── PART 09 外部信号 ── #}
+{# ── PART 09 竞品分析 ── #}
 {% set ext = report.external_signals %}
-{% if ext and (ext.medical_aesthetics or ext.other_institutions or ext.lifestyle_habits or ext.self_care or ext.external_brands) %}
+{% set competitors = [] %}
+{% if ext %}
+  {% for item in ext.medical_aesthetics or [] %}{% set _ = competitors.append(item) %}{% endfor %}
+  {% for item in ext.other_institutions or [] %}{% set _ = competitors.append(item) %}{% endfor %}
+  {% for item in ext.external_brands or [] %}{% set _ = competitors.append(item) %}{% endfor %}
+{% endif %}
+{% if competitors %}
 <div class="section">
   <div class="part-label">PART 09</div>
-  <div class="section-title">外部信号 · 顾客生态画像</div>
-  <div class="section-lead">顾客在录音里主动透露的医美/品牌/生活习惯等线索，用于后续个性化沟通</div>
-  {% set cats = [
-    ('医美经历', ext.medical_aesthetics),
-    ('其它机构', ext.other_institutions),
-    ('生活习惯', ext.lifestyle_habits),
-    ('居家护理', ext.self_care),
-    ('外部品牌', ext.external_brands)
-  ] %}
+  <div class="section-title">竞品分析 · 顾问售后学习清单</div>
+  <div class="section-lead">顾客本次提到的外部品牌/项目/机构，顾问需要在售后了解清楚，下次顾客再提时能接得住。</div>
+
   <!-- Desktop table -->
   <table class="tbl hide-on-mobile">
-    <thead><tr><th style="width:130px">类别</th><th style="width:40%">提及</th><th>对销售的洞察</th></tr></thead>
-    <tbody>
-      {% for label, rows in cats %}{% for r in rows or [] %}
+    <thead>
       <tr>
-        <td class="td-label">{% if loop.first %}{{ label }}{% endif %}</td>
-        <td class="td-signal">{{ r.item }}</td>
-        <td class="td-interp">{{ r.insight }}</td>
+        <th style="width:120px">竞品名称</th>
+        <th style="width:100px">类型</th>
+        <th style="width:35%">顾客原话</th>
+        <th>顾问应了解</th>
       </tr>
-      {% endfor %}{% endfor %}
+    </thead>
+    <tbody>
+      {% for c in competitors %}
+      <tr>
+        <td style="font-weight:600;color:var(--navy)">{{ c.item }}</td>
+        <td><span class="ov-tag warn" style="font-size:11px;padding:2px 8px">{{ c.type or '竞品' }}</span></td>
+        <td style="font-style:italic;color:var(--text-mute)">{% if c.customer_quote %}「{{ c.customer_quote }}」{% endif %}</td>
+        <td style="color:var(--text-mid)">{{ c.competitor_learn }}</td>
+      </tr>
+      {% endfor %}
     </tbody>
   </table>
+
   <!-- Mobile cards -->
   <div class="show-on-mobile">
-    {% for label, rows in cats %}{% for r in rows or [] %}
+    {% for c in competitors %}
     <div class="m-card">
-      <div class="m-card-head">{{ label }}</div>
-      <div class="m-card-row"><span class="m-card-label">提及</span><span class="m-card-val td-signal">{{ r.item }}</span></div>
-      <div class="m-card-row"><span class="m-card-label">洞察</span><span class="m-card-val td-interp">{{ r.insight }}</span></div>
+      <div class="m-card-head">
+        {{ c.item }}
+        <span class="ov-tag warn" style="font-size:11px;padding:2px 8px;margin-left:8px">{{ c.type or '竞品' }}</span>
+      </div>
+      {% if c.customer_quote %}
+      <div class="m-card-row"><span class="m-card-label">顾客原话</span><span class="m-card-val" style="font-style:italic">「{{ c.customer_quote }}」</span></div>
+      {% endif %}
+      <div class="m-card-row"><span class="m-card-label">顾问应了解</span><span class="m-card-val">{{ c.competitor_learn }}</span></div>
     </div>
-    {% endfor %}{% endfor %}
+    {% endfor %}
   </div>
 </div>
 {% endif %}
 
-{# ── PART 10 成交诊断 ── #}
+{# ── PART 10 顾客标签 ── #}
+{% set cur_tags = report.customer_tags or [] %}
+{% if cur_tags or customer_tags_history %}
+<div class="section">
+  <div class="part-label">PART 10</div>
+  <div class="section-title">顾客标签 · 画像积累</div>
+
+  {% if cur_tags %}
+  <div style="margin-bottom:20px">
+    <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:10px">本次新增标签</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      {% for tag in cur_tags %}
+      <span style="background:rgba(74,144,217,0.1);color:var(--blue);border:1px solid rgba(74,144,217,0.3);border-radius:99px;padding:4px 12px;font-size:13px">{{ tag }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if customer_tags_history %}
+  <div>
+    <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:10px">
+      历次接诊累积标签
+      <span style="font-size:12px;color:var(--text-mute);font-weight:400;margin-left:6px">（出现次数越多颜色越深）</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      {% for t in customer_tags_history %}
+      {% set idx = [t.count - 1, 3]|min %}
+      {% set opacity = [1.0, 0.8, 0.65, 0.5][idx] %}
+      <span style="background:rgba(28,52,97,{{ opacity * 0.12 }});color:var(--navy);border:1px solid rgba(28,52,97,{{ opacity * 0.25 }});border-radius:99px;padding:4px 12px;font-size:13px">
+        {{ t.tag }}{% if t.count > 1 %}<span style="font-size:11px;color:var(--text-mute);margin-left:3px">×{{ t.count }}</span>{% endif %}
+      </span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ── PART 11 成交诊断 ── #}
 {% set diag = report.deal_diagnosis %}
 {% if diag and diag.dimensions %}
 <div class="section">
-  <div class="part-label">PART 10</div>
+  <div class="part-label">PART 11</div>
   <div class="section-title">成交诊断 · 5 维度判断</div>
+
+  {# 成交状态 + 金额 + 风险等级 三联条 #}
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:20px;padding:16px 20px;background:var(--bg-light);border-radius:6px;border:1px solid var(--border)">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:13px;color:var(--text-mute)">成交状态</span>
+      {% if diag.deal_result %}
+        <span class="ov-tag good">✅ 已成交</span>
+      {% else %}
+        <span class="ov-tag bad">❌ 未成交</span>
+      {% endif %}
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:13px;color:var(--text-mute)">成交金额</span>
+      <span style="font-size:15px;font-weight:700;color:var(--navy)">{{ diag.deal_amount or '未识别' }}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:13px;color:var(--text-mute)">风险等级</span>
+      {% if diag.risk_level == 'high' %}
+        <span class="ov-tag bad">🔴 差评高风险</span>
+      {% elif diag.risk_level == 'medium' %}
+        <span class="ov-tag warn">🟡 留意</span>
+      {% else %}
+        <span class="ov-tag good">🟢 正常</span>
+      {% endif %}
+    </div>
+  </div>
+
   {% set dim_labels = {
     'customer_moved':    '顾客被打动',
     'customer_agreed':   '顾客认可方案',

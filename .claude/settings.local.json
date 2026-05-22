@@ -210,7 +210,13 @@
       "Bash(sudo grep BOSS_USERNAME /app/gp-system/.env)",
       "Bash(sudo ss -ltnp)",
       "Bash(kill 1798124)",
-      "Bash(sudo kill 1798124)"
+      "Bash(sudo kill 1798124)",
+      "Bash(ps -eo pid,cmd)",
+      "Bash(kill 1864783 1866312)",
+      "Bash(sudo -n systemctl is-active gongpai)",
+      "Bash(sudo -n systemctl status gongpai --no-pager --lines=0)",
+      "Bash(journalctl -u gongpai --since=\"30s ago\" --no-pager)",
+      "Bash(sudo -n tail -100 /var/log/gongpai-error.log)"
     ]
   }
 }

@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     analysis_scores TEXT,
     analysis_model TEXT,
     analysis_progress TEXT,
+    task_status TEXT,  -- JSON: {"T1":{"status":"done","updated_at":"...","error":null}, ...}
 
     has_evaluation INTEGER DEFAULT 0,
 
@@ -206,6 +207,16 @@ CREATE TABLE IF NOT EXISTS evaluations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_evaluations_session ON evaluations(session_id);
+
+CREATE TABLE IF NOT EXISTS customer_tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    customer_name TEXT NOT NULL,
+    advisor_name TEXT,
+    tag TEXT NOT NULL,
+    source_session_id INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ct_name ON customer_tags(customer_name);
 """
 
 
@@ -233,6 +244,8 @@ def init_db():
         conn.execute("ALTER TABLE sessions ADD COLUMN analysis_model TEXT")
     if "analysis_progress" not in existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN analysis_progress TEXT")
+    if "task_status" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN task_status TEXT")
     # 历史 evaluations 表是 UNIQUE(session_id)，迁移到允许多条
     eval_cols = {r[1] for r in conn.execute("PRAGMA table_info(evaluations)").fetchall()}
     if "comment" not in eval_cols:
@@ -969,6 +982,7 @@ SYSTEM_PROMPT_CALL1 = """\
 4. 外部信号只写顾客真实说过的，禁止编造
 5. 成交诊断的判断依据必须引用录音原话（用「」）
 6. 所有字段都必须填，没有的用空数组[]
+7. 竞品提取要求：穷尽列出顾客提到的所有外部品牌/项目/机构，不是申美自己家的东西都算竞品，宁可多列不要漏列。
 
 调用 submit_call1 工具提交结果，不要输出其他任何文字。
 """
@@ -1015,7 +1029,8 @@ TOOL_CALL1 = {
     "description": "提交顾客理解分析：画像、痛点话术、外部信号、成交诊断",
     "input_schema": {
         "type": "object",
-        "required": ["persona", "pain_points", "external_signals", "deal_diagnosis"],
+        "required": ["persona", "pain_points", "external_signals",
+                     "customer_tags", "deal_diagnosis"],
         "properties": {
             "persona": {
                 "type": "object",
@@ -1076,29 +1091,68 @@ TOOL_CALL1 = {
             },
             "external_signals": {
                 "type": "object",
+                # lifestyle_habits / self_care 改为可选（不强制 LLM 输出），仍保留字段定义
                 "required": ["medical_aesthetics", "other_institutions",
-                             "lifestyle_habits", "self_care", "external_brands"],
+                             "external_brands"],
                 "properties": {
-                    cat: {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "required": ["item", "insight"],
-                            "properties": {
-                                "item": {"type": "string"},
-                                "insight": {"type": "string"},
+                    # 三类竞品：含 customer_quote + competitor_learn
+                    **{
+                        cat: {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["item", "type", "competitor_learn"],
+                                "properties": {
+                                    "item": {"type": "string",
+                                             "description": "竞品名称，原词"},
+                                    "type": {"type": "string",
+                                             "description": "竞品类型：医美项目/医美机构/护肤品牌/仪器品牌/养生机构"},
+                                    "customer_quote": {"type": "string",
+                                                       "description": "顾客提到这个竞品时的原话片段，10-20 字"},
+                                    "competitor_learn": {"type": "string",
+                                                         "description": "顾问售后应了解什么，20 字以内，只说要学什么"},
+                                },
                             },
-                        },
-                    }
-                    for cat in ["medical_aesthetics", "other_institutions",
-                                "lifestyle_habits", "self_care", "external_brands"]
+                        }
+                        for cat in ["medical_aesthetics", "other_institutions",
+                                    "external_brands"]
+                    },
+                    # 两类非竞品：仅 item + customer_tag
+                    **{
+                        cat: {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["item", "customer_tag"],
+                                "properties": {
+                                    "item": {"type": "string",
+                                             "description": "顾客行为/习惯描述"},
+                                    "customer_tag": {"type": "string",
+                                                     "description": "基于此生成的顾客标签，10 字以内"},
+                                },
+                            },
+                        }
+                        for cat in ["lifestyle_habits", "self_care"]
+                    },
                 },
+            },
+            "customer_tags": {
+                "type": "array",
+                "description": "从录音中提取的顾客所有特征标签，不限来源（消费/习惯/身体状况/心理特征/品牌偏好），每个 10 字以内",
+                "minItems": 3,
+                "items": {"type": "string"},
             },
             "deal_diagnosis": {
                 "type": "object",
-                "required": ["deal_result", "dimensions", "risk_alert", "risk_text"],
+                "required": ["deal_result", "deal_amount", "risk_level",
+                             "dimensions", "risk_alert", "risk_text"],
                 "properties": {
                     "deal_result": {"type": "boolean"},
+                    "deal_amount": {"type": "string",
+                                    "description": "从录音里识别的成交金额，如'6800元'，未识别到填'未识别'"},
+                    "risk_level": {"type": "string",
+                                   "enum": ["high", "medium", "low"],
+                                   "description": "差评风险等级：未成交且心动/认同/效果满意三条都不是 ok 填 high；未成交但有 partial 填 medium；已成交填 low"},
                     "dimensions": {
                         "type": "object",
                         "required": ["customer_moved", "customer_agreed",
@@ -1129,10 +1183,10 @@ TOOL_CALL1 = {
 
 TOOL_CALL2 = {
     "name": "submit_call2",
-    "description": "提交接诊评判：质检评分、Case复盘、失分根因",
+    "description": "提交接诊评判：质检评分、Case复盘、失分根因、收割四步",
     "input_schema": {
         "type": "object",
-        "required": ["scoring", "cases", "cases_summary", "root_cause"],
+        "required": ["scoring", "cases", "cases_summary", "root_cause", "harvest"],
         "properties": {
             "scoring": {
                 "type": "object",
@@ -1190,7 +1244,7 @@ TOOL_CALL2 = {
                         "timestamp_label": {"type": "string"},
                         "surface": {"type": "string", "description": "表层做法或问题"},
                         "deep": {"type": "string",
-                                 "description": "深层原因或值得保留的原因"},
+                                 "description": "这个具体时刻错在哪，或者错过了什么机会，只说这一句话的问题，不要上升到整体根因，20-30 字"},
                         "improve": {"type": "string",
                                     "description": "正确做法，含顾客真名的具体话术"},
                     },
@@ -1204,7 +1258,7 @@ TOOL_CALL2 = {
                              "problem_dimension", "gap_note"],
                 "properties": {
                     "headline": {"type": "string",
-                                 "description": "一句话根因，要尖锐"},
+                                 "description": "从所有 case 里往上抽象一层，找到背后唯一的思维模式根因，不是某句话的问题，是整体思维模式，如'始终在产品维度对话而非问题维度'"},
                     "lead": {"type": "string"},
                     "product_dimension": {
                         "type": "array", "items": {"type": "string"},
@@ -1215,6 +1269,29 @@ TOOL_CALL2 = {
                         "description": "顾客需要听到的（2-3 条，与上面一一对应）",
                     },
                     "gap_note": {"type": "string", "description": "差距本质，一句话"},
+                },
+            },
+            "harvest": {
+                "type": "object",
+                "required": ["intro", "steps"],
+                "description": "项目后价值收割·黄金窗口标准流程：顾客做完项目情绪放松时的 3-5 步标准收割动作",
+                "properties": {
+                    "intro": {"type": "string",
+                              "description": "蓝底卡片导语，强调项目后 10 分钟是黄金窗口"},
+                    "steps": {
+                        "type": "array",
+                        "minItems": 3, "maxItems": 5,
+                        "items": {
+                            "type": "object",
+                            "required": ["title", "body"],
+                            "properties": {
+                                "title": {"type": "string",
+                                          "description": "步骤标题，如 '引导顾客说出效果' / '解释今天效果的原理' / '埋下下次的钩子' / '自然过渡到方案'"},
+                                "body": {"type": "string",
+                                         "description": "具体话术 + 操作说明（话术用「」或斜体），必须含顾客真名"},
+                            },
+                        },
+                    },
                 },
             },
         },
@@ -1389,6 +1466,284 @@ TOOL_CALL3 = {
         },
     },
 }
+
+
+# ─── 任务注册表 ───────────────────────────────────────────
+# 每个任务的元数据：属于哪次调用、输出字段、user_prompt 片段。
+# TOOL_CALL1/2/3 的聚合 schema 不变；单任务重跑时会从聚合 schema 抽出对应
+# properties 拼一个子集 schema 调用，省 token、隔离失败。
+
+TASK_REGISTRY = {
+    # ───── 调用1：仅录音 ─────
+    "T1": {
+        "name": "顾客真实画像",
+        "call": 1,
+        "result_keys": ["persona"],
+        "schema_keys": ["persona"],
+        "depends_on": [],
+        "prompt_snippet": """【任务1】顾客真实画像
+从顾客发言中提取 5 条以上"对话信号→解读"（填入 persona.signals）。
+**persona.summary 字段必填**（不能省略！），写一句尖锐的综合判断：消费类型（主动/被动） + 决策驱动力（专业信任/价格/情感） + 当前状态评估。
+例如："被动决策型——给了三个痛点信号没有一个被顾问接住，处于'惯性回头客'状态，随时可能沉默流失。"
+""",
+    },
+    "T2": {
+        "name": "可攻破痛点+作战方案",
+        "call": 1,
+        "result_keys": ["pain_points"],
+        "schema_keys": ["pain_points"],
+        "depends_on": [],
+        "prompt_snippet": """【任务2】可攻破痛点 + 完整作战方案
+从录音中识别 2-4 个可攻破痛点，三种 badge 尽量都覆盖：最强突破口 / 最佳情感连接点 / 最高价值突破口。
+每个痛点的四步话术（label 严格枚举）：
+  第一步 建立专业诊断感：说出顾客不知道的专业判断
+  第二步 放大连锁影响：这个问题不解决会引发什么
+  第三步 说出为什么之前没解决：区分我们和之前的方法
+  第四步 给系统方案 + 预期：几次、多久、什么效果
+每步 body 必须含"{customer_name}"，30-60 字。
+""",
+    },
+    "T3": {
+        "name": "竞品提取+顾客标签",
+        "call": 1,
+        # 同时输出两个字段
+        "result_keys": ["external_signals", "customer_tags"],
+        "schema_keys": ["external_signals", "customer_tags"],
+        "depends_on": [],
+        "prompt_snippet": """【任务3】竞品提取 + 顾客标签
+
+⚠ 重要：本任务必须输出两个独立字段：
+  (A) external_signals —— 5 类外部信号分类提取
+  (B) customer_tags    —— 汇总的标签数组（外层字段，至少 5 个）
+两个都要填，缺一个就算失败。
+
+【(A) external_signals】
+
+竞品定义：所有不是身美自家的、属于美容护肤/医美/养生**同行业**的外部品牌、项目、仪器、机构都是竞品。
+非同行业的（如大众点评、外卖、银行、餐厅、电商、社交平台等）不算竞品，不要提取。
+
+竞品分三类（每条要 item + type + customer_quote + competitor_learn）：
+1. medical_aesthetics：别家医美项目
+2. other_institutions：别家美容院/医美机构/养生机构
+3. external_brands：别家护肤品牌/仪器品牌/产品名
+
+⚠ 生活习惯和自我护理不需要单独提取，直接归纳到 customer_tags 数组里即可。
+比如顾客经常熬夜 → customer_tags 加"长期熬夜"
+比如顾客在用益生菌 → customer_tags 加"益生菌用户"
+
+【(B) customer_tags 数组（外层字段，绝对不能省略！）】
+
+从整段录音里提炼顾客特征标签（每个 10 字以内），至少 5 个。
+来源不限：消费类型 + 生活习惯 + 身体状况 + 心理特征 + 品牌偏好。
+示例：["医美深度用户", "C级潜力客户", "长期熬夜", "理性克制型", "活细胞用户"]
+
+⚠ 再次强调：customer_tags 是 external_signals 的**同级**字段，不是包在里面。两个字段都要填，缺一个就是失败。
+""",
+    },
+    "T4": {
+        "name": "成交诊断",
+        "call": 1,
+        "result_keys": ["deal_diagnosis"],
+        "schema_keys": ["deal_diagnosis"],
+        "depends_on": [],
+        "prompt_snippet": """【任务4】成交诊断 + 风险预警
+判断 5 维度（status 取 ok/partial/missing，note 引用原话）：
+customer_moved / customer_agreed / effect_satisfied / price_matched / urgency_built
+
+同时判断：
+- deal_result：是否成交（true/false）
+- deal_amount：识别成交金额
+  · 如果 deal_result=true → 填具体金额如"6800元"，识别不到就填"未识别"
+  · 如果 deal_result=false → **必须填"无"**（不能填金额，不能留空）
+- risk_level 按以下规则严格判断：
+  · 未成交 且 心动/认同/效果满意 三条都不是 ok → "high"
+  · 未成交 但 三条里有至少一条 partial → "medium"
+  · 已成交 → "low"
+
+规则：deal_result=false 且前三项都不是 ok → risk_alert=true，risk_text 写明风险点。
+""",
+    },
+
+    # ───── 调用2：录音 + 知识库 ─────
+    "T5": {
+        "name": "质检评分",
+        "call": 2,
+        "result_keys": ["scoring"],
+        "schema_keys": ["scoring"],
+        "depends_on": [],
+        "prompt_snippet": """【任务5】质检评分 · 三大接诊阶段
+综合评分 0-10，必须有区分度（差 2-3 分，一般 4-5 分，好 7-8 分，很好 9 分）。
+
+⚠ scoring.stages 必须是 3 个阶段，每个阶段必须包含所有子项，不能省略：
+
+壹 一咨找需求（5 子项）：
+  1.1 档案掌握与破冰
+  1.2 快速找到痛点
+  1.3 做检测
+  1.4 解决原理和方向（不提项目）
+  1.5 解决方案
+
+贰 确认加大意愿（3 子项）：
+  2.1 重述痛点原理
+  2.2 客人做对比效果感受
+  2.3 提供情绪价值
+
+叁 成交阶段（6 子项）：
+  3.1 效果确认
+  3.2 顾客当下结论评估
+  3.3 本店解决方向和方案
+  3.4 报价（提到价格即算触发）
+  3.5 异议处理
+  3.6 好评 + 返邀约
+
+每个子项 detail 只写一句本次事实（不写定义不写建议，20-40 字）。
+good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
+""",
+    },
+    "T6": {
+        "name": "Case复盘",
+        "call": 2,
+        "result_keys": ["cases", "cases_summary"],
+        "schema_keys": ["cases", "cases_summary"],
+        "depends_on": [],
+        "prompt_snippet": """【任务6】关键 Case 复盘
+5-8 条，按时间顺序，good / miss / bad 都有（**至少各 1 条，不能全是 miss**）。
+每条 kind / title / quote（「」15 字内）/ segment / timestamp_seconds / timestamp_label / surface / deep / improve。
+- deep：这个具体时刻的问题，只说这一句话错在哪，不要上升到整体根因，20-30 字
+- improve 必须含"{customer_name}"的具体话术
+- cases_summary 字段必填，一句话总结整个 Case，要尖锐有力
+
+时间戳：录音转录每行 `[Xs - Ys] 说话人N: ...`。第 2 段的 [134s-142s] → segment=2, timestamp_seconds=134, timestamp_label="0:02:14"。
+""",
+    },
+    "T7": {
+        "name": "失分根因",
+        "call": 2,
+        "result_keys": ["root_cause"],
+        "schema_keys": ["root_cause"],
+        "depends_on": [],
+        "prompt_snippet": """【任务7】接诊失分根因
+⚠ root_cause 对象的所有字段必填，不能为空：
+- headline：思维模式根因（整体抽象，如"始终在产品维度对话而非问题维度"，不是某句话的问题）
+- product_dimension：顾问实际说的（2-3 条字符串）
+- problem_dimension：顾客需要听到的（2-3 条字符串，与上面一一对应）
+- gap_note：差距本质，一句话
+
+注意：不要重复 Case 复盘里的具体问题，要从所有 case 往上抽象一层，找到背后唯一的思维模式根因。
+""",
+    },
+    "T8": {
+        "name": "黄金窗口收割",
+        "call": 2,
+        "result_keys": ["harvest"],
+        "schema_keys": ["harvest"],
+        "depends_on": [],
+        "prompt_snippet": """【任务8】项目后价值收割·黄金窗口标准流程
+项目结束后的 10 分钟是成交概率最高的窗口（顾客身体放松、防御最低）。
+基于本次接诊的痛点和顾客状态，给出 3-5 步顾问应执行的标准收割动作。
+
+⚠ harvest 对象的所有字段必填：
+- intro：导语一句，强调黄金窗口为什么重要
+- steps：3-5 步，每步：title（步骤名）+ body（具体话术 + 操作说明，话术用「」或斜体，必须含"{customer_name}"）
+
+注意：harvest 是给顾问的"下次怎么做"指引，不是复盘本次。
+""",
+    },
+
+    # ───── 调用3：用前两次结果摘要 ─────
+    "T9": {
+        "name": "PART1总览",
+        "call": 3,
+        "result_keys": ["overview"],
+        "schema_keys": ["overview"],
+        "depends_on": ["T1", "T2", "T3", "T4", "T5", "T6", "T7"],
+        "prompt_snippet": """【任务9】PART1 全维度评估总览
+⚠ overview 对象必含 5 个子字段，都不能省略：
+- customer_value：顾客价值评级（tag 简短 + tag_kind + note 一句话引用关键信号）
+- pain_summary：痛点识别（tag 如"3 个核心可攻破点" + items 列每个痛点，color 用 red/blue/teal/orange）
+- sales_diagnosis：销售问题诊断（tag 标签化根因 + tag_kind + note 复用 headline）
+- quality_score：质检评分（score 复用 overall + note 一句话）
+- suggestions：2-4 条可操作建议字符串数组（不能空数组），指向报告具体内容
+""",
+    },
+    "T10": {
+        "name": "能力训练路径",
+        "call": 3,
+        "result_keys": ["logic_chain"],
+        "schema_keys": ["logic_chain"],
+        "depends_on": ["T6", "T7"],
+        "prompt_snippet": """【任务10】能力训练路径
+⚠ logic_chain 对象所有字段必填：
+- bad_chain：顾问实际思维链（用 → 连接），如"顾客来了 → 了解需求 → 介绍产品 → 希望成交"
+- bad_chain_note：一句话点评 bad_chain 的问题
+- good_chain：正确思维链（用 → 连接）
+- missing_step：缺失关键一步
+- training：5 个阶段固定（破冰 / 需求挖掘 / 产品推荐 / 异议处理 / 项目结束后）
+  每阶段：stage + issue（本次问题 20 字内）+ skill（需要训练的能力）
+""",
+    },
+    "T11": {
+        "name": "下一步动作",
+        "call": 3,
+        "result_keys": ["next_steps"],
+        "schema_keys": ["next_steps"],
+        "depends_on": ["T1", "T2", "T4"],
+        "prompt_snippet": """【任务11】下一步动作 · 回店规划
+⚠ next_steps 对象 4 个字段必填：
+- return_scripts：至少 2 条回店话术，含"{customer_name}"，以"上次你提到..."开头，50-80 字
+- priority_projects：按成交难度从低到高 2-3 条（name + desc）
+- pain_entry_scripts：针对每个痛点的四步话术（pain_name + entry 含{customer_name} + principle 30 字 + direction 30 字 + sales_link 20 字）
+- medical_objections：至少 3 条泛医疗异议应答，60-100 字，严格遵循 ①承认医院 → ②分工边界 → ③我们位置 → ④互补不冲突
+""",
+    },
+}
+
+
+# ─── 任务输出验证 ─────────────────────────────────────────
+_NONEMPTY_LIST_KEYS = {
+    "customer_tags", "cases", "pain_points",
+    "good_highlights", "bad_highlights", "suggestions",
+    "return_scripts", "pain_entry_scripts", "medical_objections",
+}
+
+
+def validate_task_output(task_id, result):
+    """检查任务输出是否合格。返回 (ok: bool, reason: str)"""
+    if not result:
+        return False, "结果为空"
+
+    task = TASK_REGISTRY[task_id]
+    for key in task["result_keys"]:
+        if key not in result:
+            return False, f"缺少字段 {key}"
+        val = result[key]
+        # 对象类型不能是空 {}
+        if isinstance(val, dict) and not val:
+            return False, f"{key} 是空对象 {{}}"
+        # 关键数组字段不能为空 []
+        if isinstance(val, list) and not val and key in _NONEMPTY_LIST_KEYS:
+            return False, f"{key} 是空数组"
+
+    # 特殊规则
+    if task_id == "T3":
+        tags = result.get("customer_tags") or []
+        if not isinstance(tags, list) or len(tags) < 5:
+            return False, f"customer_tags 必须 ≥5 个，实际 {len(tags) if isinstance(tags, list) else 0}"
+
+    if task_id == "T4":
+        diag = result.get("deal_diagnosis") or {}
+        if not diag.get("deal_amount"):
+            return False, "deal_amount 未填"
+        if not diag.get("risk_level"):
+            return False, "risk_level 未填"
+
+    if task_id == "T5":
+        scoring = result.get("scoring") or {}
+        stages = scoring.get("stages") or []
+        if len(stages) != 3:
+            return False, f"stages 必须是 3 个，实际 {len(stages)}"
+
+    return True, ""
 
 
 def build_call_summaries(call1_result: dict, call2_result: dict):
@@ -1599,6 +1954,54 @@ def _set_progress(session_id, msg):
     db_write("UPDATE sessions SET analysis_progress=? WHERE id=?", (msg, session_id))
 
 
+def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
+    """把本次分析生成的顾客标签写入 customer_tags 表（去重，先删本 session 来源的旧记录）"""
+    if not customer_name:
+        return
+    ext = call1_result.get("external_signals", {}) or {}
+    tags = set()
+
+    # 1) 外层 customer_tags 数组
+    for tag in call1_result.get("customer_tags") or []:
+        if tag and isinstance(tag, str):
+            tags.add(tag.strip())
+
+    # 2) lifestyle_habits / self_care 的 customer_tag
+    for cat in ("lifestyle_habits", "self_care"):
+        for item in ext.get(cat) or []:
+            tag = (item.get("customer_tag") if isinstance(item, dict) else "") or ""
+            if tag:
+                tags.add(tag.strip())
+
+    # 3) 三类竞品 → "XX用户" 标签
+    for cat in ("medical_aesthetics", "other_institutions", "external_brands"):
+        for item in ext.get(cat) or []:
+            brand = (item.get("item") if isinstance(item, dict) else "") or ""
+            if brand:
+                tags.add(f"{brand.strip()}用户")
+
+    tags.discard("")
+    if not tags:
+        return
+
+    # 重跑时先清掉本 session 之前写入的标签，避免重复累计
+    db_write(
+        "DELETE FROM customer_tags WHERE source_session_id=?", (session_id,)
+    )
+    with _db_lock:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            conn.executemany(
+                """INSERT INTO customer_tags
+                   (customer_name, advisor_name, tag, source_session_id)
+                   VALUES (?, ?, ?, ?)""",
+                [(customer_name, advisor_name, t, session_id) for t in tags],
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
 def run_session_analysis(session_id, signature, model=None):
     """整段接诊（多录音拼接）→ 三次 LLM tool_use 拆分 → 合并存库。
 
@@ -1696,13 +2099,46 @@ def run_session_analysis(session_id, signature, model=None):
   第四步 给系统方案 + 预期：几次、多久、什么效果
 每步 body 必须含"{customer_name}"，30-60 字。
 
-【任务3】外部信号提取
-分 5 类：medical_aesthetics / other_institutions / lifestyle_habits / self_care / external_brands
-每条写 item + insight，没有的类别输出空数组 []。
+【任务3】竞品提取 + 顾客标签（重要：竞品不要漏！）
+
+竞品定义：所有不是身美自家的、属于美容护肤/医美/养生**同行业**的外部品牌、项目、仪器、机构都是竞品。
+非同行业的（如大众点评、外卖、银行、餐厅、电商、社交平台等）不算竞品，不要提取。
+在同行业范围内，穷尽列出顾客在录音里提到的每一个，哪怕只是顺带一提也要列出来。
+
+竞品分三类提取：
+1. medical_aesthetics：别家医美项目（打针/激光/疗法/手术）
+2. other_institutions：别家美容院/医美机构/养生机构
+3. external_brands：别家护肤品牌/仪器品牌/产品名
+
+每条竞品必须包含：
+- item：竞品名（原词，如"活细胞""英诺""伊莱姿"）
+- type：竞品类型（医美项目/医美机构/护肤品牌/仪器品牌/养生机构）
+- customer_quote：顾客提到时的原话片段（10-20 字）
+- competitor_learn：顾问售后应了解什么（20 字以内，只说要学什么，不给具体应对方案）
+
+生活习惯和自我护理（不是竞品）单独提取：
+4. lifestyle_habits：生活习惯（熬夜/晒太阳/久坐/压力/饮食）
+5. self_care：自我护理（护肤品/运动/保健品/泡澡等自己做的事）
+这两类每条只需要：item + customer_tag（10 字以内的顾客标签）
+
+最后生成 customer_tags 数组（外层，不在 external_signals 里）：
+把顾客在录音里体现的所有特征提炼成标签（10 字以内），
+包括消费类型、生活习惯、身体状况、心理特征、品牌偏好，
+至少 3 个，越完整越好。
+
+特别强调：同行业范围内宁可多列竞品不要漏列，哪怕顾客只说了一次也要提取；非美容护肤医美行业的东西不要提取。
 
 【任务4】成交诊断 + 风险预警
 判断 5 维度（status 取 ok/partial/missing，note 引用原话）：
 customer_moved / customer_agreed / effect_satisfied / price_matched / urgency_built
+
+同时判断：
+- deal_amount：从录音里识别成交金额（如"6800元"），完全识别不到就填"未识别"
+- risk_level 按以下规则判断：
+  · 未成交 且 心动/认同/效果满意 三条都不是 ok → "high"
+  · 未成交 但 三条里有至少一条 partial → "medium"
+  · 已成交 → "low"
+
 规则：deal_result=false 且前三项都不是 ok → risk_alert=true，risk_text 写明风险点。
 """
 
@@ -1746,10 +2182,26 @@ customer_moved / customer_agreed / effect_satisfied / price_matched / urgency_bu
 
 【任务2】关键 Case 复盘
 5-8 条，按时间顺序，good / miss / bad 都有。每条 kind / title / quote（「」15 字内）/ segment / timestamp_seconds / timestamp_label / surface / deep / improve。
-improve 必须含"{customer_name}"的具体话术。
+- deep：这个具体时刻的问题，只说这一句话错在哪，不要上升到整体根因，20-30 字
+- improve 必须含"{customer_name}"的具体话术。
 
 【任务3】接诊失分根因
-headline（一句话尖锐根因）+ product_dimension（顾问实际说的 2-3 条）+ problem_dimension（顾客需要听到的，一一对应）+ gap_note（差距本质）。
+注意：不要重复 Case 复盘里已经说过的具体问题，要从所有 case 往上抽象一层，找到背后唯一的思维模式根因（不是某句话的问题，是整体思维缺陷）。
+
+headline（思维模式根因，整体抽象，如"始终在产品维度对话而非问题维度"）+ product_dimension（顾问实际说的 2-3 条）+ problem_dimension（顾客需要听到的，一一对应）+ gap_note（差距本质）。
+
+【任务4】项目后价值收割·黄金窗口标准流程（harvest）
+项目结束后的 10 分钟是成交概率最高的窗口（顾客身体放松、防御最低）。
+基于本次接诊的痛点和顾客状态，给出 3-5 步顾问应执行的标准收割动作。
+
+输出 harvest 对象：
+- intro：导语一句，强调黄金窗口为什么重要（蓝底卡片用）
+- steps：3-5 步，每步：
+  · title：步骤名（建议沿用经典四步——"引导顾客说出效果" / "解释今天效果的原理" / "埋下下次的钩子" / "自然过渡到方案"；可根据本次情况调整顺序或合并）
+  · body：具体话术 + 操作说明，话术部分用「」或斜体，必须含"{customer_name}"
+
+注意：harvest 是给顾问的"下次怎么做"指引，不是复盘本次做了什么。
+如果本次顾问已经做对了某一步，body 里可以肯定一下；如果完全没做就直接给标准动作。
 
 时间戳：录音转录每行 `[Xs - Ys] 说话人N: ...`。第 2 段的 [134s-142s] → segment=2, timestamp_seconds=134, timestamp_label="0:02:14"。
 """
@@ -1762,18 +2214,31 @@ headline（一句话尖锐根因）+ product_dimension（顾问实际说的 2-3 
         )
 
         def _run_call1():
-            return _call_llm(model, SYSTEM_PROMPT_CALL1, user_prompt_1,
-                             tool=TOOL_CALL1, max_tokens=6000)
+            try:
+                return _call_llm(model, SYSTEM_PROMPT_CALL1, user_prompt_1,
+                                 tool=TOOL_CALL1, max_tokens=10000)
+            except Exception as e:
+                raise RuntimeError(f"[call1 顾客理解] {e}") from e
 
         def _run_call2():
-            return _call_llm(model, SYSTEM_PROMPT_CALL2, user_prompt_2,
-                             tool=TOOL_CALL2, max_tokens=8000)
+            try:
+                return _call_llm(model, SYSTEM_PROMPT_CALL2, user_prompt_2,
+                                 tool=TOOL_CALL2, max_tokens=10000)
+            except Exception as e:
+                raise RuntimeError(f"[call2 接诊评判] {e}") from e
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
             f1 = ex.submit(_run_call1)
             f2 = ex.submit(_run_call2)
             call1_result = f1.result()
             call2_result = f2.result()
+
+        # 调用1完成 → 把顾客标签写入累积表（用于跨次接诊积累画像）
+        try:
+            save_customer_tags(session_id, customer_name, advisor_name, call1_result)
+        except Exception as _tag_err:
+            # 标签写入失败不影响主流程
+            print(f"[save_customer_tags] {session_id}: {_tag_err}")
 
         # ── 调用3：串行，仅用前两次结果摘要，不重传录音 ──
         stage_label["v"] = "调用 3"
@@ -1812,8 +2277,11 @@ headline（一句话尖锐根因）+ product_dimension（顾问实际说的 2-3 
 - medical_objections：至少 3 条泛医疗异议应答，60-100 字，严格遵循 ①承认医院 → ②分工边界 → ③我们位置 → ④互补不冲突
 """
 
-        call3_result = _call_llm(model, SYSTEM_PROMPT_CALL3, user_prompt_3,
-                                  tool=TOOL_CALL3, max_tokens=8000)
+        try:
+            call3_result = _call_llm(model, SYSTEM_PROMPT_CALL3, user_prompt_3,
+                                      tool=TOOL_CALL3, max_tokens=10000)
+        except Exception as e:
+            raise RuntimeError(f"[call3 综合输出] {e}") from e
 
         stop_heartbeat.set()
         _set_progress(session_id, "解析返回的结构化报告…")
@@ -1834,6 +2302,7 @@ headline（一句话尖锐根因）+ product_dimension（顾问实际说的 2-3 
             "cases":            call2_result.get("cases", []),
             "cases_summary":    call2_result.get("cases_summary", ""),
             "root_cause":       call2_result.get("root_cause", {}),
+            "harvest":          call2_result.get("harvest", {}),
         }
 
         report_json = json.dumps(full_report, ensure_ascii=False)
@@ -2224,12 +2693,28 @@ def session_detail(sid):
         sess_d.get("analysis_status"), sess_d.get("analysis_progress"),
         bool(sess_d.get("analysis_result")),
     )
+
+    # 该顾客历次接诊累积标签（去重，按出现次数倒序）
+    customer_tags_history = []
+    if sess_d.get("customer"):
+        tag_rows = db_fetchall(
+            """SELECT tag, COUNT(*) AS cnt
+               FROM customer_tags
+               WHERE customer_name=?
+               GROUP BY tag
+               ORDER BY cnt DESC, MAX(created_at) DESC
+               LIMIT 30""",
+            (sess_d["customer"],),
+        )
+        customer_tags_history = [{"tag": r["tag"], "count": r["cnt"]} for r in tag_rows]
+
     resp = app.make_response(render_template(
         "report.html",
         sess=sess_d,
         recordings=recordings,
         report=report,
         evaluations=evals,
+        customer_tags_history=customer_tags_history,
         username=session.get("username"),
     ))
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -2569,19 +3054,16 @@ def startup_kick():
     for r in pending:
         trigger_pipeline_for_recording(r["id"])
 
-    # 仅"中途被打断"的 session 才自动补跑：
-    # - failed 状态需要重试
-    # - running 状态说明被 restart 打断了
-    # - pending 且 analysis_signature 不为 NULL（说明之前完成过、因新增录音重新排队）
-    # 从未分析过的 session（signature IS NULL AND result IS NULL）不自动跑，等用户手动触发
-    sids = db_fetchall("""
-        SELECT id FROM sessions
-        WHERE analysis_status IN ('running', 'failed')
-           OR (analysis_status='pending'
-               AND (analysis_signature IS NOT NULL OR analysis_result IS NOT NULL))
-    """)
-    for s in sids:
-        maybe_trigger_session_analysis(s["id"])
+    # ⚠ startup_kick 不再自动触发任何 session 分析。
+    # 之前规则会把 running/failed 状态当成"中途被打断"自动补跑，但实际效果是
+    # 每次 restart 都会意外烧钱。所有 LLM 分析改为完全手动触发（点"⟳ 重跑"按钮）。
+    # 把上次 restart 时还在 running 的 session 标记为 failed，避免误以为还在跑。
+    db_write(
+        """UPDATE sessions SET analysis_status='failed',
+           analysis_progress=NULL,
+           analysis_error=COALESCE(analysis_error, '服务重启时被打断，未自动恢复，请手动重跑')
+           WHERE analysis_status='running'"""
+    )
 
 
 # gunicorn 启动时也触发
