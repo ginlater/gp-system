@@ -6,6 +6,7 @@
 <title>接诊列表 · 工牌接诊分析系统</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}">
 <style>
+html,body{overflow-x:hidden;max-width:100%}
 .list-wrap{max-width:1280px;margin:0 auto;padding:30px 40px 80px}
 .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
 .toolbar input{border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-family:inherit;font-size:13px;outline:none}
@@ -34,9 +35,38 @@
 .pagi{margin-top:16px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-mid)}
 .pagi button{background:#fff;color:var(--navy);border:1px solid var(--border);border-radius:4px;padding:5px 12px;font-size:13px;cursor:pointer;font-family:inherit}
 .pagi button:disabled{opacity:.4;cursor:not-allowed}
-.header-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.header-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:12px;flex-wrap:wrap}
 .header-title{font-size:20px;font-weight:700;color:var(--navy)}
 .header-user{font-size:13px;color:var(--text-mute)}
+
+/* ─── 手机端 ─── */
+@media (max-width: 768px){
+  .list-wrap{padding:14px 12px 60px;max-width:100%;width:100%;overflow-x:hidden}
+  .header-bar,.toolbar,.sess-tbl,.pagi{max-width:100%}
+  *{min-width:0}
+  .header-title{font-size:17px}
+  .header-user{font-size:12px}
+  .toolbar{gap:8px}
+  .toolbar input{flex:1;min-width:0;width:100%;font-size:16px;padding:8px 10px}
+  .toolbar input[type=date]{flex:1 1 140px}
+  .toolbar #qAdvisor,.toolbar #qCustomer{flex:1 1 calc(50% - 4px)}
+  .toolbar button{padding:8px 12px;font-size:13px}
+  .toolbar > div[style*="flex:1"]{display:none}
+
+  /* 表格→卡片布局 */
+  .sess-tbl,.sess-tbl tbody,.sess-tbl tr,.sess-tbl td{display:block;width:100%}
+  .sess-tbl thead{display:none}
+  .sess-tbl{border:none;background:transparent}
+  .sess-tbl tr{background:#fff;border:1px solid var(--border);border-radius:6px;margin-bottom:10px;padding:12px 14px}
+  .sess-tbl tr:hover td{background:transparent}
+  .sess-tbl td{border:none;padding:4px 0;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .sess-tbl td::before{content:attr(data-label);color:var(--text-mute);font-size:12px;flex-shrink:0}
+  .sess-tbl td:last-child{margin-top:8px;padding-top:10px;border-top:1px dashed var(--border);justify-content:center}
+  .sess-tbl td:last-child::before{display:none}
+  .sess-tbl td:last-child a{display:block;width:100%;text-align:center;background:var(--navy);color:#fff !important;padding:10px;border-radius:4px;font-size:14px}
+  .pagi{flex-wrap:wrap;font-size:12px}
+  #uploadMsg{width:100%;margin-left:0 !important}
+}
 </style>
 </head>
 <body>
@@ -127,13 +157,13 @@ function loadList(page) {
         let overall = null;
         try { overall = s.analysis_scores ? JSON.parse(s.analysis_scores).overall : null; } catch(e){}
         return `<tr>
-          <td>${s.service_date || '—'}</td>
-          <td>${s.advisor || '—'}</td>
-          <td>${s.customer || '—'}</td>
-          <td>${s.asr_done_count || 0}/${s.recording_count || 0}</td>
-          <td>${fmtScore(overall)}</td>
-          <td>${fmtStatus(s.display_status, s.analysis_progress)}</td>
-          <td>${s.has_evaluation ? '✓' : ''}</td>
+          <td data-label="服务日期">${s.service_date || '—'}</td>
+          <td data-label="顾问">${s.advisor || '—'}</td>
+          <td data-label="顾客">${s.customer || '—'}</td>
+          <td data-label="录音/ASR">${s.asr_done_count || 0}/${s.recording_count || 0}</td>
+          <td data-label="综合分">${fmtScore(overall)}</td>
+          <td data-label="分析状态">${fmtStatus(s.display_status, s.analysis_progress)}</td>
+          <td data-label="点评">${s.has_evaluation ? '✓' : '—'}</td>
           <td><a href="${BASE}/session/${s.id}" style="color:var(--blue);font-weight:600">查看报告 →</a></td>
         </tr>`;
       }).join('');

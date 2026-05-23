@@ -227,7 +227,9 @@
       "Bash(sudo systemctl daemon-reload)",
       "Bash(sudo ls -lh /var/log/gongpai-*.log)",
       "Bash(sudo journalctl -u gongpai --since \"30 min ago\" --no-pager)",
-      "Bash(sudo journalctl -u gongpai --since \"60 min ago\" --no-pager)"
+      "Bash(sudo journalctl -u gongpai --since \"60 min ago\" --no-pager)",
+      "Bash(sudo systemctl restart gongpai.service)",
+      "Bash(sudo systemctl restart gp_system)"
     ]
   }
 }

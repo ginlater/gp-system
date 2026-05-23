@@ -1050,6 +1050,65 @@ function reanalyze() {
   });
 }
 
+// ── Part 折叠/展开 ──
+(function initPartCollapse() {
+  const sections = document.querySelectorAll('.section');
+  sections.forEach(function(sec) {
+    const partLabel = sec.querySelector(':scope > .part-label');
+    if (!partLabel) return; // 老板点评 section 没有 part-label，跳过
+    const isFirst = partLabel.textContent.trim() === 'PART 01';
+
+    // 把 part-label 和 section-title 包成可点击的 header
+    const title = sec.querySelector(':scope > .section-title');
+    const header = document.createElement('div');
+    header.className = 'part-collapse-header';
+    header.style.cssText = 'display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none';
+
+    // 插入 header 到 section 最前面，把 partLabel 和 title 移进去
+    sec.insertBefore(header, partLabel);
+    header.appendChild(partLabel);
+    if (title) header.appendChild(title);
+
+    // 折叠箭头
+    const arrow = document.createElement('span');
+    arrow.className = 'part-arrow';
+    arrow.style.cssText = 'margin-left:auto;font-size:14px;color:var(--text-mute);transition:transform .2s';
+    arrow.textContent = '▾';
+    header.appendChild(arrow);
+
+    // body wrapper 包住剩余内容
+    const body = document.createElement('div');
+    body.className = 'part-collapse-body';
+    while (sec.children.length > 1) { // header 已是第一个子元素
+      body.appendChild(sec.children[1]);
+    }
+    sec.appendChild(body);
+
+    // 点击展开提示
+    const hint = document.createElement('span');
+    hint.className = 'part-expand-hint';
+    hint.textContent = '点击展开';
+    hint.style.cssText = 'font-size:12px;color:#bcc5d0;margin-left:8px;font-weight:400;letter-spacing:0';
+    header.insertBefore(hint, arrow);
+
+    // 初始状态
+    if (!isFirst) {
+      body.style.display = 'none';
+      arrow.style.transform = 'rotate(-90deg)';
+      hint.style.display = '';
+    } else {
+      hint.style.display = 'none';
+    }
+
+    header.addEventListener('click', function() {
+      const collapsed = body.style.display === 'none';
+      body.style.display = collapsed ? '' : 'none';
+      arrow.style.transform = collapsed ? '' : 'rotate(-90deg)';
+      hint.style.display = collapsed ? 'none' : '';
+    });
+  });
+})();
+
 // 初始化：transcriptBody 已在 Jinja 里直接填入第一段内容，无需 JS 初始化
 
 // 分析进行中/排队时，每 3s 轮询并更新进度文本

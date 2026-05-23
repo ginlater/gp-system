@@ -162,6 +162,10 @@ details[open].rec-transcript-details .rec-transcript-summary::before{transform:r
 .section{margin-bottom:52px}
 .part-label{font-size:12px;font-weight:600;color:var(--blue);letter-spacing:.15em;margin-bottom:8px}
 .section-title{font-size:24px;font-weight:700;color:var(--navy);padding-bottom:12px;border-bottom:2px solid var(--border);margin-bottom:20px}
+.part-collapse-header{padding:6px 4px;border-radius:6px;transition:background .15s}
+.part-collapse-header:hover{background:rgba(74,144,217,.06)}
+.part-collapse-header .section-title{margin-bottom:0;border-bottom:none;padding-bottom:0}
+.part-collapse-body{margin-top:20px}
 .section-lead{font-size:14px;color:var(--text-mid);margin-bottom:18px;line-height:1.8}
 
 /* ─── CALLOUT BOXES ─── */
