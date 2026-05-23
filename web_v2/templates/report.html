@@ -108,6 +108,26 @@
 {% set pains = report.pain_points or [] %}
 {% set harvest = report.harvest %}
 {% set scoring = report.scoring %}
+{# 评分重算：stage.score = 子项均值，overall = stage 均值（保留一位小数） #}
+{% if scoring and scoring.stages %}
+  {% set _stage_scores = [] %}
+  {% for stg in scoring.stages %}
+    {% set _subs = stg.sub or [] %}
+    {% set _sub_scores = _subs | map(attribute='score') | reject('none') | list %}
+    {% if _sub_scores %}
+      {% set _avg = ((_sub_scores | sum) / (_sub_scores | length)) | round(1) %}
+      {% if stg.update({'score': _avg}) %}{% endif %}
+      {% if _stage_scores.append(_avg) %}{% endif %}
+    {% endif %}
+  {% endfor %}
+  {% if _stage_scores %}
+    {% set _overall = ((_stage_scores | sum) / (_stage_scores | length)) | round(1) %}
+    {% if scoring.update({'overall': _overall}) %}{% endif %}
+    {% if report.overview and report.overview.quality_score %}
+      {% if report.overview.quality_score.update({'score': _overall}) %}{% endif %}
+    {% endif %}
+  {% endif %}
+{% endif %}
 {% set logic = report.logic_chain %}
 {% set cases = report.cases or [] %}
 {% set ns = report.next_steps %}

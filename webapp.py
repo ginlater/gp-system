@@ -434,10 +434,11 @@ def _asr_then_maybe_analyze(recording_id):
         maybe_trigger_session_analysis(rec["session_id"])
 
 
-def maybe_trigger_session_analysis(session_id, model=None):
+def maybe_trigger_session_analysis(session_id, model=None, force_refresh_shared=False):
     """所有录音 ASR done 且分析过期/未完成 → 触发分析。
 
     model: 指定分析模型 id（来自 SUPPORTED_MODELS）；为 None 则沿用上次或默认。
+    force_refresh_shared: True 时强制重跑 shared_context（顶部"⟳ 重跑"语义）。
     """
     if not session_id:
         return
@@ -475,7 +476,10 @@ def maybe_trigger_session_analysis(session_id, model=None):
         )
 
     threading.Thread(
-        target=run_session_analysis, args=(session_id, new_sig, chosen_model), daemon=True
+        target=run_session_analysis,
+        args=(session_id, new_sig, chosen_model),
+        kwargs={"force_refresh_shared": force_refresh_shared},
+        daemon=True,
     ).start()
 
 
@@ -1006,6 +1010,49 @@ SYSTEM_PROMPT_CALL2 = """\
 调用 submit_call2 工具提交结果，不要输出其他任何文字。
 """
 
+SYSTEM_PROMPT_SHARED_CALL1 = """\
+你是申美美容院的接诊预分析员。你只产出"共用判断底稿"，不写最终报告。
+
+录音格式：
+- 每行：[开始秒s - 结束秒s] 说话人X: 内容
+- 说话人0/1 由 ASR 分配，需根据内容判断顾问 / 顾客
+- 多段录音用 ### 录音段 N/总段数 分隔
+
+底稿目标：基于完整录音抽取后续生成正式报告所需的"判断 + 证据"，给下游分块任务复用，不要重复读录音。
+
+输出纪律：
+1. 只写判断、证据、关键原话；不写任何长篇话术、不写下一步动作、不写完整方案
+2. 关键原话必须从录音里照抄（带说话人和时间），不要改写
+3. 没有出现的字段宁填空数组也不要编造
+4. 字段保持精炼，整份底稿期望 < 2500 字
+
+调用 submit_shared_call1 工具提交结果，不要输出其他任何文字。
+"""
+
+SYSTEM_PROMPT_SHARED_CALL2 = """\
+你是申美美容院的接诊质检预分析员。你只产出"共用质检底稿"，不写最终报告。
+
+录音格式：
+- 每行：[开始秒s - 结束秒s] 说话人X: 内容
+- 说话人0/1 由 ASR 分配
+- 多段录音用 ### 录音段 N/总段数 分隔
+
+知识库使用纪律：
+- 知识库（L 编号）仅供你判断时参考
+- 不要在底稿里复述知识库条目本身，只写"本次命中了什么 + 证据原话"
+- 严禁把知识库内容大段抄进字段里
+
+底稿目标：抽取后续质检评分、Case 复盘、根因、收割机会所需的"判断 + 证据"，给下游分块复用。
+
+输出纪律：
+1. 只写判断要点、命中依据、关键原话；不写最终分数、不写完整 case 三层分析、不写改进建议
+2. 关键原话必须照抄
+3. 字段保持精炼，整份底稿期望 < 3000 字
+
+调用 submit_shared_call2 工具提交结果，不要输出其他任何文字。
+"""
+
+
 SYSTEM_PROMPT_CALL3 = """\
 你是申美美容院的接诊报告撰写专家。
 你会收到前两步的分析结果（顾客画像、痛点、成交诊断、质检评分、Case复盘、失分根因），
@@ -1468,6 +1515,211 @@ TOOL_CALL3 = {
 }
 
 
+# ─── Shared-context preflight Tool Schema ────────────────
+# 仅做内部底稿：判断 + 证据 + 关键原话；不写完整话术 / 长篇方案。
+# 输出存到 analysis_result._shared_customer_context / _shared_quality_context，
+# 渲染时被 `_` 前缀过滤掉，不暴露给前端。
+
+TOOL_SHARED_CALL1 = {
+    "name": "submit_shared_call1",
+    "description": "提交 Call1 的共用顾客判断底稿（不是最终报告）",
+    "input_schema": {
+        "type": "object",
+        "required": ["shared_customer_context"],
+        "properties": {
+            "shared_customer_context": {
+                "type": "object",
+                "required": ["customer_profile", "core_pains", "external_signals",
+                             "deal_judgment", "key_quotes"],
+                "properties": {
+                    "customer_profile": {
+                        "type": "object",
+                        "description": "顾客画像要点，不写长篇判断",
+                        "properties": {
+                            "age_band": {"type": "string", "description": "年龄段，如'30-35'"},
+                            "occupation": {"type": "string"},
+                            "consumption_style": {"type": "string",
+                                                  "description": "消费观一句话，<30 字"},
+                            "personality_signals": {"type": "array",
+                                                     "items": {"type": "string"},
+                                                     "description": "性格信号，每条 <20 字，最多 5 条"},
+                            "decision_type": {"type": "string",
+                                              "description": "主动决策型 / 被动决策型 / 比价型 等，一句话"},
+                        },
+                    },
+                    "core_pains": {
+                        "type": "array",
+                        "description": "核心痛点，最多 5 条；只列名 + 证据原话",
+                        "items": {
+                            "type": "object",
+                            "required": ["name", "evidence_quote"],
+                            "properties": {
+                                "name": {"type": "string", "description": "痛点名，<15 字"},
+                                "evidence_quote": {"type": "string",
+                                                   "description": "证据原话，照抄"},
+                                "speaker": {"type": "string",
+                                            "description": "顾客 / 顾问"},
+                                "timestamp_label": {"type": "string",
+                                                    "description": "时间戳，如 '12:30'"},
+                            },
+                        },
+                    },
+                    "external_signals": {
+                        "type": "object",
+                        "properties": {
+                            "medical_aesthetics": {"type": "array",
+                                                    "items": {"type": "string"},
+                                                    "description": "医美经历，每条 <20 字"},
+                            "lifestyle_habits": {"type": "array",
+                                                  "items": {"type": "string"}},
+                            "external_brands": {"type": "array",
+                                                 "items": {"type": "string"},
+                                                 "description": "外部品牌 / 项目 / 机构"},
+                        },
+                    },
+                    "deal_judgment": {
+                        "type": "object",
+                        "description": "成交判断要点，仅事实和依据",
+                        "properties": {
+                            "is_deal": {"type": "string",
+                                        "description": "成交 / 未成交 / 待定"},
+                            "deal_amount": {"type": "string"},
+                            "deal_items": {"type": "array",
+                                            "items": {"type": "string"}},
+                            "risk_level": {"type": "string",
+                                            "description": "低 / 中 / 高"},
+                            "key_basis_quotes": {"type": "array",
+                                                  "items": {"type": "string"},
+                                                  "description": "支撑判断的原话，最多 3 条"},
+                        },
+                    },
+                    "key_quotes": {
+                        "type": "array",
+                        "description": "贯穿后续判断的关键原话，8-12 条，照抄",
+                        "items": {
+                            "type": "object",
+                            "required": ["text"],
+                            "properties": {
+                                "speaker": {"type": "string"},
+                                "timestamp_label": {"type": "string"},
+                                "text": {"type": "string"},
+                                "use_for": {"type": "string",
+                                            "description": "用途标记，如 '画像/痛点/成交'"},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+
+TOOL_SHARED_CALL2 = {
+    "name": "submit_shared_call2",
+    "description": "提交 Call2 的共用质检判断底稿（不是最终报告）",
+    "input_schema": {
+        "type": "object",
+        "required": ["shared_quality_context"],
+        "properties": {
+            "shared_quality_context": {
+                "type": "object",
+                "required": ["stage_scoring_basis", "root_cause_hypothesis",
+                             "case_candidates", "harvest_opportunities", "key_quotes"],
+                "properties": {
+                    "stage_scoring_basis": {
+                        "type": "array",
+                        "description": "三阶段（开场/挖需+方案/收单）的评分依据；只写命中要点，不出最终分数",
+                        "items": {
+                            "type": "object",
+                            "required": ["stage_name", "good_points", "bad_points"],
+                            "properties": {
+                                "stage_name": {"type": "string",
+                                                "description": "开场 / 挖需+方案 / 收单"},
+                                "good_points": {"type": "array",
+                                                 "items": {"type": "string"},
+                                                 "description": "亮点要点，每条 <30 字"},
+                                "bad_points": {"type": "array",
+                                                "items": {"type": "string"},
+                                                "description": "失分要点，每条 <30 字"},
+                                "rough_band": {"type": "string",
+                                                "description": "粗略档位：差/一般/好/优秀（仅供下游参考）"},
+                            },
+                        },
+                    },
+                    "root_cause_hypothesis": {
+                        "type": "object",
+                        "description": "失分根因假设；不写改进建议",
+                        "properties": {
+                            "headline": {"type": "string",
+                                          "description": "一句话根因假设，<40 字"},
+                            "gap_pairs": {
+                                "type": "array",
+                                "description": "顾问说了什么 vs 应该说什么，至少 3 对",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "actually_said": {"type": "string"},
+                                        "should_say": {"type": "string"},
+                                    },
+                                },
+                            },
+                            "gap_note": {"type": "string",
+                                          "description": "差距本质一句话，<30 字"},
+                        },
+                    },
+                    "case_candidates": {
+                        "type": "array",
+                        "description": "候选 case 原始片段，6-10 条；不做三层分析",
+                        "items": {
+                            "type": "object",
+                            "required": ["kind", "title", "quote"],
+                            "properties": {
+                                "kind": {"type": "string",
+                                          "description": "做得好 / 做得差 / 关键转折"},
+                                "title": {"type": "string", "description": "<20 字"},
+                                "timestamp_label": {"type": "string"},
+                                "speaker": {"type": "string"},
+                                "quote": {"type": "string", "description": "原话照抄"},
+                                "hit_logic": {"type": "string",
+                                               "description": "命中的判断逻辑要点（不写 L 编号），<30 字"},
+                            },
+                        },
+                    },
+                    "harvest_opportunities": {
+                        "type": "array",
+                        "description": "收割 / 复购机会原始线索；不写完整方案",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "opportunity": {"type": "string",
+                                                 "description": "机会一句话，<30 字"},
+                                "evidence_quote": {"type": "string"},
+                            },
+                        },
+                    },
+                    "key_quotes": {
+                        "type": "array",
+                        "description": "质检判断关键原话，8-12 条",
+                        "items": {
+                            "type": "object",
+                            "required": ["text"],
+                            "properties": {
+                                "speaker": {"type": "string"},
+                                "timestamp_label": {"type": "string"},
+                                "text": {"type": "string"},
+                                "use_for": {"type": "string",
+                                             "description": "用途标记，如 '评分/根因/case'"},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+
 # ─── 任务注册表 ───────────────────────────────────────────
 # 每个任务的元数据：属于哪次调用、输出字段、user_prompt 片段。
 # TOOL_CALL1/2/3 的聚合 schema 不变；单任务重跑时会从聚合 schema 抽出对应
@@ -1598,6 +1850,10 @@ customer_moved / customer_agreed / effect_satisfied / price_matched / urgency_bu
 
 每个子项 detail 只写一句本次事实（不写定义不写建议，20-40 字）。
 good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
+
+⚠ 计分规则（严格执行）：
+- 每个 sub 子项只打分（0-10），stage 的 score 字段固定填 0，overall 字段固定填 0
+- 不要自己算平均分，系统会自动根据子项均值重新计算 stage 分和总分
 """,
     },
     "T6": {
@@ -1705,15 +1961,36 @@ CALL_GROUPS = {
     3: ["T9", "T10", "T11"],
 }
 
+# 在同一个 Call 内部，每个 chunk 走一次独立的 LLM 小调用，输出字段少、不易被
+# DeepSeek V4 tool_call 的字符串化 JSON 撑爆 max_tokens。Call 1/2 走 shared
+# preflight 先产判断底稿，再按下面分块各自基于底稿组装正式字段；Call 3 输入
+# 本就是结构化摘要，不做 preflight，直接分块。
+CALL_CHUNKS = {
+    1: [["T1", "T2"], ["T3", "T4"]],
+    2: [["T5"], ["T6"], ["T7", "T8"]],
+    3: [["T9"], ["T10"], ["T11"]],
+}
 
-def expand_to_call_group(task_ids):
-    """把任务列表扩展到各自所在 call 的完整任务组。
-    确保同一个 call 里的任务永远一起跑，不拆开。"""
-    expanded = set(task_ids)
-    for tid in list(task_ids):
+SHARED_CONTEXT_KEYS = {
+    1: "_shared_customer_context",
+    2: "_shared_quality_context",
+}
+
+
+def expand_to_call_chunk(task_ids):
+    """把任务列表扩展到各自所在 chunk 的完整任务集（不再扩到整个 call group）。
+    新分块模型下，每个 chunk 就是一次独立 LLM 小调用：缺哪个任务，只把同 chunk
+    的兄弟带上一起跑，避免把同 call 已完成的其它任务无谓重跑。
+    """
+    expanded = set()
+    for tid in task_ids:
+        if tid not in TASK_REGISTRY:
+            continue
         call_no = TASK_REGISTRY[tid]["call"]
-        for t in CALL_GROUPS[call_no]:
-            expanded.add(t)
+        for chunk in CALL_CHUNKS[call_no]:
+            if tid in chunk:
+                expanded.update(chunk)
+                break
     return list(expanded)
 
 
@@ -1858,7 +2135,7 @@ def _call_anthropic(model, system_prompt, user_prompt, tool=None, max_tokens=160
     return merged
 
 
-def _parse_tool_calls_arguments(tool_calls) -> dict:
+def _parse_tool_calls_arguments(tool_calls, stage_label="") -> dict:
     """把 DeepSeek 返回的 tool_calls 列表合并成一个 dict。
 
     兼容两种情况：
@@ -1904,20 +2181,38 @@ def _parse_tool_calls_arguments(tool_calls) -> dict:
                 break
         return results
 
-    print(f"[parse_tool_calls] tool_calls 数量: {len(tool_calls)}")
+    tag = f"[parse_tool_calls{':'+stage_label if stage_label else ''}]"
+    print(f"{tag} tool_calls 数量: {len(tool_calls)}")
     merged = {}
     for i, tc in enumerate(tool_calls):
         args_str = tc.get("function", {}).get("arguments", "")
-        print(f"[parse_tool_calls] tool_call[{i}] arguments 长度: {len(args_str)}")
+        print(f"{tag} tool_call[{i}] arguments 长度: {len(args_str)}")
+        # DeepSeek V4 偶发在 JSON 字符串里用非法转义 \' （JSON 不支持），
+        # raw_decode 会直接报 "Expecting ',' delimiter"。这里做最小清洗：
+        # 仅把不是 \\\' 形式的 \' 替换成 '，不动 \" \\ \n \uXXXX 等合法转义。
+        if args_str:
+            cleaned, n_sub = re.subn(r"(?<!\\)\\'", "'", args_str)
+            if n_sub > 0:
+                print(f"{tag} cleaned illegal escape \\' x{n_sub}")
+                args_str = cleaned
         objs = _raw_decode_all(args_str)
         for obj in objs:
             if not isinstance(obj, dict):
-                print(f"[parse_tool_calls] tool_call[{i}] 解析结果不是 dict，跳过: {type(obj)}")
+                print(f"{tag} tool_call[{i}] 解析结果不是 dict，跳过: {type(obj)}")
                 continue
-            print(f"[parse_tool_calls] tool_call[{i}] 解析出 keys: {list(obj.keys())}")
+            print(f"{tag} tool_call[{i}] 解析出 keys: {list(obj.keys())}")
             merged = _merge(merged, obj)
 
-    print(f"[parse_tool_calls] merge 后最终 keys: {list(merged.keys())}")
+    print(f"{tag} merge 后最终 keys: {list(merged.keys())}")
+    if not merged:
+        # 空 dict：把每个 tool_call 的 arguments 长度、头尾各 500 字打出来，
+        # 用于判断到底是空字符串、坏 JSON 还是嵌套字符串没解开
+        for i, tc in enumerate(tool_calls):
+            args_str = tc.get("function", {}).get("arguments", "") or ""
+            head = args_str[:500]
+            tail = args_str[-500:] if len(args_str) > 500 else ""
+            print(f"{tag} EMPTY_MERGE tool_call[{i}] len={len(args_str)} "
+                  f"head={head!r} tail={tail!r}")
     return merged
 
 
@@ -1938,7 +2233,8 @@ def _deep_json_unwrap(node):
     return node
 
 
-def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None, enable_thinking=False):
+def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None,
+                   enable_thinking=False, stage_label=""):
     """调用 DeepSeek（OpenAI 兼容），不走代理，返回 tool_calls[0].function.arguments dict。
 
     max_tokens 语义是"输出 token 预算"；对 V4 思考模式会在内部加 16K thinking buffer。
@@ -2005,14 +2301,29 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
             f"DeepSeek 响应不是合法 JSON: {json_err}; "
             f"HTTP {resp.status_code}; body_head={resp.text[:300]}"
         )
+    stage_tag = f"[{stage_label}] " if stage_label else ""
     try:
-        msg = data["choices"][0]["message"]
+        choice0 = data["choices"][0]
+        finish = choice0.get("finish_reason")
+        msg = choice0["message"]
         tool_calls = msg.get("tool_calls") or []
+        # length 截断：成功路径也显式抛错，不要让下游解析半截 JSON 当 "结果为空"
+        if finish == "length":
+            raise RuntimeError(
+                f"{stage_tag}DeepSeek 输出被 max_tokens 截断（finish_reason=length，"
+                f"out_budget={out_budget}，model={model}）；"
+                f"建议拆分输出或调大预算"
+            )
         if not tool_calls:
-            raise RuntimeError(f"DeepSeek 未返回 tool_calls；content={msg.get('content','')[:200]}")
-        result = _parse_tool_calls_arguments(tool_calls)
+            raise RuntimeError(
+                f"{stage_tag}DeepSeek 未返回 tool_calls；finish_reason={finish}；"
+                f"content={msg.get('content','')[:200]}"
+            )
+        result = _parse_tool_calls_arguments(tool_calls, stage_label=stage_label)
         if not result:
-            raise RuntimeError("DeepSeek tool_calls 解析后为空 dict")
+            raise RuntimeError(
+                f"{stage_tag}DeepSeek tool_calls 解析后为空 dict；finish_reason={finish}"
+            )
         return _deep_json_unwrap(result)
     except (KeyError, IndexError, json.JSONDecodeError) as e:
         # 出错时把 finish_reason 显式带出来，方便判断是否是 length 截断
@@ -2022,12 +2333,13 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
         except Exception:
             pass
         raise RuntimeError(
-            f"DeepSeek 响应解析失败: {e}; finish_reason={finish}; "
+            f"{stage_tag}DeepSeek 响应解析失败: {e}; finish_reason={finish}; "
             f"body_head={json.dumps(data, ensure_ascii=False)[:400]}"
         )
 
 
-def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None, enable_thinking=False):
+def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None,
+              enable_thinking=False, stage_label=""):
     """统一入口：根据 model 的 provider 调 Claude 或 DeepSeek。"""
     provider = MODEL_PROVIDER.get(model)
     if provider == "anthropic":
@@ -2035,8 +2347,40 @@ def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None, enable_t
                                 max_tokens=max_tokens or 16000)
     if provider == "deepseek":
         return _call_deepseek(model, system_prompt, user_prompt, tool=tool,
-                              max_tokens=max_tokens, enable_thinking=enable_thinking)
+                              max_tokens=max_tokens, enable_thinking=enable_thinking,
+                              stage_label=stage_label)
     raise RuntimeError(f"未知 provider for model {model}")
+
+
+def _call_llm_with_retry(model, system_prompt, user_prompt, tool, max_tokens=None,
+                          enable_thinking=False, stage_label="", max_attempts=2):
+    """带通用重试的 LLM 调用。
+    适用：DeepSeek tool_calls 偶发 arguments 为空/坏 JSON / 解析后空 dict。
+    重试条件：_call_llm 抛错，或返回空/非 dict 结果。
+    成功路径不变；最终仍失败则抛出最后一次错误。
+    """
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            result = _call_llm(model, system_prompt, user_prompt, tool=tool,
+                               max_tokens=max_tokens,
+                               enable_thinking=enable_thinking,
+                               stage_label=stage_label)
+            if not result or not isinstance(result, dict):
+                last_err = RuntimeError(
+                    f"[{stage_label}] attempt {attempt}/{max_attempts} "
+                    f"返回结果为空或非 dict: {type(result).__name__}")
+                print(str(last_err) +
+                      ("; 即将重试" if attempt < max_attempts else "; 不再重试"))
+                continue
+            if attempt > 1:
+                print(f"[{stage_label}] 重试 attempt {attempt} 成功")
+            return result
+        except Exception as e:
+            last_err = e
+            print(f"[{stage_label}] attempt {attempt}/{max_attempts} 失败: {e}; "
+                  + ("即将重试" if attempt < max_attempts else "不再重试"))
+    raise last_err if last_err else RuntimeError(f"[{stage_label}] 未知失败")
 
 
 def _set_progress(session_id, msg):
@@ -2072,6 +2416,24 @@ def set_task_status(session_id, task_id, status, error=None):
     )
 
 
+def recalc_scoring(scoring):
+    """根据 sub 子项分重算 stage.score 和 overall（均保留一位小数）。"""
+    if not scoring or not isinstance(scoring, dict):
+        return scoring
+    stages = scoring.get("stages") or []
+    stage_scores = []
+    for stg in stages:
+        subs = stg.get("sub") or []
+        sub_scores = [s.get("score") for s in subs if isinstance(s, dict) and isinstance(s.get("score"), (int, float))]
+        if sub_scores:
+            avg = round(sum(sub_scores) / len(sub_scores), 1)
+            stg["score"] = avg
+            stage_scores.append(avg)
+    if stage_scores:
+        scoring["overall"] = round(sum(stage_scores) / len(stage_scores), 1)
+    return scoring
+
+
 def save_task_result(session_id, task_id, result):
     """把任务输出合并写入 analysis_result JSON 的对应字段。
     仅更新该任务声明的 result_keys，不动其它字段。"""
@@ -2085,6 +2447,9 @@ def save_task_result(session_id, task_id, result):
     for key in task["result_keys"]:
         if key in result:
             cur[key] = result[key]
+
+    if task_id == "T5" and "scoring" in cur:
+        recalc_scoring(cur["scoring"])
 
     db_write(
         "UPDATE sessions SET analysis_result=? WHERE id=?",
@@ -2147,9 +2512,50 @@ def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
             conn.close()
 
 
+_SESSION_RUN_LOCKS: dict = {}
+_SESSION_RUN_LOCKS_GUARD = threading.Lock()
+
+
+def _get_session_run_lock(session_id):
+    """每个 session 一把可重入锁，序列化同一 session 的 run_session_analysis。
+    避免 fill-missing 与单任务 rerun 同时触发，导致 Call 3 在 Call 2 完成前
+    抢先做依赖检查而误判 failed。"""
+    with _SESSION_RUN_LOCKS_GUARD:
+        lock = _SESSION_RUN_LOCKS.get(session_id)
+        if lock is None:
+            lock = threading.Lock()
+            _SESSION_RUN_LOCKS[session_id] = lock
+        return lock
+
+
 def run_session_analysis(session_id, signature, model=None, only_tasks=None,
                          enable_thinking=False, result_col="analysis_result",
-                         task_status_col="task_status"):
+                         task_status_col="task_status",
+                         force_refresh_shared=False):
+    """同 session 串行入口：等已有 run 完成再执行，避免 fill-missing 与
+    单任务 rerun 并发时 Call 3 抢跑导致依赖误判 failed。"""
+    import time as _t
+    lock = _get_session_run_lock(session_id)
+    wait_t = _t.time()
+    lock.acquire()
+    waited = _t.time() - wait_t
+    if waited > 0.5:
+        print(f"[run_session_analysis] session {session_id} 等待前一个 run "
+              f"{waited:.1f}s 后开始（only_tasks={only_tasks}）")
+    try:
+        return _run_session_analysis_impl(
+            session_id, signature, model=model, only_tasks=only_tasks,
+            enable_thinking=enable_thinking, result_col=result_col,
+            task_status_col=task_status_col,
+            force_refresh_shared=force_refresh_shared)
+    finally:
+        lock.release()
+
+
+def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=None,
+                         enable_thinking=False, result_col="analysis_result",
+                         task_status_col="task_status",
+                         force_refresh_shared=False):
     """整段接诊（多录音拼接）→ 三次 LLM tool_use 拆分 → 任务独立存盘。
 
     only_tasks: 指定只跑这些任务 id；None 表示全部。
@@ -2203,6 +2609,34 @@ def run_session_analysis(session_id, signature, model=None, only_tasks=None,
 
     customer_name = sess["customer"] or "未知顾客"
     advisor_name = sess["advisor"] or "未知顾问"
+
+    # 何时清空旧 _shared_*：
+    #   a) signature 变化（录音改了，底稿不再适用）
+    #   b) force_refresh_shared=True（顶部"⟳ 重跑"语义：整体重跑必须重读完整录音）
+    # 补齐任务 / 单任务重跑保持 False，让 signature 没变时可以复用底稿省成本。
+    sig_row = db_fetchone(
+        f"SELECT analysis_signature, {result_col} FROM sessions WHERE id=?",
+        (session_id,),
+    )
+    prev_sig = sig_row["analysis_signature"] if sig_row else None
+    if force_refresh_shared or prev_sig != signature:
+        try:
+            prev_full = json.loads(sig_row[result_col]) if (sig_row and sig_row[result_col]) else {}
+        except (json.JSONDecodeError, TypeError):
+            prev_full = {}
+        cleared = False
+        for k in list(prev_full.keys()):
+            if k.startswith("_shared_"):
+                prev_full.pop(k, None)
+                cleared = True
+        if cleared:
+            db_write(f"UPDATE sessions SET {result_col}=? WHERE id=?",
+                     (json.dumps(prev_full, ensure_ascii=False), session_id))
+            reason = ("force_refresh" if force_refresh_shared and prev_sig == signature
+                     else "signature_change")
+            print(f"[clear_shared:{reason}] session {session_id} 清空旧 _shared_* "
+                  f"(prev_sig={prev_sig}, new_sig={signature}, "
+                  f"force_refresh_shared={force_refresh_shared})")
 
     # 决定要跑哪些任务
     target_tasks = list(TASK_REGISTRY.keys()) if only_tasks is None else only_tasks
@@ -2281,8 +2715,79 @@ def run_session_analysis(session_id, signature, model=None, only_tasks=None,
             db_write(f"UPDATE sessions SET {result_col}=? WHERE id=?",
                      (json.dumps(cur, ensure_ascii=False), session_id))
 
-    def run_one_call(call_no, tids):
-        """执行一次 LLM 调用，覆盖 tids 中的所有任务，逐任务验证存盘"""
+    def _save_shared_context(call_no, shared_obj):
+        """把 shared_context 以 _shared_xxx 内部字段并入 result_col"""
+        key = SHARED_CONTEXT_KEYS[call_no]
+        with _save_lock:
+            row = db_fetchone(f"SELECT {result_col} FROM sessions WHERE id=?", (session_id,))
+            try:
+                cur = json.loads(row[result_col]) if row and row[result_col] else {}
+            except (json.JSONDecodeError, TypeError):
+                cur = {}
+            cur[key] = shared_obj
+            db_write(f"UPDATE sessions SET {result_col}=? WHERE id=?",
+                     (json.dumps(cur, ensure_ascii=False), session_id))
+
+    def _load_shared_context(call_no):
+        """读已存的 shared_context；不存在返回 None"""
+        key = SHARED_CONTEXT_KEYS[call_no]
+        row = db_fetchone(f"SELECT {result_col} FROM sessions WHERE id=?", (session_id,))
+        try:
+            cur = json.loads(row[result_col]) if row and row[result_col] else {}
+        except (json.JSONDecodeError, TypeError):
+            cur = {}
+        v = cur.get(key)
+        return v if v else None
+
+    def _run_shared_preflight(call_no):
+        """跑 Call1/2 的共用底稿；返回 shared dict；失败 raise。
+        如果 result_col 里已存在则直接复用（fill-missing 时少跑一次）。
+        """
+        cached = _load_shared_context(call_no)
+        if cached:
+            print(f"[shared_call{call_no}] 复用已存底稿")
+            return cached
+
+        if call_no == 1:
+            system = SYSTEM_PROMPT_SHARED_CALL1
+            tool = TOOL_SHARED_CALL1
+            shared_key = "shared_customer_context"
+            input_section = (
+                f"录音段数：{len(recs)} 段\n\n### 接诊录音\n{full_transcript}"
+            )
+            budget = 8000
+        else:
+            kb_text = build_kb_brief()
+            system = SYSTEM_PROMPT_SHARED_CALL2
+            tool = TOOL_SHARED_CALL2
+            shared_key = "shared_quality_context"
+            input_section = (
+                f"### 接诊录音\n{full_transcript}\n\n"
+                f"### 判断知识库（参考用，仅用于判断本次命中什么，不要复述；"
+                f"输出不带 L 编号；共 {len(load_kb())} 条）\n{kb_text}"
+            )
+            budget = 10000
+
+        user_prompt = (
+            f"顾客姓名：{customer_name}\n"
+            f"顾问姓名：{advisor_name}\n"
+            f"服务日期：{sess['service_date'] or '未知'}\n\n"
+            f"{input_section}"
+        )
+        stage = f"shared_call{call_no}"
+        result = _call_llm_with_retry(
+            model, system, user_prompt, tool=tool,
+            max_tokens=budget, enable_thinking=enable_thinking,
+            stage_label=stage, max_attempts=2)
+        shared = result.get(shared_key) if isinstance(result, dict) else None
+        if not shared or not isinstance(shared, dict):
+            raise RuntimeError(f"[{stage}] 未返回 {shared_key} 或为空")
+        _save_shared_context(call_no, shared)
+        return shared
+
+    def _run_chunk(call_no, tids, chunk_input):
+        """跑单个分块小调用：基于 shared_context / 摘要 产出正式字段；
+        逐 task validate + save + ts_set。任何失败只影响本 chunk。"""
         if not tids:
             return
 
@@ -2292,43 +2797,21 @@ def run_session_analysis(session_id, signature, model=None, only_tasks=None,
             3: SYSTEM_PROMPT_CALL3,
         }[call_no]
 
-        # 拼输入数据
-        if call_no == 1:
+        if call_no in (1, 2):
+            ctx_label = ("共用顾客判断底稿" if call_no == 1
+                         else "共用质检判断底稿")
             input_section = (
-                f"录音段数：{len(recs)} 段\n\n### 接诊录音\n{full_transcript}"
-            )
-        elif call_no == 2:
-            kb_text = build_kb_brief()
-            input_section = (
-                f"### 接诊录音\n{full_transcript}\n\n"
-                f"### 判断知识库（参考用，输出不带 L 编号；共 {len(load_kb())} 条）\n{kb_text}"
+                f"### {ctx_label}（已基于完整录音整理；请直接基于底稿组装/扩写正式字段，"
+                f"不要再假设有原始录音可读）\n"
+                f"{json.dumps(chunk_input, ensure_ascii=False, indent=2)}"
             )
         else:
-            row = db_fetchone(
-                f"SELECT {result_col} FROM sessions WHERE id=?", (session_id,))
-            try:
-                prev = json.loads(row[result_col]) if row and row[result_col] else {}
-            except (json.JSONDecodeError, TypeError):
-                prev = {}
-            # 检查依赖，把缺依赖的任务标 failed，其余正常继续
-            dep_failed = set()
-            for tid in list(tids):
-                for dep in TASK_REGISTRY[tid]["depends_on"]:
-                    for k in TASK_REGISTRY[dep]["result_keys"]:
-                        if k not in prev or not prev[k]:
-                            _ts_set(tid, "failed", error=f"依赖 {dep}（{k}）未完成")
-                            dep_failed.add(tid)
-                            break
-            tids = [tid for tid in tids if tid not in dep_failed]
-            if not tids:
-                return
-            c1_summary, c2_summary = build_call_summaries(prev, prev)
+            c1_summary, c2_summary = chunk_input
             input_section = (
                 f"### 顾客理解结果摘要\n{c1_summary}\n\n"
                 f"### 接诊评判结果摘要\n{c2_summary}"
             )
 
-        # 拼任务说明 + 收集 schema_keys
         task_prompts = []
         all_schema_keys = []
         for tid in tids:
@@ -2351,18 +2834,18 @@ def run_session_analysis(session_id, signature, model=None, only_tasks=None,
         for tid in tids:
             _ts_set(tid, "running")
 
-        # call2 输出最重（质检14子项+Case复盘+根因+收割），给更大预算
-        call_max_tokens = {1: 12000, 2: 16000, 3: 12000}.get(call_no, 12000)
+        stage = f"chunk_call{call_no}_{'+'.join(tids)}"
         try:
-            result = _call_llm(model, system_prompt, user_prompt,
-                               tool=sub_tool, max_tokens=call_max_tokens,
-                               enable_thinking=enable_thinking)
+            result = _call_llm_with_retry(
+                model, system_prompt, user_prompt,
+                tool=sub_tool, max_tokens=8000,
+                enable_thinking=enable_thinking,
+                stage_label=stage, max_attempts=2)
         except Exception as e:
             for tid in tids:
-                _ts_set(tid, "failed", error=str(e))
+                _ts_set(tid, "failed", error=f"[{stage}] {e}"[:300])
             return
 
-        # 逐任务验证 + 立刻存盘
         for tid in tids:
             t = TASK_REGISTRY[tid]
             sub_result = {k: result.get(k) for k in t["result_keys"] if k in result}
@@ -2373,7 +2856,7 @@ def run_session_analysis(session_id, signature, model=None, only_tasks=None,
             else:
                 _ts_set(tid, "failed", error=reason)
 
-        # T3 完成 → 写 customer_tags 累积表（只在主列时写，避免重复）
+        # T3 完成 → 写 customer_tags 累积表
         if "T3" in tids and result_col == "analysis_result":
             ts_now = _ts_get()
             if ts_now.get("T3", {}).get("status") == "done":
@@ -2385,51 +2868,83 @@ def run_session_analysis(session_id, signature, model=None, only_tasks=None,
                 except Exception as _tag_err:
                     print(f"[save_customer_tags] {session_id}: {_tag_err}")
 
+    def run_call(call_no, target_tids):
+        """编排单个 Call：Call1/2 先 shared_preflight 再分块并行；Call3 不做 preflight"""
+        if not target_tids:
+            return
+
+        # Call 3 路径：依赖检查 + 用 c1+c2 摘要做 chunk_input
+        if call_no == 3:
+            row = db_fetchone(
+                f"SELECT {result_col} FROM sessions WHERE id=?", (session_id,))
+            try:
+                prev = json.loads(row[result_col]) if row and row[result_col] else {}
+            except (json.JSONDecodeError, TypeError):
+                prev = {}
+            dep_failed = set()
+            for tid in list(target_tids):
+                for dep in TASK_REGISTRY[tid]["depends_on"]:
+                    for k in TASK_REGISTRY[dep]["result_keys"]:
+                        if k not in prev or not prev[k]:
+                            _ts_set(tid, "failed",
+                                    error=f"依赖 {dep}（{k}）未完成")
+                            dep_failed.add(tid)
+                            break
+            target_tids = [t for t in target_tids if t not in dep_failed]
+            if not target_tids:
+                return
+            chunk_input = build_call_summaries(prev, prev)
+        else:
+            # Call 1/2：先跑 shared preflight
+            try:
+                shared = _run_shared_preflight(call_no)
+            except Exception as e:
+                err = f"shared_context 失败: {e}"
+                for tid in target_tids:
+                    _ts_set(tid, "failed", error=err[:300])
+                return
+            chunk_input = shared
+
+        # 按 CALL_CHUNKS 取出与 target_tids 相交的分块；分块之间并行
+        relevant_chunks = []
+        for chunk in CALL_CHUNKS[call_no]:
+            intersect = [t for t in chunk if t in target_tids]
+            if intersect:
+                relevant_chunks.append(intersect)
+        if not relevant_chunks:
+            return
+        if len(relevant_chunks) == 1:
+            _run_chunk(call_no, relevant_chunks[0], chunk_input)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=len(relevant_chunks)) as ex:
+                futs = [ex.submit(_run_chunk, call_no, ch, chunk_input)
+                        for ch in relevant_chunks]
+                for f in futs:
+                    f.result()
+
     try:
         call1_tasks = by_call[1]
         call2_tasks = by_call[2]
         call3_tasks = by_call[3]
 
-        # 第一波：call1 + call2 并行
+        # 第一波：Call 1 + Call 2 并行；每个内部先 shared preflight 再分块并行
         if call1_tasks or call2_tasks:
-            _set_progress(session_id, "调用 1+2 并行启动…")
+            _set_progress(session_id, "调用 1+2 并行启动（含共用底稿）…")
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
                 futures = []
                 if call1_tasks:
-                    futures.append(ex.submit(run_one_call, 1, call1_tasks))
+                    futures.append(ex.submit(run_call, 1, call1_tasks))
                 if call2_tasks:
-                    futures.append(ex.submit(run_one_call, 2, call2_tasks))
+                    futures.append(ex.submit(run_call, 2, call2_tasks))
                 for f in futures:
                     f.result()
 
-        # 第二波：call3 串行（依赖前面结果）
+        # 第二波：Call 3（不做 preflight；内部 T9/T10/T11 各自一个 chunk 并行）
         if call3_tasks:
             stage_label["v"] = "调用 3"
-            _set_progress(session_id, "汇总前两次结果，准备生成总览与下一步…")
-            ts_now = _ts_get()
-            valid_call3 = []
-            for tid in call3_tasks:
-                deps = TASK_REGISTRY[tid]["depends_on"]
-                missing_deps = [d for d in deps
-                                if ts_now.get(d, {}).get("status") != "done"]
-                if missing_deps:
-                    _ts_set(tid, "failed", error=f"依赖未完成: {missing_deps}")
-                else:
-                    valid_call3.append(tid)
-            if valid_call3:
-                # 拆成两个子调用并行：T9 单独一组、T10+T11 一组
-                # 原因：DeepSeek V4 tool_call 的 arguments 是字符串化 JSON，三任务合并输出
-                # 容易在 max_tokens 边界被截断，导致 logic_chain / next_steps 整段丢失
-                sub_a = [t for t in valid_call3 if t == "T9"]
-                sub_b = [t for t in valid_call3 if t in ("T10", "T11")]
-                sub_groups = [g for g in (sub_a, sub_b) if g]
-                if len(sub_groups) == 1:
-                    run_one_call(3, sub_groups[0])
-                else:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-                        futs = [ex.submit(run_one_call, 3, g) for g in sub_groups]
-                        for f in futs:
-                            f.result()
+            _set_progress(session_id, "汇总前两次结果，分块生成总览与下一步…")
+            run_call(3, call3_tasks)
 
         stop_heartbeat.set()
 
@@ -2839,6 +3354,9 @@ def session_detail(sid):
         report = json.loads(sess_d.get("analysis_result") or "null")
     except (json.JSONDecodeError, TypeError):
         report = None
+    # 过滤内部字段（_shared_customer_context / _shared_quality_context 等），不暴露给前端
+    if isinstance(report, dict):
+        report = {k: v for k, v in report.items() if not k.startswith("_")}
     sess_d["display_status"] = _display_status(
         sess_d.get("analysis_status"), sess_d.get("analysis_progress"),
         bool(sess_d.get("analysis_result")),
@@ -2986,6 +3504,8 @@ def api_session_get(sid):
         out["report"] = json.loads(out.get("analysis_result") or "null")
     except (json.JSONDecodeError, TypeError):
         out["report"] = None
+    if isinstance(out["report"], dict):
+        out["report"] = {k: v for k, v in out["report"].items() if not k.startswith("_")}
     out["display_status"] = _display_status(
         out.get("analysis_status"), out.get("analysis_progress"),
         bool(out.get("analysis_result")),
@@ -3123,7 +3643,8 @@ def api_session_analyze(sid):
            analysis_progress='排队中…' WHERE id=?""",
         (sid,),
     )
-    maybe_trigger_session_analysis(sid, model=model)
+    # 顶部"⟳ 重跑"语义：必须重读完整录音、重新生成 shared_context
+    maybe_trigger_session_analysis(sid, model=model, force_refresh_shared=True)
     # 检查是否真正进入 running（ASR 未完成则仍是 pending）
     cur = db_fetchone("SELECT analysis_status, analysis_progress FROM sessions WHERE id=?", (sid,))
     return jsonify({
@@ -3215,7 +3736,7 @@ def api_task_rerun(sid, task_id):
     threading.Thread(
         target=run_session_analysis,
         args=(sid, compute_session_signature(sid), model),
-        kwargs={"only_tasks": expand_to_call_group([task_id])},
+        kwargs={"only_tasks": expand_to_call_chunk([task_id])},
         daemon=True,
     ).start()
 
@@ -3240,11 +3761,53 @@ def api_tasks_fill_missing(sid):
     threading.Thread(
         target=run_session_analysis,
         args=(sid, compute_session_signature(sid), model),
-        kwargs={"only_tasks": expand_to_call_group(missing)},
+        kwargs={"only_tasks": expand_to_call_chunk(missing)},
         daemon=True,
     ).start()
 
     return jsonify({"status": "started", "missing": missing})
+
+
+@app.route("/api/recalc_all_scoring", methods=["POST"])
+def api_recalc_all_scoring():
+    """遍历所有 session，把 analysis_result.scoring 用 recalc_scoring 重算后写回。"""
+    rows = db_fetchall(
+        "SELECT id, analysis_result FROM sessions WHERE analysis_result IS NOT NULL"
+    )
+    updated, skipped, failed = 0, 0, 0
+    details = []
+    for r in rows:
+        sid = r["id"]
+        try:
+            data = json.loads(r["analysis_result"]) if r["analysis_result"] else None
+        except (json.JSONDecodeError, TypeError):
+            failed += 1
+            continue
+        if not data or not isinstance(data, dict):
+            skipped += 1
+            continue
+        scoring = data.get("scoring")
+        if not scoring or not (scoring.get("stages") if isinstance(scoring, dict) else None):
+            skipped += 1
+            continue
+        old_overall = scoring.get("overall")
+        recalc_scoring(scoring)
+        new_overall = scoring.get("overall")
+        # 同步 overview.quality_score.score
+        ov = data.get("overview")
+        if isinstance(ov, dict) and isinstance(ov.get("quality_score"), dict) and new_overall is not None:
+            ov["quality_score"]["score"] = new_overall
+        analysis_scores_json = json.dumps({"overall": new_overall}, ensure_ascii=False)
+        db_write(
+            "UPDATE sessions SET analysis_result=?, analysis_scores=? WHERE id=?",
+            (json.dumps(data, ensure_ascii=False), analysis_scores_json, sid),
+        )
+        updated += 1
+        details.append({"id": sid, "old_overall": old_overall, "new_overall": new_overall})
+    return jsonify({
+        "updated": updated, "skipped": skipped, "failed": failed,
+        "total": len(rows), "details": details,
+    })
 
 
 @app.route("/healthz")
