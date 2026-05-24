@@ -179,7 +179,7 @@ body.skin-cute .float-decor{
   <div class="header-bar">
     <div class="header-title"><span class="t-pro">工牌接诊分析系统</span><span class="t-cute">美丽陪伴档案</span></div>
     <div class="header-user">
-      {{ username or '' }}（<span class="t-pro">{{ role or '' }}</span><span class="t-cute">{% if role == 'consultant' %}陪伴师{% else %}{{ role or '' }}{% endif %}</span>）
+      {% if role == 'consultant' %}{{ advisor_name or username or '' }}{% else %}{{ username or '' }}{% endif %}（<span class="t-pro">{{ role or '' }}</span><span class="t-cute">{% if role == 'consultant' %}陪伴师{% else %}{{ role or '' }}{% endif %}</span>）
       {% if role in ('admin', 'super') %} · <a href="{{ url_for('admin_page') }}" style="color:var(--blue)">管理后台</a>{% endif %}
       {% if role == 'consultant' %} · <a href="{{ url_for('consultant_page') }}" style="color:var(--blue)"><span class="t-pro">返回录音页</span><span class="t-cute">返回陪伴页</span></a>{% endif %}
        · <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a>
@@ -192,7 +192,7 @@ body.skin-cute .float-decor{
   <div class="float-decor" style="bottom:8%;right:8%;animation-delay:-1s">✨</div>
 
   <div class="toolbar">
-    <input id="qAdvisor" placeholder="顾问">
+    {% if role != 'consultant' %}<input id="qAdvisor" placeholder="顾问">{% else %}<input id="qAdvisor" type="hidden">{% endif %}
     <input id="qCustomer" placeholder="顾客">
     <input id="qDate" type="date">
     <button onclick="loadList(1)">筛选</button>
@@ -226,7 +226,7 @@ body.skin-cute .float-decor{
       <tr>
         {% if role in ['admin','super'] %}<th style="width:34px;text-align:center"><input type="checkbox" id="selAll" onclick="toggleSelectAll(this)"></th>{% endif %}
         <th style="width:110px">服务日期</th>
-        <th style="width:100px">顾问</th>
+        {% if role != 'consultant' %}<th style="width:100px">顾问</th>{% endif %}
         <th style="width:120px">顾客</th>
         <th style="width:90px">录音/ASR</th>
         <th style="width:100px">综合分</th>
@@ -269,12 +269,12 @@ function applySkin(skin){
 }
 function toggleSkin(){
   const next = isCute() ? 'pro' : 'cute';
-  try { localStorage.setItem('consultant_skin', next); } catch(e){}
+  try { localStorage.setItem('skin_pref_v2', next); } catch(e){}
   applySkin(next);
 }
 (function initSkin(){
-  let s = 'pro';
-  try { s = localStorage.getItem('consultant_skin') || 'pro'; } catch(e){}
+  let s = 'cute';
+  try { s = localStorage.getItem('skin_pref_v2') || 'cute'; } catch(e){}
   applySkin(s);
 })();
 const IS_ADMIN = (ROLE === 'admin' || ROLE === 'super');
@@ -436,7 +436,7 @@ function loadList(page) {
         return `<tr data-sid="${s.id}">
           ${IS_ADMIN ? `<td style="text-align:center"><input type="checkbox" class="row-chk" value="${s.id}" onclick="onRowCheck()" ${selectedIds.has(s.id) ? 'checked' : ''}></td>` : ''}
           <td data-label="服务日期">${s.service_date || '—'}</td>
-          <td data-label="顾问">${s.advisor || '—'}</td>
+          ${ROLE !== 'consultant' ? `<td data-label="顾问">${s.advisor || '—'}</td>` : ''}
           <td data-label="顾客">${s.customer || '—'}</td>
           <td data-label="录音/ASR">${s.asr_done_count || 0}/${s.recording_count || 0}</td>
           <td data-label="综合分">${fmtScore(overall)}</td>

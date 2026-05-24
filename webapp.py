@@ -3741,10 +3741,12 @@ def logout():
 @app.route("/")
 @login_required
 def index():
+    u = current_user()
     return render_template(
         "index.html",
         username=session.get("username"),
         role=session.get("role"),
+        advisor_name=(u["advisor_name"] if u else "") or "",
     )
 
 

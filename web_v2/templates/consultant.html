@@ -330,14 +330,14 @@ function applySkin(skin){
 }
 function toggleSkin(){
   const next = isCute() ? 'pro' : 'cute';
-  try { localStorage.setItem('consultant_skin', next); } catch(e){}
+  try { localStorage.setItem('skin_pref_v2', next); } catch(e){}
   applySkin(next);
   // 重新渲染未入库列表的状态标签
   if (typeof loadPending === 'function') loadPending();
 }
 (function initSkin(){
-  let s = 'pro';
-  try { s = localStorage.getItem('consultant_skin') || 'pro'; } catch(e){}
+  let s = 'cute';
+  try { s = localStorage.getItem('skin_pref_v2') || 'cute'; } catch(e){}
   applySkin(s);
 })();
 
