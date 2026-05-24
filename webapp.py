@@ -681,14 +681,31 @@ _kb_cache = None
 
 def load_kb():
     global _kb_cache
-    if _kb_cache is None:
-        with open(KB_PATH, "r", encoding="utf-8") as f:
-            raw = json.load(f)
-        # 兼容两种结构：旧版直接是 list，新版是 {tag_taxonomy, canonical_logics}
-        if isinstance(raw, dict) and isinstance(raw.get("canonical_logics"), list):
-            _kb_cache = raw["canonical_logics"]
-        else:
-            _kb_cache = raw
+    if _kb_cache is not None:
+        return _kb_cache
+    with open(KB_PATH, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    # 兼容两种结构：旧版直接是 list，新版是 {tag_taxonomy, canonical_logics}
+    if isinstance(raw, dict) and isinstance(raw.get("canonical_logics"), list):
+        items = raw["canonical_logics"]
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        raise ValueError(
+            f"logic_library.json 根结构异常: {type(raw).__name__}，"
+            f"期望 list 或含 canonical_logics 的 dict"
+        )
+    bad_items = [
+        {"index": i, "type": type(item).__name__, "value": repr(item)[:200]}
+        for i, item in enumerate(items)
+        if not isinstance(item, dict)
+    ]
+    if bad_items:
+        raise ValueError(
+            f"logic_library.json 含 {len(bad_items)} 条非 dict 元素，"
+            f"示例: {bad_items[:3]}"
+        )
+    _kb_cache = items
     return _kb_cache
 
 
@@ -696,6 +713,8 @@ def build_kb_brief():
     kb = load_kb()
     lines = []
     for item in kb:
+        if not isinstance(item, dict):
+            continue
         stage = item.get("stage", "")
         tags = "/".join(item.get("secondary_tags", [])[:3])
         prio = item.get("boss_priority", "")
@@ -2896,8 +2915,9 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         """
         cached = _load_shared_context(call_no)
         if cached:
-            print(f"[shared_call{call_no}] 复用已存底稿")
+            print(f"[shared_call{call_no}] session={session_id} 复用已存底稿")
             return cached
+        _t_pf0 = _t.time()
 
         if call_no == 1:
             system = SYSTEM_PROMPT_SHARED_CALL1
@@ -2926,6 +2946,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
             f"{input_section}"
         )
         stage = f"shared_call{call_no}"
+        print(f"[{stage}] session={session_id} 开始 preflight")
         result = _call_llm_with_retry(
             model, system, user_prompt, tool=tool,
             max_tokens=budget, enable_thinking=enable_thinking,
@@ -2934,6 +2955,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         if not shared or not isinstance(shared, dict):
             raise RuntimeError(f"[{stage}] 未返回 {shared_key} 或为空")
         _save_shared_context(call_no, shared)
+        print(f"[{stage}] session={session_id} preflight 完成 耗时{_t.time()-_t_pf0:.1f}s")
         return shared
 
     def _run_chunk(call_no, tids, chunk_input):
@@ -2986,6 +3008,8 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
             _ts_set(tid, "running")
 
         stage = f"chunk_call{call_no}_{'+'.join(tids)}"
+        _t_chunk0 = _t.time()
+        print(f"[{stage}] session={session_id} 开始 tasks={tids}")
         try:
             result = _call_llm_with_retry(
                 model, system_prompt, user_prompt,
@@ -2993,10 +3017,14 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
                 enable_thinking=enable_thinking,
                 stage_label=stage, max_attempts=2)
         except Exception as e:
+            elapsed = _t.time() - _t_chunk0
+            print(f"[{stage}] session={session_id} 失败 耗时{elapsed:.1f}s error={e}")
             for tid in tids:
                 _ts_set(tid, "failed", error=f"[{stage}] {e}"[:300])
             return
 
+        elapsed_llm = _t.time() - _t_chunk0
+        print(f"[{stage}] session={session_id} LLM返回 耗时{elapsed_llm:.1f}s")
         for tid in tids:
             t = TASK_REGISTRY[tid]
             sub_result = {k: result.get(k) for k in t["result_keys"] if k in result}
@@ -3004,8 +3032,10 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
             if ok:
                 _result_save(tid, sub_result)
                 _ts_set(tid, "done")
+                print(f"[{stage}] session={session_id} {tid}({t['name']}) done 耗时{_t.time()-_t_chunk0:.1f}s")
             else:
                 _ts_set(tid, "failed", error=reason)
+                print(f"[{stage}] session={session_id} {tid}({t['name']}) failed reason={reason[:100]}")
 
         # T3 完成 → 写 customer_tags 累积表
         if "T3" in tids and result_col == "analysis_result":
@@ -3135,6 +3165,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
                 full = json.loads(row[result_col]) if row else {}
                 scoring = full.get("scoring") or {}
                 if scoring:
+                    scoring = _recalc_scoring(scoring)
                     scores_summary = {
                         "overall": scoring.get("overall"),
                         "stages": [

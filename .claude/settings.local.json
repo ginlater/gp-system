@@ -269,7 +269,9 @@
       "Bash(journalctl -u gongpai --no-pager -n 10)",
       "Bash(journalctl -u gongpai --no-pager --since \"15:54:16\")",
       "Bash(journalctl -u gongpai --no-pager --since \"15:54:00\")",
-      "Bash(journalctl -u gongpai --no-pager --since \"10 sec ago\")"
+      "Bash(journalctl -u gongpai --no-pager --since \"10 sec ago\")",
+      "Bash(journalctl --disk-usage)",
+      "Read(//etc/systemd/**)"
     ]
   }
 }
