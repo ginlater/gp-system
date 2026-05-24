@@ -229,7 +229,22 @@
       "Bash(sudo journalctl -u gongpai --since \"30 min ago\" --no-pager)",
       "Bash(sudo journalctl -u gongpai --since \"60 min ago\" --no-pager)",
       "Bash(sudo systemctl restart gongpai.service)",
-      "Bash(sudo systemctl restart gp_system)"
+      "Bash(sudo systemctl restart gp_system)",
+      "Bash(sudo mkdir -p /etc/nginx/ssl/gp)",
+      "Bash(sudo chmod 600 /etc/nginx/ssl/gp/gp.aibeautyfulwomen.com.key)",
+      "Bash(sudo chmod 644 /etc/nginx/ssl/gp/gp.aibeautyfulwomen.com_bundle.crt)",
+      "Bash(sudo openssl x509 -in /etc/nginx/ssl/gp/gp.aibeautyfulwomen.com_bundle.crt -noout -subject -dates -issuer)",
+      "Bash(sudo bash -c 'diff <\\(openssl x509 -in /etc/nginx/ssl/gp/gp.aibeautyfulwomen.com_bundle.crt -modulus -noout\\) <\\(openssl rsa -in /etc/nginx/ssl/gp/gp.aibeautyfulwomen.com.key -modulus -noout\\)')",
+      "Bash(echo \"match=$?\")",
+      "Bash(env -u https_proxy -u http_proxy -u all_proxy curl -ksS --resolve gp.aibeautyfulwomen.com:443:127.0.0.1 -o /dev/null -w \"https code=%{http_code}\\\\n\" https://gp.aibeautyfulwomen.com/login)",
+      "Bash(env -u https_proxy -u http_proxy -u all_proxy curl -sS --resolve gp.aibeautyfulwomen.com:80:127.0.0.1 -o /dev/null -w \"http code=%{http_code} loc=%{redirect_url}\\\\n\" http://gp.aibeautyfulwomen.com/login)",
+      "Bash(kill -HUP 2678065)",
+      "Bash(env -u https_proxy -u http_proxy -u all_proxy curl -ksS -o /dev/null -w \"/: %{http_code}\\\\n\" https://gp.aibeautyfulwomen.com/login)",
+      "Bash(python *)",
+      "Read(//var/log/**)",
+      "Bash(journalctl -n 30 --no-pager)",
+      "Read(//mnt/user-data/**)",
+      "Bash(find / -name \"工作簿*\")"
     ]
   }
 }

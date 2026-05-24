@@ -1,0 +1,12 @@
+.admin-content { padding-top: 20px; }
+.admin-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.admin-toolbar h2 { font-size: 18px; }
+.user-table { width: 100%; }
+.user-table .role-badge { text-transform: uppercase; font-size: 11px; }
+.delete-btn { color: var(--danger); background: none; border: none; cursor: pointer; font-size: 13px; }
+.delete-btn:hover { text-decoration: underline; }
+
+@media (max-width: 640px) {
+  .admin-toolbar { flex-direction: column; gap: 10px; align-items: flex-start; }
+}
+

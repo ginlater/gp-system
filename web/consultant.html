@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>顾问端 - 接诊分析系统</title>
+  <link rel="stylesheet" href="/web/common.css">
+  <link rel="stylesheet" href="/web/consultant.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>接诊分析</h1>
+    <div class="user-info">
+      <span id="displayName"></span>
+      <button class="btn btn-sm btn-outline" id="logoutBtn">退出</button>
+    </div>
+  </header>
+
+  <div class="container" style="padding-top:20px;">
+    <div class="tabs">
+      <div class="tab active" data-tab="record">录音</div>
+      <div class="tab" data-tab="recordings">我的录音</div>
+      <div class="tab" data-tab="sessions">分析结果</div>
+    </div>
+
+    <!-- Tab 1: Record -->
+    <div class="tab-panel active" id="panel-record">
+      <div class="card">
+        <div class="record-area">
+          <button class="record-btn" id="recordBtn">开始录音</button>
+          <div class="record-timer" id="timer">00:00</div>
+          <div class="record-status" id="recordStatus">点击按钮开始录音</div>
+          <canvas id="waveCanvas"></canvas>
+          <div class="upload-progress" id="uploadProgress">正在上传...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab 2: My Recordings -->
+    <div class="tab-panel" id="panel-recordings">
+      <div class="card">
+        <div class="flex items-center" style="justify-content:space-between;margin-bottom:12px;">
+          <h3 style="font-size:16px;">我的录音</h3>
+          <button class="btn btn-sm btn-outline" id="refreshRecBtn">刷新</button>
+        </div>
+        <div id="recordingsList"><p class="text-muted text-center">加载中...</p></div>
+      </div>
+    </div>
+
+    <!-- Tab 3: Sessions/Analysis -->
+    <div class="tab-panel" id="panel-sessions">
+      <div class="card">
+        <div class="flex items-center" style="justify-content:space-between;margin-bottom:12px;">
+          <h3 style="font-size:16px;">我的接诊</h3>
+          <button class="btn btn-sm btn-outline" id="refreshSessBtn">刷新</button>
+        </div>
+        <div id="sessionsList"><p class="text-muted text-center">加载中...</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bind Modal -->
+  <div class="modal-overlay" id="bindModal">
+    <div class="modal">
+      <div class="modal-header">
+        <span class="modal-title">绑定录音</span>
+        <button class="modal-close" id="bindModalClose">&times;</button>
+      </div>
+      <form id="bindForm">
+        <input type="hidden" id="bindRecId">
+        <div class="form-group form-group-rel">
+          <label class="form-label">客户姓名</label>
+          <input type="text" class="form-input" id="bindCustomer" placeholder="输入客户姓名" required autocomplete="off">
+          <div class="customer-suggestions" id="customerSugg"></div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">阶段</label>
+          <select class="form-select" id="bindStage" required>
+            <option value="">请选择阶段</option>
+            <option value="进房间前">进房间前</option>
+            <option value="服务过程中">服务过程中</option>
+            <option value="出房间后">出房间后</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%;">确认绑定</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Report Modal -->
+  <div class="modal-overlay" id="reportModal">
+    <div class="modal" style="max-width:700px;">
+      <div class="modal-header">
+        <span class="modal-title" id="reportTitle">分析报告</span>
+        <button class="modal-close" id="reportModalClose">&times;</button>
+      </div>
+      <div class="report-content" id="reportContent"></div>
+    </div>
+  </div>
+
+  <!-- Toast container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script src="/web/consultant.js"></script>
+</body>
+</html>
+

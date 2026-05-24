@@ -73,7 +73,12 @@ html,body{overflow-x:hidden;max-width:100%}
 <div class="list-wrap">
   <div class="header-bar">
     <div class="header-title">工牌接诊分析系统</div>
-    <div class="header-user">{{ username or '' }} · <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a></div>
+    <div class="header-user">
+      {{ username or '' }}（{{ role or '' }}）
+      {% if role in ('admin', 'super') %} · <a href="{{ url_for('admin_page') }}" style="color:var(--blue)">管理后台</a>{% endif %}
+      {% if role == 'consultant' %} · <a href="{{ url_for('consultant_page') }}" style="color:var(--blue)">返回录音页</a>{% endif %}
+       · <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a>
+    </div>
   </div>
 
   <div class="toolbar">
@@ -116,6 +121,7 @@ html,body{overflow-x:hidden;max-width:100%}
 
 <script>
 const BASE = {{ request.script_root|tojson }};
+const ROLE = {{ role|tojson }};
 let curPage = 1;
 let totalPages = 1;
 const PAGE_SIZE = 20;
@@ -164,7 +170,15 @@ function loadList(page) {
           <td data-label="综合分">${fmtScore(overall)}</td>
           <td data-label="分析状态">${fmtStatus(s.display_status, s.analysis_progress)}</td>
           <td data-label="点评">${s.has_evaluation ? '✓' : '—'}</td>
-          <td><a href="${BASE}/session/${s.id}" style="color:var(--blue);font-weight:600">查看报告 →</a></td>
+          <td style="white-space:nowrap">
+            <a href="${BASE}/session/${s.id}" style="color:var(--blue);font-weight:600">查看 →</a>
+            ${ROLE === 'admin' || ROLE === 'super' ? `
+              ${s.recording_count > 0 ? `<button onclick="deleteSessionRecs(${s.id},this)" style="margin-left:6px;background:none;border:1px solid rgba(231,76,60,.5);color:#e74c3c;border-radius:3px;padding:2px 7px;font-size:12px;cursor:pointer" title="删除录音文件">🗑录音</button>` : ''}
+              ${s.display_status === 'done' ? `<button onclick="deleteSessionReport(${s.id},this)" style="margin-left:4px;background:none;border:1px solid rgba(230,126,34,.5);color:#e67e22;border-radius:3px;padding:2px 7px;font-size:12px;cursor:pointer" title="清除分析报告">🗑报告</button>` : ''}
+              <button onclick="deleteSessionFull(${s.id},this)" style="margin-left:4px;background:none;border:1px solid rgba(231,76,60,.5);color:#e74c3c;border-radius:3px;padding:2px 7px;font-size:12px;cursor:pointer;font-weight:600" title="完全删除此接诊">⚠全删</button>
+            ` : ''}
+            ${s.recording_count > 0 && ROLE === 'consultant' ? `<button onclick="requestDelSessionRecs(${s.id},this)" style="margin-left:8px;background:none;border:1px solid #ccc;color:#555;border-radius:3px;padding:2px 8px;font-size:12px;cursor:pointer">申请删除</button>` : ''}
+          </td>
         </tr>`;
       }).join('');
     }
@@ -211,6 +225,46 @@ function uploadFiles() {
     loadList(1);
     setTimeout(() => msg.textContent = '', 6000);
   }).catch(e => { msg.textContent = '上传失败：' + e; });
+}
+
+async function deleteSessionRecs(sid, btn) {
+  if (!confirm('确认删除该接诊的全部录音文件？不可恢复！')) return;
+  btn.disabled = true;
+  const r = await fetch(BASE + '/api/session/' + sid + '/recordings/delete', {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) { btn.textContent = '已删除'; btn.style.opacity = '0.4'; loadList(curPage); }
+  else { alert(d.error || '删除失败'); btn.disabled = false; }
+}
+
+async function deleteSessionReport(sid, btn) {
+  if (!confirm('确认清除该接诊的分析报告？录音和接诊记录保留。')) return;
+  btn.disabled = true;
+  const r = await fetch(BASE + '/api/session/' + sid + '/report/delete', {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) { btn.textContent = '已清除'; btn.style.opacity = '0.4'; loadList(curPage); }
+  else { alert(d.error || '失败'); btn.disabled = false; }
+}
+
+async function deleteSessionFull(sid, btn) {
+  if (!confirm('⚠ 完全删除此接诊？录音文件、分析报告、接诊记录将全部删除，不可恢复！')) return;
+  btn.disabled = true;
+  const r = await fetch(BASE + '/api/session/' + sid + '/delete', {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) { loadList(curPage); }
+  else { alert(d.error || '失败'); btn.disabled = false; }
+}
+
+async function requestDelSessionRecs(sid, btn) {
+  const reason = prompt('申请删除原因（可选）：');
+  if (reason === null) return;
+  btn.disabled = true;
+  const r = await fetch(BASE + '/api/session/' + sid + '/delete-request', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({reason}),
+  });
+  const d = await r.json();
+  if (d.ok) { btn.textContent = '已申请'; btn.style.opacity = '0.5'; }
+  else { alert(d.error || '申请失败'); btn.disabled = false; }
 }
 
 loadList(1);

@@ -217,6 +217,57 @@ CREATE TABLE IF NOT EXISTS customer_tags (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_ct_name ON customer_tags(customer_name);
+
+-- ============ 角色 / 多公司 ============
+CREATE TABLE IF NOT EXISTS companies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT NOT NULL UNIQUE,  -- 顾问用手机号；admin 用 env BOSS_USERNAME
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'consultant',  -- super | admin | consultant
+    company_id INTEGER,
+    advisor_name TEXT,   -- 顾问姓名（用于匹配 sessions.advisor）
+    employee_id TEXT,    -- 工号
+    phone TEXT,          -- 手机号
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+CREATE INDEX IF NOT EXISTS idx_users_company ON users(company_id);
+CREATE INDEX IF NOT EXISTS idx_users_advisor ON users(advisor_name);
+
+CREATE TABLE IF NOT EXISTS company_customers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    member_card TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    UNIQUE(company_id, name),
+    FOREIGN KEY (company_id) REFERENCES companies(id)
+);
+CREATE INDEX IF NOT EXISTS idx_cc_company ON company_customers(company_id);
+
+CREATE TABLE IF NOT EXISTS delete_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    recording_id INTEGER NOT NULL,
+    session_id INTEGER,
+    requester_user_id INTEGER NOT NULL,
+    requester_name TEXT,
+    reason TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
+    reviewer_user_id INTEGER,
+    reviewer_name TEXT,
+    reviewed_at TEXT,
+    reject_reason TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (recording_id) REFERENCES recordings(id)
+);
+CREATE INDEX IF NOT EXISTS idx_dr_status ON delete_requests(status);
+CREATE INDEX IF NOT EXISTS idx_dr_recording ON delete_requests(recording_id);
 """
 
 
@@ -278,6 +329,39 @@ def init_db():
             ALTER TABLE evaluations_new RENAME TO evaluations;
             CREATE INDEX IF NOT EXISTS idx_evaluations_session ON evaluations(session_id);
         """)
+    # sessions / recordings 加 company_id
+    sess_cols = {r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    if "company_id" not in sess_cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN company_id INTEGER DEFAULT 1")
+    rec_cols = {r[1] for r in conn.execute("PRAGMA table_info(recordings)").fetchall()}
+    if "company_id" not in rec_cols:
+        conn.execute("ALTER TABLE recordings ADD COLUMN company_id INTEGER DEFAULT 1")
+    if "uploader_user_id" not in rec_cols:
+        conn.execute("ALTER TABLE recordings ADD COLUMN uploader_user_id INTEGER")
+    if "asr_speaker_count" not in rec_cols:
+        conn.execute("ALTER TABLE recordings ADD COLUMN asr_speaker_count INTEGER")
+    if "asr_speaker_warning" not in rec_cols:
+        conn.execute("ALTER TABLE recordings ADD COLUMN asr_speaker_warning INTEGER DEFAULT 0")
+    if "speaker_confirmed" not in rec_cols:
+        conn.execute("ALTER TABLE recordings ADD COLUMN speaker_confirmed INTEGER DEFAULT 0")
+
+    # seed: 默认公司 + BOSS 管理员
+    conn.execute("INSERT OR IGNORE INTO companies (id, name) VALUES (1, '默认公司')")
+    boss_u = os.environ.get("BOSS_USERNAME", "boss")
+    boss_p = os.environ.get("BOSS_PASSWORD", "boss")
+    boss_hash = hashlib.sha256(boss_p.encode("utf-8")).hexdigest()
+    row = conn.execute("SELECT id, role FROM users WHERE username=?", (boss_u,)).fetchone()
+    if not row:
+        conn.execute(
+            """INSERT INTO users (username, password_hash, role, company_id, advisor_name)
+               VALUES (?, ?, 'admin', 1, ?)""",
+            (boss_u, boss_hash, "管理员"),
+        )
+    else:
+        # 同步密码（方便用 env 改），保留 role
+        conn.execute(
+            "UPDATE users SET password_hash=? WHERE id=?", (boss_hash, row[0])
+        )
     conn.commit()
     conn.close()
 
@@ -369,7 +453,7 @@ def oss_signed_url(oss_key, expires=7200):
 
 
 # ============ Session 管理 ============
-def get_or_create_session(advisor, customer, service_date):
+def get_or_create_session(advisor, customer, service_date, company_id=1):
     """根据 (advisor, customer, service_date) 找或创建 session。返回 session_id。
     如果三个字段任一为空，归到一个独立 session（按 oss_key 区分）。"""
     if not (advisor and customer and service_date):
@@ -382,12 +466,12 @@ def get_or_create_session(advisor, customer, service_date):
     if row:
         return row["id"]
     return db_write(
-        "INSERT INTO sessions (advisor, customer, service_date) VALUES (?, ?, ?)",
-        (advisor, customer, service_date),
+        "INSERT INTO sessions (advisor, customer, service_date, company_id) VALUES (?, ?, ?, ?)",
+        (advisor, customer, service_date, company_id or 1),
     )
 
 
-def get_or_create_orphan_session(advisor, customer, oss_key):
+def get_or_create_orphan_session(advisor, customer, oss_key, company_id=1):
     """元数据不全的录音：以 oss_key 当 service_date 创建独立 session（保证唯一）"""
     fake_date = "?-" + hashlib.md5(oss_key.encode()).hexdigest()[:8]
     row = db_fetchone(
@@ -397,8 +481,8 @@ def get_or_create_orphan_session(advisor, customer, oss_key):
     if row:
         return row["id"]
     return db_write(
-        "INSERT INTO sessions (advisor, customer, service_date) VALUES (?, ?, ?)",
-        (advisor or "(未填顾问)", customer or "(未填顾客)", fake_date),
+        "INSERT INTO sessions (advisor, customer, service_date, company_id) VALUES (?, ?, ?, ?)",
+        (advisor or "(未填顾问)", customer or "(未填顾客)", fake_date, company_id or 1),
     )
 
 
@@ -430,7 +514,7 @@ def _asr_then_maybe_analyze(recording_id):
         run_asr(recording_id)
     # 重新读一遍
     rec = db_fetchone("SELECT session_id, asr_status FROM recordings WHERE id=?", (recording_id,))
-    if rec and rec["asr_status"] == "done":
+    if rec and rec["asr_status"] == "done" and rec["session_id"]:
         maybe_trigger_session_analysis(rec["session_id"])
 
 
@@ -450,6 +534,15 @@ def maybe_trigger_session_analysis(session_id, model=None, force_refresh_shared=
             return
         if not all(r["asr_status"] == "done" for r in recs):
             return  # 还有 ASR 没完成
+        # 有"说话人>2"且顾问未确认的录音 → 不自动分析，等顾问处理
+        warn = db_fetchone(
+            """SELECT COUNT(*) AS n FROM recordings
+               WHERE session_id=? AND asr_speaker_warning=1
+                 AND COALESCE(speaker_confirmed,0)=0""",
+            (session_id,),
+        )
+        if warn and warn["n"] > 0:
+            return
         sess = db_fetchone(
             "SELECT analysis_status, analysis_signature, analysis_model FROM sessions WHERE id=?",
             (session_id,),
@@ -499,7 +592,7 @@ def _asr_submit_with_retry(audio_url, attempts=5):
                     model="fun-asr",
                     file_urls=[audio_url],
                     diarization_enabled=True,
-                    speaker_count=2,
+                    speaker_count=4,
                     language_hints=["zh", "en"],
                 )
             except Exception as e:
@@ -537,6 +630,7 @@ def run_asr(recording_id):
 
         full_json = []
         transcript_lines = []
+        speaker_set = set()
         for transcription in resp.output["results"]:
             if transcription["subtask_status"] != "SUCCEEDED":
                 raise RuntimeError(f"识别失败: {transcription}")
@@ -547,6 +641,8 @@ def run_asr(recording_id):
             for tr in detailed.get("transcripts", []):
                 for s in tr.get("sentences", []):
                     spk = s.get("speaker_id")
+                    if spk is not None:
+                        speaker_set.add(spk)
                     speaker = f"说话人{spk}" if spk is not None else "说话人?"
                     start_sec = (s.get("begin_time", 0) or 0) / 1000.0
                     end_sec = (s.get("end_time", 0) or 0) / 1000.0
@@ -556,11 +652,15 @@ def run_asr(recording_id):
                     )
 
         transcript = "\n".join(transcript_lines)
+        spk_count = len(speaker_set)
+        warning = 1 if spk_count > 2 else 0
         db_write(
             """UPDATE recordings SET asr_status='done',
                asr_result_json=?, asr_transcript=?,
+               asr_speaker_count=?, asr_speaker_warning=?,
                asr_finished_at=datetime('now','localtime') WHERE id=?""",
-            (json.dumps(full_json, ensure_ascii=False), transcript, recording_id),
+            (json.dumps(full_json, ensure_ascii=False), transcript,
+             spk_count, warning, recording_id),
         )
     except Exception as e:
         db_write(
@@ -3007,7 +3107,9 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
 # ============ 录音入库（公共入口）============
 def ingest_recording(oss_key, *, source, size_bytes=None,
                      advisor=None, customer=None, recorded_at=None,
-                     service_date=None, duration_label=None):
+                     service_date=None, duration_label=None,
+                     company_id=1, uploader_user_id=None,
+                     orphan=False):
     """新增 recording + 关联 session + 启动自动流水线。返回 recording_id（如果已存在则返回原 id 且不重复入库）"""
     existing = db_fetchone("SELECT id FROM recordings WHERE oss_key=?", (oss_key,))
     if existing:
@@ -3026,10 +3128,12 @@ def ingest_recording(oss_key, *, source, size_bytes=None,
         service_date = recorded_at[:10]
 
     # 关联 / 创建 session
-    if advisor and customer and service_date:
-        session_id = get_or_create_session(advisor, customer, service_date)
+    if orphan:
+        session_id = None  # 顾问端浏览器录音：先不绑 session，等绑定客户
+    elif advisor and customer and service_date:
+        session_id = get_or_create_session(advisor, customer, service_date, company_id)
     else:
-        session_id = get_or_create_orphan_session(advisor, customer, oss_key)
+        session_id = get_or_create_orphan_session(advisor, customer, oss_key, company_id)
 
     if size_bytes is None:
         try:
@@ -3040,22 +3144,32 @@ def ingest_recording(oss_key, *, source, size_bytes=None,
     rid = db_write(
         """INSERT INTO recordings
            (session_id, oss_key, advisor, customer, recorded_at,
-            duration_label, size_bytes, source)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            duration_label, size_bytes, source, company_id, uploader_user_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (session_id, oss_key, advisor, customer, recorded_at,
-         duration_label, size_bytes, source),
+         duration_label, size_bytes, source, company_id or 1, uploader_user_id),
     )
 
     # 新增录音会让 session 之前的分析结果过期；标 pending 等流水线
-    db_write(
-        """UPDATE sessions SET analysis_status='pending',
-           analysis_error=NULL WHERE id=?
-           AND analysis_status='done' AND analysis_signature != ?""",
-        (session_id, compute_session_signature(session_id)),
-    )
+    if session_id:
+        db_write(
+            """UPDATE sessions SET analysis_status='pending',
+               analysis_error=NULL WHERE id=?
+               AND analysis_status='done' AND analysis_signature != ?""",
+            (session_id, compute_session_signature(session_id)),
+        )
 
     # 启动流水线
-    trigger_pipeline_for_recording(rid)
+    # orphan 录音（顾问端自录、未绑客户）不立即跑 ASR，省钱：
+    # 顾问需要先在「未入库」里听前 60s 决定归属哪个客户，绑定后才入库 + 跑 ASR。
+    if orphan:
+        # 标一个特殊状态，方便前端展示
+        db_write(
+            "UPDATE recordings SET asr_status='awaiting_intake' WHERE id=?",
+            (rid,),
+        )
+    else:
+        trigger_pipeline_for_recording(rid)
     return rid
 
 
@@ -3290,6 +3404,46 @@ def login_required(f):
     return wrapped
 
 
+def current_user():
+    uid = session.get("user_id")
+    if not uid:
+        return None
+    return db_fetchone(
+        "SELECT id, username, role, company_id, advisor_name, employee_id, phone FROM users WHERE id=?",
+        (uid,),
+    )
+
+
+def current_company_id():
+    u = current_user()
+    return u["company_id"] if u else None
+
+
+def admin_required(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if not session.get("logged_in"):
+            return jsonify({"error": "未登录", "code": "auth_required"}), 401
+        role = session.get("role")
+        if role not in ("admin", "super"):
+            return jsonify({"error": "需要管理员权限"}), 403
+        return f(*args, **kwargs)
+    return wrapped
+
+
+def super_required(f):
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if session.get("role") != "super":
+            return jsonify({"error": "需要超级管理员"}), 403
+        return f(*args, **kwargs)
+    return wrapped
+
+
+def _hash_pw(p):
+    return hashlib.sha256((p or "").encode("utf-8")).hexdigest()
+
+
 def _safe_next(target):
     """只允许跳转到本应用（同 SCRIPT_NAME 前缀下）的相对路径，防止开放重定向 / 跨服务跳走"""
     if not target:
@@ -3310,11 +3464,25 @@ def login():
     if request.method == "POST":
         u = (request.form.get("username") or "").strip()
         p = request.form.get("password") or ""
-        if u == BOSS_USERNAME and p == BOSS_PASSWORD:
+        row = db_fetchone(
+            "SELECT id, username, password_hash, role, company_id, advisor_name FROM users WHERE username=?",
+            (u,),
+        )
+        if row and row["password_hash"] == _hash_pw(p):
             session["logged_in"] = True
-            session["username"] = u
+            session["user_id"] = row["id"]
+            session["username"] = row["username"]
+            session["role"] = row["role"]
+            session["company_id"] = row["company_id"]
+            session["advisor_name"] = row["advisor_name"] or ""
             session.permanent = True
-            return redirect(_safe_next(request.args.get("next")) or url_for("index"))
+            # 顾问默认跳 consultant 页
+            nxt = _safe_next(request.args.get("next"))
+            if nxt:
+                return redirect(nxt)
+            if row["role"] == "consultant":
+                return redirect(url_for("consultant_page"))
+            return redirect(url_for("index"))
         error = "用户名或密码错误"
     return render_template("login.html", error=error)
 
@@ -3329,7 +3497,35 @@ def logout():
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html", username=session.get("username"))
+    return render_template(
+        "index.html",
+        username=session.get("username"),
+        role=session.get("role"),
+    )
+
+
+@app.route("/admin")
+@admin_required
+def admin_page():
+    return render_template(
+        "admin.html",
+        username=session.get("username"),
+        role=session.get("role"),
+    )
+
+
+@app.route("/consultant")
+@login_required
+def consultant_page():
+    u = current_user()
+    if not u:
+        return redirect(url_for("logout"))
+    return render_template(
+        "consultant.html",
+        username=u["username"],
+        advisor_name=u["advisor_name"] or "",
+        role=u["role"],
+    )
 
 
 @app.route("/session/<int:sid>")
@@ -3384,6 +3580,7 @@ def session_detail(sid):
         evaluations=evals,
         customer_tags_history=customer_tags_history,
         username=session.get("username"),
+        role=session.get("role"),
     ))
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
@@ -3426,6 +3623,20 @@ def api_sessions():
 
     where = []
     params = []
+    # 角色 / 公司隔离
+    role = session.get("role")
+    cid = session.get("company_id")
+    if role == "consultant":
+        where.append("s.advisor = ?")
+        params.append(session.get("advisor_name") or "__none__")
+        if cid:
+            where.append("(s.company_id IS NULL OR s.company_id = ?)")
+            params.append(cid)
+    elif role == "admin":
+        if cid:
+            where.append("(s.company_id IS NULL OR s.company_id = ?)")
+            params.append(cid)
+    # super 不过滤
     if advisor:
         where.append("s.advisor LIKE ?")
         params.append(f"%{advisor}%")
@@ -3609,6 +3820,230 @@ def api_run_asr(rid):
         return jsonify({"status": "running"})
     trigger_pipeline_for_recording(rid)
     return jsonify({"status": "started"})
+
+
+@app.route("/api/recording/<int:rid>/delete", methods=["DELETE"])
+@admin_required
+def api_recording_delete(rid):
+    """管理员直接删除录音（OSS + DB）"""
+    rec = db_fetchone("SELECT id, oss_key, session_id, company_id FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    if session.get("role") != "super" and rec["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    try:
+        oss_bucket.delete_object(rec["oss_key"])
+    except Exception as e:
+        print(f"[delete_recording] OSS delete failed: {e}")
+    db_write("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
+    db_write("DELETE FROM recordings WHERE id=?", (rid,))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/recording/<int:rid>/delete-request", methods=["POST"])
+@login_required
+def api_recording_delete_request(rid):
+    """顾问申请删除录音"""
+    rec = db_fetchone("SELECT id, session_id, company_id FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    role = session.get("role")
+    if role in ("admin", "super"):
+        return jsonify({"error": "管理员请直接删除"}), 400
+    # 顾问只能申请自己公司的录音
+    if rec["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    existing = db_fetchone(
+        "SELECT id FROM delete_requests WHERE recording_id=? AND status='pending'", (rid,)
+    )
+    if existing:
+        return jsonify({"error": "已有待审批的删除申请"}), 400
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "").strip()
+    user_id = session.get("user_id")
+    advisor_name = session.get("advisor_name") or session.get("username")
+    db_write(
+        """INSERT INTO delete_requests
+           (recording_id, session_id, requester_user_id, requester_name, reason)
+           VALUES (?,?,?,?,?)""",
+        (rid, rec["session_id"], user_id, advisor_name, reason),
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/session/<int:sid>/report/delete", methods=["DELETE"])
+@admin_required
+def api_session_report_delete(sid):
+    """管理员清除分析报告（接诊记录和录音保留）"""
+    sess = db_fetchone("SELECT id, company_id FROM sessions WHERE id=?", (sid,))
+    if not sess:
+        return jsonify({"error": "接诊不存在"}), 404
+    if session.get("role") != "super" and sess["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    db_write("""UPDATE sessions SET
+        analysis_status='pending', analysis_result=NULL, analysis_error=NULL,
+        analysis_started_at=NULL, analysis_finished_at=NULL, analysis_signature=NULL,
+        analysis_scores=NULL, analysis_model=NULL, analysis_progress=NULL, task_status=NULL
+        WHERE id=?""", (sid,))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/session/<int:sid>/delete", methods=["DELETE"])
+@admin_required
+def api_session_delete(sid):
+    """管理员完全删除接诊（录音 OSS + DB + 报告 + 接诊记录）"""
+    sess = db_fetchone("SELECT id, company_id FROM sessions WHERE id=?", (sid,))
+    if not sess:
+        return jsonify({"error": "接诊不存在"}), 404
+    if session.get("role") != "super" and sess["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    recs = db_fetchall("SELECT id, oss_key FROM recordings WHERE session_id=?", (sid,))
+    for r in recs:
+        try:
+            oss_bucket.delete_object(r["oss_key"])
+        except Exception as e:
+            print(f"[session_full_delete] OSS {r['oss_key']}: {e}")
+        db_write("DELETE FROM delete_requests WHERE recording_id=?", (r["id"],))
+        db_write("DELETE FROM recordings WHERE id=?", (r["id"],))
+    db_write("DELETE FROM evaluations WHERE session_id=?", (sid,))
+    db_write("DELETE FROM customer_tags WHERE source_session_id=?", (sid,))
+    db_write("DELETE FROM sessions WHERE id=?", (sid,))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/session/<int:sid>/recordings/delete", methods=["DELETE"])
+@admin_required
+def api_session_recordings_delete(sid):
+    """管理员删除某 session 下所有录音（OSS + DB）"""
+    recs = db_fetchall("SELECT id, oss_key, company_id FROM recordings WHERE session_id=?", (sid,))
+    if not recs:
+        return jsonify({"error": "该接诊没有录音"}), 404
+    if session.get("role") != "super":
+        for r in recs:
+            if r["company_id"] != session.get("company_id"):
+                return jsonify({"error": "无权操作"}), 403
+    for r in recs:
+        try:
+            oss_bucket.delete_object(r["oss_key"])
+        except Exception as e:
+            print(f"[session_del_rec] OSS {r['oss_key']}: {e}")
+        db_write("DELETE FROM delete_requests WHERE recording_id=?", (r["id"],))
+        db_write("DELETE FROM recordings WHERE id=?", (r["id"],))
+    return jsonify({"ok": True, "deleted": len(recs)})
+
+
+@app.route("/api/session/<int:sid>/delete-request", methods=["POST"])
+@login_required
+def api_session_delete_request(sid):
+    """顾问申请删除某 session 下所有录音"""
+    role = session.get("role")
+    if role in ("admin", "super"):
+        return jsonify({"error": "管理员请直接删除"}), 400
+    recs = db_fetchall("SELECT id, session_id, company_id FROM recordings WHERE session_id=?", (sid,))
+    if not recs:
+        return jsonify({"error": "该接诊没有录音"}), 404
+    for r in recs:
+        if r["company_id"] != session.get("company_id"):
+            return jsonify({"error": "无权操作"}), 403
+    data = request.get_json(silent=True) or {}
+    reason = (data.get("reason") or "").strip()
+    user_id = session.get("user_id")
+    advisor_name = session.get("advisor_name") or session.get("username")
+    added = 0
+    for r in recs:
+        existing = db_fetchone(
+            "SELECT id FROM delete_requests WHERE recording_id=? AND status='pending'", (r["id"],)
+        )
+        if not existing:
+            db_write(
+                """INSERT INTO delete_requests
+                   (recording_id, session_id, requester_user_id, requester_name, reason)
+                   VALUES (?,?,?,?,?)""",
+                (r["id"], sid, user_id, advisor_name, reason),
+            )
+            added += 1
+    if added == 0:
+        return jsonify({"error": "该接诊所有录音已有待审批申请"}), 400
+    return jsonify({"ok": True, "added": added})
+
+
+@app.route("/api/admin/delete-requests")
+@admin_required
+def api_admin_delete_requests():
+    """管理员查看删除申请列表"""
+    status = request.args.get("status", "pending")
+    company_id = session.get("company_id")
+    role = session.get("role")
+    if role == "super":
+        rows = db_fetchall(
+            """SELECT dr.*, r.oss_key, r.recorded_at, r.advisor, r.customer, r.session_id as rec_session_id
+               FROM delete_requests dr
+               JOIN recordings r ON r.id = dr.recording_id
+               WHERE dr.status=?
+               ORDER BY dr.created_at DESC""",
+            (status,),
+        )
+    else:
+        rows = db_fetchall(
+            """SELECT dr.*, r.oss_key, r.recorded_at, r.advisor, r.customer, r.session_id as rec_session_id
+               FROM delete_requests dr
+               JOIN recordings r ON r.id = dr.recording_id
+               WHERE dr.status=? AND r.company_id=?
+               ORDER BY dr.created_at DESC""",
+            (status, company_id),
+        )
+    return jsonify({"requests": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/delete-requests/<int:req_id>/approve", methods=["POST"])
+@admin_required
+def api_admin_delete_request_approve(req_id):
+    """管理员审批通过：删除录音"""
+    dr = db_fetchone("SELECT * FROM delete_requests WHERE id=?", (req_id,))
+    if not dr:
+        return jsonify({"error": "申请不存在"}), 404
+    if dr["status"] != "pending":
+        return jsonify({"error": "该申请已处理"}), 400
+    rec = db_fetchone("SELECT id, oss_key, company_id FROM recordings WHERE id=?", (dr["recording_id"],))
+    if not rec:
+        # 录音已不存在，直接更新申请状态
+        db_write(
+            "UPDATE delete_requests SET status='approved', reviewer_user_id=?, reviewer_name=?, reviewed_at=datetime('now','localtime') WHERE id=?",
+            (session.get("user_id"), session.get("advisor_name") or session.get("username"), req_id),
+        )
+        return jsonify({"ok": True})
+    if session.get("role") != "super" and rec["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    reviewer = session.get("advisor_name") or session.get("username")
+    try:
+        oss_bucket.delete_object(rec["oss_key"])
+    except Exception as e:
+        print(f"[approve_delete] OSS delete failed: {e}")
+    db_write("DELETE FROM recordings WHERE id=?", (rec["id"],))
+    db_write(
+        "UPDATE delete_requests SET status='approved', reviewer_user_id=?, reviewer_name=?, reviewed_at=datetime('now','localtime') WHERE id=?",
+        (session.get("user_id"), reviewer, req_id),
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/delete-requests/<int:req_id>/reject", methods=["POST"])
+@admin_required
+def api_admin_delete_request_reject(req_id):
+    """管理员拒绝删除申请"""
+    dr = db_fetchone("SELECT * FROM delete_requests WHERE id=?", (req_id,))
+    if not dr:
+        return jsonify({"error": "申请不存在"}), 404
+    if dr["status"] != "pending":
+        return jsonify({"error": "该申请已处理"}), 400
+    data = request.get_json(silent=True) or {}
+    reject_reason = (data.get("reason") or "").strip()
+    reviewer = session.get("advisor_name") or session.get("username")
+    db_write(
+        "UPDATE delete_requests SET status='rejected', reviewer_user_id=?, reviewer_name=?, reviewed_at=datetime('now','localtime'), reject_reason=? WHERE id=?",
+        (session.get("user_id"), reviewer, reject_reason, req_id),
+    )
+    return jsonify({"ok": True})
 
 
 @app.route("/api/models")
@@ -3808,6 +4243,751 @@ def api_recalc_all_scoring():
         "updated": updated, "skipped": skipped, "failed": failed,
         "total": len(rows), "details": details,
     })
+
+
+# ============ 当前用户 ============
+@app.route("/api/me")
+@login_required
+def api_me():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "未登录"}), 401
+    return jsonify({
+        "id": u["id"], "username": u["username"], "role": u["role"],
+        "company_id": u["company_id"], "advisor_name": u["advisor_name"],
+        "employee_id": u["employee_id"], "phone": u["phone"],
+    })
+
+
+# ============ 管理员：顾问账号 ============
+# ============ 管理员统计（轻量缓存，避免每次切 tab 都查库）============
+_admin_stats_cache = {"data": None, "ts": 0.0}
+_admin_stats_lock = threading.Lock()
+
+
+def _invalidate_admin_stats():
+    with _admin_stats_lock:
+        _admin_stats_cache["data"] = None
+        _admin_stats_cache["ts"] = 0.0
+
+
+def _compute_admin_stats(cid, is_super):
+    if is_super:
+        c1 = db_fetchone("SELECT COUNT(*) AS n FROM users WHERE role='consultant'")["n"]
+        c2 = db_fetchone("SELECT COUNT(*) AS n FROM company_customers")["n"]
+        c3 = db_fetchone("SELECT COUNT(*) AS n FROM delete_requests WHERE status='pending'")["n"]
+    else:
+        c1 = db_fetchone(
+            "SELECT COUNT(*) AS n FROM users WHERE role='consultant' AND company_id=?",
+            (cid,),
+        )["n"]
+        c2 = db_fetchone(
+            "SELECT COUNT(*) AS n FROM company_customers WHERE company_id=?",
+            (cid,),
+        )["n"]
+        c3 = db_fetchone(
+            """SELECT COUNT(*) AS n FROM delete_requests dr
+               JOIN recordings r ON r.id = dr.recording_id
+               WHERE dr.status='pending' AND r.company_id=?""",
+            (cid,),
+        )["n"]
+    return {"consultants": c1, "customers": c2, "delete_requests_pending": c3}
+
+
+@app.route("/api/admin/stats")
+@admin_required
+def api_admin_stats():
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+    cache_key = ("super",) if is_super else ("cid", cid)
+    import time as _time
+    now = _time.time()
+    with _admin_stats_lock:
+        cached = _admin_stats_cache.get("data")
+        ts = _admin_stats_cache.get("ts", 0.0)
+        if cached and cached.get("_key") == cache_key and now - ts < 30:
+            out = {k: v for k, v in cached.items() if k != "_key"}
+            return jsonify(out)
+    data = _compute_admin_stats(cid, is_super)
+    data["_key"] = cache_key
+    with _admin_stats_lock:
+        _admin_stats_cache["data"] = data
+        _admin_stats_cache["ts"] = now
+    return jsonify({k: v for k, v in data.items() if k != "_key"})
+
+
+@app.route("/api/admin/consultants", methods=["GET"])
+@admin_required
+def api_admin_consultants_list():
+    cid = session.get("company_id")
+    q = (request.args.get("q") or "").strip()
+    is_super = session.get("role") == "super"
+    base_where = "role='consultant'" if is_super else "role='consultant' AND company_id=?"
+    base_params = [] if is_super else [cid]
+    if q:
+        where = base_where + " AND (advisor_name LIKE ? OR employee_id LIKE ? OR phone LIKE ? OR username LIKE ?)"
+        params = base_params + [f"%{q}%"] * 4
+    else:
+        where = base_where
+        params = base_params
+    rows = db_fetchall(
+        f"SELECT id, username, role, company_id, advisor_name, employee_id, phone, created_at "
+        f"FROM users WHERE {where} ORDER BY id DESC LIMIT 100",
+        tuple(params),
+    )
+    total = db_fetchone(
+        f"SELECT COUNT(*) AS n FROM users WHERE {where}", tuple(params)
+    )["n"]
+    total_all = db_fetchone(
+        f"SELECT COUNT(*) AS n FROM users WHERE {base_where}", tuple(base_params)
+    )["n"]
+    return jsonify({
+        "consultants": [dict(r) for r in rows],
+        "total": total,
+        "total_all": total_all,
+    })
+
+
+@app.route("/api/admin/consultants", methods=["POST"])
+@admin_required
+def api_admin_consultants_create():
+    data = request.get_json(silent=True) or {}
+    advisor_name = (data.get("advisor_name") or "").strip()
+    employee_id = (data.get("employee_id") or "").strip()
+    phone = (data.get("phone") or "").strip()
+    password = (data.get("password") or "").strip()
+    # 登录用户名 = 手机号；若无手机号则退回工号
+    username = phone or employee_id or (data.get("username") or "").strip()
+    if not advisor_name or not username or not password:
+        return jsonify({"error": "姓名、登录账号（手机号或工号）、密码必填"}), 400
+    cid = session.get("company_id") or 1
+    if session.get("role") == "super":
+        cid = int(data.get("company_id") or cid)
+    try:
+        uid = db_write(
+            """INSERT INTO users (username, password_hash, role, company_id,
+                                  advisor_name, employee_id, phone)
+               VALUES (?, ?, 'consultant', ?, ?, ?, ?)""",
+            (username, _hash_pw(password), cid, advisor_name, employee_id or None, phone or None),
+        )
+    except sqlite3.IntegrityError:
+        return jsonify({"error": f"账号 {username} 已存在"}), 409
+    return jsonify({"id": uid, "username": username})
+
+
+@app.route("/api/admin/consultants/<int:uid>", methods=["PATCH"])
+@admin_required
+def api_admin_consultants_update(uid):
+    row = db_fetchone("SELECT id, company_id, role FROM users WHERE id=?", (uid,))
+    if not row or row["role"] != "consultant":
+        return jsonify({"error": "顾问不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    data = request.get_json(silent=True) or {}
+    sets, params = [], []
+    if data.get("password"):
+        sets.append("password_hash=?")
+        params.append(_hash_pw(data["password"]))
+    for f in ("advisor_name", "employee_id", "phone"):
+        if f in data:
+            sets.append(f"{f}=?")
+            params.append((data[f] or "").strip() or None)
+    if not sets:
+        return jsonify({"error": "无修改字段"}), 400
+    params.append(uid)
+    db_write(f"UPDATE users SET {', '.join(sets)} WHERE id=?", tuple(params))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/consultants/<int:uid>", methods=["DELETE"])
+@admin_required
+def api_admin_consultants_delete(uid):
+    row = db_fetchone("SELECT id, company_id, role FROM users WHERE id=?", (uid,))
+    if not row or row["role"] != "consultant":
+        return jsonify({"error": "顾问不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    db_write("DELETE FROM users WHERE id=?", (uid,))
+    return jsonify({"ok": True})
+
+
+# ============ CSV/XLSX 解析工具 ============
+def _parse_table_upload(file_storage):
+    """支持 CSV / XLSX，返回二维列表（每行去首尾空白，去全空行）。"""
+    import io as _io
+    import csv as _csv
+    fn = (file_storage.filename or "").lower()
+    data = file_storage.read()
+    rows = []
+    if fn.endswith(".xlsx") or fn.endswith(".xls"):
+        import openpyxl
+        wb = openpyxl.load_workbook(_io.BytesIO(data), data_only=True, read_only=True)
+        ws = wb.active
+        for r in ws.iter_rows(values_only=True):
+            rows.append([("" if v is None else str(v)).strip() for v in r])
+    else:
+        # 试 utf-8-sig，再退到 gbk
+        text = None
+        for enc in ("utf-8-sig", "utf-8", "gbk"):
+            try:
+                text = data.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            text = data.decode("utf-8", errors="ignore")
+        for r in _csv.reader(_io.StringIO(text)):
+            rows.append([(c or "").strip() for c in r])
+    # 去全空行
+    return [r for r in rows if any(c for c in r)]
+
+
+def _looks_like_header(row, keywords):
+    s = "".join(row).lower()
+    return any(k in s for k in keywords)
+
+
+@app.route("/api/admin/import/consultants", methods=["POST"])
+@admin_required
+def api_admin_import_consultants():
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "未上传文件"}), 400
+    try:
+        rows = _parse_table_upload(f)
+    except Exception as e:
+        return jsonify({"error": f"解析失败：{e}"}), 400
+    if rows and _looks_like_header(rows[0], ["姓名", "工号", "手机", "name", "phone"]):
+        rows = rows[1:]
+    cid = session.get("company_id") or 1
+    created, skipped, failed = 0, 0, []
+    for r in rows:
+        name = (r[0] if len(r) > 0 else "").strip()
+        emp = (r[1] if len(r) > 1 else "").strip()
+        phone = (r[2] if len(r) > 2 else "").strip()
+        pwd = (r[3] if len(r) > 3 else "").strip()
+        if not name or not (phone or emp):
+            failed.append({"row": r, "reason": "缺少姓名或手机号/工号"})
+            continue
+        username = phone or emp
+        if not pwd:
+            pwd = (phone[-6:] if len(phone) >= 6 else (phone or emp or "123456"))
+        try:
+            db_write(
+                """INSERT INTO users (username, password_hash, role, company_id,
+                                      advisor_name, employee_id, phone)
+                   VALUES (?, ?, 'consultant', ?, ?, ?, ?)""",
+                (username, _hash_pw(pwd), cid, name, emp or None, phone or None),
+            )
+            created += 1
+        except sqlite3.IntegrityError:
+            skipped += 1
+    return jsonify({"created": created, "skipped": skipped, "failed": failed})
+
+
+# ============ 管理员：顾客库 ============
+@app.route("/api/admin/customers", methods=["GET"])
+@admin_required
+def api_admin_customers_list():
+    cid = session.get("company_id")
+    q = (request.args.get("q") or "").strip()
+    is_super = session.get("role") == "super"
+    base_where = "1=1" if is_super else "company_id=?"
+    base_params = [] if is_super else [cid]
+    if q:
+        where = base_where + " AND (name LIKE ? OR member_card LIKE ?)"
+        params = base_params + [f"%{q}%", f"%{q}%"]
+    else:
+        where = base_where
+        params = base_params
+    rows = db_fetchall(
+        f"SELECT id, name, member_card, company_id, created_at "
+        f"FROM company_customers WHERE {where} ORDER BY id DESC LIMIT 100",
+        tuple(params),
+    )
+    total = db_fetchone(
+        f"SELECT COUNT(*) AS n FROM company_customers WHERE {where}",
+        tuple(params),
+    )["n"]
+    # 顺便给个总数（不带搜索）
+    total_all = db_fetchone(
+        f"SELECT COUNT(*) AS n FROM company_customers WHERE {base_where}",
+        tuple(base_params),
+    )["n"]
+    return jsonify({
+        "customers": [dict(r) for r in rows],
+        "total": total,
+        "total_all": total_all,
+    })
+
+
+@app.route("/api/admin/customers", methods=["POST"])
+@admin_required
+def api_admin_customers_create():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    card = (data.get("member_card") or "").strip()
+    if not name:
+        return jsonify({"error": "姓名必填"}), 400
+    cid = session.get("company_id") or 1
+    try:
+        rid = db_write(
+            "INSERT INTO company_customers (company_id, name, member_card) VALUES (?, ?, ?)",
+            (cid, name, card or None),
+        )
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "该顾客已存在"}), 409
+    return jsonify({"id": rid})
+
+
+@app.route("/api/admin/customers/<int:cid>", methods=["DELETE"])
+@admin_required
+def api_admin_customers_delete(cid):
+    row = db_fetchone("SELECT id, company_id FROM company_customers WHERE id=?", (cid,))
+    if not row:
+        return jsonify({"error": "不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    db_write("DELETE FROM company_customers WHERE id=?", (cid,))
+    return jsonify({"ok": True})
+
+
+# 导入任务进度（in-memory；gunicorn -w 1 单 worker 够用）
+_import_jobs = {}
+_import_jobs_lock = threading.Lock()
+
+
+def _run_customer_import(job_id, cid, seen):
+    job = _import_jobs[job_id]
+    try:
+        total = len(seen)
+        with _db_lock:
+            conn = sqlite3.connect(DB_PATH)
+            try:
+                existing_rows = conn.execute(
+                    "SELECT name, id, member_card FROM company_customers WHERE company_id=?",
+                    (cid,),
+                ).fetchall()
+                existing_map = {row[0]: (row[1], row[2]) for row in existing_rows}
+                conn.execute("BEGIN")
+                processed = 0
+                created = 0
+                skipped = 0
+                for name, card in seen.items():
+                    if name in existing_map:
+                        old_id, old_card = existing_map[name]
+                        if card and card != (old_card or ""):
+                            conn.execute(
+                                "UPDATE company_customers SET member_card=? WHERE id=?",
+                                (card, old_id),
+                            )
+                        skipped += 1
+                    else:
+                        conn.execute(
+                            "INSERT INTO company_customers (company_id, name, member_card) VALUES (?, ?, ?)",
+                            (cid, name, card or None),
+                        )
+                        created += 1
+                    processed += 1
+                    # 每 500 行刷一次进度
+                    if processed % 500 == 0:
+                        with _import_jobs_lock:
+                            job["processed"] = processed
+                            job["created"] = created
+                            job["skipped"] = skipped
+                conn.commit()
+            finally:
+                conn.close()
+        with _import_jobs_lock:
+            job["status"] = "done"
+            job["processed"] = total
+            job["created"] = created
+            job["skipped"] = skipped
+            job["finished_at"] = datetime.now().isoformat()
+    except Exception as e:
+        with _import_jobs_lock:
+            job["status"] = "failed"
+            job["error"] = str(e)[:500]
+            job["finished_at"] = datetime.now().isoformat()
+
+
+@app.route("/api/admin/import/customers", methods=["POST"])
+@admin_required
+def api_admin_import_customers():
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "未上传文件"}), 400
+    try:
+        rows = _parse_table_upload(f)
+    except Exception as e:
+        return jsonify({"error": f"解析失败：{e}"}), 400
+    if rows and _looks_like_header(rows[0], ["姓名", "会员", "name", "card"]):
+        rows = rows[1:]
+    cid = session.get("company_id") or 1
+    seen = {}
+    for r in rows:
+        name = (r[0] if len(r) > 0 else "").strip()
+        card = (r[1] if len(r) > 1 else "").strip()
+        if not name:
+            continue
+        if name in seen and not card:
+            continue
+        seen[name] = card
+    job_id = uuid.uuid4().hex[:12]
+    with _import_jobs_lock:
+        _import_jobs[job_id] = {
+            "status": "running",
+            "total": len(seen),
+            "processed": 0,
+            "created": 0,
+            "skipped": 0,
+            "error": None,
+            "started_at": datetime.now().isoformat(),
+            "finished_at": None,
+        }
+    threading.Thread(
+        target=_run_customer_import, args=(job_id, cid, seen), daemon=True
+    ).start()
+    return jsonify({"job_id": job_id, "total": len(seen)})
+
+
+@app.route("/api/admin/import/customers/jobs/<job_id>")
+@admin_required
+def api_admin_import_customers_status(job_id):
+    with _import_jobs_lock:
+        job = _import_jobs.get(job_id)
+        if not job:
+            return jsonify({"error": "任务不存在或已过期"}), 404
+        return jsonify(dict(job))
+
+
+# ============ 公司管理（super） ============
+@app.route("/api/admin/companies", methods=["GET"])
+@super_required
+def api_admin_companies_list():
+    comps = db_fetchall("SELECT id, name, created_at FROM companies ORDER BY id")
+    out = []
+    for c in comps:
+        admins = db_fetchall(
+            "SELECT username, advisor_name FROM users WHERE company_id=? AND role='admin'",
+            (c["id"],),
+        )
+        d = dict(c)
+        d["admins"] = [dict(a) for a in admins]
+        out.append(d)
+    return jsonify({"companies": out})
+
+
+@app.route("/api/admin/companies", methods=["POST"])
+@super_required
+def api_admin_companies_create():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    au = (data.get("admin_username") or "").strip()
+    an = (data.get("admin_name") or "").strip() or "管理员"
+    ap = (data.get("admin_password") or "").strip()
+    if not name or not au or not ap:
+        return jsonify({"error": "公司名、管理员用户名、密码必填"}), 400
+    try:
+        cid = db_write("INSERT INTO companies (name) VALUES (?)", (name,))
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "公司名已存在"}), 409
+    try:
+        db_write(
+            """INSERT INTO users (username, password_hash, role, company_id, advisor_name)
+               VALUES (?, ?, 'admin', ?, ?)""",
+            (au, _hash_pw(ap), cid, an),
+        )
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "管理员用户名已存在（公司已创建，请单独再加管理员）"}), 409
+    return jsonify({"id": cid})
+
+
+# ============ 顾客下拉搜索（顾问/管理员通用） ============
+@app.route("/api/customers/search")
+@login_required
+def api_customers_search():
+    q = (request.args.get("q") or "").strip()
+    cid = session.get("company_id") or 1
+    sql = "SELECT id, name, member_card FROM company_customers WHERE company_id=?"
+    params = [cid]
+    if q:
+        sql += " AND (name LIKE ? OR member_card LIKE ?)"
+        params += [f"%{q}%", f"%{q}%"]
+    sql += " ORDER BY name LIMIT 30"
+    rows = db_fetchall(sql, tuple(params))
+    return jsonify({"customers": [dict(r) for r in rows]})
+
+
+# ============ 顾问端：录音上传 / 未入库 / 绑定 / 分析 ============
+import uuid as _uuid
+
+
+def _consultant_required():
+    if session.get("role") != "consultant":
+        return jsonify({"error": "仅顾问账号可用"}), 403
+    return None
+
+
+@app.route("/api/consultant/upload", methods=["POST"])
+@login_required
+def api_consultant_upload():
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    f = request.files.get("file") or request.files.get("audio")
+    if not f:
+        return jsonify({"error": "未上传音频"}), 400
+    advisor = u["advisor_name"] or u["username"]
+    company_id = u["company_id"] or 1
+    # OSS key: consultant-uploads/<company>/<user>/<uuid>.<ext>
+    raw_name = f.filename or "audio.webm"
+    ext = raw_name.rsplit(".", 1)[-1].lower() if "." in raw_name else "webm"
+    if ext not in ("webm", "mp3", "wav", "m4a", "mp4", "ogg", "aac", "amr"):
+        ext = "webm"
+    oss_key = f"consultant-uploads/{company_id}/{u['id']}/{_uuid.uuid4().hex}.{ext}"
+    data = f.read()
+    try:
+        oss_bucket.put_object(oss_key, data)
+    except Exception as e:
+        return jsonify({"error": f"上传 OSS 失败：{e}"}), 500
+    recorded_at = datetime.now().strftime("%Y%m%d%H%M%S")
+    rid = ingest_recording(
+        oss_key, source="consultant-upload", size_bytes=len(data),
+        advisor=advisor, customer=None,
+        recorded_at=recorded_at, service_date=recorded_at[:8],
+        company_id=company_id, uploader_user_id=u["id"], orphan=True,
+    )
+    return jsonify({"id": rid, "oss_key": oss_key})
+
+
+@app.route("/api/consultant/recordings/pending")
+@login_required
+def api_consultant_recordings_pending():
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    advisor = u["advisor_name"] or u["username"]
+    rows = db_fetchall(
+        """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
+                  asr_status, asr_error, customer, created_at,
+                  asr_speaker_count, asr_speaker_warning
+           FROM recordings
+           WHERE uploader_user_id=? AND session_id IS NULL
+           ORDER BY id DESC LIMIT 200""",
+        (u["id"],),
+    )
+    # 兼容老数据：advisor 同名但 uploader_user_id 为空的也算上
+    rows2 = db_fetchall(
+        """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
+                  asr_status, asr_error, customer, created_at,
+                  asr_speaker_count, asr_speaker_warning
+           FROM recordings
+           WHERE advisor=? AND uploader_user_id IS NULL AND session_id IS NULL
+           ORDER BY id DESC LIMIT 200""",
+        (advisor,),
+    )
+    seen = set()
+    out = []
+    for r in list(rows) + list(rows2):
+        if r["id"] in seen:
+            continue
+        seen.add(r["id"])
+        d = dict(r)
+        try:
+            d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600)
+        except Exception:
+            d["audio_url"] = None
+        out.append(d)
+    return jsonify({"recordings": out})
+
+
+@app.route("/api/consultant/recordings/<int:rid>/bind", methods=["POST"])
+@login_required
+def api_consultant_recording_bind(rid):
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    data = request.get_json(silent=True) or {}
+    customer = (data.get("customer") or "").strip()
+    is_new = bool(data.get("new_customer"))
+    if not customer:
+        return jsonify({"error": "请填写顾客姓名"}), 400
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    if rec["uploader_user_id"] and rec["uploader_user_id"] != u["id"]:
+        return jsonify({"error": "无权绑定他人录音"}), 403
+    cid = u["company_id"] or 1
+    if is_new:
+        # 加进顾客库（若不存在）
+        existing = db_fetchone(
+            "SELECT id FROM company_customers WHERE company_id=? AND name=?", (cid, customer)
+        )
+        if not existing:
+            db_write(
+                "INSERT INTO company_customers (company_id, name) VALUES (?, ?)",
+                (cid, customer),
+            )
+    advisor = u["advisor_name"] or u["username"]
+    service_date = (rec["recorded_at"] or datetime.now().strftime("%Y%m%d"))[:8]
+    # 格式 YYYY-MM-DD？get_or_create_session 不挑剔。保留 YYYYMMDD。
+    sid = get_or_create_session(advisor, customer, service_date, company_id=cid)
+    db_write(
+        """UPDATE recordings SET session_id=?, customer=?, advisor=?,
+           asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
+           WHERE id=?""",
+        (sid, customer, advisor, rid),
+    )
+    # 绑定后启动 ASR（之前 orphan 阶段没跑）
+    trigger_pipeline_for_recording(rid)
+    return jsonify({"ok": True, "session_id": sid})
+
+
+@app.route("/api/consultant/recordings/needs_confirm")
+@login_required
+def api_consultant_recordings_needs_confirm():
+    """绑定后 ASR 检测到 >2 个说话人、尚未顾问确认的录音"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    rows = db_fetchall(
+        """SELECT id, oss_key, recorded_at, customer, advisor, session_id,
+                  asr_speaker_count, asr_status, created_at
+           FROM recordings
+           WHERE uploader_user_id=? AND session_id IS NOT NULL
+             AND asr_speaker_warning=1 AND COALESCE(speaker_confirmed,0)=0
+           ORDER BY id DESC LIMIT 50""",
+        (u["id"],),
+    )
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600)
+        except Exception:
+            d["audio_url"] = None
+        out.append(d)
+    return jsonify({"recordings": out})
+
+
+@app.route("/api/consultant/recordings/<int:rid>/confirm_speakers", methods=["POST"])
+@login_required
+def api_consultant_confirm_speakers(rid):
+    """action=keep 表示顾问确认照常分析；action=unbind 表示解绑回未入库以便拆分重传"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip()
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    if rec["uploader_user_id"] and rec["uploader_user_id"] != u["id"]:
+        return jsonify({"error": "无权操作他人录音"}), 403
+    if action == "keep":
+        db_write("UPDATE recordings SET speaker_confirmed=1 WHERE id=?", (rid,))
+        return jsonify({"ok": True})
+    if action == "unbind":
+        db_write(
+            """UPDATE recordings SET session_id=NULL, customer=NULL,
+               speaker_confirmed=0 WHERE id=?""",
+            (rid,),
+        )
+        return jsonify({"ok": True})
+    return jsonify({"error": "未知 action"}), 400
+
+
+@app.route("/api/consultant/customer_recordings")
+@login_required
+def api_consultant_customer_recordings():
+    """列出本顾问 + 指定顾客的所有录音，按 service_date 分组，给"按顾客分析"前预览用"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    customer = (request.args.get("customer") or "").strip()
+    if not customer:
+        return jsonify({"error": "缺少 customer"}), 400
+    advisor = u["advisor_name"] or u["username"]
+    cid = u["company_id"] or 1
+    rows = db_fetchall(
+        """SELECT r.id, r.oss_key, r.recorded_at, r.duration_label,
+                  r.asr_status, r.asr_speaker_count, r.asr_speaker_warning,
+                  r.speaker_confirmed,
+                  s.id AS session_id, s.service_date, s.analysis_status
+           FROM recordings r
+           JOIN sessions s ON s.id = r.session_id
+           WHERE s.advisor=? AND s.customer=?
+             AND (s.company_id IS NULL OR s.company_id=?)
+           ORDER BY COALESCE(r.recorded_at,''), r.id""",
+        (advisor, customer, cid),
+    )
+    groups = {}
+    for r in rows:
+        d = dict(r)
+        try:
+            d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600)
+        except Exception:
+            d["audio_url"] = None
+        sd = (d.get("service_date") or "")
+        # 归一化到 YYYY-MM-DD
+        if len(sd) == 8 and sd.isdigit():
+            sd = f"{sd[:4]}-{sd[4:6]}-{sd[6:]}"
+        d["service_date_norm"] = sd
+        groups.setdefault(sd, []).append(d)
+    out = [{"service_date": k, "recordings": groups[k]} for k in sorted(groups.keys())]
+    return jsonify({"groups": out})
+
+
+@app.route("/api/consultant/analyze", methods=["POST"])
+@login_required
+def api_consultant_analyze():
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    data = request.get_json(silent=True) or {}
+    customer = (data.get("customer") or "").strip()
+    start_date = (data.get("start_date") or "").strip()
+    end_date = (data.get("end_date") or start_date).strip()
+    if not customer or not start_date:
+        return jsonify({"error": "请填写顾客和起始日期"}), 400
+    advisor = u["advisor_name"] or u["username"]
+    cid = u["company_id"] or 1
+    # 时间段内该顾问+顾客的所有 session（service_date 在 [start, end]）
+    # service_date 既有 YYYY-MM-DD 也有 YYYYMMDD；都规范化匹配
+    def _norm(d):
+        d = d.replace("-", "")
+        return d
+    s = _norm(start_date); e = _norm(end_date)
+    rows = db_fetchall(
+        """SELECT id, service_date FROM sessions
+           WHERE advisor=? AND customer=?
+             AND (company_id IS NULL OR company_id=?)
+             AND REPLACE(service_date,'-','') >= ?
+             AND REPLACE(service_date,'-','') <= ?""",
+        (advisor, customer, cid, s, e),
+    )
+    if not rows:
+        return jsonify({"error": "时间段内没有该顾客的录音"}), 404
+    triggered = []
+    for r in rows:
+        sid = r["id"]
+        sig = compute_session_signature(sid)
+        try:
+            threading.Thread(
+                target=run_session_analysis, args=(sid, sig), daemon=True
+            ).start()
+            triggered.append(sid)
+        except Exception:
+            pass
+    return jsonify({"ok": True, "session_ids": triggered})
 
 
 @app.route("/healthz")

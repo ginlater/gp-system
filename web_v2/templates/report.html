@@ -7,31 +7,53 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
 <title>{{ sess.customer or '未知顾客' }} × {{ sess.advisor or '未知顾问' }} · 接诊全维度分析报告</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}?v=20260521q">
+<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}?v=20260524a">
 </head>
 <body>
 
 <!-- NAV -->
 <nav class="nav" style="position:relative">
   <div class="nav-inner">
-    <div class="nav-title">
-      <span class="dot"></span>
-      <a href="{{ url_for('index') }}" style="color:inherit">← 接诊列表</a>
-      &nbsp;|&nbsp; {{ sess.advisor or '未知顾问' }} × {{ sess.customer or '未知顾客' }} · 接诊全维度分析报告
-    </div>
-    <div class="nav-right">
-      <div class="nav-tag"><span class="circle"></span> {{ sess.service_date or '日期未知' }}</div>
-      <div class="nav-tag">销售复盘 · 内部机密</div>
-      <div class="nav-tag {% if sess.display_status == 'running' %}live{% endif %}" id="analysisStatusTag">
-        分析: {{ {'idle':'未分析','queued':'排队中','running':'分析中','done':'已完成','failed':'失败'}.get(sess.display_status, sess.display_status) }}
-        {% if sess.analysis_model %} · {{ sess.analysis_model }}{% endif %}
+    <div class="nav-row nav-row-top">
+      <div class="nav-title">
+        <a href="{{ url_for('index') }}" class="nav-back">← 接诊列表</a>
+        <span class="nav-sep"></span>
+        <span class="dot"></span>
+        <span class="nav-headline">{{ sess.advisor or '未知顾问' }} × {{ sess.customer or '未知顾客' }} · 接诊全维度分析报告</span>
       </div>
-      <button class="rec-btn" id="reanalyzeBtn" onclick="reanalyze()" title="强制重跑分析">⟳ 重跑</button>
-      {% if recordings %}
-      <button class="rec-btn" onclick="toggleRec()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10,8 16,12 10,16"/></svg>
-        原始录音
-      </button>
+      <div class="nav-meta">
+        <div class="nav-tag"><span class="circle"></span> {{ sess.service_date or '日期未知' }}</div>
+        <div class="nav-tag">销售复盘 · 内部机密</div>
+        <div class="nav-tag {% if sess.display_status == 'running' %}live{% endif %}" id="analysisStatusTag">
+          分析: {{ {'idle':'未分析','queued':'排队中','running':'分析中','done':'已完成','failed':'失败'}.get(sess.display_status, sess.display_status) }}
+          {% if sess.analysis_model %} · {{ sess.analysis_model }}{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="nav-row nav-row-actions">
+      <div class="nav-actions">
+        <button class="rec-btn" id="reanalyzeBtn" onclick="reanalyze()" title="强制重跑分析">⟳ 重跑</button>
+        {% if recordings %}
+        <button class="rec-btn rec-btn-sec" onclick="toggleRec()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10,8 16,12 10,16"/></svg>
+          原始录音
+        </button>
+        {% endif %}
+      </div>
+      {% if role in ('admin','super') %}
+      <div class="nav-actions nav-actions-danger">
+        {% if recordings %}
+        <button class="rec-btn rec-btn-warn" id="delAllRecsBtn" onclick="deleteAllRecs()" title="删除该接诊所有录音文件">🗑 删录音</button>
+        {% endif %}
+        {% if sess.analysis_result %}
+        <button class="rec-btn rec-btn-warn" onclick="deleteReport()" title="清除分析报告，接诊记录保留">🗑 删报告</button>
+        {% endif %}
+        <button class="rec-btn rec-btn-danger" onclick="deleteSession()" title="完全删除此接诊（录音+报告+记录）">⚠ 完全删除</button>
+      </div>
+      {% elif role == 'consultant' and recordings %}
+      <div class="nav-actions">
+        <button class="rec-btn rec-btn-sec" id="reqDelAllBtn" onclick="requestDeleteAllRecs()" title="申请删除该接诊所有录音文件">申请删除录音</button>
+      </div>
       {% endif %}
     </div>
   </div>
@@ -58,6 +80,24 @@
       <summary>▶ 查看文字转录</summary>
       <div class="rec-transcript-body" id="recTranscriptBody">{{ (recordings[0].asr_transcript or '（暂无转录文本）')|replace('\n','<br>')|safe }}</div>
     </details>
+
+    {% if role in ('admin','super') %}
+    <div style="margin-top:10px;text-align:right">
+      <button id="delRecBtn" onclick="deleteCurrentRec()"
+              style="background:#e74c3c;color:#fff;border:none;border-radius:4px;padding:5px 12px;font-size:12px;cursor:pointer">
+        删除当前录音段
+      </button>
+      <span id="delRecMsg" style="font-size:12px;color:#e74c3c;margin-left:8px"></span>
+    </div>
+    {% elif role == 'consultant' %}
+    <div style="margin-top:10px;text-align:right">
+      <button id="reqDelRecBtn" onclick="requestDeleteCurrentRec()"
+              style="background:#fff;color:#e74c3c;border:1px solid #e74c3c;border-radius:4px;padding:5px 12px;font-size:12px;cursor:pointer">
+        申请删除当前录音段
+      </button>
+      <span id="delRecMsg" style="font-size:12px;color:#888;margin-left:8px"></span>
+    </div>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -1029,6 +1069,95 @@ function deleteComment(eid) {
         if (el) el.remove();
       } else alert(data.error || '删除失败');
     });
+}
+
+async function deleteReport() {
+  if (!confirm('确认清除分析报告？录音和接诊记录保留，可重新分析。')) return;
+  const r = await fetch(`${BASE}/api/session/${SESSION_ID}/report/delete`, {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) location.reload();
+  else alert(d.error || '失败');
+}
+
+async function deleteSession() {
+  if (!confirm('⚠ 完全删除此接诊？录音文件、分析报告、接诊记录将全部删除，不可恢复！')) return;
+  if (!confirm('再次确认：此操作无法撤销，是否继续？')) return;
+  const r = await fetch(`${BASE}/api/session/${SESSION_ID}/delete`, {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) location.href = BASE + '/';
+  else alert(d.error || '失败');
+}
+
+async function deleteAllRecs() {
+  const btn = document.getElementById('delAllRecsBtn');
+  if (!confirm('确认删除该接诊的全部录音文件？此操作不可恢复！')) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${BASE}/api/session/${SESSION_ID}/recordings/delete`, {method: 'DELETE'});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '删除失败');
+    location.reload();
+  } catch (e) {
+    alert(e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function requestDeleteAllRecs() {
+  const btn = document.getElementById('reqDelAllBtn');
+  const reason = prompt('申请删除原因（可选）：');
+  if (reason === null) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${BASE}/api/session/${SESSION_ID}/delete-request`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason}),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '申请失败');
+    if (btn) { btn.textContent = '已申请删除'; btn.style.opacity = '0.5'; }
+  } catch (e) {
+    alert(e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function deleteCurrentRec() {
+  const rec = RECORDINGS[_currentSegIdx >= 0 ? _currentSegIdx : 0];
+  if (!rec) return;
+  const msg = document.getElementById('delRecMsg');
+  if (!confirm(`确认删除第 ${(_currentSegIdx >= 0 ? _currentSegIdx : 0) + 1} 段录音？此操作不可恢复！`)) return;
+  try {
+    const r = await fetch(`${BASE}/api/recording/${rec.id}/delete`, {method: 'DELETE'});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '删除失败');
+    location.reload();
+  } catch (e) {
+    if (msg) { msg.textContent = e.message; }
+  }
+}
+
+async function requestDeleteCurrentRec() {
+  const rec = RECORDINGS[_currentSegIdx >= 0 ? _currentSegIdx : 0];
+  if (!rec) return;
+  const msg = document.getElementById('delRecMsg');
+  const reason = prompt('申请删除原因（可选）：');
+  if (reason === null) return; // 取消
+  try {
+    const r = await fetch(`${BASE}/api/recording/${rec.id}/delete-request`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason}),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '申请失败');
+    if (msg) { msg.textContent = '申请已提交，等待管理员审批。'; }
+    const btn = document.getElementById('reqDelRecBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '已申请'; }
+  } catch (e) {
+    if (msg) { msg.textContent = e.message; }
+  }
 }
 
 function reanalyze() {

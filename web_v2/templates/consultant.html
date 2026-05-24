@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>顾问端 · 工牌接诊分析系统</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}">
+<style>
+html,body{overflow-x:hidden;max-width:100%}
+.wrap{max-width:760px;margin:0 auto;padding:20px 16px 80px}
+.header-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px}
+.header-title{font-size:18px;font-weight:700;color:var(--navy)}
+.header-user{font-size:12px;color:var(--text-mute)}
+.card{background:#fff;border:1px solid var(--border);border-radius:6px;padding:16px 18px;margin-bottom:16px}
+.card h3{font-size:14px;color:var(--navy);margin-bottom:10px}
+.btn{background:var(--navy);color:#fff;border:none;border-radius:4px;padding:9px 18px;font-size:14px;cursor:pointer;font-family:inherit}
+.btn.sec{background:#fff;color:var(--navy);border:1px solid var(--border)}
+.btn.danger{background:#e74c3c}
+.btn.big{padding:14px 28px;font-size:16px;border-radius:50px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row input,.row select{border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px;font-family:inherit;outline:none;flex:1;min-width:120px}
+.row input:focus,.row select:focus{border-color:var(--blue)}
+.msg{font-size:12px;color:var(--text-mute);margin-top:6px;min-height:16px}
+.msg.err{color:#e74c3c}
+.muted{color:var(--text-mute);font-size:12px}
+.rec-area{display:flex;flex-direction:column;align-items:center;padding:16px;gap:14px}
+.rec-timer{font-size:28px;font-weight:700;color:var(--navy);font-variant-numeric:tabular-nums}
+.rec-status{font-size:12px;color:var(--text-mute)}
+.rec-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#e74c3c;margin-right:6px;vertical-align:middle;animation:blink 1.2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.tbl{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid var(--border)}
+.tbl th{background:var(--navy);color:#fff;text-align:left;padding:8px 10px;font-size:12px}
+.tbl td{padding:8px 10px;border-bottom:1px solid var(--border)}
+.tbl tr:last-child td{border-bottom:none}
+.suggest-box{position:relative}
+.suggest{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-top:none;max-height:200px;overflow:auto;z-index:30;display:none}
+.suggest.show{display:block}
+.suggest-item{padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--bg-light)}
+.suggest-item:hover{background:var(--bg-light)}
+.suggest-item.add{color:var(--blue);font-weight:600}
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;background:rgba(74,144,217,.12);color:var(--blue)}
+.tag.done{background:rgba(39,174,96,.12);color:var(--green)}
+.tag.failed{background:rgba(231,76,60,.12);color:var(--red)}
+.tag.running{background:rgba(74,144,217,.12);color:var(--blue)}
+@media (max-width:480px){
+  .wrap{padding:12px 10px 60px}
+  .row input,.row select,.row button{font-size:16px}
+  .btn.big{width:100%}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header-bar">
+    <div class="header-title">接诊录音</div>
+    <div class="header-user">
+      {{ advisor_name or username }}（顾问） ·
+      <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a>
+    </div>
+  </div>
+
+  <!-- 录音 -->
+  <div class="card">
+    <h3>录音</h3>
+    <div class="rec-area">
+      <div class="rec-timer" id="timer">00:00</div>
+      <div class="rec-status" id="recStatus">点击开始录音</div>
+      <button class="btn big" id="recBtn">● 开始录音</button>
+      <div class="msg" id="recMsg"></div>
+    </div>
+  </div>
+
+  <!-- 未入库录音 -->
+  <div class="card">
+    <h3>未入库录音 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button></h3>
+    <div class="muted" style="margin-bottom:6px;font-size:12px">提示：试听前 60 秒以判断是哪位顾客的接诊，再绑定入库（绑定后才会跑 ASR）。</div>
+    <table class="tbl">
+      <thead><tr><th>时间</th><th>试听</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody id="pendingBody"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- 多说话人警告：需顾问确认 -->
+  <div class="card" id="needsConfirmCard" style="display:none">
+    <h3 style="color:#e67e22">⚠ 检测到可能误录（说话人 &gt; 2）</h3>
+    <div class="muted" style="margin-bottom:6px;font-size:12px">以下录音 ASR 后检测到超过 2 个说话人，可能是一段录音里混了多位顾客（忘关录音）。可解绑后拆分重传，或确认本次按当前归属分析。</div>
+    <table class="tbl">
+      <thead><tr><th>时间</th><th>顾客</th><th>说话人数</th><th>试听</th><th>操作</th></tr></thead>
+      <tbody id="needsConfirmBody"></tbody>
+    </table>
+  </div>
+
+  <!-- 分析（按顾客 + 时间段） -->
+  <div class="card">
+    <h3>按顾客分析</h3>
+    <div class="row suggest-box">
+      <input id="anaCustomer" placeholder="顾客姓名（输入搜索）" autocomplete="off">
+      <div class="suggest" id="anaSuggest"></div>
+    </div>
+    <div id="anaPreview" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:8px">
+      <input type="date" id="anaStart">
+      <span class="muted">至</span>
+      <input type="date" id="anaEnd">
+      <button class="btn" onclick="startAnalyze()">开始分析</button>
+    </div>
+    <div class="msg" id="anaMsg"></div>
+    <div class="muted" style="margin-top:6px">先选客户查看其所有录音，再决定分析时间段。分析进度可在<a href="{{ url_for('index') }}" style="color:var(--blue)">接诊列表</a>查看。</div>
+  </div>
+</div>
+
+<!-- 绑定弹窗 -->
+<div id="bindMask" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:6px;padding:20px;max-width:380px;width:90%">
+    <h3 style="font-size:15px;color:var(--navy);margin-bottom:10px">绑定顾客</h3>
+    <div class="row suggest-box" style="display:block">
+      <input id="bindCustomer" placeholder="输入顾客姓名搜索；找不到可新建" autocomplete="off" style="width:100%">
+      <div class="suggest" id="bindSuggest"></div>
+    </div>
+    <div class="msg" id="bindMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:14px">
+      <button class="btn sec" onclick="closeBind()">取消</button>
+      <button class="btn" id="bindConfirm" onclick="confirmBind()">确认绑定</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = {{ request.script_root|tojson }};
+const ADVISOR = {{ advisor_name|tojson }};
+
+// 默认日期
+(function(){
+  const t = new Date(); const s = t.toISOString().slice(0,10);
+  document.getElementById('anaStart').value = s;
+  document.getElementById('anaEnd').value = s;
+})();
+
+// ============ 录音 ============
+let mediaRecorder = null, chunks = [], startTs = 0, timerInt = null, stream = null;
+const recBtn = document.getElementById('recBtn');
+const recStatus = document.getElementById('recStatus');
+const recMsg = document.getElementById('recMsg');
+const timerEl = document.getElementById('timer');
+
+recBtn.onclick = async () => {
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    mediaRecorder.stop();
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: true});
+  } catch (e) {
+    recMsg.textContent = '无法访问麦克风：' + e.message; recMsg.className = 'msg err';
+    return;
+  }
+  const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' :
+               (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+  mediaRecorder = mime ? new MediaRecorder(stream, {mimeType: mime}) : new MediaRecorder(stream);
+  chunks = [];
+  mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  mediaRecorder.onstop = onStop;
+  mediaRecorder.start();
+  startTs = Date.now();
+  recBtn.textContent = '■ 结束录音';
+  recBtn.style.background = '#e74c3c';
+  recStatus.innerHTML = '<span class="rec-dot"></span>录音中…';
+  recMsg.textContent = '';
+  timerInt = setInterval(updateTimer, 250);
+};
+
+function updateTimer() {
+  const s = Math.floor((Date.now() - startTs) / 1000);
+  const m = Math.floor(s / 60), r = s % 60;
+  timerEl.textContent = String(m).padStart(2,'0') + ':' + String(r).padStart(2,'0');
+}
+
+async function onStop() {
+  clearInterval(timerInt);
+  recBtn.textContent = '● 开始录音';
+  recBtn.style.background = '';
+  recStatus.textContent = '上传中…';
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  const ext = (mediaRecorder && mediaRecorder.mimeType || 'audio/webm').includes('mp4') ? 'mp4' : 'webm';
+  const blob = new Blob(chunks, {type: 'audio/' + ext});
+  const fd = new FormData();
+  fd.append('file', blob, 'rec-' + Date.now() + '.' + ext);
+  try {
+    const r = await fetch(BASE + '/api/consultant/upload', {method: 'POST', body: fd});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    recStatus.textContent = '已上传，等待 ASR …';
+    recMsg.textContent = '录音已上传到未入库列表。';
+    recMsg.className = 'msg';
+    timerEl.textContent = '00:00';
+    loadPending();
+  } catch (e) {
+    recStatus.textContent = '上传失败';
+    recMsg.textContent = e.message; recMsg.className = 'msg err';
+  }
+}
+
+// ============ 未入库 ============
+// 试听限制：最多播放 60 秒
+function attachAudioCap(audioEl, maxSec) {
+  audioEl.addEventListener('timeupdate', () => {
+    if (audioEl.currentTime >= maxSec) { audioEl.pause(); audioEl.currentTime = maxSec; }
+  });
+}
+
+async function loadPending() {
+  const tb = document.getElementById('pendingBody');
+  tb.innerHTML = '<tr><td colspan="4" class="muted">加载中…</td></tr>';
+  const r = await fetch(BASE + '/api/consultant/recordings/pending');
+  const d = await r.json();
+  const list = d.recordings || [];
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">暂无未入库录音</td></tr>'; return; }
+  tb.innerHTML = list.map(x => {
+    const tag = x.asr_status === 'awaiting_intake' ? '<span class="tag">待绑定（未跑 ASR）</span>' :
+                x.asr_status === 'done' ? '<span class="tag done">ASR 完成</span>' :
+                x.asr_status === 'running' ? '<span class="tag running">ASR 中</span>' :
+                x.asr_status === 'failed' ? '<span class="tag failed">ASR 失败</span>' :
+                '<span class="tag">待 ASR</span>';
+    const audio = x.audio_url
+      ? `<audio controls preload="none" src="${x.audio_url}" data-cap="60" style="max-width:200px;height:32px"></audio>`
+      : '—';
+    return `<tr>
+      <td>${x.created_at || x.recorded_at || '—'}</td>
+      <td>${audio}</td>
+      <td>${tag}</td>
+      <td style="white-space:nowrap">
+        <button class="btn sec" onclick="openBind(${x.id})">绑定客户</button>
+        <button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;margin-left:4px" onclick="requestDelRec(${x.id}, this)">申请删除</button>
+      </td>
+    </tr>`;
+  }).join('');
+  tb.querySelectorAll('audio[data-cap]').forEach(a => attachAudioCap(a, parseFloat(a.dataset.cap)));
+}
+
+async function loadNeedsConfirm() {
+  const r = await fetch(BASE + '/api/consultant/recordings/needs_confirm');
+  const d = await r.json();
+  const list = d.recordings || [];
+  const card = document.getElementById('needsConfirmCard');
+  const tb = document.getElementById('needsConfirmBody');
+  if (!list.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  tb.innerHTML = list.map(x => {
+    const audio = x.audio_url
+      ? `<audio controls preload="none" src="${x.audio_url}" style="max-width:200px;height:32px"></audio>`
+      : '—';
+    return `<tr>
+      <td>${x.created_at || x.recorded_at || '—'}</td>
+      <td>${x.customer || '—'}</td>
+      <td><b style="color:#e67e22">${x.asr_speaker_count || '?'} 人</b></td>
+      <td>${audio}</td>
+      <td style="white-space:nowrap">
+        <button class="btn sec" onclick="confirmSpeakers(${x.id}, 'keep', this)">仍然分析</button>
+        <button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;margin-left:4px" onclick="confirmSpeakers(${x.id}, 'unbind', this)">解绑（拆分重传）</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function confirmSpeakers(rid, action, btn) {
+  if (action === 'unbind' && !confirm('解绑后录音会回到未入库列表，便于你拆分重新上传，确认？')) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rid + '/confirm_speakers', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    loadNeedsConfirm();
+    loadPending();
+  } catch (e) {
+    alert(e.message);
+  } finally { btn.disabled = false; }
+}
+
+loadPending();
+loadNeedsConfirm();
+setInterval(() => { loadPending(); loadNeedsConfirm(); }, 15000);
+
+// ============ 客户下拉（共用） ============
+function bindSuggestBox(inputId, suggestId, onPick) {
+  const inp = document.getElementById(inputId);
+  const box = document.getElementById(suggestId);
+  let timer = null;
+  inp.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fetchSugg(inp.value), 200);
+  });
+  inp.addEventListener('focus', () => fetchSugg(inp.value));
+  inp.addEventListener('blur', () => setTimeout(() => box.classList.remove('show'), 200));
+  async function fetchSugg(q) {
+    const r = await fetch(BASE + '/api/customers/search?q=' + encodeURIComponent(q || ''));
+    const d = await r.json();
+    const items = d.customers || [];
+    let html = items.map(c => `<div class="suggest-item" data-name="${c.name}">${c.name}${c.member_card?(' · ' + c.member_card):''}</div>`).join('');
+    if (q && q.trim() && !items.some(c => c.name === q.trim())) {
+      html += `<div class="suggest-item add" data-new="${q.trim()}">+ 新增「${q.trim()}」</div>`;
+    }
+    box.innerHTML = html || '<div class="suggest-item muted">无匹配，输入后可新建</div>';
+    box.classList.add('show');
+    box.querySelectorAll('.suggest-item').forEach(el => {
+      el.onmousedown = (e) => {
+        e.preventDefault();
+        const name = el.dataset.name || el.dataset.new;
+        if (!name) return;
+        inp.value = name;
+        box.classList.remove('show');
+        onPick && onPick(name, !!el.dataset.new);
+      };
+    });
+  }
+}
+let bindIsNew = false;
+bindSuggestBox('anaCustomer', 'anaSuggest', (n) => { loadAnaPreview(n); });
+bindSuggestBox('bindCustomer', 'bindSuggest', (n, isNew) => { bindIsNew = isNew; });
+document.getElementById('anaCustomer').addEventListener('change', e => loadAnaPreview(e.target.value));
+
+async function loadAnaPreview(name) {
+  const box = document.getElementById('anaPreview');
+  name = (name || '').trim();
+  if (!name) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="muted" style="font-size:12px">加载录音列表…</div>';
+  const r = await fetch(BASE + '/api/consultant/customer_recordings?customer=' + encodeURIComponent(name));
+  const d = await r.json();
+  if (d.error) { box.innerHTML = '<div class="msg err">' + d.error + '</div>'; return; }
+  const groups = d.groups || [];
+  if (!groups.length) {
+    box.innerHTML = '<div class="muted" style="font-size:12px">该顾客暂无已绑定录音。</div>';
+    return;
+  }
+  // 自动用最早 / 最新日期填充时间段，方便顾问微调
+  const first = groups[0].service_date, last = groups[groups.length-1].service_date;
+  if (first) document.getElementById('anaStart').value = first;
+  if (last)  document.getElementById('anaEnd').value = last;
+
+  const html = groups.map(g => {
+    const items = g.recordings.map(x => {
+      let badge = '';
+      if (x.asr_status === 'done') badge = '<span class="tag done">ASR✓</span>';
+      else if (x.asr_status === 'running') badge = '<span class="tag running">ASR中</span>';
+      else if (x.asr_status === 'failed') badge = '<span class="tag failed">ASR失败</span>';
+      else if (x.asr_status === 'awaiting_intake') badge = '<span class="tag">待绑定</span>';
+      else badge = '<span class="tag">待ASR</span>';
+      let warn = '';
+      if (x.asr_speaker_warning && !x.speaker_confirmed) {
+        warn = ` <span style="color:#e67e22;font-size:12px">⚠${x.asr_speaker_count||'?'}人</span>`;
+      }
+      const audio = x.audio_url ? `<audio controls preload="none" src="${x.audio_url}" style="max-width:200px;height:28px"></audio>` : '';
+      return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">
+        <span style="min-width:120px">${x.recorded_at || '—'}</span>
+        <span>${x.duration_label||''}</span>
+        ${badge}${warn}
+        ${audio}
+      </div>`;
+    }).join('');
+    return `<div style="border:1px solid #eee;border-radius:4px;padding:6px 10px;margin-bottom:6px">
+      <div style="font-weight:600;color:var(--navy);font-size:13px;margin-bottom:4px">${g.service_date || '(无日期)'} · ${g.recordings.length} 条</div>
+      ${items}
+    </div>`;
+  }).join('');
+  box.innerHTML = `<div style="max-height:300px;overflow:auto">${html}</div>`;
+}
+
+// ============ 绑定弹窗 ============
+let bindingRid = null;
+function openBind(rid) {
+  bindingRid = rid;
+  bindIsNew = false;
+  document.getElementById('bindCustomer').value = '';
+  document.getElementById('bindMsg').textContent = '';
+  document.getElementById('bindMask').style.display = 'flex';
+}
+function closeBind() {
+  document.getElementById('bindMask').style.display = 'none';
+  bindingRid = null;
+}
+async function confirmBind() {
+  const name = document.getElementById('bindCustomer').value.trim();
+  const msg = document.getElementById('bindMsg');
+  if (!name) { msg.textContent = '请填写顾客姓名'; msg.className='msg err'; return; }
+  const btn = document.getElementById('bindConfirm');
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + bindingRid + '/bind', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({customer: name, new_customer: bindIsNew}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeBind();
+    loadPending();
+    // 绑定后启动 ASR，几秒内可能就出说话人警告；定时器也会刷
+    setTimeout(loadNeedsConfirm, 8000);
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  } finally { btn.disabled = false; }
+}
+
+// ============ 申请删除未入库录音 ============
+async function requestDelRec(rid, btn) {
+  const reason = prompt('申请删除原因（可选）：');
+  if (reason === null) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/recording/' + rid + '/delete-request', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason}),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '申请失败');
+    btn.textContent = '已申请';
+    btn.style.opacity = '0.5';
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+
+// ============ 分析 ============
+async function startAnalyze() {
+  const customer = document.getElementById('anaCustomer').value.trim();
+  const start = document.getElementById('anaStart').value;
+  const end = document.getElementById('anaEnd').value || start;
+  const msg = document.getElementById('anaMsg');
+  if (!customer || !start) { msg.textContent = '请填写顾客和起始日期'; msg.className='msg err'; return; }
+  msg.textContent = '正在触发分析…'; msg.className='msg';
+  try {
+    const r = await fetch(BASE + '/api/consultant/analyze', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({customer, start_date: start, end_date: end}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    msg.textContent = '已触发 ' + (d.session_ids||[]).length + ' 个接诊的分析，请到接诊列表查看进度。';
+    msg.className='msg';
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  }
+}
+</script>
+</body>
+</html>
