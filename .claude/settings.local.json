@@ -244,7 +244,32 @@
       "Read(//var/log/**)",
       "Bash(journalctl -n 30 --no-pager)",
       "Read(//mnt/user-data/**)",
-      "Bash(find / -name \"工作簿*\")"
+      "Bash(find / -name \"工作簿*\")",
+      "Bash(git *)",
+      "Bash(RAW=output/raw_rows_new.json python3 -c ' *)",
+      "Bash(sudo supervisorctl restart gp-system)",
+      "Bash(pkill -f \"python.*webapp\")",
+      "Bash(journalctl -u gp-system --no-pager -n 200)",
+      "Bash(journalctl -u gongpai --no-pager -n 500)",
+      "Bash(journalctl -u gongpai --no-pager --since \"14:33\")",
+      "Bash(journalctl -u gongpai --no-pager --since \"today 14:30\")",
+      "Bash(journalctl -u gongpai --no-pager -n 1500)",
+      "Bash(journalctl -u gongpai --no-pager -n 5000)",
+      "Bash(journalctl -u gongpai --no-pager)",
+      "Bash(journalctl -u gongpai --no-pager --since \"2026-05-24 14:30:00\")",
+      "Bash(journalctl -u gongpai --no-pager --since \"2026-05-24 14:48:00\")",
+      "Bash(journalctl --since \"2026-05-24 14:48:00\" --no-pager)",
+      "Bash(journalctl -u gongpai --no-pager --since \"2026-05-24 15:00:00\")",
+      "Bash(journalctl _PID=2907154 --no-pager)",
+      "Bash(journalctl _SYSTEMD_UNIT=gongpai.service --no-pager --since \"2026-05-24 15:00\")",
+      "Bash(journalctl -u gongpai --no-pager --since \"2026-05-24 15:25\")",
+      "Bash(journalctl -u gongpai --no-pager --since \"2026-05-24 15:23\" --until \"2026-05-24 15:47\")",
+      "Bash(journalctl -u gongpai --no-pager --since \"2026-05-24 15:23\" --until \"2026-05-24 15:48\")",
+      "Bash(journalctl -u gongpai --no-pager --since \"1 min ago\")",
+      "Bash(journalctl -u gongpai --no-pager -n 10)",
+      "Bash(journalctl -u gongpai --no-pager --since \"15:54:16\")",
+      "Bash(journalctl -u gongpai --no-pager --since \"15:54:00\")",
+      "Bash(journalctl -u gongpai --no-pager --since \"10 sec ago\")"
     ]
   }
 }

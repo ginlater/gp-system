@@ -895,15 +895,34 @@ async function loadTaskStatus() {
   }
 }
 
+let _fastPollTimer = null;
+function startFastPoll() {
+  // 重跑后每 3 秒刷一次，共 2 分钟，之后回到常规 15s 轮询
+  let ticks = 0;
+  const MAX_TICKS = 40; // 40×3s = 120s
+  if (_fastPollTimer) clearInterval(_fastPollTimer);
+  _fastPollTimer = setInterval(async () => {
+    await loadTaskStatus();
+    ticks++;
+    if (ticks >= MAX_TICKS) {
+      clearInterval(_fastPollTimer);
+      _fastPollTimer = null;
+    }
+  }, 3000);
+}
+
 async function rerunTask(taskId) {
   if (!confirm(`重跑任务 ${taskId}？`)) return;
   const resp = await fetch(`${BASE}/api/session/${SESSION_ID}/task/${taskId}/rerun`,
                            {method:'POST'});
   const data = await resp.json();
-  alert(data.status === 'started'
-    ? `${taskId} 已开始重跑，预计 2-3 分钟，刷新查看`
-    : (data.error || '失败'));
-  setTimeout(loadTaskStatus, 2000);
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+  // 立刻刷一次，再高频轮询直到完成
+  await loadTaskStatus();
+  startFastPoll();
 }
 
 async function fillMissingTasks() {
@@ -913,10 +932,10 @@ async function fillMissingTasks() {
   const data = await resp.json();
   if (data.status === 'all_done') {
     alert('所有任务都已完成，无需补跑');
-  } else {
-    alert(`已开始补跑 ${(data.missing||[]).length} 个任务：${(data.missing||[]).join(', ')}`);
+    return;
   }
-  setTimeout(loadTaskStatus, 2000);
+  await loadTaskStatus();
+  startFastPoll();
 }
 
 loadTaskStatus();
@@ -985,7 +1004,7 @@ async function switchSeg(idx) {
 // 点外部关闭面板
 document.addEventListener('click', function(e) {
   const panel = document.getElementById('recPanel');
-  const btn = document.querySelector('.nav-right .rec-btn[onclick*="toggleRec"]');
+  const btn = document.querySelector('.rec-btn[onclick*="toggleRec"]');
   if (panel && panel.classList.contains('open') &&
       !panel.contains(e.target) && (!btn || !btn.contains(e.target))) {
     panel.classList.remove('open');

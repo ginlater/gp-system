@@ -202,15 +202,18 @@ def consolidate_with_llm(logics):
 
     kwargs = dict(
         model=model,
-        max_tokens=32000,
+        max_tokens=64000,
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user_prompt}],
-        thinking={"type": "adaptive"},
-        output_config={"effort": "high"},
     )
     with client.messages.stream(**kwargs) as stream:
         msg = stream.get_final_message()
     text = "".join(b.text for b in msg.content if b.type == "text").strip()
+    if not text:
+        raise RuntimeError(
+            f"empty response from model (stop_reason={msg.stop_reason}, "
+            f"blocks={[b.type for b in msg.content]})"
+        )
     if text.startswith("```"):
         text = text.split("\n", 1)[1]
         if text.endswith("```"):

@@ -449,7 +449,12 @@ AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg", ".opus"}
 
 
 def oss_signed_url(oss_key, expires=7200):
-    return oss_bucket.sign_url("GET", oss_key, expires, slash_safe=True)
+    url = oss_bucket.sign_url("GET", oss_key, expires, slash_safe=True)
+    # 站点跑在 https，OSS endpoint 未带 scheme 时 sign_url 默认拼 http://，
+    # 浏览器会按 mixed content 静默拦截（音频加载失败 / 地址栏不安全提示）。
+    if url.startswith("http://"):
+        url = "https://" + url[len("http://"):]
+    return url
 
 
 # ============ Session 管理 ============
@@ -678,7 +683,12 @@ def load_kb():
     global _kb_cache
     if _kb_cache is None:
         with open(KB_PATH, "r", encoding="utf-8") as f:
-            _kb_cache = json.load(f)
+            raw = json.load(f)
+        # 兼容两种结构：旧版直接是 list，新版是 {tag_taxonomy, canonical_logics}
+        if isinstance(raw, dict) and isinstance(raw.get("canonical_logics"), list):
+            _kb_cache = raw["canonical_logics"]
+        else:
+            _kb_cache = raw
     return _kb_cache
 
 
@@ -2282,10 +2292,39 @@ def _parse_tool_calls_arguments(tool_calls, stage_label="") -> dict:
         return results
 
     tag = f"[parse_tool_calls{':'+stage_label if stage_label else ''}]"
+    # DeepSeek V4 偶发把 tool_calls 整个 list 或单个 entry 序列化成字符串
+    if isinstance(tool_calls, str):
+        try:
+            tool_calls = json.loads(tool_calls)
+            print(f"{tag} tool_calls 是字符串，已 JSON 解开")
+        except (json.JSONDecodeError, ValueError) as e:
+            print(f"{tag} tool_calls 是字符串且无法解析: {e}; head={tool_calls[:200]!r}")
+            tool_calls = []
+    if not isinstance(tool_calls, list):
+        print(f"{tag} tool_calls 不是 list: {type(tool_calls).__name__}")
+        tool_calls = []
     print(f"{tag} tool_calls 数量: {len(tool_calls)}")
     merged = {}
     for i, tc in enumerate(tool_calls):
-        args_str = tc.get("function", {}).get("arguments", "")
+        # tc 也可能是字符串
+        if isinstance(tc, str):
+            try:
+                tc = json.loads(tc)
+                print(f"{tag} tool_call[{i}] 是字符串，已 JSON 解开")
+            except (json.JSONDecodeError, ValueError):
+                print(f"{tag} tool_call[{i}] 是字符串且无法解析；head={tc[:200]!r}")
+                continue
+        if not isinstance(tc, dict):
+            print(f"{tag} tool_call[{i}] 不是 dict: {type(tc).__name__}，跳过")
+            continue
+        fn = tc.get("function", {})
+        # DeepSeek V4 偶发把整个 function 字段序列化成 JSON 字符串
+        if isinstance(fn, str):
+            try:
+                fn = json.loads(fn)
+            except (json.JSONDecodeError, ValueError):
+                fn = {}
+        args_str = fn.get("arguments", "") if isinstance(fn, dict) else ""
         print(f"{tag} tool_call[{i}] arguments 长度: {len(args_str)}")
         # DeepSeek V4 偶发在 JSON 字符串里用非法转义 \' （JSON 不支持），
         # raw_decode 会直接报 "Expecting ',' delimiter"。这里做最小清洗：
@@ -2307,8 +2346,20 @@ def _parse_tool_calls_arguments(tool_calls, stage_label="") -> dict:
     if not merged:
         # 空 dict：把每个 tool_call 的 arguments 长度、头尾各 500 字打出来，
         # 用于判断到底是空字符串、坏 JSON 还是嵌套字符串没解开
+        # 注意：tc["function"] 在 DeepSeek V4 偶发是字符串，必须 isinstance 守卫，
+        # 否则 .get 会抛 "'str' object has no attribute 'get'" 把真实错误掩盖
         for i, tc in enumerate(tool_calls):
-            args_str = tc.get("function", {}).get("arguments", "") or ""
+            fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+            if isinstance(fn, str):
+                fn_str_head = fn[:200]
+                try:
+                    fn = json.loads(fn)
+                except (json.JSONDecodeError, ValueError):
+                    print(f"{tag} EMPTY_MERGE tool_call[{i}] function 是字符串且无法 JSON 解析；"
+                          f"head={fn_str_head!r}")
+                    fn = {}
+            args_str = fn.get("arguments", "") if isinstance(fn, dict) else ""
+            args_str = args_str or ""
             head = args_str[:500]
             tail = args_str[-500:] if len(args_str) > 500 else ""
             print(f"{tag} EMPTY_MERGE tool_call[{i}] len={len(args_str)} "
@@ -2425,7 +2476,7 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
                 f"{stage_tag}DeepSeek tool_calls 解析后为空 dict；finish_reason={finish}"
             )
         return _deep_json_unwrap(result)
-    except (KeyError, IndexError, json.JSONDecodeError) as e:
+    except (KeyError, IndexError, json.JSONDecodeError, AttributeError, TypeError) as e:
         # 出错时把 finish_reason 显式带出来，方便判断是否是 length 截断
         finish = None
         try:
@@ -2999,6 +3050,14 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
             try:
                 shared = _run_shared_preflight(call_no)
             except Exception as e:
+                import traceback
+                tb_str = traceback.format_exc()
+                try:
+                    with open("/tmp/gp_shared_preflight_err.log", "a") as f:
+                        f.write(f"\n=== session={session_id} call={call_no} "
+                                f"at {datetime.now()} ===\n{tb_str}\n")
+                except Exception:
+                    pass
                 err = f"shared_context 失败: {e}"
                 for tid in target_tids:
                     _ts_set(tid, "failed", error=err[:300])
@@ -4168,10 +4227,17 @@ def api_task_rerun(sid, task_id):
     data = request.get_json(silent=True) or {}
     model = (data.get("model") or "").strip() or DEFAULT_MODEL
 
+    # 立即把同 chunk 的目标任务标 running，前端能立刻看到状态翻转。
+    # 不在此处标的话，shared_preflight 阶段（耗时几十秒）期间 task_status
+    # 仍是上一次的 failed，用户体验为"点了重跑没反应"。
+    targets = expand_to_call_chunk([task_id])
+    for tid in targets:
+        set_task_status(sid, tid, "running")
+
     threading.Thread(
         target=run_session_analysis,
         args=(sid, compute_session_signature(sid), model),
-        kwargs={"only_tasks": expand_to_call_chunk([task_id])},
+        kwargs={"only_tasks": targets},
         daemon=True,
     ).start()
 
@@ -4193,10 +4259,14 @@ def api_tasks_fill_missing(sid):
     data = request.get_json(silent=True) or {}
     model = (data.get("model") or "").strip() or DEFAULT_MODEL
 
+    targets = expand_to_call_chunk(missing)
+    for tid in targets:
+        set_task_status(sid, tid, "running")
+
     threading.Thread(
         target=run_session_analysis,
         args=(sid, compute_session_signature(sid), model),
-        kwargs={"only_tasks": expand_to_call_chunk(missing)},
+        kwargs={"only_tasks": targets},
         daemon=True,
     ).start()
 
@@ -5124,6 +5194,39 @@ def task_health_check_loop():
 
 
 threading.Thread(target=task_health_check_loop, daemon=True).start()
+
+
+def reap_running_on_boot():
+    """启动时回收所有 running 任务：进程重启会把后台分析线程一起 SIGTERM 掉，
+    DB 里残留的 running 状态没人写回 → 任务永远挂着。boot 时统一标 failed，
+    让用户在前端能直接重跑。"""
+    try:
+        rows = db_fetchall("SELECT id, task_status FROM sessions WHERE task_status IS NOT NULL")
+        reaped = 0
+        for r in rows:
+            try:
+                ts = json.loads(r["task_status"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            changed = False
+            for tid, s in ts.items():
+                if isinstance(s, dict) and s.get("status") == "running":
+                    s["status"] = "failed"
+                    s["error"] = "服务重启中断，请重跑"
+                    s["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    changed = True
+            if changed:
+                db_write(
+                    "UPDATE sessions SET task_status=? WHERE id=?",
+                    (json.dumps(ts, ensure_ascii=False), r["id"]),
+                )
+                reaped += 1
+        print(f"[reap_running_on_boot] 回收了 {reaped} 个 session 的卡 running 任务")
+    except Exception as e:
+        print(f"[reap_running_on_boot] 出错: {e}")
+
+
+reap_running_on_boot()
 
 
 if __name__ == "__main__":
