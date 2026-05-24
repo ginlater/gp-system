@@ -151,6 +151,27 @@ body.skin-cute .float-decor{
 @keyframes float{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-12px) rotate(8deg)}}
 .float-decor{display:none}
 body.skin-cute .float-decor{display:block}
+
+/* 今日接诊列表卡片 */
+.reception-list{display:flex;flex-direction:column;gap:10px}
+.reception-card{border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.reception-card .info{flex:1;min-width:0}
+.reception-card .name{font-size:15px;font-weight:600;color:var(--navy)}
+.reception-card .meta{font-size:12px;color:var(--text-mute);margin-top:2px}
+.reception-card .acts{display:flex;gap:6px;flex-wrap:wrap}
+.empty-tip{color:var(--text-mute);font-size:13px;text-align:center;padding:18px 0}
+.mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:center;justify-content:center;padding:16px}
+.mask.show{display:flex}
+.dlg{background:#fff;border-radius:8px;padding:18px;max-width:560px;width:100%;max-height:90vh;overflow:auto}
+.dlg h3{font-size:15px;color:var(--navy);margin-bottom:10px}
+.seg{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:12px}
+.seg button{flex:1;border:none;background:#fff;padding:8px;font-size:13px;cursor:pointer;color:var(--text-mid);font-family:inherit}
+.seg button.active{background:var(--navy);color:#fff}
+.pkg-rec{border:1px solid #eee;border-radius:6px;padding:8px 10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
+.pkg-rec.unbound{background:#fffbe6;border-color:#ffe082}
+body.skin-cute .reception-card{background:rgba(255,255,255,.85);border-color:#f9d6e6;border-radius:14px}
+body.skin-cute .reception-card .name{color:#d96ba8}
+body.skin-cute .dlg{border-radius:18px}
 </style>
 </head>
 <body>
@@ -193,17 +214,30 @@ body.skin-cute .float-decor{display:block}
     <span class="arrow">→</span>
   </a>
 
-  <!-- 未入库录音 -->
+  <!-- 今日接诊列表 -->
   <div class="card">
-    <h3><span class="t-pro">未入库录音</span><span class="t-cute">🌷 今日记录（待整理）</span> <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button></h3>
-    <div class="muted" style="margin-bottom:6px;font-size:12px"><span class="t-pro">提示：试听前 60 秒以判断是哪位顾客的接诊，再绑定入库（绑定后才会跑 ASR）。</span><span class="t-cute">小提示：回顾片段判断是哪位姐妹，再归入她的档案 💝</span></div>
+    <h3 style="display:flex;align-items:center;justify-content:space-between">
+      <span><span class="t-pro">今日接诊列表</span><span class="t-cute">🌷 今日的姐妹们</span></span>
+      <span>
+        <button class="btn sec" style="padding:4px 10px;font-size:12px" onclick="loadReception()">刷新</button>
+        <button class="btn" style="padding:6px 14px;font-size:13px" onclick="openAddReception()">+ 加入</button>
+      </span>
+    </h3>
+    <div class="muted" style="margin-bottom:8px;font-size:12px">录音前/后请把今天要接诊的顾客加进来。录音结束后只能绑定到这个列表里的人。</div>
+    <div id="receptionList" class="reception-list"><div class="empty-tip">加载中…</div></div>
+  </div>
+
+  <!-- 未选择顾客的录音 -->
+  <div class="card">
+    <h3><span class="t-pro">未选择顾客的录音</span><span class="t-cute">💭 还没归档的片段</span> <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button></h3>
+    <div class="muted" style="margin-bottom:6px;font-size:12px">未绑定顾客的录音不会进入分析。请试听后绑定到今日接诊列表里的对应顾客。</div>
     <table class="tbl">
       <thead><tr><th>时间</th><th>试听</th><th>状态</th><th>操作</th></tr></thead>
       <tbody id="pendingBody"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
     </table>
   </div>
 
-  <!-- 多说话人警告：需顾问确认 -->
+  <!-- 多说话人警告 -->
   <div class="card" id="needsConfirmCard" style="display:none">
     <h3 style="color:#e67e22">⚠ 检测到可能误录（说话人 &gt; 2）</h3>
     <div class="muted" style="margin-bottom:6px;font-size:12px">以下录音 ASR 后检测到超过 2 个说话人，可能是一段录音里混了多位顾客（忘关录音）。可解绑后拆分重传，或确认本次按当前归属分析。</div>
@@ -212,38 +246,59 @@ body.skin-cute .float-decor{display:block}
       <tbody id="needsConfirmBody"></tbody>
     </table>
   </div>
+</div>
 
-  <!-- 分析（按顾客 + 时间段） -->
-  <div class="card">
-    <h3><span class="t-pro">按顾客分析</span><span class="t-cute">💫 按姐妹整理档案</span></h3>
-    <div class="row suggest-box">
-      <input id="anaCustomer" placeholder="顾客姓名（输入搜索）" autocomplete="off">
-      <div class="suggest" id="anaSuggest"></div>
+<!-- 加入今日接诊弹窗 -->
+<div class="mask" id="addMask">
+  <div class="dlg">
+    <h3>加入今日接诊</h3>
+    <div class="seg">
+      <button id="segSearch" class="active" onclick="switchAddMode('search')">搜索已有顾客</button>
+      <button id="segNew" onclick="switchAddMode('new')">新增顾客</button>
     </div>
-    <div id="anaPreview" style="margin-top:10px"></div>
-    <div class="row" style="margin-top:8px">
-      <input type="date" id="anaStart">
-      <span class="muted">至</span>
-      <input type="date" id="anaEnd">
-      <button class="btn" onclick="startAnalyze()">开始分析</button>
+    <div id="addSearch">
+      <input id="addSearchQ" placeholder="输入姓名 / 手机尾号 / 卡号" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px" autocomplete="off">
+      <div id="addSearchList" style="max-height:260px;overflow:auto;margin-top:8px"></div>
     </div>
-    <div class="msg" id="anaMsg"></div>
-    <div class="muted" style="margin-top:6px">先选客户查看其所有录音，再决定分析时间段。分析进度可在<a href="{{ url_for('index') }}" style="color:var(--blue)">接诊列表</a>查看。</div>
+    <div id="addNew" style="display:none">
+      <div class="row"><input id="addNewName" placeholder="顾客姓名 *"></div>
+      <div class="row" style="margin-top:8px"><input id="addNewTail" placeholder="手机尾号（4位）*" maxlength="4" inputmode="numeric"></div>
+      <div class="row" style="margin-top:8px"><input id="addNewCard" placeholder="会员/卡号（可选）"></div>
+    </div>
+    <div class="msg" id="addMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn sec" onclick="closeAdd()">取消</button>
+      <button class="btn" id="addConfirmBtn" onclick="confirmAdd()" style="display:none">确认新增并加入</button>
+    </div>
   </div>
 </div>
 
-<!-- 绑定弹窗 -->
-<div id="bindMask" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:center;justify-content:center">
-  <div style="background:#fff;border-radius:6px;padding:20px;max-width:380px;width:90%">
-    <h3 style="font-size:15px;color:var(--navy);margin-bottom:10px">绑定顾客</h3>
-    <div class="row suggest-box" style="display:block">
-      <input id="bindCustomer" placeholder="输入顾客姓名搜索；找不到可新建" autocomplete="off" style="width:100%">
-      <div class="suggest" id="bindSuggest"></div>
-    </div>
+<!-- 绑定录音弹窗（从今日接诊列表选） -->
+<div class="mask" id="bindMask">
+  <div class="dlg" style="max-width:420px">
+    <h3>绑定到今日接诊的顾客</h3>
+    <div class="muted" style="margin-bottom:8px;font-size:12px">只能从下面列表里选；若没有要找的顾客，请先点"加入今日接诊"。</div>
+    <div id="bindCustomerList" style="max-height:300px;overflow:auto"></div>
     <div class="msg" id="bindMsg"></div>
-    <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <div class="row" style="justify-content:flex-end;margin-top:10px">
       <button class="btn sec" onclick="closeBind()">取消</button>
-      <button class="btn" id="bindConfirm" onclick="confirmBind()">确认绑定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 接诊包确认弹窗 -->
+<div class="mask" id="pkgMask">
+  <div class="dlg">
+    <h3 id="pkgTitle">接诊包</h3>
+    <div class="muted" id="pkgSubtitle" style="font-size:12px;margin-bottom:8px"></div>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">本次将分析的录音</div>
+    <div id="pkgBound"></div>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:12px 0 4px">本人今日未绑定录音（可加入本接诊包）</div>
+    <div id="pkgUnbound"></div>
+    <div class="msg" id="pkgMsg"></div>
+    <div class="row" style="justify-content:space-between;margin-top:12px">
+      <button class="btn sec" onclick="closePkg()">关闭</button>
+      <button class="btn" id="pkgStartBtn" onclick="startAnalysisPkg()">确认并开始分析</button>
     </div>
   </div>
 </div>
@@ -284,13 +339,6 @@ function toggleSkin(){
   let s = 'pro';
   try { s = localStorage.getItem('consultant_skin') || 'pro'; } catch(e){}
   applySkin(s);
-})();
-
-// 默认日期
-(function(){
-  const t = new Date(); const s = t.toISOString().slice(0,10);
-  document.getElementById('anaStart').value = s;
-  document.getElementById('anaEnd').value = s;
 })();
 
 // ============ 录音 ============
@@ -352,11 +400,12 @@ async function onStop() {
     const r = await fetch(BASE + '/api/consultant/upload', {method: 'POST', body: fd});
     const d = await r.json();
     if (d.error) throw new Error(d.error);
-    recStatus.textContent = tx('已上传，等待 ASR …', '已保存 ✨ 正在整理…');
-    recMsg.textContent = tx('录音已上传到未入库列表。', '今日记录已收好 💝');
+    recStatus.textContent = tx('已上传，请选择顾客', '已保存 ✨ 请选择姐妹');
+    recMsg.textContent = tx('请把这段录音绑定到今日接诊里的顾客。', '请把这段记录归到对应的姐妹 💝');
     recMsg.className = 'msg';
     timerEl.textContent = '00:00';
     loadPending();
+    if (d && d.id) openBind(d.id);
   } catch (e) {
     recStatus.textContent = tx('上传失败', '保存失败 😢');
     recMsg.textContent = e.message; recMsg.className = 'msg err';
@@ -380,14 +429,13 @@ async function loadPending() {
   const r = await fetch(BASE + '/api/consultant/recordings/pending');
   const d = await r.json();
   const list = d.recordings || [];
-  if (!list.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">暂无未入库录音</td></tr>'; return; }
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">没有未绑定的录音</td></tr>'; return; }
   tb.innerHTML = list.map(x => {
-    const _cute = isCute();
-    const tag = x.asr_status === 'awaiting_intake' ? `<span class="tag">${_cute?'待归档':'待绑定（未跑 ASR）'}</span>` :
-                x.asr_status === 'done' ? `<span class="tag done">${_cute?'已整理 ✓':'ASR 完成'}</span>` :
-                x.asr_status === 'running' ? `<span class="tag running">${_cute?'整理中…':'ASR 中'}</span>` :
-                x.asr_status === 'failed' ? `<span class="tag failed">${_cute?'整理失败':'ASR 失败'}</span>` :
-                `<span class="tag">${_cute?'待整理':'待 ASR'}</span>`;
+    const tag = x.asr_status === 'awaiting_intake' ? `<span class="tag">待绑定顾客</span>` :
+                x.asr_status === 'done' ? `<span class="tag done">已转写</span>` :
+                x.asr_status === 'running' ? `<span class="tag running">转写中</span>` :
+                x.asr_status === 'failed' ? `<span class="tag failed">转写失败</span>` :
+                `<span class="tag">待绑定顾客</span>`;
     const audio = x.audio_url
       ? `<audio controls preload="none" src="${x.audio_url}" data-cap="60" style="max-width:200px;height:32px"></audio>`
       : '—';
@@ -396,7 +444,7 @@ async function loadPending() {
       <td>${audio}</td>
       <td>${tag}</td>
       <td style="white-space:nowrap">
-        <button class="btn sec" onclick="openBind(${x.id})">绑定客户</button>
+        <button class="btn sec" onclick="openBind(${x.id})">绑定顾客</button>
         <button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;margin-left:4px" onclick="requestDelRec(${x.id}, this)">申请删除</button>
       </td>
     </tr>`;
@@ -446,126 +494,274 @@ async function confirmSpeakers(rid, action, btn) {
   } finally { btn.disabled = false; }
 }
 
-loadPending();
-loadNeedsConfirm();
-setInterval(() => { loadPending(); loadNeedsConfirm(); }, 15000);
+// ============ 今日接诊列表 ============
+let RECEPTION = []; // {id, customer_id, name, phone_tail, locked, recording_count, ...}
 
-// ============ 客户下拉（共用） ============
-function bindSuggestBox(inputId, suggestId, onPick) {
-  const inp = document.getElementById(inputId);
-  const box = document.getElementById(suggestId);
-  let timer = null;
-  inp.addEventListener('input', () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fetchSugg(inp.value), 200);
-  });
-  inp.addEventListener('focus', () => fetchSugg(inp.value));
-  inp.addEventListener('blur', () => setTimeout(() => box.classList.remove('show'), 200));
-  async function fetchSugg(q) {
-    const r = await fetch(BASE + '/api/customers/search?q=' + encodeURIComponent(q || ''));
+async function loadReception() {
+  const box = document.getElementById('receptionList');
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception');
     const d = await r.json();
-    const items = d.customers || [];
-    let html = items.map(c => `<div class="suggest-item" data-name="${c.name}">${c.name}${c.member_card?(' · ' + c.member_card):''}</div>`).join('');
-    if (q && q.trim() && !items.some(c => c.name === q.trim())) {
-      html += `<div class="suggest-item add" data-new="${q.trim()}">+ 新增「${q.trim()}」</div>`;
+    if (d.error) throw new Error(d.error);
+    RECEPTION = d.items || [];
+    if (!RECEPTION.length) {
+      box.innerHTML = '<div class="empty-tip">今日还没有接诊顾客，点右上角"+ 加入"开始</div>';
+      return;
     }
-    box.innerHTML = html || '<div class="suggest-item muted">无匹配，输入后可新建</div>';
-    box.classList.add('show');
-    box.querySelectorAll('.suggest-item').forEach(el => {
-      el.onmousedown = (e) => {
-        e.preventDefault();
-        const name = el.dataset.name || el.dataset.new;
-        if (!name) return;
-        inp.value = name;
-        box.classList.remove('show');
-        onPick && onPick(name, !!el.dataset.new);
-      };
-    });
-  }
-}
-let bindIsNew = false;
-bindSuggestBox('anaCustomer', 'anaSuggest', (n) => { loadAnaPreview(n); });
-bindSuggestBox('bindCustomer', 'bindSuggest', (n, isNew) => { bindIsNew = isNew; });
-document.getElementById('anaCustomer').addEventListener('change', e => loadAnaPreview(e.target.value));
-
-async function loadAnaPreview(name) {
-  const box = document.getElementById('anaPreview');
-  name = (name || '').trim();
-  if (!name) { box.innerHTML = ''; return; }
-  box.innerHTML = '<div class="muted" style="font-size:12px">加载录音列表…</div>';
-  const r = await fetch(BASE + '/api/consultant/customer_recordings?customer=' + encodeURIComponent(name));
-  const d = await r.json();
-  if (d.error) { box.innerHTML = '<div class="msg err">' + d.error + '</div>'; return; }
-  const groups = d.groups || [];
-  if (!groups.length) {
-    box.innerHTML = '<div class="muted" style="font-size:12px">该顾客暂无已绑定录音。</div>';
-    return;
-  }
-  // 自动用最早 / 最新日期填充时间段，方便顾问微调
-  const first = groups[0].service_date, last = groups[groups.length-1].service_date;
-  if (first) document.getElementById('anaStart').value = first;
-  if (last)  document.getElementById('anaEnd').value = last;
-
-  const html = groups.map(g => {
-    const items = g.recordings.map(x => {
-      let badge = '';
-      if (x.asr_status === 'done') badge = '<span class="tag done">ASR✓</span>';
-      else if (x.asr_status === 'running') badge = '<span class="tag running">ASR中</span>';
-      else if (x.asr_status === 'failed') badge = '<span class="tag failed">ASR失败</span>';
-      else if (x.asr_status === 'awaiting_intake') badge = '<span class="tag">待绑定</span>';
-      else badge = '<span class="tag">待ASR</span>';
-      let warn = '';
-      if (x.asr_speaker_warning && !x.speaker_confirmed) {
-        warn = ` <span style="color:#e67e22;font-size:12px">⚠${x.asr_speaker_count||'?'}人</span>`;
-      }
-      const audio = x.audio_url ? `<audio controls preload="none" src="${x.audio_url}" style="max-width:200px;height:28px"></audio>` : '';
-      return `<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px">
-        <span style="min-width:120px">${x.recorded_at || '—'}</span>
-        <span>${x.duration_label||''}</span>
-        ${badge}${warn}
-        ${audio}
+    box.innerHTML = RECEPTION.map(x => {
+      let badge;
+      if (x.locked) badge = `<span class="tag done">已锁定 / ${x.analysis_status||'分析中'}</span>`;
+      else if (x.recording_count > 0) badge = `<span class="tag running">${x.recording_count} 段录音待分析</span>`;
+      else badge = `<span class="tag">尚无录音</span>`;
+      const tail = x.phone_tail ? `尾号${x.phone_tail}` : '';
+      const card = x.member_card ? ` · ${x.member_card}` : '';
+      const acts = x.locked
+        ? `<button class="btn sec" onclick="openPkg(${x.customer_id})">查看接诊包</button>`
+        : `<button class="btn sec" onclick="openPkg(${x.customer_id})">查看 / 开始分析</button>
+           ${x.recording_count===0 ? `<button class="btn sec" style="color:#e74c3c;border-color:#e74c3c" onclick="removeReception(${x.id}, this)">移除</button>` : ''}`;
+      return `<div class="reception-card">
+        <div class="info">
+          <div class="name">${x.name} <span class="muted" style="font-weight:400">${tail}${card}</span></div>
+          <div class="meta">${badge}</div>
+        </div>
+        <div class="acts">${acts}</div>
       </div>`;
     }).join('');
-    return `<div style="border:1px solid #eee;border-radius:4px;padding:6px 10px;margin-bottom:6px">
-      <div style="font-weight:600;color:var(--navy);font-size:13px;margin-bottom:4px">${g.service_date || '(无日期)'} · ${g.recordings.length} 条</div>
-      ${items}
-    </div>`;
-  }).join('');
-  box.innerHTML = `<div style="max-height:300px;overflow:auto">${html}</div>`;
+  } catch (e) {
+    box.innerHTML = '<div class="msg err">' + e.message + '</div>';
+  }
 }
 
-// ============ 绑定弹窗 ============
+async function removeReception(drId, btn) {
+  if (!confirm('确定从今日接诊移除？')) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception/' + drId, {method: 'DELETE'});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    loadReception();
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+
+// ============ "加入今日接诊"弹窗 ============
+let addMode = 'search';
+function openAddReception() {
+  switchAddMode('search');
+  document.getElementById('addSearchQ').value = '';
+  document.getElementById('addSearchList').innerHTML = '';
+  document.getElementById('addNewName').value = '';
+  document.getElementById('addNewTail').value = '';
+  document.getElementById('addNewCard').value = '';
+  document.getElementById('addMsg').textContent = '';
+  document.getElementById('addMask').classList.add('show');
+  doSearch('');
+}
+function closeAdd() { document.getElementById('addMask').classList.remove('show'); }
+function switchAddMode(m) {
+  addMode = m;
+  document.getElementById('segSearch').classList.toggle('active', m === 'search');
+  document.getElementById('segNew').classList.toggle('active', m === 'new');
+  document.getElementById('addSearch').style.display = m === 'search' ? '' : 'none';
+  document.getElementById('addNew').style.display = m === 'new' ? '' : 'none';
+  document.getElementById('addConfirmBtn').style.display = m === 'new' ? '' : 'none';
+}
+let searchTimer = null;
+document.getElementById('addSearchQ').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => doSearch(e.target.value), 200);
+});
+async function doSearch(q) {
+  const list = document.getElementById('addSearchList');
+  const r = await fetch(BASE + '/api/consultant/customer_lookup?q=' + encodeURIComponent(q||''));
+  const d = await r.json();
+  const items = d.customers || [];
+  if (!items.length) {
+    list.innerHTML = '<div class="muted" style="padding:10px;font-size:12px">无匹配。如新顾客请切到"新增顾客"。</div>';
+    return;
+  }
+  list.innerHTML = items.map(c => `
+    <div class="suggest-item" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid #f0f0f0">
+      <div><b>${c.name}</b> <span class="muted" style="font-size:12px">${c.phone_tail?'尾号'+c.phone_tail:''}${c.member_card?(' · '+c.member_card):''}</span></div>
+      <button class="btn" style="padding:4px 10px;font-size:12px" onclick="addExisting(${c.id}, this)">加入</button>
+    </div>`).join('');
+}
+async function addExisting(customer_id, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception/add', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({customer_id}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeAdd();
+    loadReception();
+  } catch (e) {
+    document.getElementById('addMsg').textContent = e.message;
+    document.getElementById('addMsg').className = 'msg err';
+    btn.disabled = false;
+  }
+}
+async function confirmAdd() {
+  const name = document.getElementById('addNewName').value.trim();
+  const tail = document.getElementById('addNewTail').value.trim();
+  const card = document.getElementById('addNewCard').value.trim();
+  const msg = document.getElementById('addMsg');
+  if (!name) { msg.textContent='请填写顾客姓名'; msg.className='msg err'; return; }
+  if (!/^\d{4}$/.test(tail)) { msg.textContent='手机尾号必须是 4 位数字'; msg.className='msg err'; return; }
+  const btn = document.getElementById('addConfirmBtn'); btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception/add', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name, phone_tail: tail, member_card: card}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeAdd();
+    loadReception();
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  } finally { btn.disabled = false; }
+}
+
+// ============ 绑定录音弹窗（从今日列表选）============
 let bindingRid = null;
 function openBind(rid) {
   bindingRid = rid;
-  bindIsNew = false;
-  document.getElementById('bindCustomer').value = '';
   document.getElementById('bindMsg').textContent = '';
-  document.getElementById('bindMask').style.display = 'flex';
+  const lst = document.getElementById('bindCustomerList');
+  if (!RECEPTION.length) {
+    lst.innerHTML = '<div class="empty-tip">今日接诊列表为空，请先在上面点"+ 加入"添加顾客</div>';
+  } else {
+    lst.innerHTML = RECEPTION.filter(x => !x.locked).map(x => `
+      <div class="reception-card" style="margin-bottom:6px">
+        <div class="info">
+          <div class="name">${x.name} <span class="muted" style="font-weight:400;font-size:12px">${x.phone_tail?'尾号'+x.phone_tail:''}</span></div>
+          <div class="meta">${x.recording_count} 段录音</div>
+        </div>
+        <button class="btn" onclick="doBind(${x.customer_id}, this)">绑定到这里</button>
+      </div>`).join('') || '<div class="empty-tip">列表中没有可绑定的顾客（其余已锁定）</div>';
+  }
+  document.getElementById('bindMask').classList.add('show');
 }
 function closeBind() {
-  document.getElementById('bindMask').style.display = 'none';
+  document.getElementById('bindMask').classList.remove('show');
   bindingRid = null;
 }
-async function confirmBind() {
-  const name = document.getElementById('bindCustomer').value.trim();
-  const msg = document.getElementById('bindMsg');
-  if (!name) { msg.textContent = '请填写顾客姓名'; msg.className='msg err'; return; }
-  const btn = document.getElementById('bindConfirm');
+async function doBind(customer_id, btn) {
   btn.disabled = true;
   try {
     const r = await fetch(BASE + '/api/consultant/recordings/' + bindingRid + '/bind', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({customer: name, new_customer: bindIsNew}),
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({customer_id}),
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     closeBind();
     loadPending();
-    // 绑定后启动 ASR，几秒内可能就出说话人警告；定时器也会刷
+    loadReception();
     setTimeout(loadNeedsConfirm, 8000);
   } catch (e) {
-    msg.textContent = e.message; msg.className='msg err';
+    document.getElementById('bindMsg').textContent = e.message;
+    document.getElementById('bindMsg').className = 'msg err';
+    btn.disabled = false;
+  }
+}
+
+// ============ 接诊包弹窗 ============
+let pkgCustomerId = null, pkgLocked = false;
+async function openPkg(customer_id) {
+  pkgCustomerId = customer_id;
+  document.getElementById('pkgMsg').textContent = '';
+  document.getElementById('pkgMask').classList.add('show');
+  document.getElementById('pkgBound').innerHTML = '加载中…';
+  document.getElementById('pkgUnbound').innerHTML = '';
+  await refreshPkg();
+}
+function closePkg(){ document.getElementById('pkgMask').classList.remove('show'); pkgCustomerId=null; }
+
+async function refreshPkg() {
+  const r = await fetch(BASE + '/api/consultant/session/preview?customer_id=' + pkgCustomerId);
+  const d = await r.json();
+  if (d.error) { document.getElementById('pkgBound').innerHTML = '<div class="msg err">'+d.error+'</div>'; return; }
+  pkgLocked = !!d.locked;
+  document.getElementById('pkgTitle').textContent = '接诊包 · ' + d.customer.name;
+  document.getElementById('pkgSubtitle').textContent =
+    d.service_date + (pkgLocked ? ' · 已锁定（如需修改请联系管理员）' : ' · 未锁定');
+  const startBtn = document.getElementById('pkgStartBtn');
+  startBtn.style.display = pkgLocked ? 'none' : '';
+  const bound = d.bound || [];
+  const unbound = d.unbound || [];
+  document.getElementById('pkgBound').innerHTML = bound.length ? bound.map(x => {
+    const audio = x.audio_url ? `<audio controls preload="none" src="${x.audio_url}" style="max-width:180px;height:28px"></audio>` : '';
+    const removeBtn = pkgLocked ? '' :
+      `<button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;padding:3px 8px;font-size:12px" onclick="pkgRemove(${x.id}, this)">移除</button>`;
+    return `<div class="pkg-rec">
+      <span style="min-width:130px">${x.recorded_at||'—'}</span>
+      <span>${x.duration_label||''}</span>
+      <span class="tag">${x.asr_status||'pending'}</span>
+      ${audio}${removeBtn}
+    </div>`;
+  }).join('') : '<div class="empty-tip">接诊包内还没有录音</div>';
+
+  document.getElementById('pkgUnbound').innerHTML = unbound.length ? unbound.map(x => {
+    const audio = x.audio_url ? `<audio controls preload="none" src="${x.audio_url}" data-cap="60" style="max-width:180px;height:28px"></audio>` : '';
+    const bindBtn = pkgLocked ? '' :
+      `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="pkgBind(${x.id}, this)">加入本接诊包</button>`;
+    return `<div class="pkg-rec unbound">
+      <span style="min-width:130px">${x.created_at||x.recorded_at||'—'}</span>
+      ${audio}${bindBtn}
+    </div>`;
+  }).join('') : '<div class="muted" style="font-size:12px">没有未绑定录音</div>';
+  document.querySelectorAll('#pkgUnbound audio[data-cap]').forEach(a => attachAudioCap(a, 60));
+}
+
+async function pkgRemove(rid, btn) {
+  if (!confirm('从接诊包移除这段录音？（录音回到未绑定列表，不删除）')) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/session/preview/remove', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({recording_id: rid}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    refreshPkg(); loadReception(); loadPending();
+  } catch (e) { alert(e.message); btn.disabled = false; }
+}
+
+async function pkgBind(rid, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rid + '/bind', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({customer_id: pkgCustomerId}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    refreshPkg(); loadReception(); loadPending();
+  } catch (e) { alert(e.message); btn.disabled = false; }
+}
+
+async function startAnalysisPkg() {
+  if (!confirm('确认开始分析？接诊包将被锁定，普通顾问无法再修改。')) return;
+  const btn = document.getElementById('pkgStartBtn'); btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/session/start_analysis', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({customer_id: pkgCustomerId}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    document.getElementById('pkgMsg').textContent = '已开始分析（session #' + d.session_id + '），可去接诊列表查看进度。';
+    document.getElementById('pkgMsg').className = 'msg';
+    refreshPkg(); loadReception();
+  } catch (e) {
+    document.getElementById('pkgMsg').textContent = e.message;
+    document.getElementById('pkgMsg').className = 'msg err';
   } finally { btn.disabled = false; }
 }
 
@@ -589,27 +785,8 @@ async function requestDelRec(rid, btn) {
   }
 }
 
-// ============ 分析 ============
-async function startAnalyze() {
-  const customer = document.getElementById('anaCustomer').value.trim();
-  const start = document.getElementById('anaStart').value;
-  const end = document.getElementById('anaEnd').value || start;
-  const msg = document.getElementById('anaMsg');
-  if (!customer || !start) { msg.textContent = '请填写顾客和起始日期'; msg.className='msg err'; return; }
-  msg.textContent = '正在触发分析…'; msg.className='msg';
-  try {
-    const r = await fetch(BASE + '/api/consultant/analyze', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({customer, start_date: start, end_date: end}),
-    });
-    const d = await r.json();
-    if (d.error) throw new Error(d.error);
-    msg.textContent = '已触发 ' + (d.session_ids||[]).length + ' 个接诊的分析，请到接诊列表查看进度。';
-    msg.className='msg';
-  } catch (e) {
-    msg.textContent = e.message; msg.className='msg err';
-  }
-}
+loadReception();
+setInterval(loadReception, 20000);
 </script>
 </body>
 </html>
