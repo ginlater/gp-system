@@ -144,8 +144,11 @@ const recStatus = document.getElementById('recStatus');
 const recMsg = document.getElementById('recMsg');
 const timerEl = document.getElementById('timer');
 
+let uploading = false;
 recBtn.onclick = async () => {
+  if (uploading) return;  // 上传期间禁止再次操作
   if (mediaRecorder && mediaRecorder.state === 'recording') {
+    recBtn.disabled = true;  // 防双击：停止瞬间立刻锁住
     mediaRecorder.stop();
     return;
   }
@@ -186,6 +189,8 @@ async function onStop() {
   const blob = new Blob(chunks, {type: 'audio/' + ext});
   const fd = new FormData();
   fd.append('file', blob, 'rec-' + Date.now() + '.' + ext);
+  uploading = true;
+  recBtn.disabled = true;
   try {
     const r = await fetch(BASE + '/api/consultant/upload', {method: 'POST', body: fd});
     const d = await r.json();
@@ -198,6 +203,9 @@ async function onStop() {
   } catch (e) {
     recStatus.textContent = '上传失败';
     recMsg.textContent = e.message; recMsg.className = 'msg err';
+  } finally {
+    uploading = false;
+    recBtn.disabled = false;
   }
 }
 

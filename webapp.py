@@ -288,7 +288,18 @@ def close_db(_exc):
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
+    # WAL：读不阻塞写、写不阻塞读；synchronous=NORMAL 在 WAL 下安全且更快；
+    # busy_timeout：拿不到锁时等待而不是立刻 SQLITE_BUSY 抛错
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.executescript(SCHEMA_SQL)
+    # 顾问 × 顾客 × 服务日期 × 公司 唯一，防并发绑定重复建 session
+    # （orphan session 用 fake_date "?-xxxx"，天然不冲突）
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_acsc "
+        "ON sessions(advisor, customer, service_date, company_id)"
+    )
     # 轻量迁移：补缺失的列
     existing = {r[1] for r in conn.execute("PRAGMA table_info(sessions)").fetchall()}
     if "analysis_model" not in existing:
@@ -381,7 +392,7 @@ def db_exec(sql, params=()):
 
 def db_write(sql, params=()):
     with _db_lock:
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10.0)
         try:
             cur = conn.execute(sql, params)
             conn.commit()
@@ -391,23 +402,22 @@ def db_write(sql, params=()):
 
 
 def db_fetchone(sql, params=()):
-    with _db_lock:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        try:
-            return conn.execute(sql, params).fetchone()
-        finally:
-            conn.close()
+    # WAL 模式下读不阻塞写、写不阻塞读，读取不必再抢 _db_lock
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(sql, params).fetchone()
+    finally:
+        conn.close()
 
 
 def db_fetchall(sql, params=()):
-    with _db_lock:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        try:
-            return conn.execute(sql, params).fetchall()
-        finally:
-            conn.close()
+    conn = sqlite3.connect(DB_PATH, timeout=5.0)
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
 
 
 # ============ 文件名解析 ============
@@ -465,15 +475,21 @@ def get_or_create_session(advisor, customer, service_date, company_id=1):
         return None  # 调用方决定怎么处理（一般用 oss_key 兜底建独立 session）
 
     row = db_fetchone(
-        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=?",
-        (advisor, customer, service_date),
+        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=?",
+        (advisor, customer, service_date, company_id or 1),
     )
     if row:
         return row["id"]
-    return db_write(
-        "INSERT INTO sessions (advisor, customer, service_date, company_id) VALUES (?, ?, ?, ?)",
+    # UNIQUE 索引兜底：两个并发请求同时 INSERT 时，后者会 IGNORE 并重新查到先入库的那条
+    db_write(
+        "INSERT OR IGNORE INTO sessions (advisor, customer, service_date, company_id) VALUES (?, ?, ?, ?)",
         (advisor, customer, service_date, company_id or 1),
     )
+    row = db_fetchone(
+        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=?",
+        (advisor, customer, service_date, company_id or 1),
+    )
+    return row["id"] if row else None
 
 
 def get_or_create_orphan_session(advisor, customer, oss_key, company_id=1):
@@ -502,6 +518,56 @@ def compute_session_signature(session_id):
 
 # ============ 自动流水线 ============
 _pipeline_lock = threading.Lock()  # 防止同 session 重复触发分析
+
+# 全局分析并发闸：所有 run_session_analysis 走这个池，最多 4 并发。
+# 多余的任务在 executor 内部 FIFO 排队，避免大批量上传时把内存打爆。
+# 不要 import concurrent.futures 到顶层会与函数内已有局部 import 冲突，这里单独引。
+import concurrent.futures as _cf
+ANALYSIS_MAX_CONCURRENCY = 4
+_ANALYSIS_POOL = _cf.ThreadPoolExecutor(
+    max_workers=ANALYSIS_MAX_CONCURRENCY,
+    thread_name_prefix="analysis",
+)
+# 仅用于监控：未完成（pending+running）的分析任务数
+_analysis_inflight = 0
+_analysis_inflight_lock = threading.Lock()
+
+
+def submit_analysis(session_id, signature, *args, **kwargs):
+    """把一次 run_session_analysis 入队，受 ANALYSIS_MAX_CONCURRENCY 限制。
+
+    替代原来 `threading.Thread(target=run_session_analysis,...).start()`，
+    保证全局并发 ≤ 4，多余任务在池内 FIFO 排队，不再瞬时占满内存。
+    """
+    global _analysis_inflight
+    with _analysis_inflight_lock:
+        _analysis_inflight += 1
+        depth = _analysis_inflight
+
+    def _runner():
+        global _analysis_inflight
+        # 真正被 worker 拉起来执行的瞬间，把状态从 queued 翻成 running
+        try:
+            db_write(
+                """UPDATE sessions SET analysis_status='running',
+                   analysis_started_at=datetime('now','localtime'),
+                   analysis_progress='分析正在进行中…'
+                   WHERE id=? AND analysis_status IN ('queued','running','pending')""",
+                (session_id,),
+            )
+        except Exception as e:
+            print(f"[submit_analysis] session={session_id} 翻转 running 失败: {e}", flush=True)
+        try:
+            return run_session_analysis(session_id, signature, *args, **kwargs)
+        except Exception as e:
+            print(f"[submit_analysis] session={session_id} 异常: {e}", flush=True)
+        finally:
+            with _analysis_inflight_lock:
+                _analysis_inflight -= 1
+
+    print(f"[submit_analysis] session={session_id} 入队，当前在飞={depth}/"
+          f"{ANALYSIS_MAX_CONCURRENCY} 并发上限", flush=True)
+    return _ANALYSIS_POOL.submit(_runner)
 
 
 def trigger_pipeline_for_recording(recording_id):
@@ -554,8 +620,8 @@ def maybe_trigger_session_analysis(session_id, model=None, force_refresh_shared=
         )
         if not sess:
             return
-        if sess["analysis_status"] == "running":
-            return  # 已在跑
+        if sess["analysis_status"] in ("running", "queued"):
+            return  # 已在跑或已在队列里
         new_sig = compute_session_signature(session_id)
         chosen_model = model or sess["analysis_model"] or DEFAULT_MODEL
         if chosen_model not in MODEL_PROVIDER:
@@ -564,21 +630,19 @@ def maybe_trigger_session_analysis(session_id, model=None, force_refresh_shared=
                 and sess["analysis_signature"] == new_sig
                 and model is None):
             return  # 已是最新且没强制换模型
-        # 立即标 running，避免重复触发
+        # 立即标 queued，避免重复触发；真正进池开跑时 submit_analysis 会改成 running。
         db_write(
-            """UPDATE sessions SET analysis_status='running',
+            """UPDATE sessions SET analysis_status='queued',
                analysis_model=?,
-               analysis_started_at=datetime('now','localtime'),
+               analysis_progress='排队中…',
                analysis_error=NULL WHERE id=?""",
             (chosen_model, session_id),
         )
 
-    threading.Thread(
-        target=run_session_analysis,
-        args=(session_id, new_sig, chosen_model),
-        kwargs={"force_refresh_shared": force_refresh_shared},
-        daemon=True,
-    ).start()
+    submit_analysis(
+        session_id, new_sig, chosen_model,
+        force_refresh_shared=force_refresh_shared,
+    )
 
 
 # ============ ASR ============
@@ -2604,6 +2668,64 @@ def recalc_scoring(scoring):
     return scoring
 
 
+def reconcile_task_status_from_result(session_id):
+    """根据 analysis_result 实际内容修正 task_status：
+    若某任务的全部 result_keys 都已写入（非空），但 task_status 标的是 failed/missing/running，
+    则纠正为 done（带 note 说明来自历史结果）。
+    用于解决"重跑部分失败但旧结果仍在"导致的状态不一致问题。
+    """
+    row = db_fetchone(
+        "SELECT analysis_result, task_status FROM sessions WHERE id=?", (session_id,))
+    if not row:
+        return
+    try:
+        result = json.loads(row["analysis_result"]) if row["analysis_result"] else {}
+    except (json.JSONDecodeError, TypeError):
+        result = {}
+    try:
+        ts = json.loads(row["task_status"]) if row["task_status"] else {}
+    except (json.JSONDecodeError, TypeError):
+        ts = {}
+
+    changed = False
+    for tid, meta in TASK_REGISTRY.items():
+        keys = meta["result_keys"]
+        all_present = all(
+            k in result and result[k] not in (None, "", [], {})
+            for k in keys
+        )
+        cur_status = (ts.get(tid) or {}).get("status")
+        if all_present and cur_status != "done" and cur_status != "running":
+            ts[tid] = {
+                "status": "done",
+                "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "error": None,
+                "note": "由历史结果回填",
+            }
+            changed = True
+
+    if changed:
+        db_write(
+            "UPDATE sessions SET task_status=? WHERE id=?",
+            (json.dumps(ts, ensure_ascii=False), session_id),
+        )
+
+    # 同步 session 总状态：仅在已结束状态下（done/failed）按任务结果重判
+    cur_session = db_fetchone(
+        "SELECT analysis_status FROM sessions WHERE id=?", (session_id,))
+    cur_status = cur_session["analysis_status"] if cur_session else None
+    if cur_status in ("done", "failed"):
+        total = len(TASK_REGISTRY)
+        done_cnt = sum(1 for tid in TASK_REGISTRY
+                       if (ts.get(tid) or {}).get("status") == "done")
+        expected = "done" if done_cnt == total else "failed"
+        if expected != cur_status:
+            db_write(
+                "UPDATE sessions SET analysis_status=? WHERE id=?",
+                (expected, session_id),
+            )
+
+
 def save_task_result(session_id, task_id, result):
     """把任务输出合并写入 analysis_result JSON 的对应字段。
     仅更新该任务声明的 result_keys，不动其它字段。"""
@@ -3137,13 +3259,20 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
 
         stop_heartbeat.set()
 
+        # 重跑场景下，若旧结果仍在但本次该任务失败，回填为 done，避免显示不一致
+        try:
+            reconcile_task_status_from_result(session_id)
+        except Exception as _rec_err:
+            print(f"[reconcile] session={session_id}: {_rec_err}")
+
         # 汇总 session 总状态
         ts = _ts_get()
         all_task_ids = list(TASK_REGISTRY.keys())
         done_count = sum(1 for tid in all_task_ids
                          if ts.get(tid, {}).get("status") == "done")
         any_done = done_count > 0
-        final_status = "done" if any_done else "failed"
+        # 只有全部任务都成功才算 done；任一失败 → failed，让用户在列表里能一眼看到
+        final_status = "done" if done_count == len(all_task_ids) else "failed"
 
         elapsed = int(_t.time() - t0)
         mm, ss = divmod(elapsed, 60)
@@ -3165,7 +3294,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
                 full = json.loads(row[result_col]) if row else {}
                 scoring = full.get("scoring") or {}
                 if scoring:
-                    scoring = _recalc_scoring(scoring)
+                    scoring = recalc_scoring(scoring)
                     scores_summary = {
                         "overall": scoring.get("overall"),
                         "stages": [
@@ -3736,6 +3865,24 @@ def api_sessions():
     if date:
         where.append("s.service_date = ?")
         params.append(date)
+    # 状态筛选：?status=running,queued,done,failed,idle  （逗号分隔，多选）
+    status_filter = (request.args.get("status") or "").strip()
+    if status_filter:
+        wanted = {x.strip() for x in status_filter.split(",") if x.strip()}
+        clauses = []
+        for st in wanted:
+            if st == "idle":
+                # pending + 无 progress 无 result
+                clauses.append(
+                    "(s.analysis_status='pending' "
+                    "AND (s.analysis_progress IS NULL OR s.analysis_progress='') "
+                    "AND (s.analysis_result IS NULL OR s.analysis_result=''))"
+                )
+            elif st in ("queued", "running", "done", "failed"):
+                clauses.append("s.analysis_status=?")
+                params.append(st)
+        if clauses:
+            where.append("(" + " OR ".join(clauses) + ")")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     total_row = db_fetchone(
@@ -3747,7 +3894,8 @@ def api_sessions():
     rows = db_fetchall(f"""
         SELECT s.id, s.advisor, s.customer, s.service_date,
                s.analysis_status, s.analysis_scores, s.analysis_progress,
-               s.analysis_result, s.has_evaluation, s.created_at,
+               s.analysis_result, s.task_status, s.has_evaluation, s.created_at,
+               s.analysis_finished_at,
                COUNT(r.id) AS recording_count,
                SUM(CASE WHEN r.asr_status='done' THEN 1 ELSE 0 END) AS asr_done_count,
                SUM(CASE WHEN r.asr_status='running' THEN 1 ELSE 0 END) AS asr_running_count,
@@ -3766,14 +3914,79 @@ def api_sessions():
             d.get("analysis_status"), d.get("analysis_progress"),
             bool(d.get("analysis_result")),
         )
-        # 列表不需要把完整的 analysis_result 回传
+        # 解析 task_status，给出 part 进度（done/total + 正在跑哪些）
+        ts_done = 0
+        ts_total = 0
+        ts_running: list[str] = []
+        try:
+            ts = json.loads(d.get("task_status") or "{}") or {}
+            ts_total = len(ts)
+            for tid, info in ts.items():
+                st = (info or {}).get("status")
+                if st == "done":
+                    ts_done += 1
+                elif st == "running":
+                    ts_running.append(tid)
+            ts_running.sort()
+        except (json.JSONDecodeError, TypeError, AttributeError):
+            pass
+        d["task_done"] = ts_done
+        d["task_total"] = ts_total
+        d["task_running"] = ts_running
+        # 列表不需要把完整内容回传
         d.pop("analysis_result", None)
+        d.pop("task_status", None)
         out_rows.append(d)
     return jsonify({
         "sessions": out_rows,
         "total": total,
         "page": page,
         "page_size": page_size,
+    })
+
+
+@app.route("/api/sessions/status_counts")
+@login_required
+def api_sessions_status_counts():
+    """给列表页 5 个状态 pill 用的计数。受角色/公司隔离约束。"""
+    where = []
+    params: list = []
+    role = session.get("role")
+    cid = session.get("company_id")
+    if role == "consultant":
+        where.append("s.advisor = ?")
+        params.append(session.get("advisor_name") or "__none__")
+        if cid:
+            where.append("(s.company_id IS NULL OR s.company_id = ?)")
+            params.append(cid)
+    elif role == "admin":
+        if cid:
+            where.append("(s.company_id IS NULL OR s.company_id = ?)")
+            params.append(cid)
+    where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+    row = db_fetchone(f"""
+        SELECT
+          COUNT(*) AS total,
+          SUM(CASE WHEN s.analysis_status='running' THEN 1 ELSE 0 END) AS running,
+          SUM(CASE WHEN s.analysis_status='queued'  THEN 1 ELSE 0 END) AS queued,
+          SUM(CASE WHEN s.analysis_status='done'    THEN 1 ELSE 0 END) AS done,
+          SUM(CASE WHEN s.analysis_status='failed'  THEN 1 ELSE 0 END) AS failed,
+          SUM(CASE WHEN s.analysis_status='pending'
+                    AND (s.analysis_progress IS NULL OR s.analysis_progress='')
+                    AND (s.analysis_result IS NULL OR s.analysis_result='')
+                   THEN 1 ELSE 0 END) AS idle
+        FROM sessions s {where_sql}
+    """, tuple(params))
+    counts = dict(row) if row else {}
+    return jsonify({
+        "counts": {
+            "all":     counts.get("total")   or 0,
+            "running": counts.get("running") or 0,
+            "queued":  counts.get("queued")  or 0,
+            "done":    counts.get("done")    or 0,
+            "failed":  counts.get("failed")  or 0,
+            "idle":    counts.get("idle")    or 0,
+        }
     })
 
 
@@ -4179,6 +4392,43 @@ def api_session_analyze(sid):
     })
 
 
+@app.route("/api/sessions/batch_analyze", methods=["POST"])
+@admin_required
+def api_sessions_batch_analyze():
+    """批量重跑分析。Body: {ids: [int, ...], model?: str}"""
+    data = request.get_json(silent=True) or {}
+    ids = data.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"error": "ids 为空"}), 400
+    try:
+        ids = [int(x) for x in ids]
+    except (ValueError, TypeError):
+        return jsonify({"error": "ids 含非法值"}), 400
+    model = (data.get("model") or "").strip() or None
+    if model and model not in MODEL_PROVIDER:
+        return jsonify({"error": f"不支持的模型: {model}"}), 400
+
+    ok, skipped, failed = [], [], []
+    for sid in ids:
+        row = db_fetchone("SELECT id FROM sessions WHERE id=?", (sid,))
+        if not row:
+            skipped.append(sid)
+            continue
+        try:
+            db_write(
+                """UPDATE sessions SET analysis_status='pending',
+                   analysis_signature=NULL, analysis_error=NULL,
+                   analysis_progress='排队中…' WHERE id=?""",
+                (sid,),
+            )
+            maybe_trigger_session_analysis(sid, model=model, force_refresh_shared=True)
+            ok.append(sid)
+        except Exception as e:
+            failed.append({"id": sid, "error": str(e)})
+    return jsonify({"ok": ok, "skipped": skipped, "failed": failed,
+                    "total": len(ids), "queued": len(ok)})
+
+
 @app.route("/api/session/<int:sid>/evaluate", methods=["POST"])
 @login_required
 def api_session_evaluate(sid):
@@ -4230,6 +4480,11 @@ def api_session_evaluation_delete(eid):
 @login_required
 def api_session_tasks(sid):
     """查询所有任务状态"""
+    # 读之前先按实际结果回填一次，防止显示旧的 failed
+    try:
+        reconcile_task_status_from_result(sid)
+    except Exception:
+        pass
     ts = get_task_status(sid)
     result = []
     for tid, meta in TASK_REGISTRY.items():
@@ -4265,12 +4520,10 @@ def api_task_rerun(sid, task_id):
     for tid in targets:
         set_task_status(sid, tid, "running")
 
-    threading.Thread(
-        target=run_session_analysis,
-        args=(sid, compute_session_signature(sid), model),
-        kwargs={"only_tasks": targets},
-        daemon=True,
-    ).start()
+    submit_analysis(
+        sid, compute_session_signature(sid), model,
+        only_tasks=targets,
+    )
 
     return jsonify({"status": "started", "task_id": task_id})
 
@@ -4294,12 +4547,10 @@ def api_tasks_fill_missing(sid):
     for tid in targets:
         set_task_status(sid, tid, "running")
 
-    threading.Thread(
-        target=run_session_analysis,
-        args=(sid, compute_session_signature(sid), model),
-        kwargs={"only_tasks": targets},
-        daemon=True,
-    ).start()
+    submit_analysis(
+        sid, compute_session_signature(sid), model,
+        only_tasks=targets,
+    )
 
     return jsonify({"status": "started", "missing": missing})
 
@@ -5082,9 +5333,7 @@ def api_consultant_analyze():
         sid = r["id"]
         sig = compute_session_signature(sid)
         try:
-            threading.Thread(
-                target=run_session_analysis, args=(sid, sig), daemon=True
-            ).start()
+            submit_analysis(sid, sig)
             triggered.append(sid)
         except Exception:
             pass
@@ -5093,7 +5342,14 @@ def api_consultant_analyze():
 
 @app.route("/healthz")
 def healthz():
-    return jsonify({"ok": True, "ts": datetime.now().isoformat()})
+    with _analysis_inflight_lock:
+        inflight = _analysis_inflight
+    return jsonify({
+        "ok": True,
+        "ts": datetime.now().isoformat(),
+        "analysis_inflight": inflight,
+        "analysis_max_concurrency": ANALYSIS_MAX_CONCURRENCY,
+    })
 
 
 # ============ 启动 ============
@@ -5123,7 +5379,7 @@ def startup_kick():
         """UPDATE sessions SET analysis_status='failed',
            analysis_progress=NULL,
            analysis_error=COALESCE(analysis_error, '服务重启时被打断，未自动恢复，请手动重跑')
-           WHERE analysis_status='running'"""
+           WHERE analysis_status IN ('running','queued')"""
     )
 
 
