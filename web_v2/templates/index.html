@@ -26,7 +26,17 @@ html,body{overflow-x:hidden;max-width:100%}
 .s-pending{background:rgba(230,126,34,.12);color:var(--orange)}
 .s-idle{background:rgba(138,149,163,.12);color:var(--text-mute)}
 .s-failed{background:rgba(231,76,60,.12);color:var(--red)}
+.status-tag{cursor:pointer;user-select:none}
+.status-tag:hover{filter:brightness(.95)}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+.filter-pills{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+.filter-pills .pill{cursor:pointer;user-select:none;background:#fff;border:1px solid var(--border);color:var(--text-mid);border-radius:99px;padding:5px 13px;font-size:12.5px;line-height:1;display:inline-flex;align-items:center;gap:6px}
+.filter-pills .pill:hover{border-color:var(--blue);color:var(--blue)}
+.filter-pills .pill.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+.filter-pills .pill .cnt{background:rgba(0,0,0,.08);border-radius:99px;padding:1px 7px;font-size:11px;font-weight:600}
+.filter-pills .pill.active .cnt{background:rgba(255,255,255,.22)}
+.task-prog{display:block;color:var(--text-mute);font-size:11px;margin-top:3px;line-height:1.4}
+.task-prog .now{color:var(--blue);font-weight:600}
 .score-cell{font-size:18px;font-weight:700;color:var(--navy)}
 .score-cell.warn{color:var(--orange)}
 .score-cell.bad{color:var(--red)}
@@ -93,21 +103,41 @@ html,body{overflow-x:hidden;max-width:100%}
     <input id="uploadInput" type="file" multiple accept="audio/*" style="display:none" onchange="uploadFiles()">
   </div>
 
+  {% if role in ['admin','super'] %}
+  <div id="batchBar" style="display:none;margin:8px 0;padding:8px 12px;background:rgba(74,144,217,.08);border:1px solid rgba(74,144,217,.3);border-radius:5px;display:flex;align-items:center;gap:10px;font-size:13px">
+    <span>已选 <b id="batchCount" style="color:var(--blue)">0</b> 条</span>
+    <button onclick="batchAnalyze()" style="background:var(--blue);color:#fff;border:none;border-radius:4px;padding:5px 14px;font-size:13px;cursor:pointer;font-weight:600">一键分析</button>
+    <button class="sec" onclick="clearSelection()" style="font-size:12px">清空选择</button>
+    <span id="batchMsg" style="color:var(--text-mute);margin-left:auto"></span>
+  </div>
+  {% endif %}
+
+  <div class="filter-pills" id="filterPills">
+    <span class="pill active" data-st="">全部 <span class="cnt" id="cnt-all">·</span></span>
+    <span class="pill" data-st="running">分析中 <span class="cnt" id="cnt-running">·</span></span>
+    <span class="pill" data-st="queued">排队中 <span class="cnt" id="cnt-queued">·</span></span>
+    <span class="pill" data-st="done">已完成 <span class="cnt" id="cnt-done">·</span></span>
+    <span class="pill" data-st="failed">失败 <span class="cnt" id="cnt-failed">·</span></span>
+    <span class="pill" data-st="idle">未分析 <span class="cnt" id="cnt-idle">·</span></span>
+  </div>
+
   <table class="sess-tbl">
     <thead>
       <tr>
+        {% if role in ['admin','super'] %}<th style="width:34px;text-align:center"><input type="checkbox" id="selAll" onclick="toggleSelectAll(this)"></th>{% endif %}
         <th style="width:110px">服务日期</th>
         <th style="width:100px">顾问</th>
         <th style="width:120px">顾客</th>
         <th style="width:90px">录音/ASR</th>
         <th style="width:100px">综合分</th>
-        <th style="width:90px">分析状态</th>
+        <th style="width:170px">分析状态</th>
+        <th style="width:130px">最后分析时间</th>
         <th style="width:60px">点评</th>
         <th>操作</th>
       </tr>
     </thead>
     <tbody id="listBody">
-      <tr><td colspan="8" class="empty">加载中…</td></tr>
+      <tr><td colspan="{% if role in ['admin','super'] %}10{% else %}9{% endif %}" class="empty">加载中…</td></tr>
     </tbody>
   </table>
 
@@ -122,8 +152,11 @@ html,body{overflow-x:hidden;max-width:100%}
 <script>
 const BASE = {{ request.script_root|tojson }};
 const ROLE = {{ role|tojson }};
+const IS_ADMIN = (ROLE === 'admin' || ROLE === 'super');
+const selectedIds = new Set();
 let curPage = 1;
 let totalPages = 1;
+let curStatus = '';   // '', 'running', 'queued', 'done', 'failed', 'idle'
 const PAGE_SIZE = 20;
 
 function fmtScore(s) {
@@ -132,7 +165,82 @@ function fmtScore(s) {
   return `<span class="score-cell ${cls}">${(+s).toFixed(1)}</span>`;
 }
 
-function fmtStatus(s, progress) {
+function fmtAnalysisTime(t) {
+  if (!t) return '<span style="color:var(--text-mute)">—</span>';
+  // 形如 "2026-05-24 16:48:11"
+  const m = String(t).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!m) return t;
+  return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+}
+
+function updateBatchBar() {
+  const bar = document.getElementById('batchBar');
+  if (!bar) return;
+  const n = selectedIds.size;
+  document.getElementById('batchCount').textContent = n;
+  bar.style.display = n > 0 ? 'flex' : 'none';
+  // 同步表头全选状态
+  const all = document.getElementById('selAll');
+  if (all) {
+    const rows = document.querySelectorAll('.row-chk');
+    const checked = document.querySelectorAll('.row-chk:checked').length;
+    all.checked = rows.length > 0 && checked === rows.length;
+    all.indeterminate = checked > 0 && checked < rows.length;
+  }
+}
+
+function onRowCheck() {
+  selectedIds.clear();
+  document.querySelectorAll('.row-chk:checked').forEach(el => selectedIds.add(parseInt(el.value, 10)));
+  updateBatchBar();
+}
+
+function toggleSelectAll(cb) {
+  document.querySelectorAll('.row-chk').forEach(el => {
+    el.checked = cb.checked;
+    const id = parseInt(el.value, 10);
+    if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+  });
+  updateBatchBar();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  document.querySelectorAll('.row-chk').forEach(el => { el.checked = false; });
+  updateBatchBar();
+}
+
+function batchAnalyze() {
+  const ids = Array.from(selectedIds);
+  if (!ids.length) return;
+  if (!confirm(`确认对所选 ${ids.length} 条接诊一键重跑分析？`)) return;
+  const msg = document.getElementById('batchMsg');
+  msg.textContent = '提交中…';
+  fetch(BASE + '/api/sessions/batch_analyze', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids})
+  }).then(r => r.json()).then(d => {
+    if (d.error) { msg.textContent = '失败：' + d.error; return; }
+    msg.textContent = `已入队 ${d.queued}/${d.total}` + (d.failed && d.failed.length ? `，失败 ${d.failed.length}` : '');
+    clearSelection();
+    loadList(curPage);
+  }).catch(e => { msg.textContent = '失败：' + e; });
+}
+
+function toggleDelMenu(btn) {
+  const menu = btn.parentElement.querySelector('.del-menu');
+  const opening = menu.style.display === 'none';
+  document.querySelectorAll('.del-menu').forEach(el => { el.style.display = 'none'; });
+  if (opening) menu.style.display = 'block';
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.del-wrap')) {
+    document.querySelectorAll('.del-menu').forEach(el => { el.style.display = 'none'; });
+  }
+});
+
+function fmtStatus(s, progress, row) {
   const map = {
     idle:    ['未分析',  's-idle'],
     queued:  ['排队中',  's-pending'],
@@ -142,7 +250,44 @@ function fmtStatus(s, progress) {
   };
   const [t, c] = map[s] || [s || '—', 's-idle'];
   const tip = progress ? ` title="${progress.replace(/"/g,'&quot;')}"` : '';
-  return `<span class="status-tag ${c}"${tip}>${t}</span>`;
+  let extra = '';
+  if (row && (s === 'running' || s === 'queued') && row.task_total) {
+    const done = row.task_done || 0;
+    const tot = row.task_total;
+    const cur = (row.task_running || []).join(', ');
+    extra = `<span class="task-prog">完成 ${done}/${tot}` +
+            (cur ? ` · 正在 <span class="now">${cur}</span>` : '') +
+            `</span>`;
+  } else if (row && s === 'done' && row.task_total) {
+    extra = `<span class="task-prog">${row.task_done}/${row.task_total} part</span>`;
+  }
+  return `<span class="status-tag ${c}"${tip} onclick="setStatusFilter('${s}')">${t}</span>${extra}`;
+}
+
+function setStatusFilter(st) {
+  if (st === 'idle' || st === 'queued' || st === 'running' || st === 'done' || st === 'failed') {
+    curStatus = st;
+  } else {
+    curStatus = '';
+  }
+  document.querySelectorAll('#filterPills .pill').forEach(el => {
+    el.classList.toggle('active', (el.dataset.st || '') === curStatus);
+  });
+  loadList(1);
+}
+
+function refreshCounts() {
+  // 拉 5 个状态 + 全部 的 total。为减压：一次性走 /api/sessions/status_counts
+  fetch(BASE + '/api/sessions/status_counts').then(r => r.json()).then(d => {
+    if (!d || !d.counts) return;
+    const c = d.counts;
+    document.getElementById('cnt-all').textContent     = c.all     ?? 0;
+    document.getElementById('cnt-running').textContent = c.running ?? 0;
+    document.getElementById('cnt-queued').textContent  = c.queued  ?? 0;
+    document.getElementById('cnt-done').textContent    = c.done    ?? 0;
+    document.getElementById('cnt-failed').textContent  = c.failed  ?? 0;
+    document.getElementById('cnt-idle').textContent    = c.idle    ?? 0;
+  });
 }
 
 function loadList(page) {
@@ -154,40 +299,56 @@ function loadList(page) {
   if (adv) params.set('advisor', adv);
   if (cus) params.set('customer', cus);
   if (date) params.set('date', date);
+  if (curStatus) params.set('status', curStatus);
   fetch(BASE + '/api/sessions?' + params).then(r => r.json()).then(data => {
     const tbody = document.getElementById('listBody');
     if (!data.sessions || !data.sessions.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="empty">没有匹配的接诊</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="${IS_ADMIN ? 10 : 9}" class="empty">没有匹配的接诊</td></tr>`;
     } else {
       tbody.innerHTML = data.sessions.map(s => {
         let overall = null;
         try { overall = s.analysis_scores ? JSON.parse(s.analysis_scores).overall : null; } catch(e){}
-        return `<tr>
+        return `<tr data-sid="${s.id}">
+          ${IS_ADMIN ? `<td style="text-align:center"><input type="checkbox" class="row-chk" value="${s.id}" onclick="onRowCheck()" ${selectedIds.has(s.id) ? 'checked' : ''}></td>` : ''}
           <td data-label="服务日期">${s.service_date || '—'}</td>
           <td data-label="顾问">${s.advisor || '—'}</td>
           <td data-label="顾客">${s.customer || '—'}</td>
           <td data-label="录音/ASR">${s.asr_done_count || 0}/${s.recording_count || 0}</td>
           <td data-label="综合分">${fmtScore(overall)}</td>
-          <td data-label="分析状态">${fmtStatus(s.display_status, s.analysis_progress)}</td>
+          <td data-label="分析状态">${fmtStatus(s.display_status, s.analysis_progress, s)}</td>
+          <td data-label="最后分析时间" style="color:var(--text-mute);font-size:12px;white-space:nowrap">${fmtAnalysisTime(s.analysis_finished_at)}</td>
           <td data-label="点评">${s.has_evaluation ? '✓' : '—'}</td>
           <td style="white-space:nowrap">
             <a href="${BASE}/session/${s.id}" style="color:var(--blue);font-weight:600">查看 →</a>
             ${ROLE === 'admin' || ROLE === 'super' ? `
-              ${s.recording_count > 0 ? `<button onclick="deleteSessionRecs(${s.id},this)" style="margin-left:6px;background:none;border:1px solid rgba(231,76,60,.5);color:#e74c3c;border-radius:3px;padding:2px 7px;font-size:12px;cursor:pointer" title="删除录音文件">🗑录音</button>` : ''}
-              ${s.display_status === 'done' ? `<button onclick="deleteSessionReport(${s.id},this)" style="margin-left:4px;background:none;border:1px solid rgba(230,126,34,.5);color:#e67e22;border-radius:3px;padding:2px 7px;font-size:12px;cursor:pointer" title="清除分析报告">🗑报告</button>` : ''}
-              <button onclick="deleteSessionFull(${s.id},this)" style="margin-left:4px;background:none;border:1px solid rgba(231,76,60,.5);color:#e74c3c;border-radius:3px;padding:2px 7px;font-size:12px;cursor:pointer;font-weight:600" title="完全删除此接诊">⚠全删</button>
+              <span class="del-wrap" style="position:relative;display:inline-block;margin-left:6px">
+                <button onclick="toggleDelMenu(this)" style="background:none;border:1px solid rgba(231,76,60,.5);color:#e74c3c;border-radius:3px;padding:2px 8px;font-size:12px;cursor:pointer" title="删除">🗑 删除 ▾</button>
+                <span class="del-menu" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #e3e6ea;border-radius:5px;box-shadow:0 4px 14px rgba(0,0,0,.08);padding:4px;z-index:30;min-width:120px">
+                  ${s.recording_count > 0 ? `<button onclick="deleteSessionRecs(${s.id},this)" style="display:block;width:100%;text-align:left;background:none;border:none;color:#e74c3c;padding:6px 10px;font-size:12px;cursor:pointer;border-radius:3px">🗑 录音</button>` : ''}
+                  ${s.display_status === 'done' ? `<button onclick="deleteSessionReport(${s.id},this)" style="display:block;width:100%;text-align:left;background:none;border:none;color:#e67e22;padding:6px 10px;font-size:12px;cursor:pointer;border-radius:3px">🗑 报告</button>` : ''}
+                  <button onclick="deleteSessionFull(${s.id},this)" style="display:block;width:100%;text-align:left;background:none;border:none;color:#e74c3c;padding:6px 10px;font-size:12px;cursor:pointer;font-weight:600;border-radius:3px">⚠ 全删</button>
+                </span>
+              </span>
             ` : ''}
             ${s.recording_count > 0 && ROLE === 'consultant' ? `<button onclick="requestDelSessionRecs(${s.id},this)" style="margin-left:8px;background:none;border:1px solid #ccc;color:#555;border-radius:3px;padding:2px 8px;font-size:12px;cursor:pointer">申请删除</button>` : ''}
           </td>
         </tr>`;
       }).join('');
     }
+    updateBatchBar();
     totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
     document.getElementById('pageInfo').textContent = `第 ${data.page} / ${totalPages} 页（共 ${data.total} 条）`;
     document.getElementById('prevBtn').disabled = data.page <= 1;
     document.getElementById('nextBtn').disabled = data.page >= totalPages;
   });
+  refreshCounts();
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('#filterPills .pill').forEach(el => {
+    el.addEventListener('click', () => setStatusFilter(el.dataset.st || ''));
+  });
+});
 
 function changePage(delta) {
   const next = curPage + delta;

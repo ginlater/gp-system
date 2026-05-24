@@ -271,7 +271,26 @@
       "Bash(journalctl -u gongpai --no-pager --since \"15:54:00\")",
       "Bash(journalctl -u gongpai --no-pager --since \"10 sec ago\")",
       "Bash(journalctl --disk-usage)",
-      "Read(//etc/systemd/**)"
+      "Read(//etc/systemd/**)",
+      "Bash(sudo -n dmesg)",
+      "Bash(journalctl -k --since \"1 hour ago\")",
+      "Bash(sudo -n zgrep -iE \"oom|killed process|out of memory\" /var/log/syslog /var/log/syslog.1)",
+      "Bash(sudo -n zgrep -iE \"oom-kill|Out of memory|invoked oom\" /var/log/syslog.1 /var/log/syslog)",
+      "Bash(last -x)",
+      "Bash(sudo -n journalctl --list-boots)",
+      "Bash(sudo -n journalctl -b -1 -k --no-pager)",
+      "Bash(sudo -n journalctl -b -1 --no-pager --since \"2026-05-24 22:30\")",
+      "Bash(sudo -n journalctl -b -1 --no-pager --since \"2026-05-24 22:40\" --until \"2026-05-24 22:51\")",
+      "Bash(sudo -n journalctl -b -1 --no-pager --since \"2026-05-24 22:50\")",
+      "Bash(sudo -n swapon --show)",
+      "Bash(sudo -n fallocate -l 4G /swapfile)",
+      "Bash(sudo -n chmod 600 /swapfile)",
+      "Bash(sudo -n mkswap /swapfile)",
+      "Bash(sudo -n swapon /swapfile)",
+      "Bash(sudo -n tee -a /etc/fstab)",
+      "Read(//etc/**)",
+      "Bash(systemctl cat *)",
+      "Bash(sudo tee /etc/systemd/system/gongpai.service)"
     ]
   }
 }

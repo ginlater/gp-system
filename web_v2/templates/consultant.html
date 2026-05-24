@@ -48,33 +48,155 @@ html,body{overflow-x:hidden;max-width:100%}
   .row input,.row select,.row button{font-size:16px}
   .btn.big{width:100%}
 }
+
+/* ====== 醒目的接诊列表入口 ====== */
+.list-entry{display:flex;gap:10px;align-items:center;justify-content:space-between;background:linear-gradient(90deg,#4a90d9,#3a78c0);color:#fff;border-radius:8px;padding:14px 18px;margin:0 0 16px;box-shadow:0 2px 8px rgba(74,144,217,.25);text-decoration:none;font-weight:600;font-size:15px}
+.list-entry:hover{filter:brightness(1.05);transform:translateY(-1px);transition:.15s}
+.list-entry .arrow{font-size:18px}
+.list-entry .sub{font-size:12px;font-weight:400;opacity:.85;margin-top:2px}
+.list-entry.bottom{background:linear-gradient(90deg,#27ae60,#1f9a55);box-shadow:0 2px 8px rgba(39,174,96,.25)}
+
+/* 切肤按钮 */
+.skin-toggle{background:#fff;border:1px solid var(--border);border-radius:99px;padding:4px 12px;font-size:12px;cursor:pointer;color:var(--text-mid);font-family:inherit;margin-left:8px}
+.skin-toggle:hover{border-color:var(--blue);color:var(--blue)}
+
+/* 双语切换：默认显示 .t-pro，卡通模式显示 .t-cute */
+.t-cute{display:none}
+body.skin-cute .t-pro{display:none}
+body.skin-cute .t-cute{display:inline}
+
+/* ===================== 🌸 萌系卡通皮肤 ===================== */
+body.skin-cute{
+  background:linear-gradient(135deg,#fff5fa 0%,#fef0f7 40%,#f5ecff 100%);
+  font-family:"PingFang SC","Hiragino Sans",-apple-system,"Microsoft YaHei",sans-serif;
+}
+body.skin-cute::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    radial-gradient(circle at 10% 15%,rgba(255,182,193,.3) 0,transparent 60px),
+    radial-gradient(circle at 85% 25%,rgba(221,160,221,.25) 0,transparent 70px),
+    radial-gradient(circle at 70% 80%,rgba(255,218,224,.3) 0,transparent 80px),
+    radial-gradient(circle at 20% 90%,rgba(230,200,255,.25) 0,transparent 70px);
+}
+body.skin-cute .wrap{position:relative;z-index:1}
+body.skin-cute .header-title{color:#d96ba8;font-size:20px;letter-spacing:1px}
+body.skin-cute .header-title::before{content:"🌸 ";font-size:18px}
+body.skin-cute .header-user{color:#a07898}
+body.skin-cute .header-user a{color:#d96ba8 !important}
+body.skin-cute .card{
+  background:rgba(255,255,255,.85);
+  border:1px solid #f9d6e6;
+  border-radius:18px;
+  box-shadow:0 4px 16px rgba(255,182,193,.15);
+  backdrop-filter:blur(6px);
+}
+body.skin-cute .card h3{color:#d96ba8;font-size:15px;display:flex;align-items:center;gap:4px}
+body.skin-cute .btn{
+  background:linear-gradient(135deg,#ffb6c1,#e8a0c8);
+  border-radius:99px;box-shadow:0 2px 8px rgba(232,160,200,.35);
+}
+body.skin-cute .btn.sec{background:#fff;color:#d96ba8;border:1px solid #f4c3da;box-shadow:none}
+body.skin-cute .btn.big{
+  background:linear-gradient(135deg,#ffb6c1 0%,#ffc8dd 50%,#e8a0c8 100%);
+  font-size:17px;padding:18px 36px;border-radius:99px;
+  box-shadow:0 6px 20px rgba(232,160,200,.45);
+  position:relative;overflow:hidden;
+}
+body.skin-cute .btn.big::before{
+  content:"";position:absolute;inset:0;background:linear-gradient(135deg,transparent,rgba(255,255,255,.4),transparent);
+  animation:shine 3s ease-in-out infinite;
+}
+@keyframes shine{0%{transform:translateX(-100%)}50%{transform:translateX(100%)}100%{transform:translateX(100%)}}
+body.skin-cute .rec-area{padding:24px 16px;gap:18px}
+body.skin-cute .rec-timer{
+  color:#d96ba8;font-size:32px;
+  text-shadow:0 2px 6px rgba(232,160,200,.3);
+}
+body.skin-cute .rec-timer::before{content:"💖 ";font-size:24px}
+body.skin-cute .rec-status{color:#b97ea8;font-size:13px}
+body.skin-cute .rec-dot{
+  background:#ffb6c1;width:12px;height:12px;
+  box-shadow:0 0 8px rgba(255,182,193,.8);
+  animation:heart-pulse 1.4s ease-in-out infinite;
+}
+@keyframes heart-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.3);opacity:.6}}
+body.skin-cute .tbl{border:1px solid #f9d6e6;border-radius:12px;overflow:hidden}
+body.skin-cute .tbl th{background:linear-gradient(90deg,#ffb6c1,#e8a0c8);color:#fff}
+body.skin-cute .tbl td{border-bottom:1px dashed #f4d6e6}
+body.skin-cute .tag{background:rgba(255,182,193,.2);color:#d96ba8}
+body.skin-cute .tag.done{background:rgba(167,221,179,.3);color:#5ba978}
+body.skin-cute .tag.running{background:rgba(255,200,150,.3);color:#d68b3e}
+body.skin-cute .row input,body.skin-cute .row select{
+  border:1px solid #f4c3da;border-radius:12px;
+}
+body.skin-cute .row input:focus,body.skin-cute .row select:focus{border-color:#d96ba8}
+body.skin-cute .list-entry{
+  background:linear-gradient(135deg,#ffd1dc,#d4b8e8);
+  box-shadow:0 4px 16px rgba(212,184,232,.4);
+  border-radius:18px;
+}
+body.skin-cute .list-entry.bottom{
+  background:linear-gradient(135deg,#c8e6c9,#a8d8f0);
+  box-shadow:0 4px 16px rgba(168,216,240,.4);
+}
+body.skin-cute .skin-toggle{
+  background:linear-gradient(135deg,#fff,#fef0f7);
+  border:1px solid #f4c3da;color:#d96ba8;
+}
+/* 卡通模式下漂浮的小装饰 */
+body.skin-cute .float-decor{
+  position:fixed;font-size:20px;opacity:.5;pointer-events:none;z-index:0;
+  animation:float 6s ease-in-out infinite;
+}
+@keyframes float{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-12px) rotate(8deg)}}
+.float-decor{display:none}
+body.skin-cute .float-decor{display:block}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="header-bar">
-    <div class="header-title">接诊录音</div>
+    <div class="header-title"><span class="t-pro">接诊录音</span><span class="t-cute">美丽陪伴</span></div>
     <div class="header-user">
-      {{ advisor_name or username }}（顾问） ·
+      {{ advisor_name or username }}（<span class="t-pro">顾问</span><span class="t-cute">陪伴师</span>） ·
       <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a>
+      <button class="skin-toggle" onclick="toggleSkin()" title="切换皮肤"><span id="skinLabel">🎀 切换皮肤</span></button>
     </div>
   </div>
 
+  <!-- 接诊列表入口（顶部）-->
+  <a class="list-entry" href="{{ url_for('index') }}">
+    <div>
+      <div>📋 <span class="t-pro">查看接诊列表</span><span class="t-cute">查看美丽档案</span></div>
+      <div class="sub"><span class="t-pro">所有接诊记录、分析报告、点评</span><span class="t-cute">回顾每一次陪伴与成长</span></div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+
   <!-- 录音 -->
   <div class="card">
-    <h3>录音</h3>
+    <h3><span class="t-pro">录音</span><span class="t-cute">✨ 开启美丽时光</span></h3>
     <div class="rec-area">
       <div class="rec-timer" id="timer">00:00</div>
-      <div class="rec-status" id="recStatus">点击开始录音</div>
-      <button class="btn big" id="recBtn">● 开始录音</button>
+      <div class="rec-status" id="recStatus"><span class="t-pro">点击开始录音</span><span class="t-cute">点击开始陪伴 💕</span></div>
+      <button class="btn big" id="recBtn"><span class="t-pro">● 开始录音</span><span class="t-cute">💕 开启陪伴</span></button>
       <div class="msg" id="recMsg"></div>
     </div>
   </div>
 
+  <!-- 接诊列表入口（底部 / 录音卡片下方）-->
+  <a class="list-entry bottom" href="{{ url_for('index') }}">
+    <div>
+      <div>📊 <span class="t-pro">前往接诊列表</span><span class="t-cute">前往美丽档案</span></div>
+      <div class="sub"><span class="t-pro">查看本次接诊的 ASR 与分析进度</span><span class="t-cute">看看今天的陪伴整理得怎么样啦</span></div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+
   <!-- 未入库录音 -->
   <div class="card">
-    <h3>未入库录音 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button></h3>
-    <div class="muted" style="margin-bottom:6px;font-size:12px">提示：试听前 60 秒以判断是哪位顾客的接诊，再绑定入库（绑定后才会跑 ASR）。</div>
+    <h3><span class="t-pro">未入库录音</span><span class="t-cute">🌷 今日记录（待整理）</span> <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button></h3>
+    <div class="muted" style="margin-bottom:6px;font-size:12px"><span class="t-pro">提示：试听前 60 秒以判断是哪位顾客的接诊，再绑定入库（绑定后才会跑 ASR）。</span><span class="t-cute">小提示：回顾片段判断是哪位姐妹，再归入她的档案 💝</span></div>
     <table class="tbl">
       <thead><tr><th>时间</th><th>试听</th><th>状态</th><th>操作</th></tr></thead>
       <tbody id="pendingBody"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
@@ -93,7 +215,7 @@ html,body{overflow-x:hidden;max-width:100%}
 
   <!-- 分析（按顾客 + 时间段） -->
   <div class="card">
-    <h3>按顾客分析</h3>
+    <h3><span class="t-pro">按顾客分析</span><span class="t-cute">💫 按姐妹整理档案</span></h3>
     <div class="row suggest-box">
       <input id="anaCustomer" placeholder="顾客姓名（输入搜索）" autocomplete="off">
       <div class="suggest" id="anaSuggest"></div>
@@ -130,6 +252,40 @@ html,body{overflow-x:hidden;max-width:100%}
 const BASE = {{ request.script_root|tojson }};
 const ADVISOR = {{ advisor_name|tojson }};
 
+// ============ 皮肤切换（专业版 / 萌系卡通） ============
+function isCute(){ return document.body.classList.contains('skin-cute'); }
+function tx(pro, cute){ return isCute() ? cute : pro; }
+function applySkin(skin){
+  if (skin === 'cute') {
+    document.body.classList.add('skin-cute');
+    document.getElementById('skinLabel').textContent = '💼 切回专业版';
+    document.title = '美丽陪伴 ✨';
+  } else {
+    document.body.classList.remove('skin-cute');
+    document.getElementById('skinLabel').textContent = '🎀 切换可爱皮肤';
+    document.title = '顾问端 · 工牌接诊分析系统';
+  }
+  // 重置当前录音按钮文案（如未在录音中）
+  if (!(window.mediaRecorder && window.mediaRecorder.state === 'recording') && !window.uploading) {
+    const btn = document.getElementById('recBtn');
+    if (btn) btn.innerHTML = isCute() ? '💕 开启陪伴' : '● 开始录音';
+    const st = document.getElementById('recStatus');
+    if (st && (st.textContent.indexOf('点击') === 0)) st.textContent = isCute() ? '点击开始陪伴 💕' : '点击开始录音';
+  }
+}
+function toggleSkin(){
+  const next = isCute() ? 'pro' : 'cute';
+  try { localStorage.setItem('consultant_skin', next); } catch(e){}
+  applySkin(next);
+  // 重新渲染未入库列表的状态标签
+  if (typeof loadPending === 'function') loadPending();
+}
+(function initSkin(){
+  let s = 'pro';
+  try { s = localStorage.getItem('consultant_skin') || 'pro'; } catch(e){}
+  applySkin(s);
+})();
+
 // 默认日期
 (function(){
   const t = new Date(); const s = t.toISOString().slice(0,10);
@@ -165,10 +321,11 @@ recBtn.onclick = async () => {
   mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
   mediaRecorder.onstop = onStop;
   mediaRecorder.start();
+  window.mediaRecorder = mediaRecorder;
   startTs = Date.now();
-  recBtn.textContent = '■ 结束录音';
-  recBtn.style.background = '#e74c3c';
-  recStatus.innerHTML = '<span class="rec-dot"></span>录音中…';
+  recBtn.innerHTML = tx('■ 结束录音', '🌸 结束陪伴');
+  recBtn.style.background = isCute() ? '' : '#e74c3c';
+  recStatus.innerHTML = '<span class="rec-dot"></span>' + tx('录音中…', '陪伴进行中… 💕');
   recMsg.textContent = '';
   timerInt = setInterval(updateTimer, 250);
 };
@@ -181,30 +338,30 @@ function updateTimer() {
 
 async function onStop() {
   clearInterval(timerInt);
-  recBtn.textContent = '● 开始录音';
+  recBtn.innerHTML = tx('● 开始录音', '💕 开启陪伴');
   recBtn.style.background = '';
-  recStatus.textContent = '上传中…';
+  recStatus.textContent = tx('上传中…', '保存中… ✨');
   if (stream) stream.getTracks().forEach(t => t.stop());
   const ext = (mediaRecorder && mediaRecorder.mimeType || 'audio/webm').includes('mp4') ? 'mp4' : 'webm';
   const blob = new Blob(chunks, {type: 'audio/' + ext});
   const fd = new FormData();
   fd.append('file', blob, 'rec-' + Date.now() + '.' + ext);
-  uploading = true;
+  uploading = true; window.uploading = true;
   recBtn.disabled = true;
   try {
     const r = await fetch(BASE + '/api/consultant/upload', {method: 'POST', body: fd});
     const d = await r.json();
     if (d.error) throw new Error(d.error);
-    recStatus.textContent = '已上传，等待 ASR …';
-    recMsg.textContent = '录音已上传到未入库列表。';
+    recStatus.textContent = tx('已上传，等待 ASR …', '已保存 ✨ 正在整理…');
+    recMsg.textContent = tx('录音已上传到未入库列表。', '今日记录已收好 💝');
     recMsg.className = 'msg';
     timerEl.textContent = '00:00';
     loadPending();
   } catch (e) {
-    recStatus.textContent = '上传失败';
+    recStatus.textContent = tx('上传失败', '保存失败 😢');
     recMsg.textContent = e.message; recMsg.className = 'msg err';
   } finally {
-    uploading = false;
+    uploading = false; window.uploading = false;
     recBtn.disabled = false;
   }
 }
@@ -225,11 +382,12 @@ async function loadPending() {
   const list = d.recordings || [];
   if (!list.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">暂无未入库录音</td></tr>'; return; }
   tb.innerHTML = list.map(x => {
-    const tag = x.asr_status === 'awaiting_intake' ? '<span class="tag">待绑定（未跑 ASR）</span>' :
-                x.asr_status === 'done' ? '<span class="tag done">ASR 完成</span>' :
-                x.asr_status === 'running' ? '<span class="tag running">ASR 中</span>' :
-                x.asr_status === 'failed' ? '<span class="tag failed">ASR 失败</span>' :
-                '<span class="tag">待 ASR</span>';
+    const _cute = isCute();
+    const tag = x.asr_status === 'awaiting_intake' ? `<span class="tag">${_cute?'待归档':'待绑定（未跑 ASR）'}</span>` :
+                x.asr_status === 'done' ? `<span class="tag done">${_cute?'已整理 ✓':'ASR 完成'}</span>` :
+                x.asr_status === 'running' ? `<span class="tag running">${_cute?'整理中…':'ASR 中'}</span>` :
+                x.asr_status === 'failed' ? `<span class="tag failed">${_cute?'整理失败':'ASR 失败'}</span>` :
+                `<span class="tag">${_cute?'待整理':'待 ASR'}</span>`;
     const audio = x.audio_url
       ? `<audio controls preload="none" src="${x.audio_url}" data-cap="60" style="max-width:200px;height:32px"></audio>`
       : '—';
