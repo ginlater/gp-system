@@ -503,8 +503,91 @@ def parse_filename(filename):
     }
 
 
+def _sanitize_name_for_oss(s):
+    """OSS 文件名安全化：白名单保留中文/英文/数字，其它清掉，截断到 20 字符。"""
+    if not s:
+        return "未命名"
+    cleaned = re.sub(r"[^一-鿿A-Za-z0-9]", "", s)
+    cleaned = cleaned[:20]
+    return cleaned or "未命名"
+
+
+def _format_duration_label(sec):
+    """整数秒 → 'MM分SS秒'。无效返回 None。"""
+    try:
+        n = int(float(sec))
+    except (TypeError, ValueError):
+        return None
+    if n < 0:
+        n = 0
+    m, s = divmod(n, 60)
+    return f"{m:02d}分{s:02d}秒"
+
+
+def _build_consultant_oss_key(company_id, user_id, customer, advisor, ts14, dur_label, ext):
+    c = _sanitize_name_for_oss(customer)
+    a = _sanitize_name_for_oss(advisor) or "顾问"
+    dur = dur_label or "未知时长"
+    return f"consultant-uploads/{company_id}/{user_id}/{c}_{a}_录音{ts14}_{dur}.{ext}"
+
+
 # ============ OSS ============
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg", ".opus"}
+
+
+def _oss_key_exists(key):
+    try:
+        return bool(oss_bucket.object_exists(key))
+    except Exception:
+        return False
+
+
+def _oss_copy_with_collision_suffix(old_key, new_key):
+    """从 old_key 复制到 new_key；若 new_key 已存在则追加 4 位 hex 后缀避让。
+    成功返回最终 key；失败抛异常（由调用方处理回滚）。"""
+    import uuid as __uuid
+    if _oss_key_exists(new_key):
+        if "." in new_key.rsplit("/", 1)[-1]:
+            stem, _, ex = new_key.rpartition(".")
+            new_key = f"{stem}_{__uuid.uuid4().hex[:4]}.{ex}"
+        else:
+            new_key = f"{new_key}_{__uuid.uuid4().hex[:4]}"
+    oss_bucket.copy_object(oss_bucket.bucket_name, old_key, new_key)
+    return new_key
+
+
+def _oss_delete_quiet(key):
+    try:
+        oss_bucket.delete_object(key)
+    except Exception as e:
+        app.logger.warning("oss delete failed key=%s err=%s", key, e)
+
+
+def _maybe_rename_consultant_oss(rec, new_customer, new_advisor):
+    """若 rec.oss_key 是顾问端新格式录音，则按新顾客/顾问名重命名（仅 OSS copy，未删旧）。
+    返回 (new_key, old_key_to_delete_after_db_commit)；若不需要重命名返回 (rec.oss_key, None)。
+    OSS copy 失败时抛异常（调用方负责回滚 DB 不变）。
+    旧的 uuid.ext 文件按"只管新文件"约定保持不动。"""
+    old_key = rec["oss_key"]
+    if not old_key or not old_key.startswith("consultant-uploads/"):
+        return old_key, None
+    basename = old_key.rsplit("/", 1)[-1]
+    if not parse_filename(basename):
+        return old_key, None  # 旧 uuid.ext 格式，不动
+    rec_at = rec["recorded_at"] or ""
+    digits = re.sub(r"\D", "", rec_at)
+    if len(digits) < 14:
+        return old_key, None
+    ts14 = digits[:14]
+    dur_label = rec["duration_label"] or "未知时长"
+    ext = basename.rsplit(".", 1)[-1] if "." in basename else "webm"
+    cid = rec["company_id"] or 1
+    uid = rec["uploader_user_id"] or 0
+    new_key = _build_consultant_oss_key(cid, uid, new_customer, new_advisor, ts14, dur_label, ext)
+    if new_key == old_key:
+        return old_key, None
+    final_key = _oss_copy_with_collision_suffix(old_key, new_key)
+    return final_key, old_key
 
 
 def oss_signed_url(oss_key, expires=7200):
@@ -638,15 +721,12 @@ def trigger_pipeline_for_recording(recording_id):
 
 
 def _asr_then_maybe_analyze(recording_id):
+    # 仅跑 ASR，不再自动触发分析：顾问可能要绑多条录音合并分析，分析改为手动点"开始分析"触发。
     rec = db_fetchone("SELECT session_id, asr_status FROM recordings WHERE id=?", (recording_id,))
     if not rec:
         return
     if rec["asr_status"] != "done":
         run_asr(recording_id)
-    # 重新读一遍
-    rec = db_fetchone("SELECT session_id, asr_status FROM recordings WHERE id=?", (recording_id,))
-    if rec and rec["asr_status"] == "done" and rec["session_id"]:
-        maybe_trigger_session_analysis(rec["session_id"])
 
 
 def maybe_trigger_session_analysis(session_id, model=None, force_refresh_shared=False):
@@ -3338,16 +3418,29 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         # 只有全部任务都成功才算 done；任一失败 → failed，让用户在列表里能一眼看到
         final_status = "done" if done_count == len(all_task_ids) else "failed"
 
+        # 失败时汇总失败任务清单写入 analysis_error，便于顾问端展示具体原因
+        err_msg = None
+        if final_status == "failed":
+            failed_tids = [tid for tid in all_task_ids
+                           if ts.get(tid, {}).get("status") != "done"]
+            err_parts = []
+            for tid in failed_tids:
+                st_info = ts.get(tid, {})
+                e = (st_info.get("error") or st_info.get("status") or "missing")
+                err_parts.append(f"{tid}: {e}")
+            err_msg = (f"完成 {done_count}/{len(all_task_ids)} 任务，未完成 "
+                       f"{len(failed_tids)} 项 — " + "; ".join(err_parts))[:1900]
+
         elapsed = int(_t.time() - t0)
         mm, ss = divmod(elapsed, 60)
         db_write(
             """UPDATE sessions SET analysis_status=?,
                analysis_signature=?, analysis_model=?,
-               analysis_progress=?,
+               analysis_progress=?, analysis_error=?,
                analysis_finished_at=datetime('now','localtime') WHERE id=?""",
             (final_status, signature, model,
              f"完成 {done_count}/{len(all_task_ids)} 任务（耗时 {mm}:{ss:02d}）",
-             session_id),
+             err_msg, session_id),
         )
 
         # 重新计算 scoring 摘要（只在写主列时更新）
@@ -5230,17 +5323,23 @@ def api_consultant_upload():
     ext = raw_name.rsplit(".", 1)[-1].lower() if "." in raw_name else "webm"
     if ext not in ("webm", "mp3", "wav", "m4a", "mp4", "ogg", "aac", "amr"):
         ext = "webm"
-    oss_key = f"consultant-uploads/{company_id}/{u['id']}/{_uuid.uuid4().hex}.{ext}"
+    dur_label = _format_duration_label(request.form.get("duration_sec"))
+    recorded_at = datetime.now().strftime("%Y%m%d%H%M%S")
+    # 新格式：顾客未知 → 用 "未命名" 占位，绑定时再重命名
+    oss_key = _build_consultant_oss_key(company_id, u['id'], None, advisor, recorded_at, dur_label, ext)
+    if _oss_key_exists(oss_key):
+        stem, _, ex = oss_key.rpartition(".")
+        oss_key = f"{stem}_{_uuid.uuid4().hex[:4]}.{ex}"
     data = f.read()
     try:
         oss_bucket.put_object(oss_key, data)
     except Exception as e:
         return jsonify({"error": f"上传 OSS 失败：{e}"}), 500
-    recorded_at = datetime.now().strftime("%Y%m%d%H%M%S")
     rid = ingest_recording(
         oss_key, source="consultant-upload", size_bytes=len(data),
         advisor=advisor, customer=None,
         recorded_at=recorded_at, service_date=recorded_at[:8],
+        duration_label=dur_label,
         company_id=company_id, uploader_user_id=u["id"], orphan=True,
     )
     return jsonify({"id": rid, "oss_key": oss_key})
@@ -5378,12 +5477,24 @@ def api_consultant_recording_bind(rid):
     locked_row = db_fetchone("SELECT locked FROM sessions WHERE id=?", (sid,))
     if locked_row and locked_row["locked"]:
         return jsonify({"error": "该接诊包已锁定，无法再添加录音"}), 409
-    db_write(
-        """UPDATE recordings SET session_id=?, customer=?, advisor=?,
-           asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
-           WHERE id=?""",
-        (sid, cust["name"], advisor, rid),
-    )
+    # 先尝试 OSS 重命名（新格式录音），失败则回滚整个绑定操作
+    try:
+        new_key, old_key_to_del = _maybe_rename_consultant_oss(rec, cust["name"], advisor)
+    except Exception as e:
+        return jsonify({"error": f"OSS 重命名失败：{e}"}), 500
+    try:
+        db_write(
+            """UPDATE recordings SET session_id=?, customer=?, advisor=?, oss_key=?,
+               asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
+               WHERE id=?""",
+            (sid, cust["name"], advisor, new_key, rid),
+        )
+    except Exception as e:
+        if old_key_to_del and new_key != old_key_to_del:
+            _oss_delete_quiet(new_key)  # 回滚刚 copy 出的新 key
+        return jsonify({"error": f"绑定失败：{e}"}), 500
+    if old_key_to_del and new_key != old_key_to_del:
+        _oss_delete_quiet(old_key_to_del)
     trigger_pipeline_for_recording(rid)
     return jsonify({"ok": True, "session_id": sid})
 
@@ -5692,12 +5803,24 @@ def api_consultant_direct_rebind(rid):
     new_sess = db_fetchone("SELECT locked FROM sessions WHERE id=?", (new_sid,))
     if new_sess and new_sess["locked"]:
         return jsonify({"error": "目标接诊包已锁定，不能直接换绑（请改为申请换绑）"}), 409
-    db_write(
-        """UPDATE recordings SET session_id=?, customer=?, speaker_confirmed=0,
-           asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
-           WHERE id=?""",
-        (new_sid, to_cust["name"], rid),
-    )
+    # OSS 重命名（新格式录音）；失败 → 回滚（DB 未动，告知前端重试）
+    try:
+        new_key, old_key_to_del = _maybe_rename_consultant_oss(rec, to_cust["name"], advisor)
+    except Exception as e:
+        return jsonify({"error": f"OSS 重命名失败：{e}"}), 500
+    try:
+        db_write(
+            """UPDATE recordings SET session_id=?, customer=?, oss_key=?, speaker_confirmed=0,
+               asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
+               WHERE id=?""",
+            (new_sid, to_cust["name"], new_key, rid),
+        )
+    except Exception as e:
+        if old_key_to_del and new_key != old_key_to_del:
+            _oss_delete_quiet(new_key)
+        return jsonify({"error": f"换绑失败：{e}"}), 500
+    if old_key_to_del and new_key != old_key_to_del:
+        _oss_delete_quiet(old_key_to_del)
     # 老 session 清空则删除（并删 daily_reception）
     old_sid = old_sess["id"] if old_sess else None
     if old_sid:
@@ -5858,13 +5981,25 @@ def api_admin_rebind_approve(req_id):
     new_sid = get_or_create_session(advisor, to_cust["name"], rr["rec_date"], company_id=cid)
     if not new_sid:
         return jsonify({"error": "创建目标接诊包失败"}), 500
+    # OSS 重命名（新格式录音）；失败 → 回滚（不改 DB，申请保持 pending 待重试）
+    try:
+        new_key, old_key_to_del = _maybe_rename_consultant_oss(rec, to_cust["name"], advisor)
+    except Exception as e:
+        return jsonify({"error": f"OSS 重命名失败：{e}"}), 500
     # 把 recording 移到 new session
-    db_write(
-        """UPDATE recordings SET session_id=?, customer=?, speaker_confirmed=0,
-           asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
-           WHERE id=?""",
-        (new_sid, to_cust["name"], rr["recording_id"]),
-    )
+    try:
+        db_write(
+            """UPDATE recordings SET session_id=?, customer=?, oss_key=?, speaker_confirmed=0,
+               asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
+               WHERE id=?""",
+            (new_sid, to_cust["name"], new_key, rr["recording_id"]),
+        )
+    except Exception as e:
+        if old_key_to_del and new_key != old_key_to_del:
+            _oss_delete_quiet(new_key)
+        return jsonify({"error": f"换绑失败：{e}"}), 500
+    if old_key_to_del and new_key != old_key_to_del:
+        _oss_delete_quiet(old_key_to_del)
     # 作废目标 session 的旧分析（解锁 + 标记 outdated），便于重新分析
     db_write(
         """UPDATE sessions SET locked=0,

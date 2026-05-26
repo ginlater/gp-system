@@ -437,8 +437,10 @@ async function onStop() {
   if (stream) stream.getTracks().forEach(t => t.stop());
   const ext = (mediaRecorder && mediaRecorder.mimeType || 'audio/webm').includes('mp4') ? 'mp4' : 'webm';
   const blob = new Blob(chunks, {type: 'audio/' + ext});
+  const durSec = Math.max(0, Math.round((Date.now() - startTs) / 1000));
   const fd = new FormData();
   fd.append('file', blob, 'rec-' + Date.now() + '.' + ext);
+  fd.append('duration_sec', String(durSec));
   uploading = true; window.uploading = true;
   recBtn.disabled = true;
   try {
@@ -629,13 +631,17 @@ async function loadReception() {
     }
     box.innerHTML = RECEPTION.map(x => {
       let badge;
-      // 仅当真有录音时，分析状态才算数；否则按"尚无录音"看待
-      const isDone = x.analysis_status === 'done' && x.recording_count > 0;
+      // 状态以 analysis_status 为准，locked 仅在后端用于禁止改动
       const hasRec = x.recording_count > 0;
+      const st = x.analysis_status;
+      const isDone = st === 'done' && hasRec;
+      const isRunning = (st === 'running' || st === 'queued') && hasRec;
+      const isFailed = st === 'failed' && hasRec;
       if (x.pending_rebind_count > 0) badge = `<span class="tag" style="background:#fef3e0;color:#e67e22">⏳ 换绑审批中 (${x.pending_rebind_count})</span>`;
       else if (!hasRec) badge = `<span class="tag">尚未绑定录音</span>`;
       else if (isDone) badge = `<span class="tag done">✓ 已分析</span>`;
-      else if (x.locked) badge = `<span class="tag running" style="background:#fff4e5;color:#e67e22">分析中…</span>`;
+      else if (isRunning) badge = `<span class="tag running" style="background:#fff4e5;color:#e67e22">分析中…</span>`;
+      else if (isFailed) badge = `<span class="tag" style="background:#fdecea;color:#c0392b">✗ 分析失败，点击重试</span>`;
       else badge = `<span class="tag running">${x.recording_count} 段录音待分析</span>`;
       const tail = x.phone_tail ? `尾号${x.phone_tail}` : '';
       const card = x.member_card ? ` · ${x.member_card}` : '';
@@ -647,13 +653,15 @@ async function loadReception() {
       } else if (isDone) {
         mainBtn = `<button class="btn" onclick="viewAnalysis(${x.session_id})">查看分析报告</button>
                    <button class="btn sec" style="margin-left:4px;padding:4px 10px;font-size:12px" onclick='openPkg(${pkgArgs})'>查看录音</button>`;
-      } else if (x.locked) {
+      } else if (isRunning) {
         mainBtn = `<button class="btn sec" onclick='openPkg(${pkgArgs})'>查看进度</button>`;
+      } else if (isFailed) {
+        mainBtn = `<button class="btn" onclick='openPkg(${pkgArgs})'>重新分析</button>`;
       } else {
         mainBtn = `<button class="btn" onclick='openPkg(${pkgArgs})'>开始分析</button>`;
       }
-      // 改日期/移除 仅在最近 7 天 + 未锁定 + 未分析 时允许
-      const editable = !x.locked && !isDone && _canEditOnDate(x.service_date);
+      // 改日期/移除 仅在最近 7 天 + 未开始/未完成分析 时允许
+      const editable = !isDone && !isRunning && _canEditOnDate(x.service_date);
       const editDateBtn = editable
         ? `<button class="btn sec" title="改接诊日期" style="padding:4px 8px;font-size:12px" onclick='openEditDate(${JSON.stringify({id:x.id, name:x.name, service_date:x.service_date, recording_count:x.recording_count})})'>📅</button>`
         : '';
@@ -983,7 +991,7 @@ async function startAnalysisPkg() {
   try {
     const r = await fetch(BASE + '/api/consultant/session/start_analysis', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({customer_id: pkgCustomerId}),
+      body: JSON.stringify({customer_id: pkgCustomerId, date: pkgDate || undefined}),
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
