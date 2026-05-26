@@ -214,23 +214,31 @@ body.skin-cute .dlg{border-radius:18px}
     <span class="arrow">→</span>
   </a>
 
-  <!-- 今日接诊列表 -->
+  <!-- 接诊列表（可切日期） -->
   <div class="card">
     <h3 style="display:flex;align-items:center;justify-content:space-between">
-      <span><span class="t-pro">今日接诊列表</span><span class="t-cute">🌷 今日的姐妹们</span></span>
+      <span><span class="t-pro">接诊列表</span><span class="t-cute">🌷 姐妹们的接诊</span></span>
       <span>
         <button class="btn sec" style="padding:4px 10px;font-size:12px" onclick="loadReception()">刷新</button>
-        <button class="btn" style="padding:6px 14px;font-size:13px" onclick="openAddReception()">+ 加入</button>
+        <button class="btn" id="addReceptionBtn" style="padding:6px 14px;font-size:13px" onclick="openAddReception()">+ 加入</button>
       </span>
     </h3>
-    <div class="muted" style="margin-bottom:8px;font-size:12px">录音前/后请把今天要接诊的顾客加进来。录音结束后只能绑定到这个列表里的人。</div>
+    <div id="dateSwitchRow" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;padding:6px 8px;border-radius:6px;background:#f7f9fc">
+      <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="shiftReceptionDate(-1)">◀ 前一天</button>
+      <input id="receptionDateInput" type="date" onchange="onReceptionDateChange(this.value)" style="border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:13px">
+      <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="shiftReceptionDate(1)">后一天 ▶</button>
+      <button class="btn sec" id="todayBtn" style="padding:3px 8px;font-size:12px;display:none" onclick="setReceptionDate(_todayStr())">回到今天</button>
+      <span id="dateTodayTag" class="muted" style="font-size:12px">今天</span>
+    </div>
+    <div id="dateBanner" class="muted" style="margin-bottom:8px;font-size:12px"></div>
     <div id="receptionList" class="reception-list"><div class="empty-tip">加载中…</div></div>
   </div>
 
   <!-- 未选择顾客的录音 -->
   <div class="card">
     <h3><span class="t-pro">未选择顾客的录音</span><span class="t-cute">💭 还没归档的片段</span> <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button></h3>
-    <div class="muted" style="margin-bottom:6px;font-size:12px">未绑定顾客的录音不会进入分析。请试听后绑定到今日接诊列表里的对应顾客。</div>
+    <div class="muted" style="margin-bottom:6px;font-size:12px">未绑定顾客的录音不会进入分析。请试听后绑定到对应日期接诊列表里的顾客。</div>
+    <div id="pendingCrossWarn" style="display:none;background:#fdecea;color:#c0392b;padding:6px 8px;border-radius:4px;margin-bottom:6px;font-size:12px;font-weight:600"></div>
     <table class="tbl">
       <thead><tr><th>时间</th><th>试听</th><th>状态</th><th>操作</th></tr></thead>
       <tbody id="pendingBody"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
@@ -251,7 +259,11 @@ body.skin-cute .dlg{border-radius:18px}
 <!-- 加入今日接诊弹窗 -->
 <div class="mask" id="addMask">
   <div class="dlg">
-    <h3>加入今日接诊</h3>
+    <h3 id="addTitle">加入今日接诊</h3>
+    <div id="addDateRow" style="display:none;margin-bottom:10px">
+      <div style="font-size:12px;color:#666;margin-bottom:4px">接诊日期 *（仅限最近 7 天内）</div>
+      <input id="addDateInput" type="date" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px">
+    </div>
     <div class="seg">
       <button id="segSearch" class="active" onclick="switchAddMode('search')">搜索已有顾客</button>
       <button id="segNew" onclick="switchAddMode('new')">新增顾客</button>
@@ -286,6 +298,39 @@ body.skin-cute .dlg{border-radius:18px}
   </div>
 </div>
 
+<!-- 改接诊日期弹窗 -->
+<div class="mask" id="editDateMask">
+  <div class="dlg" style="max-width:380px">
+    <h3>修改接诊日期</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">只能在原日期前后 7 天内修改，且不超过今天。<b style="color:#e74c3c">挂在该接诊下的录音会自动解绑</b>（录音真实日期不动）。</div>
+    <div id="editDateInfo" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+    <input id="editDateInput" type="date" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px">
+    <div class="msg" id="editDateMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn sec" onclick="closeEditDate()">取消</button>
+      <button class="btn" id="editDateConfirm" onclick="confirmEditDate()">确认修改</button>
+    </div>
+  </div>
+</div>
+
+<!-- 申请换绑弹窗 -->
+<div class="mask" id="rebindMask">
+  <div class="dlg">
+    <h3>申请换绑</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">提交后由管理员审批，<b>不能撤回</b>。同意后旧分析会作废，需要重新分析。</div>
+    <div id="rebindRecInfo" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">换绑到：（仅显示该录音当天接诊的顾客）</div>
+    <div id="rebindCustList" style="max-height:200px;overflow:auto;margin-bottom:8px"></div>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">换绑理由 *</div>
+    <textarea id="rebindReason" rows="3" placeholder="请简要说明为何需要换绑" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px;resize:vertical"></textarea>
+    <div class="msg" id="rebindMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn sec" onclick="closeRebind()">取消</button>
+      <button class="btn" id="rebindSubmitBtn" onclick="submitRebind()">提交申请</button>
+    </div>
+  </div>
+</div>
+
 <!-- 接诊包确认弹窗 -->
 <div class="mask" id="pkgMask">
   <div class="dlg">
@@ -293,7 +338,7 @@ body.skin-cute .dlg{border-radius:18px}
     <div class="muted" id="pkgSubtitle" style="font-size:12px;margin-bottom:8px"></div>
     <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">本次将分析的录音</div>
     <div id="pkgBound"></div>
-    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:12px 0 4px">本人今日未绑定录音（可加入本接诊包）</div>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:12px 0 4px" id="pkgUnboundTitle">本人当日未绑定录音（可加入本接诊包）</div>
     <div id="pkgUnbound"></div>
     <div class="msg" id="pkgMsg"></div>
     <div class="row" style="justify-content:space-between;margin-top:12px">
@@ -429,6 +474,18 @@ async function loadPending() {
   const r = await fetch(BASE + '/api/consultant/recordings/pending');
   const d = await r.json();
   const list = d.recordings || [];
+  // 跨天未绑录音提示，挂在「还没归档的片段」卡片上
+  const activeDate0 = currentReceptionDate || _todayStr();
+  const crossList = list.filter(x => x.rec_date && x.rec_date !== activeDate0);
+  const warn = document.getElementById('pendingCrossWarn');
+  if (warn) {
+    if (crossList.length > 0) {
+      const dates = [...new Set(crossList.map(x => x.rec_date))].sort().reverse();
+      warn.style.display = '';
+      warn.innerHTML = `⚠ 有 ${crossList.length} 段录音的日期与当前接诊（${activeDate0}）不一致：` +
+        dates.map(d => `<a href="javascript:void(0)" onclick='setReceptionDate(${JSON.stringify(d)})' style="color:#c0392b;text-decoration:underline;margin:0 4px">切到 ${d}</a>`).join('');
+    } else warn.style.display = 'none';
+  }
   if (!list.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">没有未绑定的录音</td></tr>'; return; }
   tb.innerHTML = list.map(x => {
     const tag = x.asr_status === 'awaiting_intake' ? `<span class="tag">待绑定顾客</span>` :
@@ -439,12 +496,17 @@ async function loadPending() {
     const audio = x.audio_url
       ? `<audio controls preload="none" src="${x.audio_url}" data-cap="60" style="max-width:200px;height:32px"></audio>`
       : '—';
-    return `<tr>
-      <td>${x.created_at || x.recorded_at || '—'}</td>
+    const isCross = x.rec_date && x.rec_date !== activeDate0;
+    const rowStyle = isCross ? ' style="background:#fdecea;color:#c0392b"' : '';
+    const dateChip = isCross
+      ? ` <span class="tag" style="background:#fff;color:#c0392b;border:1px solid #c0392b;margin-left:4px">${x.rec_date}</span>`
+      : '';
+    return `<tr${rowStyle}>
+      <td>${x.created_at || x.recorded_at || '—'}${dateChip}</td>
       <td>${audio}</td>
       <td>${tag}</td>
       <td style="white-space:nowrap">
-        <button class="btn sec" onclick="openBind(${x.id})">绑定顾客</button>
+        <button class="btn sec" onclick='openBind(${x.id}, ${JSON.stringify(x.rec_date||"")})'>绑定顾客</button>
         <button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;margin-left:4px" onclick="requestDelRec(${x.id}, this)">申请删除</button>
       </td>
     </tr>`;
@@ -494,13 +556,70 @@ async function confirmSpeakers(rid, action, btn) {
   } finally { btn.disabled = false; }
 }
 
-// ============ 今日接诊列表 ============
+// ============ 接诊列表（按日期）============
 let RECEPTION = []; // {id, customer_id, name, phone_tail, locked, recording_count, ...}
+let currentReceptionDate = null;  // YYYY-MM-DD；null = 今天
+
+function _diffDaysFromToday(dateStr) {
+  // dateStr - today（负数=过去，正数=未来）
+  const t = new Date(_todayStr()).getTime();
+  const d = new Date(dateStr).getTime();
+  return Math.round((d - t) / 86400000);
+}
+function _canEditOnDate(dateStr) {
+  const diff = _diffDaysFromToday(dateStr);
+  return diff <= 0 && diff >= -7;  // 最近 7 天内（含今天）
+}
+
+function setReceptionDate(d) {
+  currentReceptionDate = (d === _todayStr()) ? null : d;
+  document.getElementById('receptionDateInput').value = d;
+  loadReception();
+}
+function shiftReceptionDate(delta) {
+  const cur = currentReceptionDate || _todayStr();
+  const nd = new Date(cur); nd.setDate(nd.getDate() + delta);
+  const today = new Date(_todayStr());
+  if (nd.getTime() > today.getTime()) return;  // 不允许未来
+  setReceptionDate(_fmtYMD(nd));
+}
+function onReceptionDateChange(v) {
+  if (!v) return;
+  if (new Date(v).getTime() > new Date(_todayStr()).getTime()) {
+    alert('不能选未来日期'); document.getElementById('receptionDateInput').value = currentReceptionDate || _todayStr(); return;
+  }
+  setReceptionDate(v);
+}
 
 async function loadReception() {
   const box = document.getElementById('receptionList');
+  const activeDate = currentReceptionDate || _todayStr();
+  // 同步顶部 UI
+  const inp = document.getElementById('receptionDateInput');
+  if (inp) {
+    inp.max = _todayStr();
+    if (!inp.value) inp.value = activeDate;
+  }
+  const isToday = activeDate === _todayStr();
+  document.getElementById('todayBtn').style.display = isToday ? 'none' : '';
+  document.getElementById('dateTodayTag').style.display = isToday ? '' : 'none';
+  const banner = document.getElementById('dateBanner');
+  if (isToday) {
+    banner.textContent = '录音前/后请把今天要接诊的顾客加进来。录音结束后只能绑定到这个列表里的人。';
+    banner.style.background = ''; banner.style.padding = ''; banner.style.color='';
+  } else {
+    banner.innerHTML = `正在查看 <b>${activeDate}</b> 的接诊列表（${_canEditOnDate(activeDate) ? '可补登/改日期' : '只读'}）`;
+    banner.style.background = '#fff8e1'; banner.style.padding = '6px 8px'; banner.style.borderRadius='4px'; banner.style.color = '#7a4f00';
+  }
+  // 加入按钮文案 & 启用状态
+  const addBtn = document.getElementById('addReceptionBtn');
+  if (addBtn) {
+    if (isToday) { addBtn.textContent = '+ 加入'; addBtn.disabled = false; addBtn.style.opacity=''; }
+    else if (_canEditOnDate(activeDate)) { addBtn.textContent = '+ 加入 ' + activeDate.slice(5) + ' 的客人'; addBtn.disabled = false; addBtn.style.opacity=''; }
+    else { addBtn.textContent = '只读（超过 7 天）'; addBtn.disabled = true; addBtn.style.opacity = '0.5'; }
+  }
   try {
-    const r = await fetch(BASE + '/api/consultant/today_reception');
+    const r = await fetch(BASE + '/api/consultant/today_reception?date=' + encodeURIComponent(activeDate));
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     RECEPTION = d.items || [];
@@ -510,21 +629,43 @@ async function loadReception() {
     }
     box.innerHTML = RECEPTION.map(x => {
       let badge;
-      if (x.locked) badge = `<span class="tag done">已锁定 / ${x.analysis_status||'分析中'}</span>`;
-      else if (x.recording_count > 0) badge = `<span class="tag running">${x.recording_count} 段录音待分析</span>`;
-      else badge = `<span class="tag">尚无录音</span>`;
+      // 仅当真有录音时，分析状态才算数；否则按"尚无录音"看待
+      const isDone = x.analysis_status === 'done' && x.recording_count > 0;
+      const hasRec = x.recording_count > 0;
+      if (x.pending_rebind_count > 0) badge = `<span class="tag" style="background:#fef3e0;color:#e67e22">⏳ 换绑审批中 (${x.pending_rebind_count})</span>`;
+      else if (!hasRec) badge = `<span class="tag">尚未绑定录音</span>`;
+      else if (isDone) badge = `<span class="tag done">✓ 已分析</span>`;
+      else if (x.locked) badge = `<span class="tag running" style="background:#fff4e5;color:#e67e22">分析中…</span>`;
+      else badge = `<span class="tag running">${x.recording_count} 段录音待分析</span>`;
       const tail = x.phone_tail ? `尾号${x.phone_tail}` : '';
       const card = x.member_card ? ` · ${x.member_card}` : '';
-      const acts = x.locked
-        ? `<button class="btn sec" onclick="openPkg(${x.customer_id})">查看接诊包</button>`
-        : `<button class="btn sec" onclick="openPkg(${x.customer_id})">查看 / 开始分析</button>
-           ${x.recording_count===0 ? `<button class="btn sec" style="color:#e74c3c;border-color:#e74c3c" onclick="removeReception(${x.id}, this)">移除</button>` : ''}`;
+      // 主按钮：根据状态显示明确的下一步动作
+      const pkgArgs = `${x.customer_id}, ${JSON.stringify(x.service_date)}`;
+      let mainBtn;
+      if (!hasRec) {
+        mainBtn = `<button class="btn sec" onclick='openPkg(${pkgArgs})' title="从未归档的录音中选一段加入本接诊包">等待绑定录音</button>`;
+      } else if (isDone) {
+        mainBtn = `<button class="btn" onclick="viewAnalysis(${x.session_id})">查看分析报告</button>
+                   <button class="btn sec" style="margin-left:4px;padding:4px 10px;font-size:12px" onclick='openPkg(${pkgArgs})'>查看录音</button>`;
+      } else if (x.locked) {
+        mainBtn = `<button class="btn sec" onclick='openPkg(${pkgArgs})'>查看进度</button>`;
+      } else {
+        mainBtn = `<button class="btn" onclick='openPkg(${pkgArgs})'>开始分析</button>`;
+      }
+      // 改日期/移除 仅在最近 7 天 + 未锁定 + 未分析 时允许
+      const editable = !x.locked && !isDone && _canEditOnDate(x.service_date);
+      const editDateBtn = editable
+        ? `<button class="btn sec" title="改接诊日期" style="padding:4px 8px;font-size:12px" onclick='openEditDate(${JSON.stringify({id:x.id, name:x.name, service_date:x.service_date, recording_count:x.recording_count})})'>📅</button>`
+        : '';
+      const removeBtn = (editable && x.recording_count===0)
+        ? `<button class="btn sec" style="color:#e74c3c;border-color:#e74c3c" onclick="removeReception(${x.id}, this)">移除</button>`
+        : '';
       return `<div class="reception-card">
         <div class="info">
           <div class="name">${x.name} <span class="muted" style="font-weight:400">${tail}${card}</span></div>
           <div class="meta">${badge}</div>
         </div>
-        <div class="acts">${acts}</div>
+        <div class="acts">${editDateBtn}${mainBtn}${removeBtn}</div>
       </div>`;
     }).join('');
   } catch (e) {
@@ -546,9 +687,48 @@ async function removeReception(drId, btn) {
   }
 }
 
-// ============ "加入今日接诊"弹窗 ============
+// ============ "加入今日接诊" / "补登历史客人" 弹窗 ============
 let addMode = 'search';
+let addBackfill = false;       // 是否补登模式
+function _fmtYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dd}`;
+}
+function _todayStr() { return _fmtYMD(new Date()); }
+function _daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate()-n); return _fmtYMD(d); }
 function openAddReception() {
+  const activeDate = currentReceptionDate || _todayStr();
+  if (activeDate === _todayStr()) {
+    addBackfill = false;
+    document.getElementById('addTitle').textContent = '加入今日接诊';
+    document.getElementById('addDateRow').style.display = 'none';
+  } else {
+    // 当前在历史日期，等同于补登该日期
+    addBackfill = true;
+    document.getElementById('addTitle').textContent = '加入 ' + activeDate + ' 的接诊';
+    const row = document.getElementById('addDateRow'); row.style.display = '';
+    const inp = document.getElementById('addDateInput');
+    inp.min = _daysAgoStr(7); inp.max = _todayStr(); inp.value = activeDate;
+  }
+  _resetAdd();
+  document.getElementById('addMask').classList.add('show');
+  doSearch('');
+}
+function openBackfill(presetDate, fromBind) {
+  addBackfill = true;
+  document.getElementById('addTitle').textContent = '补登历史客人';
+  const row = document.getElementById('addDateRow'); row.style.display = '';
+  const inp = document.getElementById('addDateInput');
+  inp.min = _daysAgoStr(7);
+  inp.max = _todayStr();
+  inp.value = presetDate || _daysAgoStr(1);
+  _resetAdd();
+  document.getElementById('addMask').classList.add('show');
+  doSearch('');
+}
+function _resetAdd() {
   switchAddMode('search');
   document.getElementById('addSearchQ').value = '';
   document.getElementById('addSearchList').innerHTML = '';
@@ -556,8 +736,11 @@ function openAddReception() {
   document.getElementById('addNewTail').value = '';
   document.getElementById('addNewCard').value = '';
   document.getElementById('addMsg').textContent = '';
-  document.getElementById('addMask').classList.add('show');
-  doSearch('');
+}
+function _addDate() {
+  if (!addBackfill) return null;
+  const v = document.getElementById('addDateInput').value;
+  return v || null;
 }
 function closeAdd() { document.getElementById('addMask').classList.remove('show'); }
 function switchAddMode(m) {
@@ -589,16 +772,23 @@ async function doSearch(q) {
     </div>`).join('');
 }
 async function addExisting(customer_id, btn) {
+  if (addBackfill && !_addDate()) { document.getElementById('addMsg').textContent='请选择接诊日期'; document.getElementById('addMsg').className='msg err'; return; }
   btn.disabled = true;
   try {
+    const body = {customer_id};
+    const d0 = _addDate(); if (d0) body.date = d0;
     const r = await fetch(BASE + '/api/consultant/today_reception/add', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({customer_id}),
+      body: JSON.stringify(body),
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     closeAdd();
     loadReception();
+    // 若绑定弹窗正打开，且当前补登日期与之相同，刷新其列表
+    if (addBackfill && bindingDate && _addDate() === bindingDate) {
+      openBind(bindingRid, bindingDate);
+    }
   } catch (e) {
     document.getElementById('addMsg').textContent = e.message;
     document.getElementById('addMsg').className = 'msg err';
@@ -612,40 +802,68 @@ async function confirmAdd() {
   const msg = document.getElementById('addMsg');
   if (!name) { msg.textContent='请填写顾客姓名'; msg.className='msg err'; return; }
   if (!/^\d{4}$/.test(tail)) { msg.textContent='手机尾号必须是 4 位数字'; msg.className='msg err'; return; }
+  if (addBackfill && !_addDate()) { msg.textContent='请选择接诊日期'; msg.className='msg err'; return; }
   const btn = document.getElementById('addConfirmBtn'); btn.disabled = true;
   try {
+    const body = {name, phone_tail: tail, member_card: card};
+    const d0 = _addDate(); if (d0) body.date = d0;
     const r = await fetch(BASE + '/api/consultant/today_reception/add', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({name, phone_tail: tail, member_card: card}),
+      body: JSON.stringify(body),
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
     closeAdd();
     loadReception();
+    // 若绑定弹窗正打开，且当前补登日期与之相同，刷新其列表
+    if (addBackfill && bindingDate && _addDate() === bindingDate) {
+      openBind(bindingRid, bindingDate);
+    }
   } catch (e) {
     msg.textContent = e.message; msg.className='msg err';
   } finally { btn.disabled = false; }
 }
 
-// ============ 绑定录音弹窗（从今日列表选）============
+// ============ 绑定录音弹窗（按录音日期载入）============
 let bindingRid = null;
-function openBind(rid) {
+let bindingDate = null;
+async function openBind(rid, recDate) {
   bindingRid = rid;
+  bindingDate = recDate || null;
   document.getElementById('bindMsg').textContent = '';
   const lst = document.getElementById('bindCustomerList');
-  if (!RECEPTION.length) {
-    lst.innerHTML = '<div class="empty-tip">今日接诊列表为空，请先在上面点"+ 加入"添加顾客</div>';
+  lst.innerHTML = '<div class="empty-tip">加载中…</div>';
+  document.getElementById('bindMask').classList.add('show');
+  // 拉对应日期的接诊列表
+  const qs = bindingDate ? ('?date=' + encodeURIComponent(bindingDate)) : '';
+  let items = [];
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception' + qs);
+    const d = await r.json();
+    items = d.items || [];
+  } catch (e) {}
+  const todayStr = _todayStr();
+  const isCrossDay = bindingDate && bindingDate !== todayStr;
+  const dateBanner = isCrossDay
+    ? `<div class="msg" style="background:#fef3e0;color:#7a4f00;padding:6px 8px;margin-bottom:8px;font-size:12px">这段录音是 <b>${bindingDate}</b> 的，只能绑定到当天的接诊客人。<br>没有的话先点下方"补登 ${bindingDate} 的客人"。</div>`
+    : '';
+  let body;
+  if (!items.length) {
+    body = `<div class="empty-tip">${bindingDate||'今天'} 没有接诊客人，请下方"补登"或"+ 加入"</div>`;
   } else {
-    lst.innerHTML = RECEPTION.filter(x => !x.locked).map(x => `
+    body = items.filter(x => !x.locked).map(x => `
       <div class="reception-card" style="margin-bottom:6px">
         <div class="info">
           <div class="name">${x.name} <span class="muted" style="font-weight:400;font-size:12px">${x.phone_tail?'尾号'+x.phone_tail:''}</span></div>
           <div class="meta">${x.recording_count} 段录音</div>
         </div>
         <button class="btn" onclick="doBind(${x.customer_id}, this)">绑定到这里</button>
-      </div>`).join('') || '<div class="empty-tip">列表中没有可绑定的顾客（其余已锁定）</div>';
+      </div>`).join('') || '<div class="empty-tip">没有可绑定的顾客（其余已锁定）</div>';
   }
-  document.getElementById('bindMask').classList.add('show');
+  const backfillRow = isCrossDay
+    ? `<div style="margin-top:10px;text-align:right"><button class="btn sec" onclick="closeBind(); setReceptionDate('${bindingDate}');">切到 ${bindingDate} 接诊列表去 + 加入</button></div>`
+    : '';
+  lst.innerHTML = dateBanner + body + backfillRow;
 }
 function closeBind() {
   document.getElementById('bindMask').classList.remove('show');
@@ -672,23 +890,27 @@ async function doBind(customer_id, btn) {
 }
 
 // ============ 接诊包弹窗 ============
-let pkgCustomerId = null, pkgLocked = false;
-async function openPkg(customer_id) {
+let pkgCustomerId = null, pkgLocked = false, pkgDate = null;
+async function openPkg(customer_id, service_date) {
   pkgCustomerId = customer_id;
+  pkgDate = service_date || null;
   document.getElementById('pkgMsg').textContent = '';
   document.getElementById('pkgMask').classList.add('show');
   document.getElementById('pkgBound').innerHTML = '加载中…';
   document.getElementById('pkgUnbound').innerHTML = '';
   await refreshPkg();
 }
-function closePkg(){ document.getElementById('pkgMask').classList.remove('show'); pkgCustomerId=null; }
+function closePkg(){ document.getElementById('pkgMask').classList.remove('show'); pkgCustomerId=null; pkgDate=null; }
 
 async function refreshPkg() {
-  const r = await fetch(BASE + '/api/consultant/session/preview?customer_id=' + pkgCustomerId);
+  const qs = pkgDate ? ('&date=' + encodeURIComponent(pkgDate)) : '';
+  const r = await fetch(BASE + '/api/consultant/session/preview?customer_id=' + pkgCustomerId + qs);
   const d = await r.json();
   if (d.error) { document.getElementById('pkgBound').innerHTML = '<div class="msg err">'+d.error+'</div>'; return; }
   pkgLocked = !!d.locked;
   document.getElementById('pkgTitle').textContent = '接诊包 · ' + d.customer.name;
+  const ubt = document.getElementById('pkgUnboundTitle');
+  if (ubt) ubt.textContent = `本人 ${d.service_date} 未绑定录音（可加入本接诊包）`;
   document.getElementById('pkgSubtitle').textContent =
     d.service_date + (pkgLocked ? ' · 已锁定（如需修改请联系管理员）' : ' · 未锁定');
   const startBtn = document.getElementById('pkgStartBtn');
@@ -697,13 +919,22 @@ async function refreshPkg() {
   const unbound = d.unbound || [];
   document.getElementById('pkgBound').innerHTML = bound.length ? bound.map(x => {
     const audio = x.audio_url ? `<audio controls preload="none" src="${x.audio_url}" style="max-width:180px;height:28px"></audio>` : '';
-    const removeBtn = pkgLocked ? '' :
+    const isPending = !!x.pending_rebind_request_id;
+    const removeBtn = (pkgLocked || isPending) ? '' :
       `<button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;padding:3px 8px;font-size:12px" onclick="pkgRemove(${x.id}, this)">移除</button>`;
+    let rebindBtn;
+    if (isPending) {
+      rebindBtn = `<span class="tag" style="background:#fef3e0;color:#e67e22">⏳ 换绑审批中</span>`;
+    } else if (pkgLocked) {
+      rebindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick='openRebind(${JSON.stringify({rid:x.id, recorded_at:x.recorded_at, duration_label:x.duration_label})}, true)'>申请换绑</button>`;
+    } else {
+      rebindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick='openRebind(${JSON.stringify({rid:x.id, recorded_at:x.recorded_at, duration_label:x.duration_label})}, false)'>换绑</button>`;
+    }
     return `<div class="pkg-rec">
       <span style="min-width:130px">${x.recorded_at||'—'}</span>
       <span>${x.duration_label||''}</span>
       <span class="tag">${x.asr_status||'pending'}</span>
-      ${audio}${removeBtn}
+      ${audio}${rebindBtn}${removeBtn}
     </div>`;
   }).join('') : '<div class="empty-tip">接诊包内还没有录音</div>';
 
@@ -785,8 +1016,147 @@ async function requestDelRec(rid, btn) {
   }
 }
 
+// ============ 改接诊日期 ============
+let editDateDr = null;
+function openEditDate(x) {
+  editDateDr = x;
+  document.getElementById('editDateInfo').innerHTML =
+    `顾客：<b>${x.name}</b><br>原日期：${x.service_date}` +
+    (x.recording_count ? `<br><span style="color:#e74c3c">⚠ 已绑定 ${x.recording_count} 段录音，确认后会自动解绑</span>` : '');
+  const inp = document.getElementById('editDateInput');
+  const cur = new Date(x.service_date);
+  const min = new Date(cur); min.setDate(cur.getDate()-7);
+  const max = new Date(); // 今天
+  inp.min = _fmtYMD(min);
+  inp.max = _fmtYMD(max);
+  inp.value = x.service_date;
+  document.getElementById('editDateMsg').textContent = '';
+  document.getElementById('editDateMask').classList.add('show');
+}
+function closeEditDate(){ document.getElementById('editDateMask').classList.remove('show'); editDateDr = null; }
+async function confirmEditDate() {
+  if (!editDateDr) return;
+  const newDate = document.getElementById('editDateInput').value;
+  if (!newDate) { document.getElementById('editDateMsg').textContent='请选日期'; return; }
+  if (newDate === editDateDr.service_date) { closeEditDate(); return; }
+  if (editDateDr.recording_count && !confirm(`将解绑 ${editDateDr.recording_count} 段录音并改日期到 ${newDate}，确认？`)) return;
+  const btn = document.getElementById('editDateConfirm'); btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception/' + editDateDr.id + '/date', {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({date: newDate}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeEditDate();
+    loadReception();
+    loadPending();
+  } catch (e) {
+    document.getElementById('editDateMsg').textContent = e.message;
+    document.getElementById('editDateMsg').className = 'msg err';
+  } finally { btn.disabled = false; }
+}
+
+// ============ 换绑 / 申请换绑 ============
+let rebindRid = null;
+let rebindNeedsApproval = false;  // true=申请换绑, false=直接换绑
+async function openRebind(info, needsApproval) {
+  rebindRid = info.rid;
+  rebindNeedsApproval = !!needsApproval;
+  document.querySelector('#rebindMask h3').textContent = rebindNeedsApproval ? '申请换绑（需管理员审批）' : '直接换绑';
+  document.querySelector('#rebindMask .muted').innerHTML = rebindNeedsApproval
+    ? '已开始分析，换绑需管理员审批，<b>提交后不能撤回</b>。同意后旧分析作废，需要重新分析。'
+    : '未开始分析，可直接换绑。换绑后录音会移到新顾客的接诊包。';
+  // 理由块：仅审批模式需要
+  const reasonLabel = document.querySelector('#rebindMask div[style*="margin:6px 0 4px"]:last-of-type, #rebindMask textarea');
+  // 简化：通过 id 找
+  const ta = document.getElementById('rebindReason');
+  ta.style.display = rebindNeedsApproval ? '' : 'none';
+  if (ta.previousElementSibling) ta.previousElementSibling.style.display = rebindNeedsApproval ? '' : 'none';
+  document.getElementById('rebindRecInfo').innerHTML =
+    `录音：${info.recorded_at || '—'} · ${info.duration_label || ''}`;
+  ta.value = '';
+  document.getElementById('rebindMsg').textContent = '';
+  const cl = document.getElementById('rebindCustList');
+  cl.innerHTML = '<div class="empty-tip">加载中…</div>';
+  const rm = document.getElementById('rebindMask');
+  rm.style.zIndex = '60';   // 盖在接诊包弹窗之上
+  rm.classList.add('show');
+  // 录音日期 = 当前 pkg 包的 service_date
+  const recDate = pkgDate || _todayStr();
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception?date=' + encodeURIComponent(recDate));
+    const d = await r.json();
+    const items = (d.items || []).filter(x => x.customer_id !== pkgCustomerId);
+    if (!items.length) {
+      cl.innerHTML = `<div class="empty-tip">${recDate} 当天没有其他可换绑的客人。请先关闭→补登${recDate}的客人</div>`;
+    } else {
+      cl.innerHTML = items.map(x => `
+        <label style="display:flex;align-items:center;padding:6px 8px;border-bottom:1px solid #f0f0f0;cursor:pointer">
+          <input type="radio" name="rebindCust" value="${x.customer_id}" style="margin-right:8px">
+          <b>${x.name}</b> <span class="muted" style="font-size:12px;margin-left:6px">${x.phone_tail?'尾号'+x.phone_tail:''}</span>
+        </label>`).join('');
+    }
+  } catch (e) {
+    cl.innerHTML = '<div class="msg err">加载失败：'+e.message+'</div>';
+  }
+}
+function closeRebind(){ document.getElementById('rebindMask').classList.remove('show'); rebindRid = null; }
+async function submitRebind() {
+  const sel = document.querySelector('input[name="rebindCust"]:checked');
+  const msg = document.getElementById('rebindMsg');
+  if (!sel) { msg.textContent='请选择换绑目标顾客'; msg.className='msg err'; return; }
+  const tcid = parseInt(sel.value, 10);
+  if (rebindNeedsApproval) {
+    const reason = document.getElementById('rebindReason').value.trim();
+    if (!reason) { msg.textContent='请填写换绑理由'; msg.className='msg err'; return; }
+    if (!confirm('提交后不能撤回，旧分析会作废需重新分析。确定提交？')) return;
+    const btn = document.getElementById('rebindSubmitBtn'); btn.disabled = true;
+    try {
+      const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/rebind_request', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({to_customer_id: tcid, reason}),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      msg.textContent = '已提交，等待管理员审批。'; msg.className='msg';
+      setTimeout(() => { closeRebind(); refreshPkg(); loadReception(); }, 800);
+    } catch (e) {
+      msg.textContent = e.message; msg.className='msg err';
+    } finally { btn.disabled = false; }
+  } else {
+    if (!confirm('确定直接换绑到该顾客？')) return;
+    const btn = document.getElementById('rebindSubmitBtn'); btn.disabled = true;
+    try {
+      const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/direct_rebind', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({to_customer_id: tcid}),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error);
+      closeRebind();
+      // 老接诊包可能已删，切到新接诊包视图
+      if (d.new_session_id) {
+        pkgCustomerId = tcid;
+        refreshPkg();
+      } else {
+        refreshPkg();
+      }
+      loadReception();
+    } catch (e) {
+      msg.textContent = e.message; msg.className='msg err';
+    } finally { btn.disabled = false; }
+  }
+}
+
+// ============ 查看分析结果 ============
+function viewAnalysis(sessionId) {
+  if (!sessionId) { alert('尚无 session'); return; }
+  location.href = BASE + '/session/' + sessionId;
+}
+
 loadReception();
-setInterval(loadReception, 20000);
+setInterval(() => { if (!currentReceptionDate) loadReception(); }, 20000);
 </script>
 </body>
 </html>

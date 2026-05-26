@@ -57,6 +57,7 @@ html,body{overflow-x:hidden;max-width:100%}
     <button data-tab="consultants" class="active">顾问管理 <span class="tab-count" id="consCount"></span></button>
     <button data-tab="customers">顾客管理 <span class="tab-count" id="custCount"></span></button>
     <button data-tab="delete-requests">删除申请 <span id="drBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
+    <button data-tab="rebind-requests">换绑申请 <span id="rbBadge" style="display:none;background:#e67e22;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
     {% if role == 'super' %}<button data-tab="companies">公司管理</button>{% endif %}
   </div>
   <style>.tab-count{font-size:11px;color:#888;font-weight:normal;margin-left:2px}</style>
@@ -188,6 +189,26 @@ html,body{overflow-x:hidden;max-width:100%}
       <div class="msg" id="drMsg"></div>
     </div>
   </div>
+
+  <!-- 换绑申请 -->
+  <div id="tab-rebind-requests" class="panel">
+    <div class="card">
+      <h3>录音换绑申请 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadRebindRequests()">刷新</button></h3>
+      <div class="row" style="margin-bottom:10px">
+        <select id="rbStatusFilter" onchange="loadRebindRequests()" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
+          <option value="pending">待审批</option>
+          <option value="approved">已通过</option>
+          <option value="rejected">已拒绝</option>
+        </select>
+        <span class="muted" style="margin-left:10px;font-size:12px">同意后会移动录音、删除空接诊登记并作废相关旧分析</span>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>申请时间</th><th>顾问</th><th>录音日期</th><th>试听</th><th>原顾客</th><th>→ 目标顾客</th><th>理由</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="rbBody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
+      </table>
+      <div class="msg" id="rbMsg"></div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -200,6 +221,7 @@ const _tabLoaders = {
   consultants: () => loadConsultants(),
   customers: () => loadCustomers(),
   'delete-requests': () => loadDeleteRequests(),
+  'rebind-requests': () => loadRebindRequests(),
   companies: () => (typeof loadCompanies === 'function') && loadCompanies(),
 };
 const _tabLoaded = {};
@@ -543,6 +565,61 @@ async function rejectDeleteRequest(reqId) {
   else showMsg('drMsg', d.error || '操作失败', true);
 }
 
+async function loadRebindRequests() {
+  const status = document.getElementById('rbStatusFilter').value;
+  const tb = document.getElementById('rbBody');
+  tb.innerHTML = '<tr><td colspan="9" class="muted">加载中…</td></tr>';
+  const r = await fetch(BASE + '/api/admin/rebind_requests?status=' + status);
+  const d = await r.json();
+  const list = d.requests || [];
+  if (status === 'pending') {
+    const badge = document.getElementById('rbBadge');
+    if (list.length > 0) { badge.textContent = list.length; badge.style.display = ''; }
+    else badge.style.display = 'none';
+  }
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="9" class="muted">暂无记录</td></tr>'; return; }
+  tb.innerHTML = list.map(x => {
+    const audio = x.audio_url
+      ? `<audio controls preload="none" src="${x.audio_url}" style="max-width:160px;height:28px"></audio>`
+      : '—';
+    const ops = status === 'pending'
+      ? `<button class="btn" style="padding:3px 10px;font-size:12px" onclick="approveRebindRequest(${x.id})">通过</button>
+         <button class="btn danger" style="padding:3px 10px;font-size:12px;margin-left:4px" onclick="rejectRebindRequest(${x.id})">拒绝</button>`
+      : (x.status === 'approved' ? '<span style="color:var(--green)">已通过</span>' : `<span style="color:#e74c3c">已拒绝${x.reject_reason ? '：' + x.reject_reason : ''}</span>`);
+    return `<tr>
+      <td class="muted">${x.created_at || '—'}</td>
+      <td>${x.requester_name || '—'}</td>
+      <td>${x.rec_date || '—'}</td>
+      <td>${audio}</td>
+      <td>${x.from_customer_name || '—'}</td>
+      <td><b>${x.to_customer_name || '—'}</b></td>
+      <td>${x.reason || '—'}</td>
+      <td>${x.status === 'pending' ? '待审批' : x.status === 'approved' ? '已通过' : '已拒绝'}</td>
+      <td>${ops}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function approveRebindRequest(reqId) {
+  if (!confirm('通过此换绑申请？\n- 录音将被移到目标顾客接诊包\n- 相关旧分析结果会作废，需要重新分析\n- 若原接诊登记变为零录音将被删除')) return;
+  const r = await fetch(BASE + '/api/admin/rebind_requests/' + reqId + '/approve', {method:'POST'});
+  const d = await r.json();
+  if (d.ok) loadRebindRequests();
+  else showMsg('rbMsg', d.error || '操作失败', true);
+}
+async function rejectRebindRequest(reqId) {
+  const reason = prompt('驳回原因（必填）：');
+  if (reason === null) return;
+  if (!reason.trim()) { alert('请填写驳回原因'); return; }
+  const r = await fetch(BASE + '/api/admin/rebind_requests/' + reqId + '/reject', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({reject_reason: reason.trim()}),
+  });
+  const d = await r.json();
+  if (d.ok) loadRebindRequests();
+  else showMsg('rbMsg', d.error || '操作失败', true);
+}
+
 // 页面初始化：只拉一次轻量统计，更新 tab 标签和待审批 badge；
 // 顾问/顾客列表懒加载（首次进入对应 tab 时才请求）
 function refreshAdminStats() {
@@ -560,6 +637,12 @@ function refreshAdminStats() {
   });
 }
 refreshAdminStats();
+// 拉一次换绑申请待审批计数
+fetch(BASE + '/api/admin/rebind_requests?status=pending').then(r=>r.json()).then(d=>{
+  const list = (d && d.requests) || [];
+  const b = document.getElementById('rbBadge');
+  if (b) { if (list.length>0) { b.textContent = list.length; b.style.display=''; } else b.style.display='none'; }
+}).catch(()=>{});
 // 默认 tab 顾问，立即加载它的列表
 activateTab('consultants');
 </script>

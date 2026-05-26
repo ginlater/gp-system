@@ -290,7 +290,10 @@
       "Bash(sudo -n tee -a /etc/fstab)",
       "Read(//etc/**)",
       "Bash(systemctl cat *)",
-      "Bash(sudo tee /etc/systemd/system/gongpai.service)"
+      "Bash(sudo tee /etc/systemd/system/gongpai.service)",
+      "Bash(systemctl --user list-units --type=service)",
+      "Bash(sudo systemctl status gp-system --no-pager)",
+      "Bash(systemctl restart *)"
     ]
   }
 }

@@ -25,7 +25,7 @@
         <div class="nav-tag"><span class="circle"></span> {{ sess.service_date or '日期未知' }}</div>
         <div class="nav-tag">销售复盘 · 内部机密</div>
         <div class="nav-tag {% if sess.display_status == 'running' %}live{% endif %}" id="analysisStatusTag">
-          分析: {{ {'idle':'未分析','queued':'排队中','running':'分析中','done':'已完成','failed':'失败'}.get(sess.display_status, sess.display_status) }}
+          分析: {{ {'idle':'未分析','queued':'排队中','running':'分析中','done':'已完成','failed':'失败','stuck':'中断'}.get(sess.display_status, sess.display_status) }}
           {% if sess.analysis_model %} · {{ sess.analysis_model }}{% endif %}
         </div>
       </div>
@@ -76,8 +76,26 @@
       <source id="recAudioSrc" src="" type="audio/mpeg">
     </audio>
 
-    <details class="rec-transcript" id="recTranscript">
-      <summary>▶ 查看文字转录</summary>
+    <div id="speakerWarnBox" style="display:none;margin:10px 0;padding:10px 12px;border:1px solid #f1c40f;background:rgba(241,196,15,.10);border-radius:5px;font-size:12.5px;line-height:1.55">
+      <div style="font-weight:600;color:#b8860b;margin-bottom:4px">⚠ ASR 检测到 <span id="spkCount">?</span> 个说话人（&gt;2），分析已暂停</div>
+      <div style="color:#7a6a30">可能是录音里混入了第三人。请通过下方转录核对，然后选择：</div>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        {% if role in ('admin','super','consultant') %}
+        <button id="spkKeepBtn" onclick="confirmSpeakers('keep')"
+                style="background:#27ae60;color:#fff;border:none;border-radius:4px;padding:5px 12px;font-size:12px;cursor:pointer;font-weight:600">
+          ✓ 确认照常分析
+        </button>
+        <button id="spkUnbindBtn" onclick="confirmSpeakers('unbind')"
+                style="background:#fff;color:#e67e22;border:1px solid #e67e22;border-radius:4px;padding:5px 12px;font-size:12px;cursor:pointer">
+          解绑此录音
+        </button>
+        {% endif %}
+        <span id="spkMsg" style="font-size:12px;color:#888;align-self:center"></span>
+      </div>
+    </div>
+
+    <details class="rec-transcript" id="recTranscript" open>
+      <summary>▶ 查看文字转录（含说话人标记）</summary>
       <div class="rec-transcript-body" id="recTranscriptBody">{{ (recordings[0].asr_transcript or '（暂无转录文本）')|replace('\n','<br>')|safe }}</div>
     </details>
 
@@ -868,6 +886,7 @@
 const SESSION_ID = {{ sess.id }};
 const RECORDINGS = {{ recordings|tojson }};
 const BASE = {{ request.script_root|tojson }};
+const ROLE = {{ role|tojson }};
 async function loadTaskStatus() {
   try {
     const resp = await fetch(`${BASE}/api/session/${SESSION_ID}/tasks`);
@@ -975,6 +994,16 @@ async function switchSeg(idx) {
   const sel = document.getElementById('segSelect');
   if (sel && parseInt(sel.value, 10) !== idx) sel.value = String(idx);
   if (tbody) tbody.innerHTML = (rec.asr_transcript || '（暂无转录文本）').replace(/\n/g, '<br>');
+  // 说话人警告条
+  const warnBox = document.getElementById('speakerWarnBox');
+  if (warnBox) {
+    const needConfirm = rec.asr_speaker_warning && !rec.speaker_confirmed;
+    warnBox.style.display = needConfirm ? 'block' : 'none';
+    const spk = document.getElementById('spkCount');
+    if (spk) spk.textContent = rec.asr_speaker_count || '?';
+    const msg = document.getElementById('spkMsg');
+    if (msg) msg.textContent = '';
+  }
   // 立即停止当前播放并清空，避免上一段继续响
   try { audio.pause(); } catch (_) {}
   const wasPlaying = !audio.paused && _currentSegIdx >= 0 && _currentSegIdx !== idx;
@@ -1000,6 +1029,58 @@ async function switchSeg(idx) {
     alert('加载录音失败：' + e.message);
   }
 }
+
+// 说话人确认 / 解绑
+async function confirmSpeakers(action) {
+  const rec = RECORDINGS[_currentSegIdx];
+  if (!rec) return;
+  const keepBtn = document.getElementById('spkKeepBtn');
+  const unbindBtn = document.getElementById('spkUnbindBtn');
+  const msg = document.getElementById('spkMsg');
+  if (action === 'unbind' && !confirm('解绑后该录音将从本接诊移除，回到"未入库"列表。确认？')) return;
+  [keepBtn, unbindBtn].forEach(b => { if (b) b.disabled = true; });
+  if (msg) msg.textContent = '提交中…';
+  // admin/super 走 /api/recording/，consultant 走 /api/consultant/recordings/
+  const url = (ROLE === 'consultant')
+    ? `${BASE}/api/consultant/recordings/${rec.id}/confirm_speakers`
+    : `${BASE}/api/recording/${rec.id}/confirm_speakers`;
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({action}),
+    });
+    const d = await resp.json();
+    if (d.error) {
+      if (msg) msg.textContent = '失败：' + d.error;
+      [keepBtn, unbindBtn].forEach(b => { if (b) b.disabled = false; });
+      return;
+    }
+    if (action === 'keep') {
+      RECORDINGS[_currentSegIdx].speaker_confirmed = 1;
+      const tip = d.analysis_triggered ? '已确认，分析已开始重跑…' : '已确认';
+      if (msg) msg.textContent = tip;
+      setTimeout(() => location.reload(), 800);
+    } else {
+      if (msg) msg.textContent = '已解绑';
+      setTimeout(() => location.href = BASE + '/', 600);
+    }
+  } catch (e) {
+    if (msg) msg.textContent = '失败：' + e;
+    [keepBtn, unbindBtn].forEach(b => { if (b) b.disabled = false; });
+  }
+}
+
+// 进入页面时若有待确认录音，自动打开面板定位到该录音
+(function autoOpenIfNeedsConfirm() {
+  if (!RECORDINGS || !RECORDINGS.length) return;
+  const idx = RECORDINGS.findIndex(r => r.asr_speaker_warning && !r.speaker_confirmed);
+  if (idx < 0) return;
+  const panel = document.getElementById('recPanel');
+  if (panel) panel.classList.add('open');
+  switchSeg(idx);
+})();
 
 // 点外部关闭面板
 document.addEventListener('click', function(e) {

@@ -198,15 +198,17 @@ body.skin-cute .float-decor{
     <button onclick="loadList(1)">筛选</button>
     <button class="sec" onclick="resetFilter()">重置</button>
     <div style="flex:1"></div>
-    <button class="sec" onclick="scanOss()">扫描 OSS</button>
-    <button onclick="document.getElementById('uploadInput').click()">上传录音</button>
+    <button class="sec" onclick="scanOss()" style="display:none">扫描 OSS</button>
+    <button onclick="document.getElementById('uploadInput').click()" style="display:none">上传录音</button>
     <input id="uploadInput" type="file" multiple accept="audio/*" style="display:none" onchange="uploadFiles()">
   </div>
 
   {% if role in ['admin','super'] %}
   <div id="batchBar" style="display:none;margin:8px 0;padding:8px 12px;background:rgba(74,144,217,.08);border:1px solid rgba(74,144,217,.3);border-radius:5px;display:flex;align-items:center;gap:10px;font-size:13px">
     <span>已选 <b id="batchCount" style="color:var(--blue)">0</b> 条</span>
-    <button onclick="batchAnalyze()" style="background:var(--blue);color:#fff;border:none;border-radius:4px;padding:5px 14px;font-size:13px;cursor:pointer;font-weight:600">一键分析</button>
+    <button onclick="batchAnalyze(false)" style="background:var(--blue);color:#fff;border:none;border-radius:4px;padding:5px 14px;font-size:13px;cursor:pointer;font-weight:600">一键分析</button>
+    <button onclick="batchAnalyze(true)" title="忽略 ASR 说话人警告（视为误判），强制分析所选接诊"
+            style="background:#e67e22;color:#fff;border:none;border-radius:4px;padding:5px 14px;font-size:13px;cursor:pointer;font-weight:600">强制分析</button>
     <button class="sec" onclick="clearSelection()" style="font-size:12px">清空选择</button>
     <span id="batchMsg" style="color:var(--text-mute);margin-left:auto"></span>
   </div>
@@ -218,6 +220,7 @@ body.skin-cute .float-decor{
     <span class="pill" data-st="queued">排队中 <span class="cnt" id="cnt-queued">·</span></span>
     <span class="pill" data-st="done">已完成 <span class="cnt" id="cnt-done">·</span></span>
     <span class="pill" data-st="failed">失败 <span class="cnt" id="cnt-failed">·</span></span>
+    <span class="pill" data-st="stuck">中断 <span class="cnt" id="cnt-stuck">·</span></span>
     <span class="pill" data-st="idle">未分析 <span class="cnt" id="cnt-idle">·</span></span>
   </div>
 
@@ -335,21 +338,45 @@ function clearSelection() {
   updateBatchBar();
 }
 
-function batchAnalyze() {
+function batchAnalyze(forceConfirm) {
   const ids = Array.from(selectedIds);
   if (!ids.length) return;
-  if (!confirm(`确认对所选 ${ids.length} 条接诊一键重跑分析？`)) return;
+  const tip = forceConfirm
+    ? `【强制分析】将把所选 ${ids.length} 条接诊里所有 ASR 说话人警告的录音视为误判强制确认，并触发分析。确认？`
+    : `确认对所选 ${ids.length} 条接诊一键重跑分析？`;
+  if (!confirm(tip)) return;
   const msg = document.getElementById('batchMsg');
   msg.textContent = '提交中…';
   fetch(BASE + '/api/sessions/batch_analyze', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ids})
+    body: JSON.stringify({ids, force_confirm_speakers: !!forceConfirm})
   }).then(r => r.json()).then(d => {
     if (d.error) { msg.textContent = '失败：' + d.error; return; }
-    msg.textContent = `已入队 ${d.queued}/${d.total}` + (d.failed && d.failed.length ? `，失败 ${d.failed.length}` : '');
+    const reasonMap = {
+      speaker_unconfirmed: '说话人未确认',
+      asr_not_done: 'ASR未完成',
+      no_recording: '无录音',
+      not_found: '不存在',
+      unknown: '未知原因',
+    };
+    let txt = `已入队 ${d.queued}/${d.total}`;
+    if (d.forced_confirmed_recordings) txt += `（已强制确认 ${d.forced_confirmed_recordings} 段录音）`;
+    if (d.skipped && d.skipped.length) {
+      const cnt = {};
+      d.skipped.forEach(x => { const r = (x.reason||'unknown'); cnt[r] = (cnt[r]||0)+1; });
+      const parts = Object.entries(cnt).map(([k,v]) => `${reasonMap[k]||k} ${v}`);
+      txt += `，跳过 ${d.skipped.length}（${parts.join('、')}）`;
+    }
+    if (d.failed && d.failed.length) txt += `，失败 ${d.failed.length}`;
+    msg.textContent = txt;
+    // 有跳过/失败时弹窗，避免提示条随 clearSelection 立刻被隐藏看不到
+    if ((d.skipped && d.skipped.length) || (d.failed && d.failed.length)) {
+      alert(txt);
+    }
     clearSelection();
     loadList(curPage);
+    refreshCounts();
   }).catch(e => { msg.textContent = '失败：' + e; });
 }
 
@@ -372,6 +399,7 @@ function fmtStatus(s, progress, row) {
     running: ['分析中',  's-running'],
     done:    ['已完成',  's-done'],
     failed:  ['失败',    's-failed'],
+    stuck:   ['中断',    's-failed'],
   };
   const [t, c] = map[s] || [s || '—', 's-idle'];
   const tip = progress ? ` title="${progress.replace(/"/g,'&quot;')}"` : '';
@@ -390,7 +418,7 @@ function fmtStatus(s, progress, row) {
 }
 
 function setStatusFilter(st) {
-  if (st === 'idle' || st === 'queued' || st === 'running' || st === 'done' || st === 'failed') {
+  if (st === 'idle' || st === 'queued' || st === 'running' || st === 'done' || st === 'failed' || st === 'stuck') {
     curStatus = st;
   } else {
     curStatus = '';
@@ -411,6 +439,7 @@ function refreshCounts() {
     document.getElementById('cnt-queued').textContent  = c.queued  ?? 0;
     document.getElementById('cnt-done').textContent    = c.done    ?? 0;
     document.getElementById('cnt-failed').textContent  = c.failed  ?? 0;
+    document.getElementById('cnt-stuck').textContent   = c.stuck   ?? 0;
     document.getElementById('cnt-idle').textContent    = c.idle    ?? 0;
   });
 }

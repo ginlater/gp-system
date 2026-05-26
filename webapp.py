@@ -283,6 +283,30 @@ CREATE TABLE IF NOT EXISTS delete_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_dr_status ON delete_requests(status);
 CREATE INDEX IF NOT EXISTS idx_dr_recording ON delete_requests(recording_id);
+
+CREATE TABLE IF NOT EXISTS rebind_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    recording_id INTEGER NOT NULL,
+    rec_date TEXT,
+    requester_user_id INTEGER NOT NULL,
+    requester_name TEXT,
+    from_session_id INTEGER,
+    from_customer_id INTEGER,
+    from_customer_name TEXT,
+    to_customer_id INTEGER NOT NULL,
+    to_customer_name TEXT,
+    reason TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
+    reviewer_user_id INTEGER,
+    reviewer_name TEXT,
+    reviewed_at TEXT,
+    reject_reason TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime')),
+    FOREIGN KEY (recording_id) REFERENCES recordings(id)
+);
+CREATE INDEX IF NOT EXISTS idx_rebind_status ON rebind_requests(status);
+CREATE INDEX IF NOT EXISTS idx_rebind_recording ON rebind_requests(recording_id);
 """
 
 
@@ -586,6 +610,17 @@ def submit_analysis(session_id, signature, *args, **kwargs):
             return run_session_analysis(session_id, signature, *args, **kwargs)
         except Exception as e:
             print(f"[submit_analysis] session={session_id} 异常: {e}", flush=True)
+            try:
+                db_write(
+                    """UPDATE sessions SET analysis_status='failed',
+                       analysis_error=?,
+                       analysis_progress=NULL,
+                       analysis_finished_at=datetime('now','localtime')
+                       WHERE id=? AND analysis_status IN ('running','queued','pending')""",
+                    (f"未预期异常: {str(e)[:300]}", session_id),
+                )
+            except Exception:
+                pass
         finally:
             with _analysis_inflight_lock:
                 _analysis_inflight -= 1
@@ -2184,7 +2219,7 @@ CALL_GROUPS = {
 # preflight 先产判断底稿，再按下面分块各自基于底稿组装正式字段；Call 3 输入
 # 本就是结构化摘要，不做 preflight，直接分块。
 CALL_CHUNKS = {
-    1: [["T1", "T2"], ["T3", "T4"]],
+    1: [["T1"], ["T2"], ["T3", "T4"]],
     2: [["T5"], ["T6"], ["T7", "T8"]],
     3: [["T9"], ["T10"], ["T11"]],
 }
@@ -2493,7 +2528,7 @@ def _deep_json_unwrap(node):
 
 
 def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None,
-                   enable_thinking=False, stage_label=""):
+                   enable_thinking=False, stage_label="", temperature=0.3):
     """调用 DeepSeek（OpenAI 兼容），不走代理，返回 tool_calls[0].function.arguments dict。
 
     max_tokens 语义是"输出 token 预算"；对 V4 思考模式会在内部加 16K thinking buffer。
@@ -2529,7 +2564,7 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
             "function": {"name": tool["name"]},
         },
         "max_tokens": out_budget,
-        "temperature": 0.3,
+        "temperature": temperature,
     }
     # V4 thinking 模式：只在显式开启时启用（默认关闭，避免 token 截断）
     if is_v4 and enable_thinking:
@@ -2598,7 +2633,7 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
 
 
 def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None,
-              enable_thinking=False, stage_label=""):
+              enable_thinking=False, stage_label="", temperature=0.3):
     """统一入口：根据 model 的 provider 调 Claude 或 DeepSeek。"""
     provider = MODEL_PROVIDER.get(model)
     if provider == "anthropic":
@@ -2607,24 +2642,28 @@ def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None,
     if provider == "deepseek":
         return _call_deepseek(model, system_prompt, user_prompt, tool=tool,
                               max_tokens=max_tokens, enable_thinking=enable_thinking,
-                              stage_label=stage_label)
+                              stage_label=stage_label, temperature=temperature)
     raise RuntimeError(f"未知 provider for model {model}")
 
 
 def _call_llm_with_retry(model, system_prompt, user_prompt, tool, max_tokens=None,
-                          enable_thinking=False, stage_label="", max_attempts=2):
+                          enable_thinking=False, stage_label="", max_attempts=3):
     """带通用重试的 LLM 调用。
     适用：DeepSeek tool_calls 偶发 arguments 为空/坏 JSON / 解析后空 dict。
     重试条件：_call_llm 抛错，或返回空/非 dict 结果。
+    重试时抖动 temperature（0.3 → 0.6 → 0.9），打破 V4 tool_choice=auto 卡在空响应的循环。
     成功路径不变；最终仍失败则抛出最后一次错误。
     """
     last_err = None
     for attempt in range(1, max_attempts + 1):
+        # 第一次走默认 0.3；重试时抖一下，避免复现同样的空 tool_calls
+        temperature = 0.3 + 0.3 * (attempt - 1)
         try:
             result = _call_llm(model, system_prompt, user_prompt, tool=tool,
                                max_tokens=max_tokens,
                                enable_thinking=enable_thinking,
-                               stage_label=stage_label)
+                               stage_label=stage_label,
+                               temperature=temperature)
             if not result or not isinstance(result, dict):
                 last_err = RuntimeError(
                     f"[{stage_label}] attempt {attempt}/{max_attempts} "
@@ -2637,7 +2676,7 @@ def _call_llm_with_retry(model, system_prompt, user_prompt, tool, max_tokens=Non
             return result
         except Exception as e:
             last_err = e
-            print(f"[{stage_label}] attempt {attempt}/{max_attempts} 失败: {e}; "
+            print(f"[{stage_label}] attempt {attempt}/{max_attempts} (temp={temperature:.1f}) 失败: {e}; "
                   + ("即将重试" if attempt < max_attempts else "不再重试"))
     raise last_err if last_err else RuntimeError(f"[{stage_label}] 未知失败")
 
@@ -3784,7 +3823,8 @@ def session_detail(sid):
     recs = db_fetchall("""
         SELECT id, oss_key, recorded_at, duration_label, size_bytes, source,
                asr_status, asr_transcript, asr_error,
-               asr_started_at, asr_finished_at
+               asr_started_at, asr_finished_at,
+               asr_speaker_count, asr_speaker_warning, speaker_confirmed
         FROM recordings WHERE session_id=?
         ORDER BY COALESCE(recorded_at, ''), id
     """, (sid,))
@@ -3835,18 +3875,42 @@ def session_detail(sid):
 
 
 # ============ API ============
+# ============ 分析状态分桶：单一真源 ============
+# 数据库 analysis_status 合法值（写入时应在此集合内，未识别值会在启动自检中打日志）
+_VALID_DB_STATUSES = {"pending", "queued", "running", "done", "failed", "outdated", None, ""}
+# 前端展示桶（pill / badge / 筛选 共用）
+_DISPLAY_BUCKETS = ("running", "queued", "done", "failed", "stuck", "idle")
+
+
+def _status_bucket(status, progress, has_result):
+    """Python 端：把 (analysis_status, progress, 是否有结果) 映射到 6 个展示桶。"""
+    if status in ("done", "failed", "running", "queued"):
+        return status
+    if status == "pending" and (progress or has_result):
+        return "stuck"
+    return "idle"
+
+
+def _status_bucket_sql(prefix="s."):
+    """SQL 端：与 _status_bucket 等价的 CASE 表达式，返回桶名字符串。"""
+    p = prefix
+    return (
+        "CASE "
+        f"WHEN {p}analysis_status='done'    THEN 'done' "
+        f"WHEN {p}analysis_status='failed'  THEN 'failed' "
+        f"WHEN {p}analysis_status='running' THEN 'running' "
+        f"WHEN {p}analysis_status='queued'  THEN 'queued' "
+        f"WHEN {p}analysis_status='pending' AND ("
+        f"  ({p}analysis_progress IS NOT NULL AND {p}analysis_progress<>'')"
+        f"  OR ({p}analysis_result IS NOT NULL AND {p}analysis_result<>'')"
+        ") THEN 'stuck' "
+        "ELSE 'idle' END"
+    )
+
+
 def _display_status(status, progress, has_result):
-    """把 (analysis_status, analysis_progress, 是否有结果) 映射成用户友好的四态。"""
-    if status == "done":
-        return "done"
-    if status == "failed":
-        return "failed"
-    if status == "running":
-        return "running"
-    # pending
-    if not progress and not has_result:
-        return "idle"
-    return "queued"
+    """向后兼容旧调用点；委托 _status_bucket。"""
+    return _status_bucket(status, progress, has_result)
 
 
 @app.route("/api/sessions")
@@ -3892,24 +3956,16 @@ def api_sessions():
     if date:
         where.append("s.service_date = ?")
         params.append(date)
-    # 状态筛选：?status=running,queued,done,failed,idle  （逗号分隔，多选）
+    # 状态筛选：?status=running,queued,done,failed,stuck,idle  （逗号分隔，多选）
+    # 用 _status_bucket_sql() 作为单一真源，与 pill 计数 / 行 badge 完全一致
     status_filter = (request.args.get("status") or "").strip()
     if status_filter:
-        wanted = {x.strip() for x in status_filter.split(",") if x.strip()}
-        clauses = []
-        for st in wanted:
-            if st == "idle":
-                # pending + 无 progress 无 result
-                clauses.append(
-                    "(s.analysis_status='pending' "
-                    "AND (s.analysis_progress IS NULL OR s.analysis_progress='') "
-                    "AND (s.analysis_result IS NULL OR s.analysis_result=''))"
-                )
-            elif st in ("queued", "running", "done", "failed"):
-                clauses.append("s.analysis_status=?")
-                params.append(st)
-        if clauses:
-            where.append("(" + " OR ".join(clauses) + ")")
+        wanted = [x.strip() for x in status_filter.split(",")
+                  if x.strip() in _DISPLAY_BUCKETS]
+        if wanted:
+            placeholders = ",".join(["?"] * len(wanted))
+            where.append(f"({_status_bucket_sql('s.')}) IN ({placeholders})")
+            params.extend(wanted)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     total_row = db_fetchone(
@@ -3991,30 +4047,28 @@ def api_sessions_status_counts():
             where.append("(s.company_id IS NULL OR s.company_id = ?)")
             params.append(cid)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    row = db_fetchone(f"""
-        SELECT
-          COUNT(*) AS total,
-          SUM(CASE WHEN s.analysis_status='running' THEN 1 ELSE 0 END) AS running,
-          SUM(CASE WHEN s.analysis_status='queued'  THEN 1 ELSE 0 END) AS queued,
-          SUM(CASE WHEN s.analysis_status='done'    THEN 1 ELSE 0 END) AS done,
-          SUM(CASE WHEN s.analysis_status='failed'  THEN 1 ELSE 0 END) AS failed,
-          SUM(CASE WHEN s.analysis_status='pending'
-                    AND (s.analysis_progress IS NULL OR s.analysis_progress='')
-                    AND (s.analysis_result IS NULL OR s.analysis_result='')
-                   THEN 1 ELSE 0 END) AS idle
+    bucket_expr = _status_bucket_sql("s.")
+    rows = db_fetchall(f"""
+        SELECT {bucket_expr} AS bucket, COUNT(*) AS c
         FROM sessions s {where_sql}
+        GROUP BY bucket
     """, tuple(params))
-    counts = dict(row) if row else {}
-    return jsonify({
-        "counts": {
-            "all":     counts.get("total")   or 0,
-            "running": counts.get("running") or 0,
-            "queued":  counts.get("queued")  or 0,
-            "done":    counts.get("done")    or 0,
-            "failed":  counts.get("failed")  or 0,
-            "idle":    counts.get("idle")    or 0,
-        }
-    })
+    counts = {b: 0 for b in _DISPLAY_BUCKETS}
+    for r in rows:
+        counts[r["bucket"]] = r["c"]
+    counts["all"] = sum(counts[b] for b in _DISPLAY_BUCKETS)
+    # 自检：6 桶之和必须等于 total，不等则记录详情
+    total_row = db_fetchone(
+        f"SELECT COUNT(*) AS c FROM sessions s {where_sql}", tuple(params)
+    )
+    actual_total = total_row["c"] if total_row else 0
+    if counts["all"] != actual_total:
+        app.logger.warning(
+            "status_counts mismatch: buckets_sum=%s real_total=%s buckets=%s",
+            counts["all"], actual_total, {b: counts[b] for b in _DISPLAY_BUCKETS},
+        )
+        counts["all"] = actual_total
+    return jsonify({"counts": counts})
 
 
 @app.route("/api/session/<int:sid>")
@@ -4027,7 +4081,8 @@ def api_session_get(sid):
     recs = db_fetchall("""
         SELECT id, oss_key, recorded_at, duration_label, size_bytes, source,
                asr_status, asr_transcript, asr_error,
-               asr_started_at, asr_finished_at
+               asr_started_at, asr_finished_at,
+               asr_speaker_count, asr_speaker_warning, speaker_confirmed
         FROM recordings WHERE session_id=?
         ORDER BY COALESCE(recorded_at, ''), id
     """, (sid,))
@@ -4434,14 +4489,32 @@ def api_sessions_batch_analyze():
     model = (data.get("model") or "").strip() or None
     if model and model not in MODEL_PROVIDER:
         return jsonify({"error": f"不支持的模型: {model}"}), 400
+    force_confirm = bool(data.get("force_confirm_speakers"))
 
     ok, skipped, failed = [], [], []
+    forced_recs = 0
     for sid in ids:
         row = db_fetchone("SELECT id FROM sessions WHERE id=?", (sid,))
         if not row:
-            skipped.append(sid)
+            skipped.append({"id": sid, "reason": "not_found"})
             continue
         try:
+            if force_confirm:
+                # 视 ASR 警告为误判，把本接诊下所有未确认的警告录音批量确认
+                pre = db_fetchone(
+                    """SELECT COUNT(*) AS n FROM recordings
+                       WHERE session_id=? AND asr_speaker_warning=1
+                         AND COALESCE(speaker_confirmed,0)=0""",
+                    (sid,),
+                )
+                if pre and pre["n"] > 0:
+                    db_write(
+                        """UPDATE recordings SET speaker_confirmed=1
+                           WHERE session_id=? AND asr_speaker_warning=1
+                             AND COALESCE(speaker_confirmed,0)=0""",
+                        (sid,),
+                    )
+                    forced_recs += pre["n"]
             db_write(
                 """UPDATE sessions SET analysis_status='pending',
                    analysis_signature=NULL, analysis_error=NULL,
@@ -4449,11 +4522,43 @@ def api_sessions_batch_analyze():
                 (sid,),
             )
             maybe_trigger_session_analysis(sid, model=model, force_refresh_shared=True)
-            ok.append(sid)
+            # 触发后再读一次状态，确认是否真的进了队列
+            after = db_fetchone(
+                "SELECT analysis_status FROM sessions WHERE id=?", (sid,)
+            )
+            new_st = (after or {}).get("analysis_status") if hasattr(after, "get") else (after["analysis_status"] if after else None)
+            if new_st in ("queued", "running", "done"):
+                ok.append(sid)
+            else:
+                # 仍是 pending —— 说明被 trigger 前置条件挡住
+                reason = "asr_not_done"
+                warn = db_fetchone(
+                    """SELECT COUNT(*) AS n FROM recordings
+                       WHERE session_id=? AND asr_speaker_warning=1
+                         AND COALESCE(speaker_confirmed,0)=0""",
+                    (sid,),
+                )
+                if warn and warn["n"] > 0:
+                    reason = "speaker_unconfirmed"
+                else:
+                    recs = db_fetchall(
+                        "SELECT asr_status FROM recordings WHERE session_id=?", (sid,)
+                    )
+                    if not recs:
+                        reason = "no_recording"
+                    elif all(r["asr_status"] == "done" for r in recs):
+                        reason = "unknown"
+                skipped.append({"id": sid, "reason": reason})
+                # 让它别留 "排队中…" 假象，回到 stuck 之前的状态（仍 pending 但清掉假提示）
+                db_write(
+                    "UPDATE sessions SET analysis_progress=? WHERE id=?",
+                    (f"未触发：{reason}", sid),
+                )
         except Exception as e:
             failed.append({"id": sid, "error": str(e)})
     return jsonify({"ok": ok, "skipped": skipped, "failed": failed,
-                    "total": len(ids), "queued": len(ok)})
+                    "total": len(ids), "queued": len(ok),
+                    "forced_confirmed_recordings": forced_recs})
 
 
 @app.route("/api/session/<int:sid>/evaluate", methods=["POST"])
@@ -5179,6 +5284,7 @@ def api_consultant_recordings_pending():
             d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600)
         except Exception:
             d["audio_url"] = None
+        d["rec_date"] = _rec_date_of(r)
         out.append(d)
     return jsonify({"recordings": out})
 
@@ -5202,6 +5308,32 @@ def _check_phone_tail(s):
     if len(s) != 4 or not s.isdigit():
         return None
     return s
+
+
+# 补登/改日期范围
+BACKFILL_DAYS_BACK = 7   # 补登：今天 ~ 今天-7
+EDIT_DAYS_RANGE = 7      # 改接诊日期：±7天且不超今天
+
+
+def _parse_ymd(s):
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def _rec_date_of(rec_row):
+    """录音的实际日期 YYYY-MM-DD：优先 recorded_at 前 8 位，否则 created_at，否则今天"""
+    if rec_row is None:
+        return _today_str()
+    ra = (rec_row["recorded_at"] or "") if "recorded_at" in rec_row.keys() else ""
+    d = _norm_date(ra[:8] if len(ra) >= 8 else "")
+    if d:
+        return d
+    ca = rec_row["created_at"] if "created_at" in rec_row.keys() else None
+    if ca and len(ca) >= 10:
+        return ca[:10]
+    return _today_str()
 
 
 @app.route("/api/consultant/recordings/<int:rid>/bind", methods=["POST"])
@@ -5286,11 +5418,18 @@ def api_consultant_today_reception():
             (advisor, r["name"], date, cid),
         )
         rec_count = 0
+        pending_rebind = 0
         if sess:
             cnt = db_fetchone(
                 "SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (sess["id"],)
             )
             rec_count = cnt["n"] if cnt else 0
+            prb = db_fetchone(
+                """SELECT COUNT(*) AS n FROM rebind_requests
+                   WHERE status='pending' AND from_session_id=?""",
+                (sess["id"],),
+            )
+            pending_rebind = prb["n"] if prb else 0
         out.append({
             "id": r["dr_id"],
             "customer_id": r["customer_id"],
@@ -5302,6 +5441,7 @@ def api_consultant_today_reception():
             "locked": bool(sess["locked"]) if sess else False,
             "analysis_status": sess["analysis_status"] if sess else None,
             "recording_count": rec_count,
+            "pending_rebind_count": pending_rebind,
         })
     return jsonify({"items": out, "date": date})
 
@@ -5316,6 +5456,15 @@ def api_consultant_today_reception_add():
     cid = u["company_id"] or 1
     data = request.get_json(silent=True) or {}
     date = _norm_date(data.get("date")) or _today_str()
+    # 补登历史客人：日期不能晚于今天，也不能早于今天-7
+    today_d = _parse_ymd(_today_str())
+    d_obj = _parse_ymd(date)
+    if not d_obj:
+        return jsonify({"error": "日期格式不正确"}), 400
+    if d_obj > today_d:
+        return jsonify({"error": "接诊日期不能晚于今天"}), 400
+    if (today_d - d_obj).days > BACKFILL_DAYS_BACK:
+        return jsonify({"error": f"补登只能选最近 {BACKFILL_DAYS_BACK} 天内的日期"}), 400
     customer_id = data.get("customer_id")
     # 新增顾客
     if not customer_id:
@@ -5405,6 +5554,383 @@ def api_consultant_today_reception_remove(dr_id):
     return jsonify({"ok": True})
 
 
+@app.route("/api/consultant/today_reception/<int:dr_id>/date", methods=["PATCH"])
+@login_required
+def api_consultant_today_reception_change_date(dr_id):
+    """修改接诊日期。允许范围：当前日期 ±EDIT_DAYS_RANGE 天，且不超过今天。
+    挂在该接诊下的录音会自动解绑（录音真实日期不动）。已锁定 / 已分析的 session 不允许改。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    data = request.get_json(silent=True) or {}
+    new_date = _norm_date(data.get("date"))
+    if not new_date:
+        return jsonify({"error": "缺少日期"}), 400
+    new_d = _parse_ymd(new_date)
+    if not new_d:
+        return jsonify({"error": "日期格式不正确"}), 400
+    row = db_fetchone(
+        "SELECT * FROM daily_reception WHERE id=? AND advisor_user_id=?",
+        (dr_id, u["id"]),
+    )
+    if not row:
+        return jsonify({"error": "不存在或无权操作"}), 404
+    if row["service_date"] == new_date:
+        return jsonify({"ok": True, "unchanged": True})
+    cur_d = _parse_ymd(row["service_date"])
+    today_d = _parse_ymd(_today_str())
+    if not cur_d:
+        return jsonify({"error": "原日期异常，无法修改"}), 400
+    if new_d > today_d:
+        return jsonify({"error": "不能改到未来日期"}), 400
+    if abs((new_d - cur_d).days) > EDIT_DAYS_RANGE:
+        return jsonify({"error": f"只能在原日期前后 {EDIT_DAYS_RANGE} 天内修改"}), 400
+    cid = u["company_id"] or 1
+    advisor = u["advisor_name"] or u["username"]
+    cust = db_fetchone("SELECT name FROM company_customers WHERE id=?", (row["customer_id"],))
+    if not cust:
+        return jsonify({"error": "顾客不存在"}), 404
+    # 当前 session（如有）—— 已锁定/已分析不允许改
+    sess = db_fetchone(
+        """SELECT id, locked, analysis_status FROM sessions
+           WHERE advisor=? AND customer=? AND service_date=?
+             AND (company_id IS NULL OR company_id=?)""",
+        (advisor, cust["name"], row["service_date"], cid),
+    )
+    if sess and (sess["locked"] or (sess["analysis_status"] and sess["analysis_status"] not in ("pending", None))):
+        return jsonify({"error": "已开始分析或已锁定，不能改日期"}), 409
+    # 目标日期是否已有同顾客接诊记录？避免 UNIQUE 冲突
+    dup = db_fetchone(
+        """SELECT id FROM daily_reception
+           WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
+        (u["id"], row["customer_id"], new_date),
+    )
+    if dup:
+        return jsonify({"error": "目标日期已有该顾客的接诊记录"}), 409
+    # 解绑录音 + 删除老 session（如有）
+    unbound_count = 0
+    if sess:
+        recs = db_fetchall("SELECT id FROM recordings WHERE session_id=?", (sess["id"],))
+        unbound_count = len(recs)
+        for r in recs:
+            db_write(
+                "UPDATE recordings SET session_id=NULL, customer=NULL, speaker_confirmed=0 WHERE id=?",
+                (r["id"],),
+            )
+        db_write("DELETE FROM sessions WHERE id=?", (sess["id"],))
+    # 改 daily_reception 日期
+    db_write("UPDATE daily_reception SET service_date=? WHERE id=?", (new_date, dr_id))
+    return jsonify({"ok": True, "unbound_count": unbound_count})
+
+
+@app.route("/api/consultant/recordings/pending_dates")
+@login_required
+def api_consultant_pending_dates():
+    """当前顾问的未绑定录音中，**非今天** 的日期集合（用于决定是否展示"补登历史客人"按钮）。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    today = _today_str()
+    rows = db_fetchall(
+        """SELECT recorded_at, created_at FROM recordings
+           WHERE uploader_user_id=? AND session_id IS NULL""",
+        (u["id"],),
+    )
+    dates = set()
+    for r in rows:
+        d = _rec_date_of(r)
+        if d and d != today:
+            dates.add(d)
+    return jsonify({"dates": sorted(dates, reverse=True)})
+
+
+@app.route("/api/consultant/recordings/<int:rid>/direct_rebind", methods=["POST"])
+@login_required
+def api_consultant_direct_rebind(rid):
+    """未开始分析时，直接换绑（无需审批）。
+    约束：session 必须未锁定；目标顾客必须在录音当天接诊白名单内。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    data = request.get_json(silent=True) or {}
+    to_customer_id = data.get("to_customer_id")
+    if not to_customer_id:
+        return jsonify({"error": "请选择换绑目标顾客"}), 400
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    if rec["uploader_user_id"] and rec["uploader_user_id"] != u["id"]:
+        return jsonify({"error": "无权操作他人录音"}), 403
+    if not rec["session_id"]:
+        return jsonify({"error": "该录音尚未绑定，请直接绑定即可"}), 400
+    old_sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (rec["session_id"],))
+    if old_sess and old_sess["locked"]:
+        return jsonify({"error": "已开始分析，无法直接换绑，请走申请换绑"}), 409
+    cid = u["company_id"] or 1
+    rec_date = _rec_date_of(rec)
+    to_cust = db_fetchone(
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        (to_customer_id, cid),
+    )
+    if not to_cust:
+        return jsonify({"error": "目标顾客不存在"}), 404
+    dr = db_fetchone(
+        """SELECT id FROM daily_reception
+           WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
+        (u["id"], to_customer_id, rec_date),
+    )
+    if not dr:
+        return jsonify({"error": "目标顾客不在录音当天接诊列表，请先补登"}), 400
+    advisor = u["advisor_name"] or u["username"]
+    new_sid = get_or_create_session(advisor, to_cust["name"], rec_date, company_id=cid)
+    if not new_sid:
+        return jsonify({"error": "创建目标接诊包失败"}), 500
+    # 目标 session 不能是锁定的
+    new_sess = db_fetchone("SELECT locked FROM sessions WHERE id=?", (new_sid,))
+    if new_sess and new_sess["locked"]:
+        return jsonify({"error": "目标接诊包已锁定，不能直接换绑（请改为申请换绑）"}), 409
+    db_write(
+        """UPDATE recordings SET session_id=?, customer=?, speaker_confirmed=0,
+           asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
+           WHERE id=?""",
+        (new_sid, to_cust["name"], rid),
+    )
+    # 老 session 清空则删除（并删 daily_reception）
+    old_sid = old_sess["id"] if old_sess else None
+    if old_sid:
+        cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (old_sid,))
+        if not cnt or not cnt["n"]:
+            old_cust = db_fetchone(
+                "SELECT id FROM company_customers WHERE company_id=? AND name=?",
+                (cid, old_sess["customer"]),
+            )
+            db_write("DELETE FROM sessions WHERE id=?", (old_sid,))
+            if old_cust:
+                db_write(
+                    """DELETE FROM daily_reception
+                       WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
+                    (u["id"], old_cust["id"], rec_date),
+                )
+    return jsonify({"ok": True, "new_session_id": new_sid})
+
+
+@app.route("/api/consultant/recordings/<int:rid>/rebind_request", methods=["POST"])
+@login_required
+def api_consultant_rebind_request(rid):
+    """顾问申请换绑。目标顾客必须在录音当天的接诊白名单内；理由必填；
+    同一录音已有 pending 申请时不可重复。已分析的录音也允许申请（同意后会作废旧分析）。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    data = request.get_json(silent=True) or {}
+    to_customer_id = data.get("to_customer_id")
+    reason = (data.get("reason") or "").strip()
+    if not to_customer_id:
+        return jsonify({"error": "请选择换绑目标顾客"}), 400
+    if not reason:
+        return jsonify({"error": "请填写换绑理由"}), 400
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    if rec["uploader_user_id"] and rec["uploader_user_id"] != u["id"]:
+        return jsonify({"error": "无权操作他人录音"}), 403
+    if not rec["session_id"]:
+        return jsonify({"error": "该录音尚未绑定，请直接绑定即可"}), 400
+    cid = u["company_id"] or 1
+    rec_date = _rec_date_of(rec)
+    # 目标顾客必须在录音当天的接诊白名单
+    to_cust = db_fetchone(
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        (to_customer_id, cid),
+    )
+    if not to_cust:
+        return jsonify({"error": "目标顾客不存在"}), 404
+    dr = db_fetchone(
+        """SELECT id FROM daily_reception
+           WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
+        (u["id"], to_customer_id, rec_date),
+    )
+    if not dr:
+        return jsonify({"error": "目标顾客不在录音当天的接诊列表，请先补登再申请"}), 400
+    # 已有 pending 申请？
+    exist = db_fetchone(
+        "SELECT id FROM rebind_requests WHERE recording_id=? AND status='pending'",
+        (rid,),
+    )
+    if exist:
+        return jsonify({"error": "该录音已有换绑申请正在审批中"}), 409
+    # from 信息
+    from_sess = db_fetchone("SELECT id FROM sessions WHERE id=?", (rec["session_id"],))
+    from_cust_name = rec["customer"] or ""
+    from_cust = db_fetchone(
+        "SELECT id FROM company_customers WHERE company_id=? AND name=?",
+        (cid, from_cust_name),
+    )
+    advisor = u["advisor_name"] or u["username"]
+    req_id = db_write(
+        """INSERT INTO rebind_requests
+           (company_id, recording_id, rec_date, requester_user_id, requester_name,
+            from_session_id, from_customer_id, from_customer_name,
+            to_customer_id, to_customer_name, reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (cid, rid, rec_date, u["id"], advisor,
+         from_sess["id"] if from_sess else None,
+         from_cust["id"] if from_cust else None, from_cust_name,
+         to_cust["id"], to_cust["name"], reason),
+    )
+    return jsonify({"ok": True, "request_id": req_id})
+
+
+@app.route("/api/admin/rebind_requests")
+@login_required
+def api_admin_rebind_requests():
+    if session.get("role") not in ("admin", "super"):
+        return jsonify({"error": "仅管理员可查看"}), 403
+    status = request.args.get("status", "pending")
+    role = session.get("role")
+    my_cid = session.get("company_id") or 1
+    if role == "super":
+        rows = db_fetchall(
+            """SELECT rr.*, r.oss_key, r.recorded_at, r.duration_label
+               FROM rebind_requests rr
+               LEFT JOIN recordings r ON r.id=rr.recording_id
+               WHERE rr.status=? ORDER BY rr.id DESC LIMIT 200""",
+            (status,),
+        )
+    else:
+        rows = db_fetchall(
+            """SELECT rr.*, r.oss_key, r.recorded_at, r.duration_label
+               FROM rebind_requests rr
+               LEFT JOIN recordings r ON r.id=rr.recording_id
+               WHERE rr.status=? AND rr.company_id=? ORDER BY rr.id DESC LIMIT 200""",
+            (status, my_cid),
+        )
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600) if d.get("oss_key") else None
+        except Exception:
+            d["audio_url"] = None
+        out.append(d)
+    return jsonify({"requests": out})
+
+
+@app.route("/api/admin/rebind_requests/<int:req_id>/approve", methods=["POST"])
+@login_required
+def api_admin_rebind_approve(req_id):
+    """同意换绑：移动 recording 到新 session，作废涉及到的旧/新 session 的分析，删除空的旧接诊登记。"""
+    if session.get("role") not in ("admin", "super"):
+        return jsonify({"error": "仅管理员可操作"}), 403
+    rr = db_fetchone("SELECT * FROM rebind_requests WHERE id=?", (req_id,))
+    if not rr:
+        return jsonify({"error": "申请不存在"}), 404
+    if rr["status"] != "pending":
+        return jsonify({"error": "该申请已处理"}), 409
+    if session.get("role") == "admin":
+        if (rr["company_id"] or 1) != (session.get("company_id") or 1):
+            return jsonify({"error": "无权操作他公司申请"}), 403
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rr["recording_id"],))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    cid = rr["company_id"] or 1
+    advisor = rr["requester_name"]
+    # 目标顾客 daily_reception 是否还在？
+    to_cust = db_fetchone(
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        (rr["to_customer_id"], cid),
+    )
+    if not to_cust:
+        return jsonify({"error": "目标顾客已不存在，无法换绑"}), 400
+    dr_to = db_fetchone(
+        """SELECT id FROM daily_reception
+           WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
+        (rr["requester_user_id"], rr["to_customer_id"], rr["rec_date"]),
+    )
+    if not dr_to:
+        return jsonify({"error": "目标顾客已不在录音当天接诊列表，无法换绑"}), 400
+    old_session_id = rec["session_id"]
+    # 目标 session：找到 / 创建
+    new_sid = get_or_create_session(advisor, to_cust["name"], rr["rec_date"], company_id=cid)
+    if not new_sid:
+        return jsonify({"error": "创建目标接诊包失败"}), 500
+    # 把 recording 移到 new session
+    db_write(
+        """UPDATE recordings SET session_id=?, customer=?, speaker_confirmed=0,
+           asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
+           WHERE id=?""",
+        (new_sid, to_cust["name"], rr["recording_id"]),
+    )
+    # 作废目标 session 的旧分析（解锁 + 标记 outdated），便于重新分析
+    db_write(
+        """UPDATE sessions SET locked=0,
+                              analysis_status=CASE WHEN analysis_status IS NULL OR analysis_status='' THEN NULL ELSE 'outdated' END
+           WHERE id=?""",
+        (new_sid,),
+    )
+    # 老 session：若清空则删除；否则同样作废分析
+    if old_session_id:
+        cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (old_session_id,))
+        if not cnt or not cnt["n"]:
+            # 删除老 session 及对应 daily_reception
+            old_sess = db_fetchone("SELECT advisor, customer, service_date FROM sessions WHERE id=?", (old_session_id,))
+            db_write("DELETE FROM sessions WHERE id=?", (old_session_id,))
+            if old_sess and rr["from_customer_id"]:
+                db_write(
+                    """DELETE FROM daily_reception
+                       WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
+                    (rr["requester_user_id"], rr["from_customer_id"], rr["rec_date"]),
+                )
+        else:
+            db_write(
+                """UPDATE sessions SET locked=0,
+                                      analysis_status=CASE WHEN analysis_status IS NULL OR analysis_status='' THEN NULL ELSE 'outdated' END
+                   WHERE id=?""",
+                (old_session_id,),
+            )
+    # 标记申请
+    reviewer = session.get("username") or "管理员"
+    db_write(
+        """UPDATE rebind_requests
+           SET status='approved', reviewer_user_id=?, reviewer_name=?, reviewed_at=datetime('now','localtime')
+           WHERE id=?""",
+        (session.get("user_id"), reviewer, req_id),
+    )
+    return jsonify({"ok": True, "new_session_id": new_sid})
+
+
+@app.route("/api/admin/rebind_requests/<int:req_id>/reject", methods=["POST"])
+@login_required
+def api_admin_rebind_reject(req_id):
+    if session.get("role") not in ("admin", "super"):
+        return jsonify({"error": "仅管理员可操作"}), 403
+    data = request.get_json(silent=True) or {}
+    reject_reason = (data.get("reject_reason") or "").strip()
+    if not reject_reason:
+        return jsonify({"error": "请填写驳回原因"}), 400
+    rr = db_fetchone("SELECT * FROM rebind_requests WHERE id=?", (req_id,))
+    if not rr:
+        return jsonify({"error": "申请不存在"}), 404
+    if rr["status"] != "pending":
+        return jsonify({"error": "该申请已处理"}), 409
+    if session.get("role") == "admin":
+        if (rr["company_id"] or 1) != (session.get("company_id") or 1):
+            return jsonify({"error": "无权操作他公司申请"}), 403
+    reviewer = session.get("username") or "管理员"
+    db_write(
+        """UPDATE rebind_requests
+           SET status='rejected', reviewer_user_id=?, reviewer_name=?, reviewed_at=datetime('now','localtime'),
+               reject_reason=?
+           WHERE id=?""",
+        (session.get("user_id"), reviewer, reject_reason, req_id),
+    )
+    return jsonify({"ok": True})
+
+
 @app.route("/api/consultant/customer_lookup")
 @login_required
 def api_consultant_customer_lookup():
@@ -5471,7 +5997,52 @@ def api_consultant_confirm_speakers(rid):
         return jsonify({"error": "无权操作他人录音"}), 403
     if action == "keep":
         db_write("UPDATE recordings SET speaker_confirmed=1 WHERE id=?", (rid,))
+        if rec["session_id"]:
+            try:
+                maybe_trigger_session_analysis(rec["session_id"])
+            except Exception as e:
+                app.logger.warning("auto-trigger after confirm failed: %s", e)
         return jsonify({"ok": True})
+    if action == "unbind":
+        db_write(
+            """UPDATE recordings SET session_id=NULL, customer=NULL,
+               speaker_confirmed=0 WHERE id=?""",
+            (rid,),
+        )
+        return jsonify({"ok": True})
+    return jsonify({"error": "未知 action"}), 400
+
+
+@app.route("/api/recording/<int:rid>/confirm_speakers", methods=["POST"])
+@admin_required
+def api_admin_confirm_speakers(rid):
+    """管理员/超管：确认说话人（照常分析）或解绑录音。
+    action=keep: speaker_confirmed=1，并自动触发分析。
+    action=unbind: 解绑回未入库。"""
+    data = request.get_json(silent=True) or {}
+    action = (data.get("action") or "").strip()
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    # 公司隔离：admin 只能操作本公司
+    if session.get("role") == "admin":
+        cid = session.get("company_id")
+        if rec["company_id"] and cid and rec["company_id"] != cid:
+            return jsonify({"error": "无权操作他公司录音"}), 403
+    if action == "keep":
+        db_write("UPDATE recordings SET speaker_confirmed=1 WHERE id=?", (rid,))
+        triggered = False
+        if rec["session_id"]:
+            try:
+                maybe_trigger_session_analysis(rec["session_id"])
+                after = db_fetchone(
+                    "SELECT analysis_status FROM sessions WHERE id=?",
+                    (rec["session_id"],),
+                )
+                triggered = after and after["analysis_status"] in ("queued", "running")
+            except Exception as e:
+                app.logger.warning("auto-trigger after confirm failed: %s", e)
+        return jsonify({"ok": True, "analysis_triggered": bool(triggered)})
     if action == "unbind":
         db_write(
             """UPDATE recordings SET session_id=NULL, customer=NULL,
@@ -5565,17 +6136,24 @@ def api_consultant_session_preview():
                 d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600)
             except Exception:
                 d["audio_url"] = None
+            prb = db_fetchone(
+                "SELECT id FROM rebind_requests WHERE recording_id=? AND status='pending'",
+                (d["id"],),
+            )
+            d["pending_rebind_request_id"] = prb["id"] if prb else None
             bound.append(d)
-    # 未绑定录音（本顾问、今天）
+    # 未绑定录音：只列出实际日期 == 本接诊包 service_date 的（不跨天）
     unbound_rows = db_fetchall(
         """SELECT id, oss_key, recorded_at, duration_label, asr_status, created_at
            FROM recordings
            WHERE uploader_user_id=? AND session_id IS NULL
-           ORDER BY id DESC LIMIT 50""",
+           ORDER BY id DESC LIMIT 200""",
         (u["id"],),
     )
     unbound = []
     for r in unbound_rows:
+        if _rec_date_of(r) != date:
+            continue
         d = dict(r)
         try:
             d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600)
@@ -5633,7 +6211,7 @@ def api_consultant_session_preview_remove():
 @app.route("/api/consultant/session/start_analysis", methods=["POST"])
 @login_required
 def api_consultant_session_start_analysis():
-    """锁定 session + 触发分析。"""
+    """锁定 session + 智能触发分析（跳过已成功 task + 防滥用）。"""
     err = _consultant_required()
     if err:
         return err
@@ -5662,12 +6240,49 @@ def api_consultant_session_start_analysis():
     cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (sess["id"],))
     if not cnt or not cnt["n"]:
         return jsonify({"error": "接诊包内没有录音"}), 400
-    db_write("UPDATE sessions SET locked=1 WHERE id=?", (sess["id"],))
+
+    # ── 防滥用 + 智能分析逻辑 ──
+    sess_detail = db_fetchone(
+        "SELECT locked, analysis_status, analysis_signature FROM sessions WHERE id=?",
+        (sess["id"],),
+    )
+
+    # ① 正在跑的不允许重复提交
+    if sess_detail["analysis_status"] in ("running", "queued"):
+        return jsonify({"error": "分析正在进行中，请等待完成"}), 409
+
     sig = compute_session_signature(sess["id"])
-    try:
-        submit_analysis(sess["id"], sig)
-    except Exception as e:
-        return jsonify({"error": f"触发分析失败：{e}"}), 500
+
+    # ② 已锁定 + signature 没变 + 已完成 → 不允许重跑
+    if (sess_detail["locked"]
+            and sess_detail["analysis_signature"] == sig
+            and sess_detail["analysis_status"] == "done"):
+        return jsonify({"error": "分析已完成，录音未变化，无需重新分析"}), 409
+
+    # 锁定 session
+    db_write("UPDATE sessions SET locked=1 WHERE id=?", (sess["id"],))
+
+    # ③ signature 没变 + 已有分析结果 → 只补跑失败/缺失的 task
+    if (sess_detail["analysis_signature"] == sig
+            and sess_detail["analysis_status"] in ("done", "failed")):
+        missing = get_missing_tasks(sess["id"])
+        if not missing:
+            return jsonify({"ok": True, "session_id": sess["id"],
+                            "msg": "所有任务已完成，无需重跑"})
+        targets = expand_to_call_chunk(missing)
+        for tid in targets:
+            set_task_status(sess["id"], tid, "running")
+        try:
+            submit_analysis(sess["id"], sig, only_tasks=targets)
+        except Exception as e:
+            return jsonify({"error": f"触发分析失败：{e}"}), 500
+    else:
+        # ④ signature 变了或首次分析 → 全量跑
+        try:
+            submit_analysis(sess["id"], sig)
+        except Exception as e:
+            return jsonify({"error": f"触发分析失败：{e}"}), 500
+
     return jsonify({"ok": True, "session_id": sess["id"]})
 
 
@@ -5718,15 +6333,28 @@ def api_consultant_analyze():
     if not rows:
         return jsonify({"error": "时间段内没有该顾客的录音"}), 404
     triggered = []
+    skipped = []
     for r in rows:
         sid = r["id"]
+        sess_detail = db_fetchone(
+            "SELECT analysis_status, analysis_signature FROM sessions WHERE id=?",
+            (sid,),
+        )
+        if not sess_detail:
+            continue
+        if sess_detail["analysis_status"] in ("running", "queued"):
+            continue
         sig = compute_session_signature(sid)
+        if (sess_detail["analysis_status"] == "done"
+                and sess_detail["analysis_signature"] == sig):
+            skipped.append(sid)
+            continue
         try:
             submit_analysis(sid, sig)
             triggered.append(sid)
         except Exception:
             pass
-    return jsonify({"ok": True, "session_ids": triggered})
+    return jsonify({"ok": True, "session_ids": triggered, "skipped": skipped})
 
 
 @app.route("/healthz")
@@ -5743,6 +6371,30 @@ def healthz():
 
 # ============ 启动 ============
 init_db()
+
+
+def _selfcheck_analysis_statuses():
+    """启动自检：扫库找未识别的 analysis_status 值并告警。"""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        rows = conn.execute(
+            "SELECT analysis_status, COUNT(*) FROM sessions GROUP BY analysis_status"
+        ).fetchall()
+        conn.close()
+        bad = [(s, c) for s, c in rows if s not in _VALID_DB_STATUSES]
+        if bad:
+            app.logger.warning(
+                "[startup] sessions.analysis_status contains unknown values: %s "
+                "(legal=%s)", bad, sorted(x for x in _VALID_DB_STATUSES if x)
+            )
+        else:
+            app.logger.info("[startup] analysis_status self-check OK: %s",
+                            {s: c for s, c in rows})
+    except Exception as e:
+        app.logger.warning("[startup] analysis_status self-check failed: %s", e)
+
+
+_selfcheck_analysis_statuses()
 
 
 def startup_kick():
@@ -5770,6 +6422,70 @@ def startup_kick():
            analysis_error=COALESCE(analysis_error, '服务重启时被打断，未自动恢复，请手动重跑')
            WHERE analysis_status IN ('running','queued')"""
     )
+
+    # ── 新增：修正"pending+排队中"的异常卡死状态 ──
+    stale_pending = db_fetchall("""
+        SELECT id FROM sessions
+        WHERE analysis_status = 'pending'
+          AND analysis_progress = '排队中…'
+          AND analysis_started_at IS NOT NULL
+    """)
+    for s in stale_pending:
+        ts_row = db_fetchone("SELECT task_status FROM sessions WHERE id=?", (s["id"],))
+        ts = {}
+        if ts_row and ts_row["task_status"]:
+            try:
+                ts = json.loads(ts_row["task_status"])
+            except (json.JSONDecodeError, TypeError):
+                pass
+        all_ids = list(TASK_REGISTRY.keys())
+        done_cnt = sum(1 for tid in all_ids if ts.get(tid, {}).get("status") == "done")
+        if done_cnt == len(all_ids):
+            db_write(
+                """UPDATE sessions SET analysis_status='done',
+                   analysis_progress=? WHERE id=?""",
+                (f"完成 {done_cnt}/{len(all_ids)} 任务（启动修复）", s["id"]),
+            )
+            print(f"[startup_kick] session {s['id']} task 全 done，修正为 done")
+        else:
+            db_write(
+                """UPDATE sessions SET analysis_status='failed',
+                   analysis_progress=NULL,
+                   analysis_error='启动时发现状态异常（pending+排队中），请手动重跑'
+                   WHERE id=?""",
+                (s["id"],),
+            )
+            print(f"[startup_kick] session {s['id']} 状态异常，标记 failed")
+
+    # ── 新增：自动恢复"零成本失败"的 session（从未发过 LLM 调用） ──
+    zero_cost_failed = db_fetchall("""
+        SELECT id FROM sessions
+        WHERE analysis_status = 'failed'
+          AND (task_status IS NULL OR task_status = '{}')
+          AND analysis_error LIKE '%interpreter shutdown%'
+    """)
+    if zero_cost_failed:
+        print(f"[startup_kick] 发现 {len(zero_cost_failed)} 个零成本失败 session，自动恢复")
+    for s in zero_cost_failed:
+        maybe_trigger_session_analysis(s["id"])
+
+    # ── 新增：触发 pending 且 ASR 全完成的 session ──
+    pending_ready = db_fetchall("""
+        SELECT s.id FROM sessions s
+        WHERE (s.analysis_status = 'pending' OR s.analysis_status IS NULL)
+          AND analysis_progress IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM recordings r
+            WHERE r.session_id = s.id AND r.asr_status != 'done'
+          )
+          AND EXISTS (
+            SELECT 1 FROM recordings r WHERE r.session_id = s.id
+          )
+    """)
+    if pending_ready:
+        print(f"[startup_kick] 发现 {len(pending_ready)} 个 pending+ASR就绪 session，自动触发")
+    for s in pending_ready:
+        maybe_trigger_session_analysis(s["id"])
 
 
 # gunicorn 启动时也触发
@@ -5831,11 +6547,15 @@ threading.Thread(target=backfill_task_status, daemon=True).start()
 
 
 def task_health_check_loop():
-    """每 15 分钟扫描一次，把卡死在 running 超过 30 分钟的任务标记 failed。
-    不自动补跑，避免意外烧钱，需要用户手动点补跑按钮。"""
+    """每 15 分钟扫描一次：
+    1. 把卡死在 running 超过 30 分钟的 task 标记 failed
+    2. 把 session 级别卡在 running/queued 超 30 分钟的标 failed
+    3. 修正 task 全 done 但 session 状态不是 done 的不一致
+    """
     import time as _time
     while True:
         try:
+            # ── 原有逻辑：task 级别 running 超时 ──
             rows = db_fetchall(
                 "SELECT id, task_status FROM sessions WHERE analysis_status='done'"
             )
@@ -5864,6 +6584,49 @@ def task_health_check_loop():
                         "UPDATE sessions SET task_status=? WHERE id=?",
                         (json.dumps(ts, ensure_ascii=False), r["id"]),
                     )
+
+            # ── 新增：session 级别卡死修复 ──
+            stale = db_fetchall("""
+                SELECT id FROM sessions
+                WHERE analysis_status IN ('running', 'queued')
+                  AND analysis_started_at IS NOT NULL
+                  AND (julianday('now','localtime') - julianday(analysis_started_at)) * 1440 > 30
+            """)
+            for s in stale:
+                db_write(
+                    """UPDATE sessions SET analysis_status='failed',
+                       analysis_error='卡在运行状态超过 30 分钟，自动标记失败',
+                       analysis_progress=NULL,
+                       analysis_finished_at=datetime('now','localtime')
+                       WHERE id=?""",
+                    (s["id"],),
+                )
+                print(f"[task_health_check] session {s['id']} 卡死超时，标记 failed")
+
+            # ── 新增：task 全 done 但 session 状态不一致 ──
+            inconsistent = db_fetchall("""
+                SELECT id, task_status FROM sessions
+                WHERE analysis_status NOT IN ('done', 'running', 'queued')
+                  AND task_status IS NOT NULL AND task_status != '{}'
+            """)
+            for s in inconsistent:
+                try:
+                    ts = json.loads(s["task_status"])
+                    all_ids = list(TASK_REGISTRY.keys())
+                    done_cnt = sum(1 for tid in all_ids
+                                   if ts.get(tid, {}).get("status") == "done")
+                    if done_cnt == len(all_ids):
+                        db_write(
+                            """UPDATE sessions SET analysis_status='done',
+                               analysis_progress=?,
+                               analysis_finished_at=COALESCE(analysis_finished_at, datetime('now','localtime'))
+                               WHERE id=?""",
+                            (f"完成 {done_cnt}/{len(all_ids)} 任务（状态修复）", s["id"]),
+                        )
+                        print(f"[task_health_check] session {s['id']} task 全 done，修正状态为 done")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
         except Exception as e:
             print(f"[task_health_check] {e}")
         _time.sleep(900)
