@@ -295,7 +295,10 @@
       "Bash(sudo systemctl status gp-system --no-pager)",
       "Bash(systemctl restart *)",
       "Bash(pkill -f webapp.py)",
-      "Bash(kill -HUP 703198)"
+      "Bash(kill -HUP 703198)",
+      "Bash(sudo journalctl -u gongpai -n 50 --no-pager)",
+      "Bash(sudo journalctl -u gongpai --no-pager -n 80)",
+      "Bash(sudo journalctl -u gongpai --no-pager -n 30)"
     ]
   }
 }

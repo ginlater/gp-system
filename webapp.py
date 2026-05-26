@@ -15,7 +15,7 @@ import re
 import sqlite3
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from http import HTTPStatus
 from pathlib import Path
@@ -144,7 +144,61 @@ def chinese_num(n):
 
 
 # ============ SQLite ============
-_db_lock = threading.Lock()
+# 写队列：一个专用线程串行消费所有写操作，避免高并发时多线程竞争写锁。
+# 每条写任务是 (sql, params, future)；future=None 表示 fire-and-forget。
+import queue as _queue
+from concurrent.futures import Future as _Future
+
+_db_write_queue: "_queue.Queue[tuple]" = _queue.Queue()
+_db_lock = threading.Lock()  # 保留，供 db_exec 等遗留调用使用
+
+
+def _db_writer_loop():
+    """单线程消费写队列，持有一个长连接。
+    队列元素有两种形态：
+      - (sql, params, fut)    — 单条写，返回 lastrowid
+      - (callable, fut)       — 批量事务，callable(conn) 由调用方负责 commit/rollback
+    """
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=10000")
+    while True:
+        item = _db_write_queue.get()
+        if item is None:
+            break
+        if callable(item[0]):
+            fn, fut = item
+            try:
+                result = fn(conn)
+                if fut is not None:
+                    fut.set_result(result)
+            except Exception as e:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                if fut is not None:
+                    fut.set_exception(e)
+                else:
+                    print(f"[db_writer] 批量写失败: {e}")
+        else:
+            sql, params, fut = item
+            try:
+                cur = conn.execute(sql, params)
+                conn.commit()
+                if fut is not None:
+                    fut.set_result(cur.lastrowid)
+            except Exception as e:
+                conn.rollback()
+                if fut is not None:
+                    fut.set_exception(e)
+                else:
+                    print(f"[db_writer] fire-and-forget 写失败: {e} | sql={sql[:120]}")
+
+
+_db_writer_thread = threading.Thread(target=_db_writer_loop, daemon=True, name="db-writer")
+_db_writer_thread.start()
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -427,27 +481,17 @@ def init_db():
 
 
 def db_exec(sql, params=()):
-    """线程安全的写/读单条"""
-    with _db_lock:
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        try:
-            cur = conn.execute(sql, params)
-            conn.commit()
-            return cur
-        finally:
-            pass  # connection 仍可用直到 GC，但我们已 commit
+    """线程安全的写/读单条，走写队列。"""
+    fut = _Future()
+    _db_write_queue.put((sql, params, fut))
+    return fut.result(timeout=30)
 
 
 def db_write(sql, params=()):
-    with _db_lock:
-        conn = sqlite3.connect(DB_PATH, timeout=10.0)
-        try:
-            cur = conn.execute(sql, params)
-            conn.commit()
-            return cur.lastrowid
-        finally:
-            conn.close()
+    """把写操作投入队列，等待写线程执行完成后返回 lastrowid。"""
+    fut = _Future()
+    _db_write_queue.put((sql, params, fut))
+    return fut.result(timeout=30)
 
 
 def db_fetchone(sql, params=()):
@@ -467,6 +511,15 @@ def db_fetchall(sql, params=()):
         return conn.execute(sql, params).fetchall()
     finally:
         conn.close()
+
+
+def db_batch(fn, timeout=60):
+    """在写线程的连接上执行批量事务。
+    fn(conn) 由调用方负责 executemany/commit 等操作，返回值透传给调用方。
+    """
+    fut = _Future()
+    _db_write_queue.put((fn, fut))
+    return fut.result(timeout=timeout)
 
 
 # ============ 文件名解析 ============
@@ -2944,18 +2997,16 @@ def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
     db_write(
         "DELETE FROM customer_tags WHERE source_session_id=?", (session_id,)
     )
-    with _db_lock:
-        conn = sqlite3.connect(DB_PATH)
-        try:
-            conn.executemany(
-                """INSERT INTO customer_tags
-                   (customer_name, advisor_name, tag, source_session_id)
-                   VALUES (?, ?, ?, ?)""",
-                [(customer_name, advisor_name, t, session_id) for t in tags],
-            )
-            conn.commit()
-        finally:
-            conn.close()
+    rows = [(customer_name, advisor_name, t, session_id) for t in tags]
+    def _insert_tags(conn):
+        conn.executemany(
+            """INSERT INTO customer_tags
+               (customer_name, advisor_name, tag, source_session_id)
+               VALUES (?, ?, ?, ?)""",
+            rows,
+        )
+        conn.commit()
+    db_batch(_insert_tags)
 
 
 _SESSION_RUN_LOCKS: dict = {}
@@ -4959,6 +5010,152 @@ def _compute_admin_stats(cid, is_super):
     return {"consultants": c1, "customers": c2, "delete_requests_pending": c3}
 
 
+@app.route("/api/admin/ops_dashboard")
+@admin_required
+def api_admin_ops_dashboard():
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    week_start = (datetime.now() - timedelta(days=datetime.now().weekday())).strftime("%Y-%m-%d")
+
+    def _session_stats(where_extra, params_today, params_week, params_fail):
+        def _counts(date_cond, p):
+            rows = db_fetchall(f"""
+                SELECT
+                    analysis_status,
+                    COUNT(*) AS n,
+                    AVG(CASE
+                        WHEN analysis_finished_at IS NOT NULL AND analysis_started_at IS NOT NULL
+                        THEN (julianday(analysis_finished_at) - julianday(analysis_started_at)) * 1440
+                        ELSE NULL END) AS avg_min
+                FROM sessions
+                WHERE {date_cond} {where_extra}
+                GROUP BY analysis_status
+            """, p)
+            out = {"total": 0, "done": 0, "failed": 0, "pending": 0, "avg_min": None}
+            for r in rows:
+                st = r["analysis_status"] or "pending"
+                cnt = r["n"]
+                out["total"] += cnt
+                if st == "done":
+                    out["done"] += cnt
+                    if r["avg_min"] is not None:
+                        out["avg_min"] = round(r["avg_min"], 1)
+                elif st == "failed":
+                    out["failed"] += cnt
+                else:
+                    out["pending"] += cnt
+            out["rate"] = round(out["done"] / out["total"] * 100) if out["total"] else 0
+            return out
+
+        today_stats = _counts("REPLACE(service_date,'-','') >= REPLACE(?,'-','')", params_today)
+        week_stats  = _counts("REPLACE(service_date,'-','') >= REPLACE(?,'-','')", params_week)
+
+        failures = db_fetchall(f"""
+            SELECT id, advisor, customer, service_date, analysis_error
+            FROM sessions
+            WHERE analysis_status='failed' {where_extra}
+            ORDER BY COALESCE(analysis_finished_at, analysis_started_at) DESC
+            LIMIT 15
+        """, params_fail)
+
+        return today_stats, week_stats, [dict(r) for r in failures]
+
+    if is_super:
+        companies = db_fetchall("SELECT id, name FROM companies ORDER BY id")
+        result = []
+        for co in companies:
+            co_id = co["id"]
+            today_s, week_s, fails = _session_stats(
+                "AND company_id=?",
+                (today, co_id), (week_start, co_id), (co_id,)
+            )
+            advisors_rows = db_fetchall("""
+                SELECT
+                    advisor,
+                    COUNT(*) AS total,
+                    SUM(analysis_status='done') AS done,
+                    SUM(analysis_status='failed') AS failed,
+                    AVG(CASE
+                        WHEN analysis_finished_at IS NOT NULL AND analysis_started_at IS NOT NULL
+                        THEN (julianday(analysis_finished_at) - julianday(analysis_started_at)) * 1440
+                        ELSE NULL END) AS avg_min
+                FROM sessions
+                WHERE company_id=?
+                  AND REPLACE(service_date,'-','') >= REPLACE(?,'-','')
+                GROUP BY advisor
+                ORDER BY total DESC
+            """, (co_id, week_start))
+            advisors = []
+            for a in advisors_rows:
+                total = a["total"] or 0
+                done = a["done"] or 0
+                failed = a["failed"] or 0
+                advisors.append({
+                    "name": a["advisor"],
+                    "week_total": total,
+                    "week_done": done,
+                    "week_failed": failed,
+                    "week_pending": total - done - failed,
+                    "week_rate": round(done / total * 100) if total else 0,
+                    "avg_min": round(a["avg_min"], 1) if a["avg_min"] else None,
+                })
+            result.append({
+                "company_id": co_id,
+                "company_name": co["name"],
+                "today": today_s,
+                "week": week_s,
+                "advisors": advisors,
+                "recent_failures": fails,
+            })
+        return jsonify({"is_super": True, "today": today, "week_start": week_start, "companies": result})
+    else:
+        today_s, week_s, fails = _session_stats(
+            "AND (company_id IS NULL OR company_id=?)",
+            (today, cid), (week_start, cid), (cid,)
+        )
+        advisors_rows = db_fetchall("""
+            SELECT
+                advisor,
+                COUNT(*) AS total,
+                SUM(analysis_status='done') AS done,
+                SUM(analysis_status='failed') AS failed,
+                AVG(CASE
+                    WHEN analysis_finished_at IS NOT NULL AND analysis_started_at IS NOT NULL
+                    THEN (julianday(analysis_finished_at) - julianday(analysis_started_at)) * 1440
+                    ELSE NULL END) AS avg_min
+            FROM sessions
+            WHERE (company_id IS NULL OR company_id=?)
+              AND REPLACE(service_date,'-','') >= REPLACE(?,'-','')
+            GROUP BY advisor
+            ORDER BY total DESC
+        """, (cid, week_start))
+        advisors = []
+        for a in advisors_rows:
+            total = a["total"] or 0
+            done = a["done"] or 0
+            failed = a["failed"] or 0
+            advisors.append({
+                "name": a["advisor"],
+                "week_total": total,
+                "week_done": done,
+                "week_failed": failed,
+                "week_pending": total - done - failed,
+                "week_rate": round(done / total * 100) if total else 0,
+                "avg_min": round(a["avg_min"], 1) if a["avg_min"] else None,
+            })
+        return jsonify({
+            "is_super": False,
+            "today": today,
+            "week_start": week_start,
+            "today_stats": today_s,
+            "week_stats": week_s,
+            "advisors": advisors,
+            "recent_failures": fails,
+        })
+
+
 @app.route("/api/admin/stats")
 @admin_required
 def api_admin_stats():
@@ -5226,43 +5423,41 @@ def _run_customer_import(job_id, cid, seen):
     job = _import_jobs[job_id]
     try:
         total = len(seen)
-        with _db_lock:
-            conn = sqlite3.connect(DB_PATH)
-            try:
-                existing_rows = conn.execute(
-                    "SELECT name, id, member_card FROM company_customers WHERE company_id=?",
-                    (cid,),
-                ).fetchall()
-                existing_map = {row[0]: (row[1], row[2]) for row in existing_rows}
-                conn.execute("BEGIN")
-                processed = 0
-                created = 0
-                skipped = 0
-                for name, card in seen.items():
-                    if name in existing_map:
-                        old_id, old_card = existing_map[name]
-                        if card and card != (old_card or ""):
-                            conn.execute(
-                                "UPDATE company_customers SET member_card=? WHERE id=?",
-                                (card, old_id),
-                            )
-                        skipped += 1
-                    else:
+        def _do_import(conn):
+            existing_rows = conn.execute(
+                "SELECT name, id, member_card FROM company_customers WHERE company_id=?",
+                (cid,),
+            ).fetchall()
+            existing_map = {row[0]: (row[1], row[2]) for row in existing_rows}
+            conn.execute("BEGIN")
+            _processed = 0
+            _created = 0
+            _skipped = 0
+            for name, card in seen.items():
+                if name in existing_map:
+                    old_id, old_card = existing_map[name]
+                    if card and card != (old_card or ""):
                         conn.execute(
-                            "INSERT INTO company_customers (company_id, name, member_card) VALUES (?, ?, ?)",
-                            (cid, name, card or None),
+                            "UPDATE company_customers SET member_card=? WHERE id=?",
+                            (card, old_id),
                         )
-                        created += 1
-                    processed += 1
-                    # 每 500 行刷一次进度
-                    if processed % 500 == 0:
-                        with _import_jobs_lock:
-                            job["processed"] = processed
-                            job["created"] = created
-                            job["skipped"] = skipped
-                conn.commit()
-            finally:
-                conn.close()
+                    _skipped += 1
+                else:
+                    conn.execute(
+                        "INSERT INTO company_customers (company_id, name, member_card) VALUES (?, ?, ?)",
+                        (cid, name, card or None),
+                    )
+                    _created += 1
+                _processed += 1
+                if _processed % 500 == 0:
+                    with _import_jobs_lock:
+                        job["processed"] = _processed
+                        job["created"] = _created
+                        job["skipped"] = _skipped
+            conn.commit()
+            return _processed, _created, _skipped
+
+        processed, created, skipped = db_batch(_do_import, timeout=120)
         with _import_jobs_lock:
             job["status"] = "done"
             job["processed"] = total

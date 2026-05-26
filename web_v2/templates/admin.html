@@ -59,6 +59,7 @@ html,body{overflow-x:hidden;max-width:100%}
     <button data-tab="delete-requests">删除申请 <span id="drBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
     <button data-tab="rebind-requests">换绑申请 <span id="rbBadge" style="display:none;background:#e67e22;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
     {% if role == 'super' %}<button data-tab="companies">公司管理</button>{% endif %}
+    <button data-tab="ops-dashboard">运营看板</button>
   </div>
   <style>.tab-count{font-size:11px;color:#888;font-weight:normal;margin-left:2px}</style>
 
@@ -171,6 +172,33 @@ html,body{overflow-x:hidden;max-width:100%}
   </div>
   {% endif %}
 
+  <!-- 运营看板 -->
+  <div id="tab-ops-dashboard" class="panel">
+    <style>
+      .ops-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:16px}
+      .ops-kpi{background:#f8f9fc;border:1px solid var(--border);border-radius:8px;padding:14px 12px;text-align:center}
+      .ops-kpi .val{font-size:26px;font-weight:700;color:var(--navy)}
+      .ops-kpi .val.green{color:#22c55e}.ops-kpi .val.red{color:#e74c3c}
+      .ops-kpi .lbl{font-size:11px;color:#999;margin-top:3px}
+      .ops-block{margin-bottom:24px}
+      .ops-block-title{font-size:13px;font-weight:600;color:var(--navy);margin:14px 0 8px}
+      .ops-rate-bar{display:inline-block;width:50px;height:5px;background:#e2e8f0;border-radius:3px;vertical-align:middle;margin-right:5px}
+      .ops-rate-fill{height:100%;border-radius:3px;background:var(--navy)}
+      .ops-fail-list{list-style:none;padding:0;margin:0}
+      .ops-fail-item{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0;font-size:12px}
+      .ops-fail-item:last-child{border:none}
+      .ops-fail-meta{flex:0 0 auto;color:#888;min-width:150px}
+      .ops-fail-err{color:#e74c3c;flex:1;word-break:break-all}
+      .ops-co-name{font-size:14px;font-weight:700;color:var(--navy);margin:0 0 10px}
+      #opsDashboardContent .muted{color:#aaa;font-size:13px;padding:20px 0;text-align:center}
+    </style>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <span style="font-size:13px;color:#666" id="opsGenTime"></span>
+      <button class="btn sec" style="padding:4px 12px;font-size:12px" onclick="loadOpsDashboard(true)">↻ 刷新</button>
+    </div>
+    <div id="opsDashboardContent"><div class="muted">加载中…</div></div>
+  </div>
+
   <!-- 删除申请 -->
   <div id="tab-delete-requests" class="panel">
     <div class="card">
@@ -223,6 +251,7 @@ const _tabLoaders = {
   'delete-requests': () => loadDeleteRequests(),
   'rebind-requests': () => loadRebindRequests(),
   companies: () => (typeof loadCompanies === 'function') && loadCompanies(),
+  'ops-dashboard': () => loadOpsDashboard(),
 };
 const _tabLoaded = {};
 function activateTab(name) {
@@ -618,6 +647,79 @@ async function rejectRebindRequest(reqId) {
   const d = await r.json();
   if (d.ok) loadRebindRequests();
   else showMsg('rbMsg', d.error || '操作失败', true);
+}
+
+// ---- 运营看板 ----
+let _opsLoaded = false;
+function loadOpsDashboard(force) {
+  if (_opsLoaded && !force) return;
+  const box = document.getElementById('opsDashboardContent');
+  box.innerHTML = '<div class="muted">加载中…</div>';
+  fetch(BASE + '/api/admin/ops_dashboard').then(r => {
+    if (!r.ok) return r.text().then(t => { throw new Error('HTTP ' + r.status + ': ' + t.slice(0,100)); });
+    return r.json();
+  }).then(d => {
+    _opsLoaded = true;
+    const gt = document.getElementById('opsGenTime');
+    if (gt) gt.textContent = '今日 ' + d.today + '  |  本周自 ' + d.week_start;
+    box.innerHTML = d.is_super ? renderOpsSuper(d) : renderOpsAdmin(d);
+  }).catch(e => { box.innerHTML = '<div class="muted">加载失败：' + e + '</div>'; });
+}
+
+function _kpiCards(s, label) {
+  const rate = s.rate ?? 0;
+  const avg = s.avg_min != null ? s.avg_min + ' 分钟' : '-';
+  const rateColor = rate >= 80 ? 'green' : rate >= 50 ? '' : 'red';
+  return `<div class="ops-summary">
+    <div class="ops-kpi"><div class="val">${s.total}</div><div class="lbl">${label}接诊包</div></div>
+    <div class="ops-kpi"><div class="val green">${s.done}</div><div class="lbl">已完成</div></div>
+    <div class="ops-kpi"><div class="val red">${s.failed}</div><div class="lbl">失败</div></div>
+    <div class="ops-kpi"><div class="val">${s.pending}</div><div class="lbl">待分析</div></div>
+    <div class="ops-kpi"><div class="val ${rateColor}">${rate}%</div><div class="lbl">完成率</div></div>
+    <div class="ops-kpi"><div class="val">${avg}</div><div class="lbl">平均耗时</div></div>
+  </div>`;
+}
+
+function _advisorTable(advisors) {
+  if (!advisors || !advisors.length) return '<p class="muted">本周暂无数据</p>';
+  return `<table class="tbl" style="font-size:12px">
+    <thead><tr><th>顾问</th><th>本周接诊</th><th>完成</th><th>失败</th><th>待分析</th><th>完成率</th><th>平均耗时</th></tr></thead>
+    <tbody>${advisors.map(a => `<tr>
+      <td>${a.name}</td><td>${a.week_total}</td>
+      <td style="color:#22c55e">${a.week_done}</td>
+      <td style="color:#e74c3c">${a.week_failed}</td>
+      <td>${a.week_pending}</td>
+      <td><span class="ops-rate-bar"><span class="ops-rate-fill" style="width:${a.week_rate}%"></span></span>${a.week_rate}%</td>
+      <td>${a.avg_min != null ? a.avg_min + ' 分钟' : '-'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function _failList(fails) {
+  if (!fails || !fails.length) return '<p class="muted">暂无失败记录</p>';
+  return `<ul class="ops-fail-list">${fails.map(f => `<li class="ops-fail-item">
+    <div class="ops-fail-meta">#${f.id} ${f.advisor} → ${f.customer}<br>${f.service_date || ''}</div>
+    <div class="ops-fail-err">${(f.analysis_error || '未知错误').slice(0, 120)}</div>
+  </li>`).join('')}</ul>`;
+}
+
+function renderOpsAdmin(d) {
+  return `<div class="card ops-block">
+    <div class="ops-block-title">今日</div>${_kpiCards(d.today_stats, '今日')}
+    <div class="ops-block-title">本周</div>${_kpiCards(d.week_stats, '本周')}
+    <div class="ops-block-title">顾问明细（本周）</div>${_advisorTable(d.advisors)}
+    <div class="ops-block-title">近期失败</div>${_failList(d.recent_failures)}
+  </div>`;
+}
+
+function renderOpsSuper(d) {
+  return d.companies.map(co => `<div class="card ops-block">
+    <div class="ops-co-name">🏢 ${co.company_name}</div>
+    <div class="ops-block-title">今日</div>${_kpiCards(co.today, '今日')}
+    <div class="ops-block-title">本周</div>${_kpiCards(co.week, '本周')}
+    <div class="ops-block-title">顾问明细（本周）</div>${_advisorTable(co.advisors)}
+    <div class="ops-block-title">近期失败</div>${_failList(co.recent_failures)}
+  </div>`).join('');
 }
 
 // 页面初始化：只拉一次轻量统计，更新 tab 标签和待审批 badge；
