@@ -293,7 +293,9 @@
       "Bash(sudo tee /etc/systemd/system/gongpai.service)",
       "Bash(systemctl --user list-units --type=service)",
       "Bash(sudo systemctl status gp-system --no-pager)",
-      "Bash(systemctl restart *)"
+      "Bash(systemctl restart *)",
+      "Bash(pkill -f webapp.py)",
+      "Bash(kill -HUP 703198)"
     ]
   }
 }

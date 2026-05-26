@@ -2608,10 +2608,14 @@ def _deep_json_unwrap(node):
 
 
 def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None,
-                   enable_thinking=False, stage_label="", temperature=0.3):
+                   enable_thinking=False, stage_label="", temperature=0.3,
+                   force_tool_choice=False):
     """调用 DeepSeek（OpenAI 兼容），不走代理，返回 tool_calls[0].function.arguments dict。
 
     max_tokens 语义是"输出 token 预算"；对 V4 思考模式会在内部加 16K thinking buffer。
+    force_tool_choice=True 时：显式 tool_choice=function 强制调用工具（用于打破 V4 auto
+    模式偶发返回空 tool_calls 的死循环）；此时会自动关闭 V4 thinking，因为 V4 思考模式
+    只支持 tool_choice=auto。
     """
     import httpx
 
@@ -2631,6 +2635,9 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
     is_v4 = "v4" in model.lower()
     # 输出 token 预算（不含 V4 thinking）
     out_budget = max_tokens or 8000
+    # force_tool_choice 与 V4 thinking 互斥：强制 tool_choice 时关掉 thinking
+    effective_thinking = enable_thinking and not force_tool_choice
+    explicit_tc = {"type": "function", "function": {"name": tool["name"]}}
     payload = {
         "model": model,
         "messages": [
@@ -2638,16 +2645,13 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
             {"role": "user", "content": user_prompt},
         ],
         "tools": [openai_tool],
-        # V4 思考模式只支持 "auto"，不支持指定具体 function；V3 仍可强制
-        "tool_choice": "auto" if is_v4 else {
-            "type": "function",
-            "function": {"name": tool["name"]},
-        },
+        # V4 思考模式只支持 "auto"；force_tool_choice 时关掉 thinking 改强制
+        "tool_choice": explicit_tc if (force_tool_choice or not is_v4) else "auto",
         "max_tokens": out_budget,
         "temperature": temperature,
     }
-    # V4 thinking 模式：只在显式开启时启用（默认关闭，避免 token 截断）
-    if is_v4 and enable_thinking:
+    # V4 thinking 模式：只在显式开启且未强制 tool_choice 时启用
+    if is_v4 and effective_thinking:
         payload["reasoning_effort"] = "high"
         payload["thinking"] = {"type": "enabled"}
         # thinking token 计入 max_tokens，预留 24K buffer
@@ -2713,7 +2717,8 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
 
 
 def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None,
-              enable_thinking=False, stage_label="", temperature=0.3):
+              enable_thinking=False, stage_label="", temperature=0.3,
+              force_tool_choice=False):
     """统一入口：根据 model 的 provider 调 Claude 或 DeepSeek。"""
     provider = MODEL_PROVIDER.get(model)
     if provider == "anthropic":
@@ -2722,7 +2727,8 @@ def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None,
     if provider == "deepseek":
         return _call_deepseek(model, system_prompt, user_prompt, tool=tool,
                               max_tokens=max_tokens, enable_thinking=enable_thinking,
-                              stage_label=stage_label, temperature=temperature)
+                              stage_label=stage_label, temperature=temperature,
+                              force_tool_choice=force_tool_choice)
     raise RuntimeError(f"未知 provider for model {model}")
 
 
@@ -2738,12 +2744,16 @@ def _call_llm_with_retry(model, system_prompt, user_prompt, tool, max_tokens=Non
     for attempt in range(1, max_attempts + 1):
         # 第一次走默认 0.3；重试时抖一下，避免复现同样的空 tool_calls
         temperature = 0.3 + 0.3 * (attempt - 1)
+        # 最后一次重试：强制 tool_choice 指定函数（V4 会自动关 thinking），
+        # 打破 V4 auto 模式偶发返回空 tool_calls 的死循环
+        force_tc = attempt == max_attempts and max_attempts > 1
         try:
             result = _call_llm(model, system_prompt, user_prompt, tool=tool,
                                max_tokens=max_tokens,
                                enable_thinking=enable_thinking,
                                stage_label=stage_label,
-                               temperature=temperature)
+                               temperature=temperature,
+                               force_tool_choice=force_tc)
             if not result or not isinstance(result, dict):
                 last_err = RuntimeError(
                     f"[{stage_label}] attempt {attempt}/{max_attempts} "
@@ -3216,7 +3226,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         result = _call_llm_with_retry(
             model, system, user_prompt, tool=tool,
             max_tokens=budget, enable_thinking=enable_thinking,
-            stage_label=stage, max_attempts=2)
+            stage_label=stage, max_attempts=3)
         shared = result.get(shared_key) if isinstance(result, dict) else None
         if not shared or not isinstance(shared, dict):
             raise RuntimeError(f"[{stage}] 未返回 {shared_key} 或为空")
@@ -3281,7 +3291,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
                 model, system_prompt, user_prompt,
                 tool=sub_tool, max_tokens=8000,
                 enable_thinking=enable_thinking,
-                stage_label=stage, max_attempts=2)
+                stage_label=stage, max_attempts=3)
         except Exception as e:
             elapsed = _t.time() - _t_chunk0
             print(f"[{stage}] session={session_id} 失败 耗时{elapsed:.1f}s error={e}")
@@ -4046,9 +4056,42 @@ def api_sessions():
     if customer:
         where.append("s.customer LIKE ?")
         params.append(f"%{customer}%")
+    # 日期筛选也按 time_type 区分：recording → service_date / analysis → DATE(analysis_finished_at)
+    _time_type_for_date = request.args.get("time_type", "recording")
     if date:
-        where.append("s.service_date = ?")
+        if _time_type_for_date == "analysis":
+            where.append("s.analysis_finished_at IS NOT NULL AND DATE(s.analysis_finished_at) = ?")
+        else:
+            where.append("s.service_date = ?")
         params.append(date)
+    # 时间区间筛选：time_type=recording(默认) 按录音时间 / time_type=analysis 按最后分析时间
+    # recorded_at 存在两种格式：'YYYY-MM-DD HH:MM:SS'(len=19) 和 'YYYYMMDDHHmmss'(len=14)
+    # 录音时间筛选必须与列表显示的"录音时间"列(MIN(recorded_at)，即首条录音)一致，
+    # 否则会出现"显示 13:42 却被 16:52-17:52 命中"的诡异结果。
+    _FIRST_REC_TIME_SQL = (
+        "(SELECT CASE WHEN length(MIN(r2.recorded_at))=14 "
+        "THEN substr(MIN(r2.recorded_at),9,2)||':'||substr(MIN(r2.recorded_at),11,2) "
+        "ELSE TIME(MIN(r2.recorded_at)) END "
+        "FROM recordings r2 WHERE r2.session_id=s.id AND r2.recorded_at IS NOT NULL)"
+    )
+    time_from = (request.args.get("time_from") or "").strip()  # HH:MM
+    time_to   = (request.args.get("time_to")   or "").strip()  # HH:MM
+    time_type = request.args.get("time_type", "recording")     # recording | analysis
+    _HM = r'^\d{2}:\d{2}$'
+    if time_type == "analysis":
+        if time_from and re.match(_HM, time_from):
+            where.append("s.analysis_finished_at IS NOT NULL AND TIME(s.analysis_finished_at) >= ?")
+            params.append(time_from)
+        if time_to and re.match(_HM, time_to):
+            where.append("s.analysis_finished_at IS NOT NULL AND TIME(s.analysis_finished_at) <= ?")
+            params.append(time_to)
+    else:
+        if time_from and re.match(_HM, time_from):
+            where.append(f"{_FIRST_REC_TIME_SQL} >= ?")
+            params.append(time_from)
+        if time_to and re.match(_HM, time_to):
+            where.append(f"{_FIRST_REC_TIME_SQL} <= ?")
+            params.append(time_to)
     # 状态筛选：?status=running,queued,done,failed,stuck,idle  （逗号分隔，多选）
     # 用 _status_bucket_sql() 作为单一真源，与 pill 计数 / 行 badge 完全一致
     status_filter = (request.args.get("status") or "").strip()
@@ -4071,11 +4114,14 @@ def api_sessions():
         SELECT s.id, s.advisor, s.customer, s.service_date,
                s.analysis_status, s.analysis_scores, s.analysis_progress,
                s.analysis_result, s.task_status, s.has_evaluation, s.created_at,
+               s.analysis_started_at,
                s.analysis_finished_at,
                COUNT(r.id) AS recording_count,
                SUM(CASE WHEN r.asr_status='done' THEN 1 ELSE 0 END) AS asr_done_count,
                SUM(CASE WHEN r.asr_status='running' THEN 1 ELSE 0 END) AS asr_running_count,
-               SUM(CASE WHEN r.asr_status='failed' THEN 1 ELSE 0 END) AS asr_failed_count
+               SUM(CASE WHEN r.asr_status='failed' THEN 1 ELSE 0 END) AS asr_failed_count,
+               MIN(r.recorded_at) AS first_recorded_at,
+               MAX(r.recorded_at) AS last_recorded_at
         FROM sessions s
         LEFT JOIN recordings r ON r.session_id = s.id
         {where_sql}
@@ -4124,7 +4170,7 @@ def api_sessions():
 @app.route("/api/sessions/status_counts")
 @login_required
 def api_sessions_status_counts():
-    """给列表页 5 个状态 pill 用的计数。受角色/公司隔离约束。"""
+    """给列表页 5 个状态 pill 用的计数。受角色/公司隔离约束，支持 advisor/customer/date 筛选。"""
     where = []
     params: list = []
     role = session.get("role")
@@ -4139,6 +4185,48 @@ def api_sessions_status_counts():
         if cid:
             where.append("(s.company_id IS NULL OR s.company_id = ?)")
             params.append(cid)
+    # 额外筛选参数（与列表页保持一致）
+    advisor_q = request.args.get("advisor", "").strip()
+    customer_q = request.args.get("customer", "").strip()
+    date_q = request.args.get("date", "").strip()
+    if advisor_q and role != "consultant":
+        where.append("s.advisor LIKE ?")
+        params.append(f"%{advisor_q}%")
+    if customer_q:
+        where.append("s.customer LIKE ?")
+        params.append(f"%{customer_q}%")
+    _time_type_for_date_q = request.args.get("time_type", "recording")
+    if date_q:
+        if _time_type_for_date_q == "analysis":
+            where.append("s.analysis_finished_at IS NOT NULL AND DATE(s.analysis_finished_at) = ?")
+        else:
+            where.append("s.service_date = ?")
+        params.append(date_q)
+    time_from_q = request.args.get("time_from", "").strip()
+    time_to_q   = request.args.get("time_to",   "").strip()
+    time_type_q = request.args.get("time_type", "recording")
+    # 与 /api/sessions 保持一致：按首条录音时间(MIN(recorded_at)) 过滤
+    _FIRST_REC_TIME_SQL2 = (
+        "(SELECT CASE WHEN length(MIN(r2.recorded_at))=14 "
+        "THEN substr(MIN(r2.recorded_at),9,2)||':'||substr(MIN(r2.recorded_at),11,2) "
+        "ELSE TIME(MIN(r2.recorded_at)) END "
+        "FROM recordings r2 WHERE r2.session_id=s.id AND r2.recorded_at IS NOT NULL)"
+    )
+    _HM2 = r'^\d{2}:\d{2}$'
+    if time_type_q == "analysis":
+        if time_from_q and re.match(_HM2, time_from_q):
+            where.append("s.analysis_finished_at IS NOT NULL AND TIME(s.analysis_finished_at) >= ?")
+            params.append(time_from_q)
+        if time_to_q and re.match(_HM2, time_to_q):
+            where.append("s.analysis_finished_at IS NOT NULL AND TIME(s.analysis_finished_at) <= ?")
+            params.append(time_to_q)
+    else:
+        if time_from_q and re.match(_HM2, time_from_q):
+            where.append(f"{_FIRST_REC_TIME_SQL2} >= ?")
+            params.append(time_from_q)
+        if time_to_q and re.match(_HM2, time_to_q):
+            where.append(f"{_FIRST_REC_TIME_SQL2} <= ?")
+            params.append(time_to_q)
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     bucket_expr = _status_bucket_sql("s.")
     rows = db_fetchall(f"""

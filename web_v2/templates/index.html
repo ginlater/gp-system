@@ -35,7 +35,7 @@ html,body{overflow-x:hidden;max-width:100%}
 .filter-pills .pill.active{background:var(--navy);color:#fff;border-color:var(--navy)}
 .filter-pills .pill .cnt{background:rgba(0,0,0,.08);border-radius:99px;padding:1px 7px;font-size:11px;font-weight:600}
 .filter-pills .pill.active .cnt{background:rgba(255,255,255,.22)}
-.task-prog{display:block;color:var(--text-mute);font-size:11px;margin-top:3px;line-height:1.4}
+.task-prog{display:block;color:var(--text-mute);font-size:11px;margin-top:3px;line-height:1.4;word-break:break-all;white-space:normal}
 .task-prog .now{color:var(--blue);font-weight:600}
 .score-cell{font-size:18px;font-weight:700;color:var(--navy)}
 .score-cell.warn{color:var(--orange)}
@@ -192,9 +192,19 @@ body.skin-cute .float-decor{
   <div class="float-decor" style="bottom:8%;right:8%;animation-delay:-1s">✨</div>
 
   <div class="toolbar">
-    {% if role != 'consultant' %}<input id="qAdvisor" placeholder="顾问">{% else %}<input id="qAdvisor" type="hidden">{% endif %}
-    <input id="qCustomer" placeholder="顾客">
-    <input id="qDate" type="date">
+    {% if role != 'consultant' %}<input id="qAdvisor" placeholder="顾问" oninput="debouncedLoad()">{% else %}<input id="qAdvisor" type="hidden">{% endif %}
+    <input id="qCustomer" placeholder="顾客" oninput="debouncedLoad()">
+    <button class="sec" id="timeToggleBtn" onclick="toggleTimeFilter()" style="white-space:nowrap;font-size:12px">⏱ 时间</button>
+    <span id="timeFilterRow" style="display:none;align-items:center;gap:4px;white-space:nowrap">
+      <select id="qTimeType" onchange="loadList(1)" style="font-size:12px;padding:3px 4px;border:1px solid var(--border);border-radius:4px;color:var(--text-mid);background:#fff">
+        <option value="recording">录音时间</option>
+        <option value="analysis">分析时间</option>
+      </select>
+      <input id="qDate" type="date" onchange="loadList(1)" style="font-size:12px">
+      <input id="qTimeFrom" type="time" onchange="loadList(1)" style="width:100px;font-size:12px">
+      <span style="color:var(--text-mute);font-size:11px">—</span>
+      <input id="qTimeTo" type="time" onchange="loadList(1)" style="width:100px;font-size:12px">
+    </span>
     <button onclick="loadList(1)">筛选</button>
     <button class="sec" onclick="resetFilter()">重置</button>
     <div style="flex:1"></div>
@@ -228,12 +238,12 @@ body.skin-cute .float-decor{
     <thead>
       <tr>
         {% if role in ['admin','super'] %}<th style="width:34px;text-align:center"><input type="checkbox" id="selAll" onclick="toggleSelectAll(this)"></th>{% endif %}
-        <th style="width:110px">服务日期</th>
         {% if role != 'consultant' %}<th style="width:100px">顾问</th>{% endif %}
         <th style="width:120px">顾客</th>
         <th style="width:90px">录音/ASR</th>
+        <th style="width:120px">录音时间</th>
         <th style="width:100px">综合分</th>
-        <th style="width:170px">分析状态</th>
+        <th style="width:140px">分析状态</th>
         <th style="width:130px">最后分析时间</th>
         <th style="width:60px">点评</th>
         <th>操作</th>
@@ -286,6 +296,43 @@ let curPage = 1;
 let totalPages = 1;
 let curStatus = '';   // '', 'running', 'queued', 'done', 'failed', 'idle'
 const PAGE_SIZE = 20;
+let _debounceTimer = null;
+function debouncedLoad() { clearTimeout(_debounceTimer); _debounceTimer = setTimeout(() => loadList(1), 350); }
+
+function fmtRecTime(t) {
+  if (!t) return null;
+  const s = String(t);
+  if (s.length === 14) return { date: s.slice(0,4)+'-'+s.slice(4,6)+'-'+s.slice(6,8), time: s.slice(8,10)+':'+s.slice(10,12) };
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? { date: `${m[1]}-${m[2]}-${m[3]}`, time: `${m[4]}:${m[5]}` } : { date: '', time: s };
+}
+function fmtTimeRange(first, last) {
+  const a = fmtRecTime(first);
+  const b = fmtRecTime(last);
+  if (!a && !b) return '<span style="color:var(--text-mute)">—</span>';
+  if (a && !b) return `<div>${a.date}</div><div>${a.time}</div>`;
+  if (!a && b) return `<div>${b.date}</div><div>${b.time}</div>`;
+  if (a.date === b.date && a.time === b.time) return `<div>${a.date}</div><div>${a.time}</div>`;
+  if (a.date === b.date) return `<div>${a.date}</div><div>${a.time}–${b.time}</div>`;
+  return `<div>${a.date} ${a.time}</div><div>${b.date} ${b.time}</div>`;
+}
+function fmtRecRange(first, last) { return fmtTimeRange(first, last); }
+
+function toggleTimeFilter() {
+  const row = document.getElementById('timeFilterRow');
+  const btn = document.getElementById('timeToggleBtn');
+  const open = row.style.display === 'none';
+  row.style.display = open ? 'flex' : 'none';
+  btn.style.background = open ? 'var(--navy)' : '';
+  btn.style.color = open ? '#fff' : '';
+  btn.style.borderColor = open ? 'var(--navy)' : '';
+  if (!open) {
+    document.getElementById('qDate').value = '';
+    document.getElementById('qTimeFrom').value = '';
+    document.getElementById('qTimeTo').value = '';
+    loadList(1);
+  }
+}
 
 function fmtScore(s) {
   if (s == null) return '<span style="color:var(--text-mute)">—</span>';
@@ -293,12 +340,8 @@ function fmtScore(s) {
   return `<span class="score-cell ${cls}">${(+s).toFixed(1)}</span>`;
 }
 
-function fmtAnalysisTime(t) {
-  if (!t) return '<span style="color:var(--text-mute)">—</span>';
-  // 形如 "2026-05-24 16:48:11"
-  const m = String(t).match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
-  if (!m) return t;
-  return `${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
+function fmtAnalysisTime(start, end) {
+  return fmtTimeRange(start, end);
 }
 
 function updateBatchBar() {
@@ -430,8 +473,21 @@ function setStatusFilter(st) {
 }
 
 function refreshCounts() {
-  // 拉 5 个状态 + 全部 的 total。为减压：一次性走 /api/sessions/status_counts
-  fetch(BASE + '/api/sessions/status_counts').then(r => r.json()).then(d => {
+  const adv = document.getElementById('qAdvisor').value.trim();
+  const cus = document.getElementById('qCustomer').value.trim();
+  const date = document.getElementById('qDate').value;
+  const timeFrom = document.getElementById('qTimeFrom').value;
+  const timeTo = document.getElementById('qTimeTo').value;
+  const timeType = document.getElementById('qTimeType').value;
+  const params = new URLSearchParams();
+  if (adv) params.set('advisor', adv);
+  if (cus) params.set('customer', cus);
+  if (date) params.set('date', date);
+  if (timeFrom) params.set('time_from', timeFrom);
+  if (timeTo) params.set('time_to', timeTo);
+  if ((date || timeFrom || timeTo) && timeType) params.set('time_type', timeType);
+  const qs = params.toString() ? '?' + params.toString() : '';
+  fetch(BASE + '/api/sessions/status_counts' + qs).then(r => r.json()).then(d => {
     if (!d || !d.counts) return;
     const c = d.counts;
     document.getElementById('cnt-all').textContent     = c.all     ?? 0;
@@ -449,10 +505,16 @@ function loadList(page) {
   const adv = document.getElementById('qAdvisor').value.trim();
   const cus = document.getElementById('qCustomer').value.trim();
   const date = document.getElementById('qDate').value;
+  const timeFrom = document.getElementById('qTimeFrom').value;
+  const timeTo = document.getElementById('qTimeTo').value;
+  const timeType = document.getElementById('qTimeType').value;
   const params = new URLSearchParams({page: page, page_size: PAGE_SIZE});
   if (adv) params.set('advisor', adv);
   if (cus) params.set('customer', cus);
   if (date) params.set('date', date);
+  if (timeFrom) params.set('time_from', timeFrom);
+  if (timeTo) params.set('time_to', timeTo);
+  if ((date || timeFrom || timeTo) && timeType) params.set('time_type', timeType);
   if (curStatus) params.set('status', curStatus);
   fetch(BASE + '/api/sessions?' + params).then(r => r.json()).then(data => {
     const tbody = document.getElementById('listBody');
@@ -464,13 +526,13 @@ function loadList(page) {
         try { overall = s.analysis_scores ? JSON.parse(s.analysis_scores).overall : null; } catch(e){}
         return `<tr data-sid="${s.id}">
           ${IS_ADMIN ? `<td style="text-align:center"><input type="checkbox" class="row-chk" value="${s.id}" onclick="onRowCheck()" ${selectedIds.has(s.id) ? 'checked' : ''}></td>` : ''}
-          <td data-label="服务日期">${s.service_date || '—'}</td>
           ${ROLE !== 'consultant' ? `<td data-label="顾问">${s.advisor || '—'}</td>` : ''}
           <td data-label="顾客">${s.customer || '—'}</td>
           <td data-label="录音/ASR">${s.asr_done_count || 0}/${s.recording_count || 0}</td>
+          <td data-label="录音时间" style="color:var(--text-mute);font-size:12px;white-space:nowrap">${fmtRecRange(s.first_recorded_at, s.last_recorded_at)}</td>
           <td data-label="综合分">${fmtScore(overall)}</td>
           <td data-label="分析状态">${fmtStatus(s.display_status, s.analysis_progress, s)}</td>
-          <td data-label="最后分析时间" style="color:var(--text-mute);font-size:12px;white-space:nowrap">${fmtAnalysisTime(s.analysis_finished_at)}</td>
+          <td data-label="最后分析时间" style="color:var(--text-mute);font-size:12px;white-space:nowrap">${fmtAnalysisTime(s.analysis_started_at, s.analysis_finished_at)}</td>
           <td data-label="点评">${s.has_evaluation ? '✓' : '—'}</td>
           <td style="white-space:nowrap">
             <a href="${BASE}/session/${s.id}" style="color:var(--blue);font-weight:600">查看 →</a>
@@ -514,6 +576,16 @@ function resetFilter() {
   document.getElementById('qAdvisor').value = '';
   document.getElementById('qCustomer').value = '';
   document.getElementById('qDate').value = '';
+  document.getElementById('qTimeFrom').value = '';
+  document.getElementById('qTimeTo').value = '';
+  document.getElementById('qTimeType').value = 'recording';
+  document.getElementById('timeFilterRow').style.display = 'none';
+  const btn = document.getElementById('timeToggleBtn');
+  btn.style.background = ''; btn.style.color = ''; btn.style.borderColor = '';
+  curStatus = '';
+  document.querySelectorAll('#filterPills .pill').forEach(el => {
+    el.classList.toggle('active', (el.dataset.st || '') === '');
+  });
   loadList(1);
 }
 
