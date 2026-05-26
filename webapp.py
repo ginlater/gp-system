@@ -5607,9 +5607,11 @@ def api_consultant_upload():
     if ext not in ("webm", "mp3", "wav", "m4a", "mp4", "ogg", "aac", "amr"):
         ext = "webm"
     dur_label = _format_duration_label(request.form.get("duration_sec"))
-    recorded_at = datetime.now().strftime("%Y%m%d%H%M%S")
+    now = datetime.now()
+    recorded_at = now.strftime("%Y-%m-%d %H:%M:%S")
+    ts14 = now.strftime("%Y%m%d%H%M%S")
     # 新格式：顾客未知 → 用 "未命名" 占位，绑定时再重命名
-    oss_key = _build_consultant_oss_key(company_id, u['id'], None, advisor, recorded_at, dur_label, ext)
+    oss_key = _build_consultant_oss_key(company_id, u['id'], None, advisor, ts14, dur_label, ext)
     if _oss_key_exists(oss_key):
         stem, _, ex = oss_key.rpartition(".")
         oss_key = f"{stem}_{_uuid.uuid4().hex[:4]}.{ex}"
@@ -5621,7 +5623,7 @@ def api_consultant_upload():
     rid = ingest_recording(
         oss_key, source="consultant-upload", size_bytes=len(data),
         advisor=advisor, customer=None,
-        recorded_at=recorded_at, service_date=recorded_at[:8],
+        recorded_at=recorded_at, service_date=recorded_at[:10],
         duration_label=dur_label,
         company_id=company_id, uploader_user_id=u["id"], orphan=True,
     )

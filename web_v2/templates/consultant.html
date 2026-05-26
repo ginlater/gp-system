@@ -240,8 +240,8 @@ body.skin-cute .dlg{border-radius:18px}
     <div class="muted" style="margin-bottom:6px;font-size:12px">未绑定顾客的录音不会进入分析。请试听后绑定到对应日期接诊列表里的顾客。</div>
     <div id="pendingCrossWarn" style="display:none;background:#fdecea;color:#c0392b;padding:6px 8px;border-radius:4px;margin-bottom:6px;font-size:12px;font-weight:600"></div>
     <table class="tbl">
-      <thead><tr><th>时间</th><th>试听</th><th>状态</th><th>操作</th></tr></thead>
-      <tbody id="pendingBody"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+      <thead><tr><th>录音信息</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody id="pendingBody"><tr><td colspan="3" class="muted">加载中…</td></tr></tbody>
     </table>
   </div>
 
@@ -488,7 +488,7 @@ async function loadPending() {
         dates.map(d => `<a href="javascript:void(0)" onclick='setReceptionDate(${JSON.stringify(d)})' style="color:#c0392b;text-decoration:underline;margin:0 4px">切到 ${d}</a>`).join('');
     } else warn.style.display = 'none';
   }
-  if (!list.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">没有未绑定的录音</td></tr>'; return; }
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="3" class="muted">没有未绑定的录音</td></tr>'; return; }
   tb.innerHTML = list.map(x => {
     const tag = x.asr_status === 'awaiting_intake' ? `<span class="tag">待绑定顾客</span>` :
                 x.asr_status === 'done' ? `<span class="tag done">已转写</span>` :
@@ -496,18 +496,24 @@ async function loadPending() {
                 x.asr_status === 'failed' ? `<span class="tag failed">转写失败</span>` :
                 `<span class="tag">待绑定顾客</span>`;
     const audio = x.audio_url
-      ? `<audio controls preload="none" src="${x.audio_url}" data-cap="60" style="max-width:200px;height:32px"></audio>`
-      : '—';
+      ? `<audio controls preload="none" src="${x.audio_url}" data-cap="60" style="width:200px;height:28px;vertical-align:middle"></audio>`
+      : '<span class="muted">无音频</span>';
     const isCross = x.rec_date && x.rec_date !== activeDate0;
-    const rowStyle = isCross ? ' style="background:#fdecea;color:#c0392b"' : '';
+    const rowStyle = isCross ? ' style="background:#fdecea"' : '';
     const dateChip = isCross
-      ? ` <span class="tag" style="background:#fff;color:#c0392b;border:1px solid #c0392b;margin-left:4px">${x.rec_date}</span>`
+      ? `<span class="tag" style="background:#fff;color:#c0392b;border:1px solid #c0392b;margin-left:6px;font-size:11px">${x.rec_date}</span>`
       : '';
+    const durText = x.duration_label
+      ? `<span style="color:#2e7d32;font-weight:600;margin-right:8px">⏱ ${x.duration_label}</span>`
+      : '';
+    const timeStr = x.created_at || x.recorded_at || '—';
     return `<tr${rowStyle}>
-      <td>${x.created_at || x.recorded_at || '—'}${dateChip}</td>
-      <td>${audio}</td>
-      <td>${tag}</td>
-      <td style="white-space:nowrap">
+      <td>
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px;white-space:nowrap">${timeStr}${dateChip}</div>
+        <div style="display:flex;align-items:center;gap:4px">${durText}${audio}</div>
+      </td>
+      <td style="vertical-align:middle">${tag}</td>
+      <td style="white-space:nowrap;vertical-align:middle">
         <button class="btn sec" onclick='openBind(${x.id}, ${JSON.stringify(x.rec_date||"")})'>绑定顾客</button>
         <button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;margin-left:4px" onclick="requestDelRec(${x.id}, this)">申请删除</button>
       </td>
