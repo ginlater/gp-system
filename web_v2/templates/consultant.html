@@ -239,11 +239,24 @@ body.skin-cute .dlg{border-radius:18px}
     <h3><span class="t-pro">未选择顾客的录音</span><span class="t-cute">💭 还没归档的片段</span> <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button></h3>
     <div class="muted" style="margin-bottom:6px;font-size:12px">未绑定顾客的录音不会进入分析。请试听后绑定到对应日期接诊列表里的顾客。</div>
     <div id="pendingCrossWarn" style="display:none;background:#fdecea;color:#c0392b;padding:6px 8px;border-radius:4px;margin-bottom:6px;font-size:12px;font-weight:600"></div>
-    <table class="tbl">
-      <thead><tr><th>录音信息</th><th>状态</th><th>操作</th></tr></thead>
-      <tbody id="pendingBody"><tr><td colspan="3" class="muted">加载中…</td></tr></tbody>
+    <table class="tbl pending-tbl">
+      <thead><tr><th>服务日期</th><th>时间段</th><th>时长</th><th>试听</th><th>操作</th></tr></thead>
+      <tbody id="pendingBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
     </table>
   </div>
+
+  <style>
+    /* 未归档列表：手机端转卡片布局 */
+    @media (max-width: 640px) {
+      .pending-tbl thead { display:none; }
+      .pending-tbl, .pending-tbl tbody, .pending-tbl tr, .pending-tbl td { display:block; width:100%; }
+      .pending-tbl tr { border:1px solid var(--border); border-radius:6px; padding:8px; margin-bottom:8px; box-sizing:border-box; }
+      .pending-tbl td { border:none; padding:3px 0; }
+      .pending-tbl td[data-lbl]::before { content: attr(data-lbl) "："; color:#666; font-size:12px; margin-right:4px; }
+      .pending-tbl td.pending-acts { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+      .pending-tbl audio { width:100% !important; }
+    }
+  </style>
 
   <!-- 多说话人警告 -->
   <div class="card" id="needsConfirmCard" style="display:none">
@@ -313,20 +326,36 @@ body.skin-cute .dlg{border-radius:18px}
   </div>
 </div>
 
-<!-- 申请换绑弹窗 -->
+<!-- 换绑弹窗（直接执行，无审批） -->
 <div class="mask" id="rebindMask">
   <div class="dlg">
-    <h3>申请换绑</h3>
-    <div class="muted" style="font-size:12px;margin-bottom:8px">提交后由管理员审批，<b>不能撤回</b>。同意后旧分析会作废，需要重新分析。</div>
+    <h3>换绑录音到其他顾客</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">直接换绑，无需审批。<b>若已分析将作废，需要重新分析</b>。所有换绑会被管理员留痕。</div>
     <div id="rebindRecInfo" class="muted" style="font-size:12px;margin-bottom:8px"></div>
     <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">换绑到：（仅显示该录音当天接诊的顾客）</div>
     <div id="rebindCustList" style="max-height:200px;overflow:auto;margin-bottom:8px"></div>
-    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">换绑理由 *</div>
-    <textarea id="rebindReason" rows="3" placeholder="请简要说明为何需要换绑" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px;resize:vertical"></textarea>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">换绑理由（可选）</div>
+    <textarea id="rebindReason" rows="2" placeholder="可选：说明换绑原因，便于管理员复盘" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px;resize:vertical"></textarea>
     <div class="msg" id="rebindMsg"></div>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
       <button class="btn sec" onclick="closeRebind()">取消</button>
-      <button class="btn" id="rebindSubmitBtn" onclick="submitRebind()">提交申请</button>
+      <button class="btn" id="rebindSubmitBtn" onclick="submitRebind()">确认换绑</button>
+    </div>
+  </div>
+</div>
+
+<!-- 退回未归档弹窗 -->
+<div class="mask" id="unbindMask">
+  <div class="dlg" style="max-width:420px">
+    <h3>退回未归档片段</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">录音将从当前顾客解绑，回到"未归档片段"里，可以在那里申请删除。<b>若已分析将作废</b>。所有操作会被管理员留痕。</div>
+    <div id="unbindRecInfo" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">退回理由 *</div>
+    <textarea id="unbindReason" rows="3" placeholder="请简要说明（如：录错顾客、想删除等）" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px;resize:vertical"></textarea>
+    <div class="msg" id="unbindMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn sec" onclick="closeUnbind()">取消</button>
+      <button class="btn" id="unbindSubmitBtn" style="background:#e74c3c;border-color:#e74c3c" onclick="submitUnbind()">确认退回未归档</button>
     </div>
   </div>
 </div>
@@ -336,6 +365,7 @@ body.skin-cute .dlg{border-radius:18px}
   <div class="dlg">
     <h3 id="pkgTitle">接诊包</h3>
     <div class="muted" id="pkgSubtitle" style="font-size:12px;margin-bottom:8px"></div>
+    <div id="pkgProgress" style="display:none;background:#f5f7fa;border:1px solid #e3e8ee;border-radius:6px;padding:10px 12px;margin-bottom:10px"></div>
     <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">本次将分析的录音</div>
     <div id="pkgBound"></div>
     <div style="font-weight:600;font-size:13px;color:var(--navy);margin:12px 0 4px" id="pkgUnboundTitle">本人当日未绑定录音（可加入本接诊包）</div>
@@ -472,54 +502,86 @@ function attachAudioCap(audioEl, maxSec) {
 
 async function loadPending() {
   const tb = document.getElementById('pendingBody');
-  tb.innerHTML = '<tr><td colspan="4" class="muted">加载中…</td></tr>';
+  if (!tb.dataset.loaded) tb.innerHTML = '<tr><td colspan="5" class="muted">加载中…</td></tr>';
   const r = await fetch(BASE + '/api/consultant/recordings/pending');
   const d = await r.json();
   const list = d.recordings || [];
-  // 跨天未绑录音提示，挂在「还没归档的片段」卡片上
+  tb.dataset.loaded = '1';
   const activeDate0 = currentReceptionDate || _todayStr();
-  const crossList = list.filter(x => x.rec_date && x.rec_date !== activeDate0);
+  const crossList = list.filter(x => x.service_date && x.service_date !== activeDate0);
   const warn = document.getElementById('pendingCrossWarn');
   if (warn) {
     if (crossList.length > 0) {
-      const dates = [...new Set(crossList.map(x => x.rec_date))].sort().reverse();
+      const dates = [...new Set(crossList.map(x => x.service_date))].sort().reverse();
       warn.style.display = '';
       warn.innerHTML = `⚠ 有 ${crossList.length} 段录音的日期与当前接诊（${activeDate0}）不一致：` +
-        dates.map(d => `<a href="javascript:void(0)" onclick='setReceptionDate(${JSON.stringify(d)})' style="color:#c0392b;text-decoration:underline;margin:0 4px">切到 ${d}</a>`).join('');
+        dates.map(d => `<a href="javascript:void(0)" onclick='setReceptionDate(${JSON.stringify(d)})' style="color:#c0392b;text-decoration:underline;margin:0 4px;white-space:nowrap;display:inline-block">切到 ${d}</a>`).join('');
     } else warn.style.display = 'none';
   }
-  if (!list.length) { tb.innerHTML = '<tr><td colspan="3" class="muted">没有未绑定的录音</td></tr>'; return; }
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">没有未绑定的录音</td></tr>'; return; }
   tb.innerHTML = list.map(x => {
-    const tag = x.asr_status === 'awaiting_intake' ? `<span class="tag">待绑定顾客</span>` :
-                x.asr_status === 'done' ? `<span class="tag done">已转写</span>` :
-                x.asr_status === 'running' ? `<span class="tag running">转写中</span>` :
-                x.asr_status === 'failed' ? `<span class="tag failed">转写失败</span>` :
-                `<span class="tag">待绑定顾客</span>`;
     const audio = x.audio_url
-      ? `<audio controls preload="none" src="${x.audio_url}" data-cap="60" style="width:200px;height:28px;vertical-align:middle"></audio>`
+      ? `<audio controls preload="none" src="${x.audio_url}" style="width:160px;height:28px;vertical-align:middle"></audio>`
       : '<span class="muted">无音频</span>';
-    const isCross = x.rec_date && x.rec_date !== activeDate0;
-    const rowStyle = isCross ? ' style="background:#fdecea"' : '';
-    const dateChip = isCross
-      ? `<span class="tag" style="background:#fff;color:#c0392b;border:1px solid #c0392b;margin-left:6px;font-size:11px">${x.rec_date}</span>`
-      : '';
-    const durText = x.duration_label
-      ? `<span style="color:#2e7d32;font-weight:600;margin-right:8px">⏱ ${x.duration_label}</span>`
-      : '';
-    const timeStr = x.created_at || x.recorded_at || '—';
+    const isCross = x.service_date && x.service_date !== activeDate0;
+    const drStatus = x.delete_request_status; // null | 'pending' | 'rejected'
+    const isDelPending = drStatus === 'pending';
+    const isDelRejected = drStatus === 'rejected';
+    let rowBg = '';
+    if (isDelPending) rowBg = 'background:#f0f0f0;opacity:0.85';
+    else if (isCross) rowBg = 'background:#fdecea';
+    const rowStyle = rowBg ? ` style="${rowBg}"` : '';
+    const dateStyle = isCross ? 'color:#c0392b;font-weight:600' : 'font-weight:600';
+    const durMin = (x.duration_min != null) ? `${x.duration_min} 分钟` : '—';
+    const span = (x.start_hm && x.end_hm) ? `${x.start_hm} – ${x.end_hm}` : (x.start_hm || '—');
+    // 状态横幅（删除审批中 / 删除被拒绝）
+    let banner = '';
+    if (isDelPending) {
+      banner = `<div style="grid-column:1/-1;background:#fff3cd;color:#856404;padding:4px 8px;border-radius:4px;font-size:12px;margin-bottom:4px">
+        ⏳ 删除审批中（需先"撤回申请"才能进行其他操作）
+      </div>`;
+    } else if (isDelRejected) {
+      const reason = x.delete_reject_reason ? '：' + x.delete_reject_reason.replace(/"/g,'&quot;') : '';
+      banner = `<div style="grid-column:1/-1;background:#fdecea;color:#c0392b;padding:4px 8px;border-radius:4px;font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+        <span>✗ 删除申请被拒${reason}</span>
+        <button class="btn sec" style="padding:2px 8px;font-size:11px" onclick="dismissDelReject(${x.id})">知道了</button>
+      </div>`;
+    }
+    // 操作按钮
+    let actsHtml;
+    if (isDelPending) {
+      actsHtml = `
+        <button class="btn sec" style="padding:4px 8px;font-size:12px;white-space:nowrap;opacity:0.5;cursor:not-allowed" onclick="alert('该录音正在申请删除，请先撤回申请再操作')" disabled>绑定顾客</button>
+        <button class="btn" style="padding:4px 8px;font-size:12px;white-space:nowrap;background:#e67e22;border-color:#e67e22" onclick="withdrawDelRec(${x.id}, this)">撤回删除申请</button>
+      `;
+    } else {
+      actsHtml = `
+        <button class="btn sec" style="padding:4px 8px;font-size:12px;white-space:nowrap" onclick='openBind(${x.id}, ${JSON.stringify(x.service_date||"")})'>绑定顾客</button>
+        <button class="btn sec" style="padding:4px 8px;font-size:12px;white-space:nowrap;color:#e74c3c;border-color:#e74c3c" onclick="requestDelRec(${x.id}, this)">申请删除</button>
+      `;
+    }
     return `<tr${rowStyle}>
-      <td>
-        <div style="font-size:13px;font-weight:600;margin-bottom:4px;white-space:nowrap">${timeStr}${dateChip}</div>
-        <div style="display:flex;align-items:center;gap:4px">${durText}${audio}</div>
-      </td>
-      <td style="vertical-align:middle">${tag}</td>
-      <td style="white-space:nowrap;vertical-align:middle">
-        <button class="btn sec" onclick='openBind(${x.id}, ${JSON.stringify(x.rec_date||"")})'>绑定顾客</button>
-        <button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;margin-left:4px" onclick="requestDelRec(${x.id}, this)">申请删除</button>
+      ${banner ? `<td colspan="5" style="padding:0 6px">${banner}</td></tr><tr${rowStyle}>` : ''}
+      <td data-lbl="服务日期" style="white-space:nowrap;${dateStyle}">${x.service_date || '—'}</td>
+      <td data-lbl="时间段" style="white-space:nowrap">${span}</td>
+      <td data-lbl="时长" style="white-space:nowrap;color:#2e7d32;font-weight:600">${durMin}</td>
+      <td data-lbl="试听">${audio}</td>
+      <td class="pending-acts" style="vertical-align:middle">
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:stretch">${actsHtml}</div>
       </td>
     </tr>`;
   }).join('');
   tb.querySelectorAll('audio[data-cap]').forEach(a => attachAudioCap(a, parseFloat(a.dataset.cap)));
+}
+
+// 自动刷新未归档列表：5s 一次。页面隐藏 / 有音频正在试听时跳过，避免打断。
+if (!window._pendingAutoTimer) {
+  window._pendingAutoTimer = setInterval(() => {
+    if (document.hidden) return;
+    const playing = document.querySelectorAll('#pendingBody audio');
+    for (const a of playing) { if (!a.paused) return; }
+    loadPending();
+  }, 5000);
 }
 
 async function loadNeedsConfirm() {
@@ -914,7 +976,65 @@ async function openPkg(customer_id, service_date) {
   document.getElementById('pkgUnbound').innerHTML = '';
   await refreshPkg();
 }
-function closePkg(){ document.getElementById('pkgMask').classList.remove('show'); pkgCustomerId=null; pkgDate=null; }
+function closePkg(){
+  document.getElementById('pkgMask').classList.remove('show');
+  pkgCustomerId=null; pkgDate=null;
+  if (window._pkgPollTimer) { clearTimeout(window._pkgPollTimer); window._pkgPollTimer = null; }
+}
+
+function _fmtElapsed(sec) {
+  if (sec == null || sec < 0) return '';
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m > 0 ? `${m} 分 ${s} 秒` : `${s} 秒`;
+}
+
+function renderPkgProgress(tp, ast) {
+  const box = document.getElementById('pkgProgress');
+  if (!tp || !ast || ast === 'pending' || ast === '') { box.style.display = 'none'; return; }
+  const total = tp.total || 11;
+  const done = tp.done || 0;
+  const running = tp.running || 0;
+  const failed = tp.failed || 0;
+  const pct = total ? Math.round(done * 100 / total) : 0;
+  let stateLabel, stateColor;
+  if (ast === 'done') { stateLabel = '✓ 已完成'; stateColor = '#2e7d32'; }
+  else if (ast === 'failed') { stateLabel = '✗ 分析失败'; stateColor = '#c0392b'; }
+  else if (ast === 'outdated') { stateLabel = '⟳ 录音有变更，需重新分析'; stateColor = '#e67e22'; }
+  else if (ast === 'queued') { stateLabel = '⏳ 排队中'; stateColor = '#e67e22'; }
+  else if (ast === 'running') { stateLabel = '🔄 分析中'; stateColor = '#1976d2'; }
+  else { stateLabel = ''; stateColor = '#666'; }
+  const wait = tp.wait_sec != null ? `已等待 ${_fmtElapsed(tp.wait_sec)}` : '';
+  const runningLine = (running > 0 && (tp.running_names || []).length)
+    ? `<div style="font-size:12px;color:#1976d2;margin-top:4px">正在分析：${tp.running_names.join('、')}</div>`
+    : '';
+  // 仅当整体状态停留在 failed/outdated 时才提示"任务失败"；分析中/排队中说明已经在重试，不再显示
+  const failedLine = (failed > 0 && (tp.failed_names || []).length && (ast === 'failed' || ast === 'outdated'))
+    ? `<div style="font-size:12px;color:#c0392b;margin-top:4px;font-weight:600">✗ 失败：${tp.failed_names.join('、')}（重新分析可重试）</div>`
+    : '';
+  box.style.display = '';
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;font-size:13px">
+      <span style="font-weight:600;color:${stateColor}">${stateLabel}</span>
+      <span style="color:#666;font-size:12px">${wait}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <div style="flex:1;height:8px;background:#e3e8ee;border-radius:99px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${stateColor};transition:width .4s"></div>
+      </div>
+      <span style="font-size:12px;color:#444;font-weight:600;white-space:nowrap">${done} / ${total}</span>
+    </div>
+    ${runningLine}${failedLine}
+  `;
+}
+
+function schedulePkgPoll(ast) {
+  if (window._pkgPollTimer) { clearTimeout(window._pkgPollTimer); window._pkgPollTimer = null; }
+  if (ast === 'running' || ast === 'queued') {
+    window._pkgPollTimer = setTimeout(() => {
+      if (pkgCustomerId != null) refreshPkg();
+    }, 5000);
+  }
+}
 
 async function refreshPkg() {
   const qs = pkgDate ? ('&date=' + encodeURIComponent(pkgDate)) : '';
@@ -925,30 +1045,40 @@ async function refreshPkg() {
   document.getElementById('pkgTitle').textContent = '接诊包 · ' + d.customer.name;
   const ubt = document.getElementById('pkgUnboundTitle');
   if (ubt) ubt.textContent = `本人 ${d.service_date} 未绑定录音（可加入本接诊包）`;
-  document.getElementById('pkgSubtitle').textContent =
-    d.service_date + (pkgLocked ? ' · 已锁定（如需修改请联系管理员）' : ' · 未锁定');
+  const ast = d.analysis_status || '';
+  const isAnalyzing = (ast === 'running' || ast === 'queued');
+  const isDone = (ast === 'done');
+  const canRetry = (ast === 'failed' || ast === 'outdated');
+  renderPkgProgress(d.task_progress, ast);
+  schedulePkgPoll(ast);
+  document.getElementById('pkgSubtitle').innerHTML =
+    `${d.service_date} · 核对顾客信息后开始分析，如绑错可以"换绑"或"退回未归档"`;
+  d._subtitleSet = true;
+  // 若上方已设置则跳过；否则保留向后兼容
+  if (!d._subtitleSet) {
+    document.getElementById('pkgSubtitle').textContent =
+      d.service_date + ' · 核对顾客信息后开始分析，如绑错可以"换绑"或"退回未归档"';
+  }
   const startBtn = document.getElementById('pkgStartBtn');
-  startBtn.style.display = pkgLocked ? 'none' : '';
+  if (isAnalyzing || isDone) {
+    // 分析中：不让重复触发；已完成：避免无意义重跑
+    startBtn.style.display = 'none';
+  } else {
+    startBtn.style.display = '';
+    startBtn.textContent = canRetry ? '重新分析' : '确认并开始分析';
+  }
   const bound = d.bound || [];
   const unbound = d.unbound || [];
   document.getElementById('pkgBound').innerHTML = bound.length ? bound.map(x => {
     const audio = x.audio_url ? `<audio controls preload="none" src="${x.audio_url}" style="max-width:180px;height:28px"></audio>` : '';
-    const isPending = !!x.pending_rebind_request_id;
-    const removeBtn = (pkgLocked || isPending) ? '' :
-      `<button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;padding:3px 8px;font-size:12px" onclick="pkgRemove(${x.id}, this)">移除</button>`;
-    let rebindBtn;
-    if (isPending) {
-      rebindBtn = `<span class="tag" style="background:#fef3e0;color:#e67e22">⏳ 换绑审批中</span>`;
-    } else if (pkgLocked) {
-      rebindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick='openRebind(${JSON.stringify({rid:x.id, recorded_at:x.recorded_at, duration_label:x.duration_label})}, true)'>申请换绑</button>`;
-    } else {
-      rebindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick='openRebind(${JSON.stringify({rid:x.id, recorded_at:x.recorded_at, duration_label:x.duration_label})}, false)'>换绑</button>`;
-    }
+    const info = JSON.stringify({rid:x.id, recorded_at:x.recorded_at, duration_label:x.duration_label});
+    const rebindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick='openRebind(${info})'>换绑</button>`;
+    const unbindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px;color:#e74c3c;border-color:#e74c3c" onclick='openUnbind(${info})'>退回未归档</button>`;
     return `<div class="pkg-rec">
       <span style="min-width:130px">${x.recorded_at||'—'}</span>
       <span>${x.duration_label||''}</span>
       <span class="tag">${x.asr_status||'pending'}</span>
-      ${audio}${rebindBtn}${removeBtn}
+      ${audio}${rebindBtn}${unbindBtn}
     </div>`;
   }).join('') : '<div class="empty-tip">接诊包内还没有录音</div>';
 
@@ -1022,12 +1152,32 @@ async function requestDelRec(rid, btn) {
     });
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || '申请失败');
-    btn.textContent = '已申请';
-    btn.style.opacity = '0.5';
+    loadPending();
   } catch (e) {
     alert(e.message);
     btn.disabled = false;
   }
+}
+
+async function withdrawDelRec(rid, btn) {
+  if (!confirm('撤回这段录音的删除申请？撤回后可继续绑定/换绑等操作。')) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/recording/' + rid + '/delete-request/withdraw', {method:'POST'});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    loadPending();
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+
+async function dismissDelReject(rid) {
+  try {
+    await fetch(BASE + '/api/recording/' + rid + '/delete-request/dismiss', {method:'POST'});
+    loadPending();
+  } catch (e) { /* 忽略 */ }
 }
 
 // ============ 改接诊日期 ============
@@ -1071,32 +1221,19 @@ async function confirmEditDate() {
   } finally { btn.disabled = false; }
 }
 
-// ============ 换绑 / 申请换绑 ============
+// ============ 换绑 / 退回未归档 ============
 let rebindRid = null;
-let rebindNeedsApproval = false;  // true=申请换绑, false=直接换绑
-async function openRebind(info, needsApproval) {
+async function openRebind(info) {
   rebindRid = info.rid;
-  rebindNeedsApproval = !!needsApproval;
-  document.querySelector('#rebindMask h3').textContent = rebindNeedsApproval ? '申请换绑（需管理员审批）' : '直接换绑';
-  document.querySelector('#rebindMask .muted').innerHTML = rebindNeedsApproval
-    ? '已开始分析，换绑需管理员审批，<b>提交后不能撤回</b>。同意后旧分析作废，需要重新分析。'
-    : '未开始分析，可直接换绑。换绑后录音会移到新顾客的接诊包。';
-  // 理由块：仅审批模式需要
-  const reasonLabel = document.querySelector('#rebindMask div[style*="margin:6px 0 4px"]:last-of-type, #rebindMask textarea');
-  // 简化：通过 id 找
-  const ta = document.getElementById('rebindReason');
-  ta.style.display = rebindNeedsApproval ? '' : 'none';
-  if (ta.previousElementSibling) ta.previousElementSibling.style.display = rebindNeedsApproval ? '' : 'none';
   document.getElementById('rebindRecInfo').innerHTML =
     `录音：${info.recorded_at || '—'} · ${info.duration_label || ''}`;
-  ta.value = '';
+  document.getElementById('rebindReason').value = '';
   document.getElementById('rebindMsg').textContent = '';
   const cl = document.getElementById('rebindCustList');
   cl.innerHTML = '<div class="empty-tip">加载中…</div>';
   const rm = document.getElementById('rebindMask');
-  rm.style.zIndex = '60';   // 盖在接诊包弹窗之上
+  rm.style.zIndex = '60';
   rm.classList.add('show');
-  // 录音日期 = 当前 pkg 包的 service_date
   const recDate = pkgDate || _todayStr();
   try {
     const r = await fetch(BASE + '/api/consultant/today_reception?date=' + encodeURIComponent(recDate));
@@ -1121,46 +1258,54 @@ async function submitRebind() {
   const msg = document.getElementById('rebindMsg');
   if (!sel) { msg.textContent='请选择换绑目标顾客'; msg.className='msg err'; return; }
   const tcid = parseInt(sel.value, 10);
-  if (rebindNeedsApproval) {
-    const reason = document.getElementById('rebindReason').value.trim();
-    if (!reason) { msg.textContent='请填写换绑理由'; msg.className='msg err'; return; }
-    if (!confirm('提交后不能撤回，旧分析会作废需重新分析。确定提交？')) return;
-    const btn = document.getElementById('rebindSubmitBtn'); btn.disabled = true;
-    try {
-      const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/rebind_request', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({to_customer_id: tcid, reason}),
-      });
-      const d = await r.json();
-      if (d.error) throw new Error(d.error);
-      msg.textContent = '已提交，等待管理员审批。'; msg.className='msg';
-      setTimeout(() => { closeRebind(); refreshPkg(); loadReception(); }, 800);
-    } catch (e) {
-      msg.textContent = e.message; msg.className='msg err';
-    } finally { btn.disabled = false; }
-  } else {
-    if (!confirm('确定直接换绑到该顾客？')) return;
-    const btn = document.getElementById('rebindSubmitBtn'); btn.disabled = true;
-    try {
-      const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/direct_rebind', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({to_customer_id: tcid}),
-      });
-      const d = await r.json();
-      if (d.error) throw new Error(d.error);
-      closeRebind();
-      // 老接诊包可能已删，切到新接诊包视图
-      if (d.new_session_id) {
-        pkgCustomerId = tcid;
-        refreshPkg();
-      } else {
-        refreshPkg();
-      }
-      loadReception();
-    } catch (e) {
-      msg.textContent = e.message; msg.className='msg err';
-    } finally { btn.disabled = false; }
-  }
+  const reason = document.getElementById('rebindReason').value.trim();
+  if (!confirm('确定换绑到该顾客？若已分析将作废，需要重新分析。')) return;
+  const btn = document.getElementById('rebindSubmitBtn'); btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/direct_rebind', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({to_customer_id: tcid, reason}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeRebind();
+    if (d.new_session_id) pkgCustomerId = tcid;
+    refreshPkg(); loadReception(); loadPending();
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  } finally { btn.disabled = false; }
+}
+
+let unbindRid = null;
+function openUnbind(info) {
+  unbindRid = info.rid;
+  document.getElementById('unbindRecInfo').innerHTML =
+    `录音：${info.recorded_at || '—'} · ${info.duration_label || ''}`;
+  document.getElementById('unbindReason').value = '';
+  document.getElementById('unbindMsg').textContent = '';
+  const um = document.getElementById('unbindMask');
+  um.style.zIndex = '60';
+  um.classList.add('show');
+}
+function closeUnbind(){ document.getElementById('unbindMask').classList.remove('show'); unbindRid = null; }
+async function submitUnbind() {
+  const msg = document.getElementById('unbindMsg');
+  const reason = document.getElementById('unbindReason').value.trim();
+  if (!reason) { msg.textContent='请填写退回理由'; msg.className='msg err'; return; }
+  if (!confirm('确定将这段录音退回未归档片段？若已分析将作废。')) return;
+  const btn = document.getElementById('unbindSubmitBtn'); btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + unbindRid + '/unbind', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({reason}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeUnbind();
+    refreshPkg(); loadReception(); loadPending();
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  } finally { btn.disabled = false; }
 }
 
 // ============ 查看分析结果 ============

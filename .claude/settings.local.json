@@ -298,7 +298,8 @@
       "Bash(kill -HUP 703198)",
       "Bash(sudo journalctl -u gongpai -n 50 --no-pager)",
       "Bash(sudo journalctl -u gongpai --no-pager -n 80)",
-      "Bash(sudo journalctl -u gongpai --no-pager -n 30)"
+      "Bash(sudo journalctl -u gongpai --no-pager -n 30)",
+      "Bash(journalctl -u gongpai.service -n 5 --no-pager)"
     ]
   }
 }
