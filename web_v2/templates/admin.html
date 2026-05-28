@@ -56,6 +56,7 @@ html,body{overflow-x:hidden;max-width:100%}
   <div class="tabs">
     <button data-tab="consultants" class="active">顾问管理 <span class="tab-count" id="consCount"></span></button>
     <button data-tab="customers">顾客管理 <span class="tab-count" id="custCount"></span></button>
+    <button data-tab="high-risk">差评高风险预警 <span id="hrBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
     <button data-tab="delete-requests">删除申请 <span id="drBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
     <button data-tab="rebind-requests">换绑/解绑记录</button>
     {% if role == 'super' %}<button data-tab="companies">公司管理</button>{% endif %}
@@ -199,6 +200,36 @@ html,body{overflow-x:hidden;max-width:100%}
     <div id="opsDashboardContent"><div class="muted">加载中…</div></div>
   </div>
 
+  <!-- 差评高风险预警 -->
+  <div id="tab-high-risk" class="panel">
+    <div class="card">
+      <h3>差评高风险预警
+        <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadHighRisk()">刷新</button>
+      </h3>
+      <div class="tip">系统判定为「未成交且关键维度未达成」的接诊，建议每天浏览。已点过「已查看」的不会再计入红点未读数。</div>
+      <div class="row" style="margin-bottom:10px">
+        <select id="hrFilter" onchange="loadHighRisk()" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
+          <option value="0">全部</option>
+          <option value="1">仅未查看</option>
+        </select>
+        <select id="hrLevel" onchange="loadHighRisk()" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px;margin-left:8px">
+          <option value="">默认（高风险预警）</option>
+          <option value="high">仅 high</option>
+          <option value="medium">仅 medium</option>
+          <option value="low">仅 low</option>
+        </select>
+      </div>
+      <table class="tbl">
+        <thead><tr>
+          <th>接诊时间</th><th>顾问</th><th>顾客</th><th>风险等级</th>
+          <th>成交</th><th>风险说明</th><th>查看状态</th><th>操作</th>
+        </tr></thead>
+        <tbody id="hrBody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+      </table>
+      <div class="msg" id="hrMsg"></div>
+    </div>
+  </div>
+
   <!-- 删除申请 -->
   <div id="tab-delete-requests" class="panel">
     <div class="card">
@@ -249,6 +280,7 @@ let _custCache = [];
 const _tabLoaders = {
   consultants: () => loadConsultants(),
   customers: () => loadCustomers(),
+  'high-risk': () => loadHighRisk(),
   'delete-requests': () => loadDeleteRequests(),
   'rebind-requests': () => loadRebindRequests(),
   companies: () => (typeof loadCompanies === 'function') && loadCompanies(),
@@ -650,8 +682,45 @@ function loadOpsDashboard(force) {
     _opsLoaded = true;
     const gt = document.getElementById('opsGenTime');
     if (gt) gt.textContent = '今日 ' + d.today + '  |  本周自 ' + d.week_start;
-    box.innerHTML = d.is_super ? renderOpsSuper(d) : renderOpsAdmin(d);
+    box.innerHTML = (d.is_super ? renderOpsSuper(d) : renderOpsAdmin(d))
+      + `<div class="card ops-block">
+           <div class="ops-block-title" style="display:flex;align-items:center;gap:10px">
+             顾问报告查看情况
+             <select id="viewStatsDays" onchange="loadViewStats()" style="border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:12px">
+               <option value="7">近 7 天</option>
+               <option value="30" selected>近 30 天</option>
+               <option value="90">近 90 天</option>
+             </select>
+             <span style="font-size:11px;color:#aaa;font-weight:400">含点击列表/录音/直接打开报告页的所有查看；时长以章节展开+在视窗内计时</span>
+           </div>
+           <div id="viewStatsBox"><div class="muted">加载中…</div></div>
+         </div>`;
+    loadViewStats();
   }).catch(e => { box.innerHTML = '<div class="muted">加载失败：' + e + '</div>'; });
+}
+
+function loadViewStats() {
+  const sel = document.getElementById('viewStatsDays');
+  const days = sel ? sel.value : '30';
+  const box = document.getElementById('viewStatsBox');
+  if (!box) return;
+  box.innerHTML = '<div class="muted">加载中…</div>';
+  fetch(BASE + '/api/admin/report_view_stats?days=' + days).then(r => r.json()).then(d => {
+    const rows = d.rows || [];
+    if (!rows.length) { box.innerHTML = '<p class="muted">该时段无查看记录</p>'; return; }
+    const roleLabel = { consultant: '顾问', admin: '管理员', super: '超管' };
+    box.innerHTML = `<table class="tbl" style="font-size:12px">
+      <thead><tr><th>用户</th><th>角色</th><th>看过的报告数</th><th>进入次数</th><th>章节展开次数</th><th>总时长（分钟）</th><th>最常看的章节</th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td>${r.username || '-'}</td>
+        <td>${roleLabel[r.role] || r.role || '-'}</td>
+        <td>${r.sessions_viewed}</td>
+        <td>${r.enter_count}</td>
+        <td>${r.part_expand_count}</td>
+        <td><strong>${r.total_minutes}</strong></td>
+        <td>${r.favorite_part ? r.favorite_part.toUpperCase().replace('PART','PART ') : '-'}</td>
+      </tr>`).join('')}</tbody></table>`;
+  }).catch(e => { box.innerHTML = '<p class="muted">加载失败：' + e + '</p>'; });
 }
 
 function _kpiCards(s, label) {
@@ -724,7 +793,75 @@ function refreshAdminStats() {
       if (cnt > 0) { badge.textContent = cnt; badge.style.display = ''; }
       else { badge.style.display = 'none'; }
     }
+    const hb = document.getElementById('hrBadge');
+    const hc = d.high_risk_unread || 0;
+    if (hb) {
+      if (hc > 0) { hb.textContent = hc; hb.style.display = ''; }
+      else { hb.style.display = 'none'; }
+    }
   });
+}
+
+// ---- 差评高风险预警 ----
+function _escHtml(s) {
+  return (s == null ? '' : String(s))
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+function loadHighRisk() {
+  const unread = document.getElementById('hrFilter').value === '1' ? '1' : '0';
+  const level = document.getElementById('hrLevel').value || '';
+  const tb = document.getElementById('hrBody');
+  tb.innerHTML = '<tr><td colspan="8" class="muted">加载中…</td></tr>';
+  fetch(BASE + '/api/admin/high_risk_sessions?unread=' + unread + (level ? '&level=' + level : ''))
+    .then(r => r.json()).then(d => {
+      const list = d.sessions || [];
+      if (!list.length) {
+        tb.innerHTML = '<tr><td colspan="8" class="muted">暂无高风险接诊</td></tr>';
+        return;
+      }
+      tb.innerHTML = list.map(x => {
+        const lvl = x.risk_level === 'high'
+          ? '<span style="color:#e74c3c;font-weight:600">high</span>'
+          : (x.risk_level === 'medium'
+              ? '<span style="color:#d97706;font-weight:600">medium</span>'
+              : (x.risk_level === 'low'
+                  ? '<span style="color:#22c55e">low</span>'
+                  : _escHtml(x.risk_level || '')));
+        const deal = x.deal_result
+          ? '<span style="color:#22c55e">已成交</span>'
+          : '<span style="color:#e74c3c">未成交</span>';
+        const status = x.unread
+          ? '<span style="color:#e74c3c;font-weight:600">● 未查看</span>'
+          : `<span class="muted">已查看 ${_escHtml((x.viewed_at || '').slice(5,16))}</span>`;
+        const opMark = x.unread
+          ? `<button class="btn sec" style="padding:2px 8px;font-size:12px" onclick="markHrViewed(${x.id})">标记已查看</button>`
+          : '';
+        return `<tr>
+          <td>${_escHtml(x.service_date || (x.analysis_finished_at || '').slice(0,10))}</td>
+          <td>${_escHtml(x.advisor || '')}</td>
+          <td>${_escHtml(x.customer || '')}</td>
+          <td>${lvl}</td>
+          <td>${deal}</td>
+          <td style="max-width:360px;color:#444">${_escHtml(x.risk_text)}</td>
+          <td>${status}</td>
+          <td>
+            <a class="btn" style="padding:2px 8px;font-size:12px" target="_blank"
+               href="${BASE}/session/${x.id}?from=high_risk">查看报告</a>
+            ${opMark}
+          </td>
+        </tr>`;
+      }).join('');
+    }).catch(() => {
+      tb.innerHTML = '<tr><td colspan="8" class="muted">加载失败</td></tr>';
+    });
+}
+function markHrViewed(sid) {
+  fetch(BASE + '/api/admin/high_risk_sessions/' + sid + '/view', {method: 'POST'})
+    .then(r => r.json()).then(() => {
+      loadHighRisk();
+      refreshAdminStats();
+    });
 }
 refreshAdminStats();
 // 默认 tab 顾问，立即加载它的列表

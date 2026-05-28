@@ -449,6 +449,41 @@ def init_db():
     if "speaker_confirmed" not in rec_cols:
         conn.execute("ALTER TABLE recordings ADD COLUMN speaker_confirmed INTEGER DEFAULT 0")
 
+    # 2026-05-28 customer_tags 加 mention_count（本次录音里顾客提及该标签话题的次数）
+    ct_cols = {r[1] for r in conn.execute("PRAGMA table_info(customer_tags)").fetchall()}
+    if "mention_count" not in ct_cols:
+        conn.execute("ALTER TABLE customer_tags ADD COLUMN mention_count INTEGER DEFAULT 1")
+
+    # 2026-05-28 顾问查看报告埋点表
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS report_view_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            role TEXT,
+            company_id INTEGER,
+            session_id INTEGER,
+            source TEXT,
+            part_key TEXT,
+            event TEXT,
+            duration_ms INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rve_user ON report_view_events(user_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rve_session ON report_view_events(session_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_rve_company ON report_view_events(company_id, created_at)")
+
+    # 2026-05-28 差评高风险预警查看记录（每个管理员单独记一条 viewed）
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS high_risk_views (
+            session_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            viewed_at TEXT DEFAULT (datetime('now', 'localtime')),
+            PRIMARY KEY (session_id, user_id)
+        )
+    """)
+
     # 2026-05-25 接诊包改造：phone_tail / locked / customer_id / daily_reception
     cc_cols = {r[1] for r in conn.execute("PRAGMA table_info(company_customers)").fetchall()}
     if "phone_tail" not in cc_cols:
@@ -468,6 +503,93 @@ def init_db():
     dr_cols = {r[1] for r in conn.execute("PRAGMA table_info(delete_requests)").fetchall()}
     if "dismissed_at" not in dr_cols:
         conn.execute("ALTER TABLE delete_requests ADD COLUMN dismissed_at TEXT")
+
+    # 2026-05-28 允许同名顾客并存 + session 按 customer_id 聚合
+    # company_customers 旧版有 UNIQUE(company_id, name)，需要拆掉
+    idx_rows = conn.execute("PRAGMA index_list(company_customers)").fetchall()
+    has_legacy_unique = False
+    for ir in idx_rows:
+        if ir[2]:  # unique=1
+            cols = [c[2] for c in conn.execute(f"PRAGMA index_info({ir[1]})").fetchall()]
+            if set(cols) == {"company_id", "name"}:
+                has_legacy_unique = True
+                break
+    if has_legacy_unique:
+        conn.executescript("""
+            CREATE TABLE company_customers_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                member_card TEXT,
+                phone_tail TEXT,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+            INSERT INTO company_customers_new (id, company_id, name, member_card, phone_tail, created_at)
+                SELECT id, company_id, name, member_card, phone_tail, created_at FROM company_customers;
+            DROP TABLE company_customers;
+            ALTER TABLE company_customers_new RENAME TO company_customers;
+            CREATE INDEX IF NOT EXISTS idx_cc_company ON company_customers(company_id);
+            CREATE INDEX IF NOT EXISTS idx_cc_name ON company_customers(company_id, name);
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_cc_member ON company_customers(company_id, member_card)
+                WHERE member_card IS NOT NULL AND member_card != '';
+        """)
+    else:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_cc_member ON company_customers(company_id, member_card) "
+            "WHERE member_card IS NOT NULL AND member_card != ''"
+        )
+
+    # sessions：旧表有 table-level UNIQUE(advisor, customer, service_date) 自动索引，
+    # 阻止同名客户分别建 session；rebuild 表去掉这个约束
+    sess_idx = conn.execute("PRAGMA index_list(sessions)").fetchall()
+    has_legacy_sess_unique = any(
+        (ix[2] and ix[1].startswith("sqlite_autoindex_sessions"))
+        for ix in sess_idx
+    )
+    if has_legacy_sess_unique:
+        conn.executescript("""
+            CREATE TABLE sessions_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                advisor TEXT,
+                customer TEXT,
+                service_date TEXT,
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                analysis_status TEXT DEFAULT 'pending',
+                analysis_result TEXT,
+                analysis_error TEXT,
+                analysis_started_at TEXT,
+                analysis_finished_at TEXT,
+                analysis_signature TEXT,
+                has_evaluation INTEGER DEFAULT 0,
+                analysis_scores TEXT,
+                analysis_model TEXT,
+                analysis_progress TEXT,
+                task_status TEXT,
+                company_id INTEGER DEFAULT 1,
+                locked INTEGER DEFAULT 0,
+                customer_id INTEGER
+            );
+            INSERT INTO sessions_new SELECT
+                id, advisor, customer, service_date, created_at,
+                analysis_status, analysis_result, analysis_error,
+                analysis_started_at, analysis_finished_at, analysis_signature,
+                has_evaluation, analysis_scores, analysis_model, analysis_progress,
+                task_status, company_id, locked, customer_id
+            FROM sessions;
+            DROP TABLE sessions;
+            ALTER TABLE sessions_new RENAME TO sessions;
+        """)
+    conn.execute("DROP INDEX IF EXISTS uq_sessions_acsc")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_acid "
+        "ON sessions(advisor, customer_id, service_date, company_id) "
+        "WHERE customer_id IS NOT NULL"
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_sessions_acn "
+        "ON sessions(advisor, customer, service_date, company_id) "
+        "WHERE customer_id IS NULL"
+    )
 
     # seed: 默认公司 + BOSS 管理员
     conn.execute("INSERT OR IGNORE INTO companies (id, name) VALUES (1, '默认公司')")
@@ -663,25 +785,42 @@ def oss_signed_url(oss_key, expires=7200):
 
 
 # ============ Session 管理 ============
-def get_or_create_session(advisor, customer, service_date, company_id=1):
-    """根据 (advisor, customer, service_date) 找或创建 session。返回 session_id。
-    如果三个字段任一为空，归到一个独立 session（按 oss_key 区分）。"""
+def get_or_create_session(advisor, customer, service_date, company_id=1, customer_id=None):
+    """根据 (advisor, customer_id, service_date) 找或创建 session（兼容旧逻辑）。"""
     if not (advisor and customer and service_date):
-        return None  # 调用方决定怎么处理（一般用 oss_key 兜底建独立 session）
+        return None
 
+    if customer_id:
+        row = db_fetchone(
+            "SELECT id FROM sessions WHERE advisor=? AND customer_id=? AND service_date=? AND company_id=?",
+            (advisor, customer_id, service_date, company_id or 1),
+        )
+        if row:
+            return row["id"]
+        db_write(
+            "INSERT OR IGNORE INTO sessions (advisor, customer, customer_id, service_date, company_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (advisor, customer, customer_id, service_date, company_id or 1),
+        )
+        row = db_fetchone(
+            "SELECT id FROM sessions WHERE advisor=? AND customer_id=? AND service_date=? AND company_id=?",
+            (advisor, customer_id, service_date, company_id or 1),
+        )
+        return row["id"] if row else None
+
+    # 兼容：没传 customer_id 走旧的按姓名匹配
     row = db_fetchone(
-        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=?",
+        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=? AND customer_id IS NULL",
         (advisor, customer, service_date, company_id or 1),
     )
     if row:
         return row["id"]
-    # UNIQUE 索引兜底：两个并发请求同时 INSERT 时，后者会 IGNORE 并重新查到先入库的那条
     db_write(
         "INSERT OR IGNORE INTO sessions (advisor, customer, service_date, company_id) VALUES (?, ?, ?, ?)",
         (advisor, customer, service_date, company_id or 1),
     )
     row = db_fetchone(
-        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=?",
+        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=? AND customer_id IS NULL",
         (advisor, customer, service_date, company_id or 1),
     )
     return row["id"] if row else None
@@ -808,15 +947,6 @@ def maybe_trigger_session_analysis(session_id, model=None, force_refresh_shared=
             return
         if not all(r["asr_status"] == "done" for r in recs):
             return  # 还有 ASR 没完成
-        # 有"说话人>2"且顾问未确认的录音 → 不自动分析，等顾问处理
-        warn = db_fetchone(
-            """SELECT COUNT(*) AS n FROM recordings
-               WHERE session_id=? AND asr_speaker_warning=1
-                 AND COALESCE(speaker_confirmed,0)=0""",
-            (session_id,),
-        )
-        if warn and warn["n"] > 0:
-            return
         sess = db_fetchone(
             "SELECT analysis_status, analysis_signature, analysis_model FROM sessions WHERE id=?",
             (session_id,),
@@ -1581,9 +1711,17 @@ TOOL_CALL1 = {
             },
             "customer_tags": {
                 "type": "array",
-                "description": "从录音中提取的顾客所有特征标签，不限来源（消费/习惯/身体状况/心理特征/品牌偏好），每个 10 字以内",
+                "description": "从录音中提取的顾客所有特征标签（消费/习惯/身体状况/心理特征/品牌偏好），每个 10 字以内；count 为本次录音里顾客自己提及该标签相关话题的次数（至少 1）",
                 "minItems": 3,
-                "items": {"type": "string"},
+                "items": {
+                    "type": "object",
+                    "required": ["tag", "count"],
+                    "properties": {
+                        "tag": {"type": "string", "description": "标签名（10 字以内）"},
+                        "count": {"type": "integer", "minimum": 1,
+                                  "description": "本次录音里顾客提及该标签相关话题的次数"},
+                    },
+                },
             },
             "deal_diagnosis": {
                 "type": "object",
@@ -2176,16 +2314,18 @@ TASK_REGISTRY = {
 3. external_brands：别家护肤品牌/仪器品牌/产品名
 
 ⚠ 生活习惯和自我护理不需要单独提取，直接归纳到 customer_tags 数组里即可。
-比如顾客经常熬夜 → customer_tags 加"长期熬夜"
-比如顾客在用益生菌 → customer_tags 加"益生菌用户"
+比如顾客经常熬夜 → customer_tags 加 {"tag":"长期熬夜","count":N}
+比如顾客在用益生菌 → customer_tags 加 {"tag":"益生菌用户","count":N}
 
 【(B) customer_tags 数组（外层字段，绝对不能省略！）】
 
 从整段录音里提炼顾客特征标签（每个 10 字以内），至少 5 个。
 来源不限：消费类型 + 生活习惯 + 身体状况 + 心理特征 + 品牌偏好。
-示例：["医美深度用户", "C级潜力客户", "长期熬夜", "理性克制型", "活细胞用户"]
 
-⚠ 再次强调：customer_tags 是 external_signals 的**同级**字段，不是包在里面。两个字段都要填，缺一个就是失败。
+每个标签必须输出为对象 {"tag": "标签名", "count": N}，其中 count 为本次录音里**顾客自己**提及该标签相关话题的次数（统计顾客发言里出现该话题的轮次，至少为 1）。
+示例：[{"tag":"医美深度用户","count":4}, {"tag":"C级潜力客户","count":1}, {"tag":"长期熬夜","count":3}, {"tag":"理性克制型","count":2}, {"tag":"活细胞用户","count":2}]
+
+⚠ 再次强调：customer_tags 是 external_signals 的**同级**字段，不是包在里面。两个字段都要填，缺一个就是失败。每个元素必须是带 tag+count 的对象，不能是裸字符串。
 """,
     },
     "T4": {
@@ -2978,28 +3118,43 @@ def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
     if not customer_name:
         return
     ext = call1_result.get("external_signals", {}) or {}
-    tags = set()
+    # tag -> count（同 session 内同名标签取最大值合并）
+    tags: dict = {}
+    def _add(tag, cnt):
+        tag = (tag or "").strip()
+        if not tag:
+            return
+        try:
+            cnt = int(cnt)
+        except Exception:
+            cnt = 1
+        if cnt < 1:
+            cnt = 1
+        if tag in tags:
+            tags[tag] = max(tags[tag], cnt)
+        else:
+            tags[tag] = cnt
 
-    # 1) 外层 customer_tags 数组
-    for tag in call1_result.get("customer_tags") or []:
-        if tag and isinstance(tag, str):
-            tags.add(tag.strip())
+    # 1) 外层 customer_tags 数组（兼容字符串和 {tag,count} 对象）
+    for item in call1_result.get("customer_tags") or []:
+        if isinstance(item, str):
+            _add(item, 1)
+        elif isinstance(item, dict):
+            _add(item.get("tag"), item.get("count", 1))
 
     # 2) lifestyle_habits / self_care 的 customer_tag
     for cat in ("lifestyle_habits", "self_care"):
         for item in ext.get(cat) or []:
             tag = (item.get("customer_tag") if isinstance(item, dict) else "") or ""
-            if tag:
-                tags.add(tag.strip())
+            _add(tag, 1)
 
     # 3) 三类竞品 → "XX用户" 标签
     for cat in ("medical_aesthetics", "other_institutions", "external_brands"):
         for item in ext.get(cat) or []:
             brand = (item.get("item") if isinstance(item, dict) else "") or ""
             if brand:
-                tags.add(f"{brand.strip()}用户")
+                _add(f"{brand.strip()}用户", 1)
 
-    tags.discard("")
     if not tags:
         return
 
@@ -3007,12 +3162,12 @@ def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
     db_write(
         "DELETE FROM customer_tags WHERE source_session_id=?", (session_id,)
     )
-    rows = [(customer_name, advisor_name, t, session_id) for t in tags]
+    rows = [(customer_name, advisor_name, t, session_id, c) for t, c in tags.items()]
     def _insert_tags(conn):
         conn.executemany(
             """INSERT INTO customer_tags
-               (customer_name, advisor_name, tag, source_session_id)
-               VALUES (?, ?, ?, ?)""",
+               (customer_name, advisor_name, tag, source_session_id, mention_count)
+               VALUES (?, ?, ?, ?, ?)""",
             rows,
         )
         conn.commit()
@@ -3556,7 +3711,7 @@ def ingest_recording(oss_key, *, source, size_bytes=None,
                      advisor=None, customer=None, recorded_at=None,
                      service_date=None, duration_label=None,
                      company_id=1, uploader_user_id=None,
-                     orphan=False):
+                     orphan=False, customer_id=None):
     """新增 recording + 关联 session + 启动自动流水线。返回 recording_id（如果已存在则返回原 id 且不重复入库）"""
     existing = db_fetchone("SELECT id FROM recordings WHERE oss_key=?", (oss_key,))
     if existing:
@@ -3578,7 +3733,7 @@ def ingest_recording(oss_key, *, source, size_bytes=None,
     if orphan:
         session_id = None  # 顾问端浏览器录音：先不绑 session，等绑定客户
     elif advisor and customer and service_date:
-        session_id = get_or_create_session(advisor, customer, service_date, company_id)
+        session_id = get_or_create_session(advisor, customer, service_date, company_id, customer_id=customer_id)
     else:
         session_id = get_or_create_orphan_session(advisor, customer, oss_key, company_id)
 
@@ -4009,18 +4164,28 @@ def session_detail(sid):
     )
 
     # 该顾客历次接诊累积标签（去重，按出现次数倒序）
+    # 排除当前 session，只取历史接诊的标签；若无历史则为第一次来访
     customer_tags_history = []
+    is_first_visit = True
     if sess_d.get("customer"):
-        tag_rows = db_fetchall(
-            """SELECT tag, COUNT(*) AS cnt
+        session_count_row = db_fetchone(
+            """SELECT COUNT(DISTINCT source_session_id) AS n
                FROM customer_tags
-               WHERE customer_name=?
-               GROUP BY tag
-               ORDER BY cnt DESC, MAX(created_at) DESC
-               LIMIT 30""",
-            (sess_d["customer"],),
+               WHERE customer_name=? AND source_session_id != ?""",
+            (sess_d["customer"], sid),
         )
-        customer_tags_history = [{"tag": r["tag"], "count": r["cnt"]} for r in tag_rows]
+        is_first_visit = (not session_count_row) or (session_count_row["n"] == 0)
+        if not is_first_visit:
+            tag_rows = db_fetchall(
+                """SELECT tag, SUM(COALESCE(mention_count,1)) AS cnt
+                   FROM customer_tags
+                   WHERE customer_name=? AND source_session_id != ?
+                   GROUP BY tag
+                   ORDER BY cnt DESC, MAX(created_at) DESC
+                   LIMIT 30""",
+                (sess_d["customer"], sid),
+            )
+            customer_tags_history = [{"tag": r["tag"], "count": r["cnt"]} for r in tag_rows]
 
     resp = app.make_response(render_template(
         "report.html",
@@ -4029,6 +4194,7 @@ def session_detail(sid):
         report=report,
         evaluations=evals,
         customer_tags_history=customer_tags_history,
+        is_first_visit=is_first_visit,
         username=session.get("username"),
         role=session.get("role"),
     ))
@@ -4352,14 +4518,14 @@ def api_session_get(sid):
 
 
 @app.route("/api/scan", methods=["POST"])
-@login_required
+@admin_required
 def api_scan():
     added = scan_oss_bucket()
     return jsonify({"added": added})
 
 
 @app.route("/api/upload", methods=["POST"])
-@login_required
+@admin_required
 def api_upload():
     """支持单文件或多文件批量上传。
     可选表单字段（用于文件名不规范时兜底）：advisor, customer, recorded_at, duration_label
@@ -4375,8 +4541,33 @@ def api_upload():
 
     advisor = (request.form.get("advisor") or "").strip() or None
     customer = (request.form.get("customer") or "").strip() or None
+    customer_id_raw = (request.form.get("customer_id") or "").strip()
+    customer_id = None
+    company_id = session.get("company_id") or 1
+    if customer_id_raw:
+        try:
+            cid_int = int(customer_id_raw)
+            cust_row = db_fetchone(
+                "SELECT id, name FROM company_customers WHERE id=? AND (company_id=? OR ?=1)",
+                (cid_int, company_id, 1 if session.get("role") == "super" else 0),
+            )
+            if not cust_row:
+                return jsonify({"error": "顾客不存在"}), 404
+            customer_id = cust_row["id"]
+            customer = cust_row["name"]
+        except ValueError:
+            return jsonify({"error": "customer_id 非法"}), 400
+    service_date_raw = (request.form.get("service_date") or "").strip()
     recorded_at_raw = (request.form.get("recorded_at") or "").strip()
     duration_label = (request.form.get("duration_label") or "").strip() or None
+    duration_sec_list = request.form.getlist("duration_sec")
+
+    service_date = None
+    if service_date_raw:
+        try:
+            service_date = datetime.strptime(service_date_raw, "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            service_date = None
 
     recorded_at = None
     if recorded_at_raw:
@@ -4388,22 +4579,40 @@ def api_upload():
                 continue
         if recorded_at is None:
             recorded_at = recorded_at_raw
+    if not recorded_at and service_date:
+        recorded_at = f"{service_date} 00:00:00"
+
+    use_struct_name = bool(customer and advisor and service_date)
 
     created = []
-    for f in files:
+    for idx, f in enumerate(files):
         if not f or not f.filename:
             continue
         orig_name = f.filename
-        # 默认 oss_key 直接用原文件名（保留命名约定）
-        oss_key = orig_name
+        ext = orig_name.rsplit(".", 1)[-1].lower() if "." in orig_name else "mp3"
+        ext = re.sub(r"[^A-Za-z0-9]", "", ext) or "mp3"
 
-        # 如果名字含路径分隔符或不安全字符，转义
-        if "/" in oss_key or "\\" in oss_key:
-            oss_key = oss_key.replace("/", "_").replace("\\", "_")
+        per_dur_label = duration_label
+        if idx < len(duration_sec_list) and duration_sec_list[idx]:
+            lbl = _format_duration_label(duration_sec_list[idx])
+            if lbl:
+                per_dur_label = lbl
 
-        # 重名 → 加 uuid 前缀避免覆盖
-        if oss_bucket.object_exists(oss_key):
-            oss_key = f"upload/{datetime.now().strftime('%Y%m%d')}/{uuid.uuid4().hex[:6]}_{oss_key}"
+        if use_struct_name:
+            c = _sanitize_name_for_oss(customer)
+            a = _sanitize_name_for_oss(advisor)
+            dur = per_dur_label or "未知时长"
+            base = f"{c}_{a}_{service_date}_{dur}.{ext}"
+            oss_key = f"upload/{service_date.replace('-','')}/{base}"
+            if oss_bucket.object_exists(oss_key):
+                stem, _, ex = oss_key.rpartition(".")
+                oss_key = f"{stem}_{uuid.uuid4().hex[:4]}.{ex}"
+        else:
+            oss_key = orig_name
+            if "/" in oss_key or "\\" in oss_key:
+                oss_key = oss_key.replace("/", "_").replace("\\", "_")
+            if oss_bucket.object_exists(oss_key):
+                oss_key = f"upload/{datetime.now().strftime('%Y%m%d')}/{uuid.uuid4().hex[:6]}_{oss_key}"
 
         f.stream.seek(0)
         oss_bucket.put_object(oss_key, f.stream)
@@ -4414,7 +4623,10 @@ def api_upload():
             advisor=advisor,
             customer=customer,
             recorded_at=recorded_at,
-            duration_label=duration_label,
+            service_date=service_date,
+            duration_label=per_dur_label,
+            company_id=company_id,
+            customer_id=customer_id,
         )
         rec = db_fetchone("SELECT session_id FROM recordings WHERE id=?", (rid,))
         created.append({"id": rid, "oss_key": oss_key, "session_id": rec["session_id"]})
@@ -5118,7 +5330,223 @@ def _compute_admin_stats(cid, is_super):
                WHERE dr.status='pending' AND r.company_id=?""",
             (cid,),
         )["n"]
-    return {"consultants": c1, "customers": c2, "delete_requests_pending": c3}
+    uid = session.get("user_id") or 0
+    risk_where = (
+        "json_extract(s.analysis_result, '$.deal_diagnosis.risk_alert') = 1 "
+        "OR json_extract(s.analysis_result, '$.deal_diagnosis.risk_level') = 'high'"
+    )
+    if is_super:
+        c4_row = db_fetchone(
+            f"""SELECT COUNT(*) AS n FROM sessions s
+                LEFT JOIN high_risk_views v
+                  ON v.session_id = s.id AND v.user_id = ?
+                WHERE s.analysis_result IS NOT NULL
+                  AND ({risk_where})
+                  AND v.session_id IS NULL""",
+            (uid,),
+        )
+    else:
+        c4_row = db_fetchone(
+            f"""SELECT COUNT(*) AS n FROM sessions s
+                LEFT JOIN high_risk_views v
+                  ON v.session_id = s.id AND v.user_id = ?
+                WHERE s.analysis_result IS NOT NULL
+                  AND (s.company_id IS NULL OR s.company_id = ?)
+                  AND ({risk_where})
+                  AND v.session_id IS NULL""",
+            (uid, cid),
+        )
+    c4 = c4_row["n"] if c4_row else 0
+    return {"consultants": c1, "customers": c2,
+            "delete_requests_pending": c3,
+            "high_risk_unread": c4}
+
+
+@app.route("/api/admin/high_risk_sessions")
+@admin_required
+def api_admin_high_risk_sessions():
+    """差评高风险预警列表。管理员每日浏览：unread=true 表示当前管理员尚未点过"已查看"。"""
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+    uid = session.get("user_id") or 0
+    only_unread = (request.args.get("unread") or "").strip() == "1"
+    level = (request.args.get("level") or "").strip().lower()
+
+    where = ["s.analysis_result IS NOT NULL"]
+    if level in ("high", "medium", "low"):
+        where.append("json_extract(s.analysis_result, '$.deal_diagnosis.risk_level') = ?")
+        params_extra = [level]
+    else:
+        where.append(
+            "(json_extract(s.analysis_result, '$.deal_diagnosis.risk_alert') = 1 "
+            "OR json_extract(s.analysis_result, '$.deal_diagnosis.risk_level') = 'high')"
+        )
+        params_extra = []
+    params: list = [uid] + params_extra
+    if not is_super and cid:
+        where.append("(s.company_id IS NULL OR s.company_id = ?)")
+        params.append(cid)
+    if only_unread:
+        where.append("v.session_id IS NULL")
+    where_sql = "WHERE " + " AND ".join(where)
+
+    rows = db_fetchall(
+        f"""SELECT s.id, s.advisor, s.customer, s.service_date, s.created_at,
+                   s.analysis_finished_at, s.analysis_result,
+                   v.viewed_at AS viewed_at
+            FROM sessions s
+            LEFT JOIN high_risk_views v
+              ON v.session_id = s.id AND v.user_id = ?
+            {where_sql}
+            ORDER BY s.analysis_finished_at DESC, s.id DESC
+            LIMIT 500""",
+        tuple(params),
+    )
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            ar = json.loads(d.pop("analysis_result") or "null") or {}
+        except (json.JSONDecodeError, TypeError):
+            ar = {}
+        diag = (ar.get("deal_diagnosis") or {})
+        d["risk_level"] = diag.get("risk_level")
+        d["risk_text"] = diag.get("risk_text") or ""
+        d["deal_result"] = bool(diag.get("deal_result"))
+        d["deal_amount"] = diag.get("deal_amount") or ""
+        d["unread"] = d.get("viewed_at") is None
+        out.append(d)
+    return jsonify({"sessions": out, "total": len(out)})
+
+
+@app.route("/api/admin/high_risk_sessions/<int:sid>/view", methods=["POST"])
+@admin_required
+def api_admin_high_risk_mark_viewed(sid):
+    uid = session.get("user_id")
+    if not uid:
+        return jsonify({"error": "no user"}), 400
+    db_write(
+        "INSERT OR IGNORE INTO high_risk_views (session_id, user_id) VALUES (?, ?)",
+        (sid, uid),
+    )
+    _invalidate_admin_stats()
+    return jsonify({"ok": True})
+
+
+# ============ 顾问报告查看埋点 ============
+
+def _log_view_event(session_id, source, part_key, event, duration_ms=0):
+    u = current_user()
+    if not u:
+        return
+    try:
+        role = u["role"]
+    except Exception:
+        role = None
+    try:
+        cid = u["company_id"]
+    except Exception:
+        cid = None
+    db_write(
+        """INSERT INTO report_view_events
+           (user_id, username, role, company_id, session_id, source, part_key, event, duration_ms)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (u["id"], u["username"], role, cid,
+         session_id, source, part_key, event, int(duration_ms or 0)),
+    )
+
+
+@app.route("/api/report_view/enter", methods=["POST"])
+@login_required
+def api_report_view_enter():
+    data = request.get_json(silent=True) or {}
+    sid = data.get("session_id")
+    source = (data.get("source") or "unknown")[:32]
+    if not sid:
+        return jsonify({"error": "missing session_id"}), 400
+    _log_view_event(sid, source, "overall", "enter", 0)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/report_view/part", methods=["POST"])
+@login_required
+def api_report_view_part():
+    # 兼容 sendBeacon：body 可能是 text/plain JSON
+    data = request.get_json(silent=True)
+    if data is None:
+        try:
+            data = json.loads(request.get_data(as_text=True) or "{}")
+        except Exception:
+            data = {}
+    sid = data.get("session_id")
+    part_key = (data.get("part_key") or "")[:32]
+    event = (data.get("event") or "")[:16]
+    duration_ms = data.get("duration_ms") or 0
+    if not sid or not part_key or event not in ("enter", "duration"):
+        return jsonify({"error": "bad params"}), 400
+    _log_view_event(sid, "detail", part_key, event, duration_ms)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/report_view_stats")
+@admin_required
+def api_admin_report_view_stats():
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+    days = int(request.args.get("days", "30"))
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    where = "created_at >= ?"
+    params = [since]
+    if not is_super:
+        where += " AND company_id=?"
+        params.append(cid)
+    # 只统计顾问/admin 自己看（super 看的不计入对外汇总，但 super 视角下显示全部）
+    where += " AND role IN ('consultant','admin','super')"
+
+    # 1) 每个顾问汇总
+    rows = db_fetchall(f"""
+        SELECT
+            user_id, username, role,
+            COUNT(DISTINCT session_id) AS sessions_viewed,
+            SUM(CASE WHEN event='enter' AND part_key='overall' THEN 1 ELSE 0 END) AS enter_count,
+            SUM(CASE WHEN event='enter' AND part_key<>'overall' THEN 1 ELSE 0 END) AS part_expand_count,
+            SUM(CASE WHEN event='duration' THEN duration_ms ELSE 0 END) AS total_ms
+        FROM report_view_events
+        WHERE {where}
+        GROUP BY user_id, username, role
+        ORDER BY total_ms DESC
+    """, tuple(params))
+
+    # 2) 每人最常看的 PART（不含 overall）
+    fav_rows = db_fetchall(f"""
+        SELECT user_id, part_key, SUM(duration_ms) AS ms
+        FROM report_view_events
+        WHERE {where} AND event='duration' AND part_key<>'overall'
+        GROUP BY user_id, part_key
+    """, tuple(params))
+    fav_map: dict = {}
+    for r in fav_rows:
+        uid = r["user_id"]
+        if uid not in fav_map or r["ms"] > fav_map[uid][1]:
+            fav_map[uid] = (r["part_key"], r["ms"] or 0)
+
+    out = []
+    for r in rows:
+        uid = r["user_id"]
+        total_ms = int(r["total_ms"] or 0)
+        fav = fav_map.get(uid)
+        out.append({
+            "user_id": uid,
+            "username": r["username"],
+            "role": r["role"],
+            "sessions_viewed": int(r["sessions_viewed"] or 0),
+            "enter_count": int(r["enter_count"] or 0),
+            "part_expand_count": int(r["part_expand_count"] or 0),
+            "total_minutes": round(total_ms / 60000, 1),
+            "favorite_part": fav[0] if fav else None,
+        })
+    return jsonify({"days": days, "rows": out})
 
 
 @app.route("/api/admin/ops_dashboard")
@@ -5272,7 +5700,8 @@ def api_admin_ops_dashboard():
 def api_admin_stats():
     cid = session.get("company_id")
     is_super = session.get("role") == "super"
-    cache_key = ("super",) if is_super else ("cid", cid)
+    uid = session.get("user_id") or 0
+    cache_key = ("super", uid) if is_super else ("cid", cid, uid)
     import time as _time
     now = _time.time()
     with _admin_stats_lock:
@@ -5474,7 +5903,7 @@ def api_admin_customers_list():
         where = base_where
         params = base_params
     rows = db_fetchall(
-        f"SELECT id, name, member_card, company_id, created_at "
+        f"SELECT id, name, member_card, phone_tail, company_id, created_at "
         f"FROM company_customers WHERE {where} ORDER BY id DESC LIMIT 100",
         tuple(params),
     )
@@ -5494,23 +5923,50 @@ def api_admin_customers_list():
     })
 
 
+def _generate_member_card(company_id):
+    """格式：M + YYMMDD + 4位随机数字。本公司内唯一，冲突重试。"""
+    from random import randint
+    today = datetime.now().strftime("%y%m%d")
+    for _ in range(20):
+        code = f"M{today}{randint(0, 9999):04d}"
+        exists = db_fetchone(
+            "SELECT 1 FROM company_customers WHERE company_id=? AND member_card=?",
+            (company_id, code),
+        )
+        if not exists:
+            return code
+    # 极端 fallback：加 uuid 短串
+    return f"M{today}{uuid.uuid4().hex[:6]}"
+
+
 @app.route("/api/admin/customers", methods=["POST"])
 @admin_required
 def api_admin_customers_create():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
     card = (data.get("member_card") or "").strip()
+    phone_tail = (data.get("phone_tail") or "").strip()
     if not name:
         return jsonify({"error": "姓名必填"}), 400
     cid = session.get("company_id") or 1
-    try:
-        rid = db_write(
-            "INSERT INTO company_customers (company_id, name, member_card) VALUES (?, ?, ?)",
-            (cid, name, card or None),
+    # 手机尾号校验：可选；若填则必须是 4 位数字
+    if phone_tail and not re.fullmatch(r"\d{4}", phone_tail):
+        return jsonify({"error": "手机尾号必须是 4 位数字"}), 400
+    # 会员号校验：填了就查公司内唯一
+    if card:
+        dup = db_fetchone(
+            "SELECT id FROM company_customers WHERE company_id=? AND member_card=?",
+            (cid, card),
         )
-    except sqlite3.IntegrityError:
-        return jsonify({"error": "该顾客已存在"}), 409
-    return jsonify({"id": rid})
+        if dup:
+            return jsonify({"error": "会员号已存在，请改一个或留空让系统生成"}), 409
+    else:
+        card = _generate_member_card(cid)
+    rid = db_write(
+        "INSERT INTO company_customers (company_id, name, member_card, phone_tail) VALUES (?, ?, ?, ?)",
+        (cid, name, card, phone_tail or None),
+    )
+    return jsonify({"id": rid, "name": name, "member_card": card, "phone_tail": phone_tail or None})
 
 
 @app.route("/api/admin/customers/<int:cid>", methods=["DELETE"])

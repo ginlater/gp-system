@@ -1311,7 +1311,7 @@ async function submitUnbind() {
 // ============ 查看分析结果 ============
 function viewAnalysis(sessionId) {
   if (!sessionId) { alert('尚无 session'); return; }
-  location.href = BASE + '/session/' + sessionId;
+  location.href = BASE + '/session/' + sessionId + '?from=recording';
 }
 
 loadReception();

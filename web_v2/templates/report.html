@@ -739,7 +739,16 @@
     <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:10px">本次新增标签</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px">
       {% for tag in cur_tags %}
-      <span style="background:rgba(74,144,217,0.1);color:var(--blue);border:1px solid rgba(74,144,217,0.3);border-radius:99px;padding:4px 12px;font-size:13px">{{ tag }}</span>
+        {% if tag is mapping %}
+          {% set tname = tag.tag %}{% set tcnt = tag.count or 1 %}
+        {% else %}
+          {% set tname = tag %}{% set tcnt = 1 %}
+        {% endif %}
+        {% set idx = [tcnt - 1, 3]|min %}
+        {% set opacity = [0.5, 0.65, 0.8, 1.0][idx] %}
+        <span style="background:rgba(74,144,217,{{ opacity * 0.18 }});color:var(--blue);border:1px solid rgba(74,144,217,{{ opacity * 0.4 }});border-radius:99px;padding:4px 12px;font-size:13px">
+          {{ tname }}{% if tcnt > 1 %}<span style="font-size:11px;color:var(--text-mute);margin-left:3px">×{{ tcnt }}</span>{% endif %}
+        </span>
       {% endfor %}
     </div>
   </div>
@@ -747,14 +756,11 @@
 
   {% if customer_tags_history %}
   <div>
-    <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:10px">
-      历次接诊累积标签
-      <span style="font-size:12px;color:var(--text-mute);font-weight:400;margin-left:6px">（出现次数越多颜色越深）</span>
-    </div>
+    <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:10px">历次接诊累积标签</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px">
       {% for t in customer_tags_history %}
       {% set idx = [t.count - 1, 3]|min %}
-      {% set opacity = [1.0, 0.8, 0.65, 0.5][idx] %}
+      {% set opacity = [0.5, 0.65, 0.8, 1.0][idx] %}
       <span style="background:rgba(28,52,97,{{ opacity * 0.12 }});color:var(--navy);border:1px solid rgba(28,52,97,{{ opacity * 0.25 }});border-radius:99px;padding:4px 12px;font-size:13px">
         {{ t.tag }}{% if t.count > 1 %}<span style="font-size:11px;color:var(--text-mute);margin-left:3px">×{{ t.count }}</span>{% endif %}
       </span>
@@ -1335,6 +1341,156 @@ function reanalyze() {
       arrow.style.transform = collapsed ? '' : 'rotate(-90deg)';
       hint.style.display = collapsed ? 'none' : '';
     });
+  });
+})();
+
+// ── 顾问报告查看埋点 ──
+(function initViewTracking() {
+  // 入口来源：?from=list / ?from=recording，无则 direct
+  const params = new URLSearchParams(location.search);
+  const source = params.get('from') || 'direct';
+
+  // 进入页面 → 上报一次 enter(overall)
+  try {
+    fetch(`${BASE}/api/report_view/enter`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: SESSION_ID, source: source}),
+      keepalive: true,
+    }).catch(()=>{});
+  } catch (e) {}
+
+  // 为每个 section 解析 part_key
+  const sections = [];
+  document.querySelectorAll('.section').forEach(sec => {
+    const lbl = sec.querySelector('.part-label');
+    if (!lbl) return;
+    const txt = lbl.textContent.trim();
+    const m = txt.match(/PART\s*0?(\d+)/i);
+    const key = m ? `part${parseInt(m[1],10)}` : `extra_${txt}`;
+    sec.dataset.partKey = key;
+    sections.push(sec);
+  });
+
+  // 每个 section 维护：accumulated_ms, last_visible_at, expanded_logged
+  const stat = new Map(); // key -> {acc, t0, enteredLogged}
+  sections.forEach(s => stat.set(s.dataset.partKey, {acc: 0, t0: 0, enteredLogged: false}));
+
+  function isExpanded(sec) {
+    const body = sec.querySelector(':scope > .part-collapse-body');
+    if (!body) return true; // 没折叠机制的（老板点评）默认展开
+    return body.style.display !== 'none';
+  }
+
+  function startCount(key) {
+    const s = stat.get(key);
+    if (!s || s.t0) return;
+    s.t0 = Date.now();
+  }
+  function stopCount(key) {
+    const s = stat.get(key);
+    if (!s || !s.t0) return;
+    s.acc += Date.now() - s.t0;
+    s.t0 = 0;
+  }
+  function logEnter(key) {
+    const s = stat.get(key);
+    if (!s || s.enteredLogged) return;
+    s.enteredLogged = true;
+    fetch(`${BASE}/api/report_view/part`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: SESSION_ID, part_key: key, event: 'enter'}),
+      keepalive: true,
+    }).catch(()=>{});
+  }
+
+  // IntersectionObserver：可见 + 已展开 才计时
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      const sec = e.target;
+      const key = sec.dataset.partKey;
+      sec._visible = e.isIntersecting && e.intersectionRatio > 0.15;
+      if (sec._visible && isExpanded(sec)) {
+        logEnter(key);
+        if (document.visibilityState === 'visible') startCount(key);
+      } else {
+        stopCount(key);
+      }
+    });
+  }, {threshold: [0, 0.15, 0.5]});
+  sections.forEach(s => io.observe(s));
+
+  // 折叠/展开切换时，重算所有可见 section 的状态
+  document.querySelectorAll('.part-collapse-header').forEach(h => {
+    h.addEventListener('click', () => {
+      setTimeout(() => {
+        sections.forEach(sec => {
+          const key = sec.dataset.partKey;
+          if (sec._visible && isExpanded(sec)) {
+            logEnter(key);
+            if (document.visibilityState === 'visible') startCount(key);
+          } else {
+            stopCount(key);
+          }
+        });
+      }, 0);
+    });
+  });
+
+  // 切走标签页 → 暂停所有；切回 → 对可见且展开的恢复计时
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      sections.forEach(sec => stopCount(sec.dataset.partKey));
+      flush();
+    } else {
+      sections.forEach(sec => {
+        if (sec._visible && isExpanded(sec)) startCount(sec.dataset.partKey);
+      });
+    }
+  });
+
+  // 上报累积时长
+  function flush() {
+    const payload = [];
+    stat.forEach((s, key) => {
+      if (s.acc >= 1000) {  // 至少 1 秒才上报
+        payload.push({key, ms: s.acc});
+        s.acc = 0;
+      }
+    });
+    if (!payload.length) return;
+    payload.forEach(p => {
+      const body = JSON.stringify({
+        session_id: SESSION_ID, part_key: p.key,
+        event: 'duration', duration_ms: p.ms,
+      });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(`${BASE}/api/report_view/part`,
+          new Blob([body], {type: 'application/json'}));
+      } else {
+        fetch(`${BASE}/api/report_view/part`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body, keepalive: true,
+        }).catch(()=>{});
+      }
+    });
+  }
+
+  // 定时 flush（每 30s）+ 离开页面 flush
+  setInterval(() => {
+    // 先把当前正在计时的也滚一遍
+    sections.forEach(sec => {
+      const key = sec.dataset.partKey;
+      const s = stat.get(key);
+      if (s && s.t0) { s.acc += Date.now() - s.t0; s.t0 = Date.now(); }
+    });
+    flush();
+  }, 30000);
+
+  window.addEventListener('pagehide', () => {
+    sections.forEach(sec => stopCount(sec.dataset.partKey));
+    flush();
   });
 })();
 
