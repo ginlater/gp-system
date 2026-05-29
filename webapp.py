@@ -6401,10 +6401,9 @@ def api_consultant_recording_bind(rid):
     if not dr:
         return jsonify({"error": "该顾客未在今日接诊列表，请先加入"}), 400
     advisor = u["advisor_name"] or u["username"]
-    sid = get_or_create_session(advisor, cust["name"], rec_date, company_id=cid)
-    # 把 customer_id 也写到 session（新字段，便于后续判断）
-    db_write("UPDATE sessions SET customer_id=? WHERE id=? AND COALESCE(customer_id,0)=0",
-             (customer_id, sid))
+    sid = get_or_create_session(advisor, cust["name"], rec_date, company_id=cid, customer_id=customer_id)
+    if not sid:
+        return jsonify({"error": "创建/查找接诊包失败"}), 500
     # 锁定 session 不允许再绑录音
     locked_row = db_fetchone("SELECT locked FROM sessions WHERE id=?", (sid,))
     if locked_row and locked_row["locked"]:

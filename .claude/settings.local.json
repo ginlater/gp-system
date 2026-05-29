@@ -299,7 +299,12 @@
       "Bash(sudo journalctl -u gongpai -n 50 --no-pager)",
       "Bash(sudo journalctl -u gongpai --no-pager -n 80)",
       "Bash(sudo journalctl -u gongpai --no-pager -n 30)",
-      "Bash(journalctl -u gongpai.service -n 5 --no-pager)"
+      "Bash(journalctl -u gongpai.service -n 5 --no-pager)",
+      "Bash(chmod +x /app/gp-system/smoke_test.py /app/gp-system/smoke_test.sh)",
+      "Bash(awk '{print $4, $7, $9}')",
+      "Bash(kill -HUP 1318249)",
+      "Bash(ps -o pid,ppid,etime,cmd -p 1318249)",
+      "Bash(xargs -I{} ps -o pid,ppid,etime -p {})"
     ]
   }
 }
