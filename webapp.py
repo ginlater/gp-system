@@ -2314,16 +2314,16 @@ TASK_REGISTRY = {
 3. external_brands：别家护肤品牌/仪器品牌/产品名
 
 ⚠ 生活习惯和自我护理不需要单独提取，直接归纳到 customer_tags 数组里即可。
-比如顾客经常熬夜 → customer_tags 加 {"tag":"长期熬夜","count":N}
-比如顾客在用益生菌 → customer_tags 加 {"tag":"益生菌用户","count":N}
+比如顾客经常熬夜 → customer_tags 加 {{"tag":"长期熬夜","count":N}}
+比如顾客在用益生菌 → customer_tags 加 {{"tag":"益生菌用户","count":N}}
 
 【(B) customer_tags 数组（外层字段，绝对不能省略！）】
 
 从整段录音里提炼顾客特征标签（每个 10 字以内），至少 5 个。
 来源不限：消费类型 + 生活习惯 + 身体状况 + 心理特征 + 品牌偏好。
 
-每个标签必须输出为对象 {"tag": "标签名", "count": N}，其中 count 为本次录音里**顾客自己**提及该标签相关话题的次数（统计顾客发言里出现该话题的轮次，至少为 1）。
-示例：[{"tag":"医美深度用户","count":4}, {"tag":"C级潜力客户","count":1}, {"tag":"长期熬夜","count":3}, {"tag":"理性克制型","count":2}, {"tag":"活细胞用户","count":2}]
+每个标签必须输出为对象 {{"tag": "标签名", "count": N}}，其中 count 为本次录音里**顾客自己**提及该标签相关话题的次数（统计顾客发言里出现该话题的轮次，至少为 1）。
+示例：[{{"tag":"医美深度用户","count":4}}, {{"tag":"C级潜力客户","count":1}}, {{"tag":"长期熬夜","count":3}}, {{"tag":"理性克制型","count":2}}, {{"tag":"活细胞用户","count":2}}]
 
 ⚠ 再次强调：customer_tags 是 external_signals 的**同级**字段，不是包在里面。两个字段都要填，缺一个就是失败。每个元素必须是带 tag+count 的对象，不能是裸字符串。
 """,
@@ -7524,7 +7524,7 @@ def api_consultant_session_start_analysis():
 
     # ③ signature 没变 + 已有分析结果 → 只补跑失败/缺失的 task
     if (sess_detail["analysis_signature"] == sig
-            and sess_detail["analysis_status"] in ("done", "failed")):
+            and sess_detail["analysis_status"] in ("done", "failed", "cancelled")):
         missing = get_missing_tasks(sess["id"])
         if not missing:
             return jsonify({"ok": True, "session_id": sess["id"],
@@ -7544,6 +7544,56 @@ def api_consultant_session_start_analysis():
             return jsonify({"error": f"触发分析失败：{e}"}), 500
 
     return jsonify({"ok": True, "session_id": sess["id"]})
+
+
+def _do_cancel_analysis(session_id, company_id=None):
+    """取消分析的公共逻辑。company_id 不为 None 时做公司隔离校验（super 传 None 跳过）。"""
+    row = db_fetchone(
+        "SELECT id, company_id, analysis_status FROM sessions WHERE id=?",
+        (session_id,),
+    )
+    if not row:
+        return jsonify({"error": "session 不存在"}), 404
+    if company_id is not None and (row["company_id"] or 1) != company_id:
+        return jsonify({"error": "无权操作"}), 403
+    if row["analysis_status"] not in ("running", "queued"):
+        return jsonify({"error": "当前不在分析中，无法取消"}), 409
+    db_write(
+        """UPDATE sessions SET analysis_status='cancelled',
+           analysis_error='已手动中断',
+           analysis_progress=NULL,
+           analysis_finished_at=datetime('now','localtime')
+           WHERE id=? AND analysis_status IN ('running','queued')""",
+        (session_id,),
+    )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/consultant/session/cancel_analysis", methods=["POST"])
+@login_required
+def api_consultant_session_cancel_analysis():
+    """顾问取消自己公司内正在分析中的 session。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    cid = u["company_id"] or 1
+    data = request.get_json(silent=True) or {}
+    session_id = data.get("session_id")
+    if not session_id:
+        return jsonify({"error": "缺少 session_id"}), 400
+    return _do_cancel_analysis(session_id, company_id=cid)
+
+
+@app.route("/api/admin/sessions/<int:sid>/cancel_analysis", methods=["POST"])
+@login_required
+def api_admin_session_cancel_analysis(sid):
+    """管理员/超管取消任意分析中的 session。"""
+    role = session.get("role")
+    if role not in ("admin", "super"):
+        return jsonify({"error": "仅管理员可操作"}), 403
+    cid = session.get("company_id") or 1 if role == "admin" else None
+    return _do_cancel_analysis(sid, company_id=cid)
 
 
 @app.route("/api/admin/sessions/<int:sid>/unlock", methods=["POST"])

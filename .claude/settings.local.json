@@ -304,7 +304,8 @@
       "Bash(awk '{print $4, $7, $9}')",
       "Bash(kill -HUP 1318249)",
       "Bash(ps -o pid,ppid,etime,cmd -p 1318249)",
-      "Bash(xargs -I{} ps -o pid,ppid,etime -p {})"
+      "Bash(xargs -I{} ps -o pid,ppid,etime -p {})",
+      "Bash(journalctl -u gp-system --since \"2 days ago\" -n 100)"
     ]
   }
 }

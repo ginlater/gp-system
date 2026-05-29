@@ -705,11 +705,13 @@ async function loadReception() {
       const isDone = st === 'done' && hasRec;
       const isRunning = (st === 'running' || st === 'queued') && hasRec;
       const isFailed = st === 'failed' && hasRec;
+      const isCancelled = st === 'cancelled' && hasRec;
       if (x.pending_rebind_count > 0) badge = `<span class="tag" style="background:#fef3e0;color:#e67e22">⏳ 换绑审批中 (${x.pending_rebind_count})</span>`;
       else if (!hasRec) badge = `<span class="tag">尚未绑定录音</span>`;
       else if (isDone) badge = `<span class="tag done">✓ 已分析</span>`;
       else if (isRunning) badge = `<span class="tag running" style="background:#fff4e5;color:#e67e22">分析中…</span>`;
       else if (isFailed) badge = `<span class="tag" style="background:#fdecea;color:#c0392b">✗ 分析失败，点击重试</span>`;
+      else if (isCancelled) badge = `<span class="tag" style="background:#f3f3f3;color:#888">⊘ 已中断</span>`;
       else badge = `<span class="tag running">${x.recording_count} 段录音待分析</span>`;
       const tail = x.phone_tail ? `尾号${x.phone_tail}` : '';
       const card = x.member_card ? ` · ${x.member_card}` : '';
@@ -722,7 +724,10 @@ async function loadReception() {
         mainBtn = `<button class="btn" onclick="viewAnalysis(${x.session_id})">查看分析报告</button>
                    <button class="btn sec" style="margin-left:4px;padding:4px 10px;font-size:12px" onclick='openPkg(${pkgArgs})'>查看录音</button>`;
       } else if (isRunning) {
-        mainBtn = `<button class="btn sec" onclick='openPkg(${pkgArgs})'>查看进度</button>`;
+        mainBtn = `<button class="btn sec" onclick='openPkg(${pkgArgs})'>查看进度</button>
+                   <button class="btn sec" style="margin-left:4px;padding:4px 10px;font-size:12px;color:#e67e22;border-color:#e67e22" onclick='cancelAnalysis(${x.session_id}, this)'>取消分析</button>`;
+      } else if (isCancelled) {
+        mainBtn = `<button class="btn" onclick='openPkg(${pkgArgs})'>重新分析</button>`;
       } else if (isFailed) {
         mainBtn = `<button class="btn" onclick='openPkg(${pkgArgs})'>重新分析</button>`;
       } else {
@@ -746,6 +751,26 @@ async function loadReception() {
     }).join('');
   } catch (e) {
     box.innerHTML = '<div class="msg err">' + e.message + '</div>';
+  }
+}
+
+async function cancelAnalysis(sessionId, btn) {
+  if (!confirm('确定取消分析？状态将变为"已中断"，之后可重新开始。')) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/session/cancel_analysis', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: sessionId}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    // 刷新列表和弹窗（如果弹窗打开着）
+    loadReception();
+    if (pkgCustomerId != null) refreshPkg();
+  } catch (e) {
+    alert(e.message);
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -966,7 +991,7 @@ async function doBind(customer_id, btn) {
 }
 
 // ============ 接诊包弹窗 ============
-let pkgCustomerId = null, pkgLocked = false, pkgDate = null;
+let pkgCustomerId = null, pkgLocked = false, pkgDate = null, pkgSessionId = null;
 async function openPkg(customer_id, service_date) {
   pkgCustomerId = customer_id;
   pkgDate = service_date || null;
@@ -978,7 +1003,7 @@ async function openPkg(customer_id, service_date) {
 }
 function closePkg(){
   document.getElementById('pkgMask').classList.remove('show');
-  pkgCustomerId=null; pkgDate=null;
+  pkgCustomerId=null; pkgDate=null; pkgSessionId=null;
   if (window._pkgPollTimer) { clearTimeout(window._pkgPollTimer); window._pkgPollTimer = null; }
 }
 
@@ -988,7 +1013,7 @@ function _fmtElapsed(sec) {
   return m > 0 ? `${m} 分 ${s} 秒` : `${s} 秒`;
 }
 
-function renderPkgProgress(tp, ast) {
+function renderPkgProgress(tp, ast, sessionId) {
   const box = document.getElementById('pkgProgress');
   if (!tp || !ast || ast === 'pending' || ast === '') { box.style.display = 'none'; return; }
   const total = tp.total || 11;
@@ -999,6 +1024,7 @@ function renderPkgProgress(tp, ast) {
   let stateLabel, stateColor;
   if (ast === 'done') { stateLabel = '✓ 已完成'; stateColor = '#2e7d32'; }
   else if (ast === 'failed') { stateLabel = '✗ 分析失败'; stateColor = '#c0392b'; }
+  else if (ast === 'cancelled') { stateLabel = '⊘ 已中断'; stateColor = '#888'; }
   else if (ast === 'outdated') { stateLabel = '⟳ 录音有变更，需重新分析'; stateColor = '#e67e22'; }
   else if (ast === 'queued') { stateLabel = '⏳ 排队中'; stateColor = '#e67e22'; }
   else if (ast === 'running') { stateLabel = '🔄 分析中'; stateColor = '#1976d2'; }
@@ -1011,10 +1037,14 @@ function renderPkgProgress(tp, ast) {
   const failedLine = (failed > 0 && (tp.failed_names || []).length && (ast === 'failed' || ast === 'outdated'))
     ? `<div style="font-size:12px;color:#c0392b;margin-top:4px;font-weight:600">✗ 失败：${tp.failed_names.join('、')}（重新分析可重试）</div>`
     : '';
+  const isRunningNow = (ast === 'running' || ast === 'queued');
+  const cancelBtn = (isRunningNow && sessionId)
+    ? `<button onclick="cancelAnalysis(${sessionId}, this)" style="font-size:12px;padding:2px 10px;border:1px solid #e67e22;color:#e67e22;background:none;border-radius:4px;cursor:pointer;margin-left:8px">取消分析</button>`
+    : '';
   box.style.display = '';
   box.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;font-size:13px">
-      <span style="font-weight:600;color:${stateColor}">${stateLabel}</span>
+      <span style="font-weight:600;color:${stateColor}">${stateLabel}${cancelBtn}</span>
       <span style="color:#666;font-size:12px">${wait}</span>
     </div>
     <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
@@ -1042,14 +1072,15 @@ async function refreshPkg() {
   const d = await r.json();
   if (d.error) { document.getElementById('pkgBound').innerHTML = '<div class="msg err">'+d.error+'</div>'; return; }
   pkgLocked = !!d.locked;
+  pkgSessionId = d.session_id || null;
   document.getElementById('pkgTitle').textContent = '接诊包 · ' + d.customer.name;
   const ubt = document.getElementById('pkgUnboundTitle');
   if (ubt) ubt.textContent = `本人 ${d.service_date} 未绑定录音（可加入本接诊包）`;
   const ast = d.analysis_status || '';
   const isAnalyzing = (ast === 'running' || ast === 'queued');
   const isDone = (ast === 'done');
-  const canRetry = (ast === 'failed' || ast === 'outdated');
-  renderPkgProgress(d.task_progress, ast);
+  const canRetry = (ast === 'failed' || ast === 'outdated' || ast === 'cancelled');
+  renderPkgProgress(d.task_progress, ast, pkgSessionId);
   schedulePkgPoll(ast);
   document.getElementById('pkgSubtitle').innerHTML =
     `${d.service_date} · 核对顾客信息后开始分析，如绑错可以"换绑"或"退回未归档"`;

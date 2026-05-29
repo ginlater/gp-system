@@ -491,12 +491,13 @@ document.addEventListener('click', (e) => {
 
 function fmtStatus(s, progress, row) {
   const map = {
-    idle:    ['未分析',  's-idle'],
-    queued:  ['排队中',  's-pending'],
-    running: ['分析中',  's-running'],
-    done:    ['已完成',  's-done'],
-    failed:  ['失败',    's-failed'],
-    stuck:   ['中断',    's-failed'],
+    idle:      ['未分析',  's-idle'],
+    queued:    ['排队中',  's-pending'],
+    running:   ['分析中',  's-running'],
+    done:      ['已完成',  's-done'],
+    failed:    ['失败',    's-failed'],
+    stuck:     ['中断',    's-failed'],
+    cancelled: ['已中断',  's-failed'],
   };
   const [t, c] = map[s] || [s || '—', 's-idle'];
   const tip = progress ? ` title="${progress.replace(/"/g,'&quot;')}"` : '';
@@ -590,6 +591,7 @@ function loadList(page) {
           <td data-label="点评">${s.has_evaluation ? '✓' : '—'}</td>
           <td style="white-space:nowrap">
             <a href="${BASE}/session/${s.id}?from=list" style="color:var(--blue);font-weight:600">查看 →</a>
+            ${(s.display_status === 'running' || s.display_status === 'queued') ? `<button onclick="cancelAnalysis(${s.id}, this)" style="margin-left:6px;background:none;border:1px solid #e67e22;color:#e67e22;border-radius:3px;padding:2px 8px;font-size:12px;cursor:pointer">取消分析</button>` : ''}
             ${ROLE === 'admin' || ROLE === 'super' ? `
               <span class="del-wrap" style="position:relative;display:inline-block;margin-left:6px">
                 <button onclick="toggleDelMenu(this)" style="background:none;border:1px solid rgba(231,76,60,.5);color:#e74c3c;border-radius:3px;padding:2px 8px;font-size:12px;cursor:pointer" title="删除">🗑 删除 ▾</button>
@@ -619,6 +621,28 @@ document.addEventListener('DOMContentLoaded', () => {
     el.addEventListener('click', () => setStatusFilter(el.dataset.st || ''));
   });
 });
+
+async function cancelAnalysis(sid, btn) {
+  if (!confirm('确定取消分析？状态将变为"已中断"，之后可重新开始。')) return;
+  btn.disabled = true;
+  try {
+    const url = (ROLE === 'admin' || ROLE === 'super')
+      ? `${BASE}/api/admin/sessions/${sid}/cancel_analysis`
+      : `${BASE}/api/consultant/session/cancel_analysis`;
+    const body = (ROLE === 'admin' || ROLE === 'super') ? undefined : JSON.stringify({session_id: sid});
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: body,
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    loadList(curPage);
+  } catch(e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
 
 function changePage(delta) {
   const next = curPage + delta;
