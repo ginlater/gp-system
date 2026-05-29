@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>顾客档案 · 工牌接诊分析系统</title>
+<style>
+  :root{--navy:#1c3461;--blue:#4a90d9;--border:#e3e8f0;--bg-light:#f8f9fc;--text-mid:#445;--text-mute:#8a93a6}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;margin:0;background:#f4f6fa;color:#222}
+  .wrap{max-width:980px;margin:0 auto;padding:20px 16px 60px}
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+  a.back{color:var(--blue);text-decoration:none;font-size:13px}
+  .card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:16px}
+  .card h3{font-size:15px;color:var(--navy);margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  .info-grid{display:flex;flex-wrap:wrap;gap:18px;font-size:14px}
+  .info-grid b{color:var(--navy)}
+  .chip{border-radius:99px;padding:4px 12px;font-size:13px;display:inline-block}
+  .chip-hist{background:rgba(28,52,97,.1);color:var(--navy);border:1px solid rgba(28,52,97,.2)}
+  .chip-cur{background:rgba(74,144,217,.16);color:var(--blue);border:1px solid rgba(74,144,217,.4)}
+  .tl-item{border-left:2px solid var(--border);padding:0 0 18px 16px;position:relative;margin-left:6px}
+  .tl-item::before{content:"";position:absolute;left:-6px;top:3px;width:10px;height:10px;border-radius:50%;background:var(--blue)}
+  .tl-date{font-weight:700;color:var(--navy);font-size:14px}
+  .tl-meta{font-size:12px;color:var(--text-mute);margin:2px 0 6px}
+  .btn{background:var(--navy);color:#fff;border:none;border-radius:5px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit}
+  .btn.sec{background:#fff;color:var(--navy);border:1px solid var(--border)}
+  select{border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:12px;font-family:inherit}
+  .muted{color:var(--text-mute);font-size:13px}
+  .hit{background:#fff7e6;color:#b9770e;border:1px solid #f0c97a;border-radius:4px;padding:1px 7px;font-size:11px;margin-left:4px}
+  .val-block{margin-bottom:14px}
+  .val-block .t{font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px}
+  .val-block .c{font-size:13px;line-height:1.7;color:var(--text-mid);white-space:pre-wrap}
+  a.sess-link{color:var(--blue);text-decoration:none;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a class="back" href="{{ request.script_root }}/admin">← 返回管理后台</a>
+    <span class="muted">{{ username }}（{{ role }}）</span>
+  </div>
+
+  <div class="card">
+    <h3 id="custName">加载中…</h3>
+    <div class="info-grid" id="custInfo"></div>
+  </div>
+
+  <div class="card">
+    <h3>累积标签 · 画像积累
+      <select id="cpRange" onchange="loadProfile()">
+        <option value="all">至今</option>
+        <option value="30">近30天</option>
+        <option value="90">近90天</option>
+        <option value="180">近180天</option>
+        <option value="365">近1年</option>
+      </select>
+    </h3>
+    <div id="accTags" style="display:flex;flex-wrap:wrap;gap:8px"><span class="muted">加载中…</span></div>
+  </div>
+
+  <div class="card">
+    <h3>客户价值预测 <span style="font-size:12px;font-weight:normal;color:var(--text-mute)" id="valMeta"></span></h3>
+    <div class="muted" style="margin-bottom:10px">基于该客人历次接待综合产出（结果会缓存，有新接诊分析后可刷新重算）。</div>
+    <div id="valActions"><button class="btn" onclick="genValue()" id="genBtn">生成 / 刷新预测</button></div>
+    <div id="valContent" style="margin-top:14px"></div>
+  </div>
+
+  <div class="card">
+    <h3>服务时间线 <span class="muted" id="sessCount"></span></h3>
+    <div id="timeline"><span class="muted">加载中…</span></div>
+  </div>
+</div>
+
+<script>
+const BASE = {{ request.script_root|tojson }};
+const CUSTOMER_ID = {{ customer_id }};
+function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+function loadProfile() {
+  const rng = document.getElementById('cpRange').value;
+  fetch(`${BASE}/api/admin/customer_profile?customer_id=${CUSTOMER_ID}&range=${rng}`)
+    .then(r => r.json()).then(d => {
+      if (d.error) { document.getElementById('custName').textContent = d.error; return; }
+      const info = d.info || {};
+      document.getElementById('custName').textContent = info.name || '（未命名）';
+      document.getElementById('custInfo').innerHTML =
+        `<div>会员号：<b>${esc(info.member_card)||'—'}</b></div>` +
+        `<div>手机尾号：<b>${esc(info.phone_tail)||'—'}</b></div>` +
+        `<div>接诊次数：<b>${d.session_count}</b></div>`;
+      // 累积标签
+      const at = d.accumulated_tags || [];
+      document.getElementById('accTags').innerHTML = at.length
+        ? at.map(t => `<span class="chip chip-hist">${esc(t.tag)}${t.count>1?` ×${t.count}`:''}</span>`).join('')
+        : '<span class="muted">该区间暂无标签</span>';
+      // 时间线
+      const sess = d.sessions || [];
+      document.getElementById('sessCount').textContent = `（共 ${sess.length} 次）`;
+      document.getElementById('timeline').innerHTML = sess.length ? sess.map(s => `
+        <div class="tl-item">
+          <div class="tl-date">${esc(s.service_date)||'?'} <a class="sess-link" href="${BASE}/session/${s.id}">查看报告 →</a></div>
+          <div class="tl-meta">顾问：${esc(s.advisor)||'?'}${s.store_name?(' · '+esc(s.store_name)):''} · ${esc(s.analysis_status)||''}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">
+            ${(s.tags||[]).map(t=>`<span class="chip chip-cur">${esc(t)}</span>`).join('') || '<span class="muted">无标签</span>'}
+            ${(s.project_hits||[]).map(p=>`<span class="hit">命中主推：${esc(p)}</span>`).join('')}
+          </div>
+        </div>`).join('') : '<span class="muted">暂无接诊记录</span>';
+    });
+}
+
+function renderValue(content, meta) {
+  const m = document.getElementById('valMeta');
+  m.textContent = meta || '';
+  const wrap = document.getElementById('valContent');
+  if (!content) { wrap.innerHTML = ''; return; }
+  const blocks = [
+    ['客户价值评估', content.value_rebuild],
+    ['攻坚作战方案', content.battle_plan],
+    ['项目规划（竞品/可做项目/售后学习）', content.project_plan],
+    ['经营规划（下一步/回店）', content.biz_plan],
+  ];
+  let html = blocks.filter(b=>b[1]).map(b=>`<div class="val-block"><div class="t">${b[0]}</div><div class="c">${esc(b[1])}</div></div>`).join('');
+  const am = content.advisor_match || [];
+  if (am.length) {
+    html += `<div class="val-block"><div class="t">顾问匹配度</div>` +
+      am.map(a=>`<div class="c" style="margin-bottom:6px">· <b>${esc(a.advisor)}</b>：${esc(a.assessment)}</div>`).join('') + `</div>`;
+  }
+  wrap.innerHTML = html || '<span class="muted">（无内容）</span>';
+}
+
+function loadValue() {
+  fetch(`${BASE}/api/admin/customer_value?customer_id=${CUSTOMER_ID}`)
+    .then(r => r.json()).then(d => {
+      if (d.error) return;
+      if (d.has_cache) {
+        let meta = `生成于 ${d.generated_at||''}${d.model?(' · '+d.model):''}`;
+        if (d.stale) meta += '（有新接诊，建议刷新）';
+        renderValue(d.content, meta);
+      } else {
+        document.getElementById('valContent').innerHTML =
+          `<span class="muted">${d.done_count? '尚未生成，点上方按钮生成。' : '该客人还没有已完成的接诊分析。'}</span>`;
+      }
+    });
+}
+
+function genValue() {
+  const btn = document.getElementById('genBtn');
+  btn.disabled = true; btn.textContent = '生成中…（约十几秒）';
+  fetch(`${BASE}/api/admin/customer_value`, {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({customer_id: CUSTOMER_ID}),
+  }).then(r => r.json()).then(d => {
+    btn.disabled = false; btn.textContent = '生成 / 刷新预测';
+    if (d.error) { alert(d.error); return; }
+    renderValue(d.content, `生成于 ${d.generated_at||''}${d.model?(' · '+d.model):''}`);
+  }).catch(e => { btn.disabled = false; btn.textContent = '生成 / 刷新预测'; alert('生成失败'); });
+}
+
+loadProfile();
+loadValue();
+</script>
+</body>
+</html>

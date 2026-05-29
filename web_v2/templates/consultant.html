@@ -179,10 +179,20 @@ body.skin-cute .dlg{border-radius:18px}
   <div class="header-bar">
     <div class="header-title"><span class="t-pro">接诊录音</span><span class="t-cute">美丽陪伴</span></div>
     <div class="header-user">
-      {{ advisor_name or username }}（<span class="t-pro">顾问</span><span class="t-cute">陪伴师</span>） ·
+      <button id="reminderBell" onclick="toggleReminderPanel()" title="提醒" style="position:relative;background:none;border:none;cursor:pointer;font-size:18px;vertical-align:middle;margin-right:6px">🔔<span id="reminderDot" style="display:none;position:absolute;top:-2px;right:-4px;background:#e74c3c;color:#fff;border-radius:99px;font-size:10px;padding:0 4px;line-height:14px"></span></button>
+      {{ advisor_name or username }}（{% if role == 'store_manager' %}店长{% else %}<span class="t-pro">顾问</span><span class="t-cute">陪伴师</span>{% endif %}） ·
+      {% if role == 'store_manager' %}<a href="{{ url_for('admin_page') }}" style="color:var(--blue)">本店看板</a> · {% endif %}
       <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a>
       <button class="skin-toggle" onclick="toggleSkin()" title="切换皮肤"><span id="skinLabel">🎀 切换皮肤</span></button>
     </div>
+  </div>
+
+  <!-- 提醒下拉面板 -->
+  <div id="reminderPanel" style="display:none;position:fixed;top:54px;right:16px;width:320px;max-height:60vh;overflow:auto;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);z-index:2000;padding:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <b>提醒</b><span style="cursor:pointer;color:#999" onclick="toggleReminderPanel()">✕</span>
+    </div>
+    <div id="reminderList"><div class="muted" style="font-size:13px;padding:8px 0">加载中…</div></div>
   </div>
 
   <!-- 接诊列表入口（顶部）-->
@@ -1345,8 +1355,42 @@ function viewAnalysis(sessionId) {
   location.href = BASE + '/session/' + sessionId + '?from=recording';
 }
 
+// ============ 模块4：站内提醒 ============
+function _remEsc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+function loadReminders() {
+  fetch(BASE + '/api/consultant/reminders').then(r => r.json()).then(d => {
+    if (d.error) return;
+    const dot = document.getElementById('reminderDot');
+    const n = d.count || 0;
+    if (n > 0) { dot.style.display = ''; dot.textContent = n > 99 ? '99+' : n; }
+    else { dot.style.display = 'none'; }
+    const list = document.getElementById('reminderList');
+    const items = d.items || [];
+    if (!items.length) { list.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0">暂无未处理提醒 🎉</div>'; return; }
+    list.innerHTML = items.map(it => {
+      const tag = it.kind === 'unbound' ? '未绑定' : '未查看';
+      const color = it.level >= 2 ? '#e74c3c' : '#e67e22';
+      const link = it.ref_type === 'session'
+        ? `<a href="${BASE}/session/${it.ref_id}?from=reminder" style="color:var(--blue);font-size:12px">查看报告 →</a>` : '';
+      return `<div style="border-bottom:1px solid #f0f0f0;padding:8px 2px">
+        <span style="display:inline-block;font-size:11px;color:#fff;background:${color};border-radius:4px;padding:0 6px;margin-right:4px">${tag} L${it.level}</span>
+        <span style="font-size:13px">${_remEsc(it.message)}</span>
+        <div style="margin-top:3px">${link} <span class="muted" style="font-size:11px">${_remEsc(it.created_at||'')}</span></div>
+      </div>`;
+    }).join('');
+  });
+}
+function toggleReminderPanel() {
+  const p = document.getElementById('reminderPanel');
+  const show = p.style.display === 'none';
+  p.style.display = show ? 'block' : 'none';
+  if (show) loadReminders();
+}
+
 loadReception();
 setInterval(() => { if (!currentReceptionDate) loadReception(); }, 20000);
+loadReminders();
+setInterval(loadReminders, 120000);
 </script>
 </body>
 </html>

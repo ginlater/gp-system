@@ -54,11 +54,23 @@ html,body{overflow-x:hidden;max-width:100%}
   </div>
 
   <div class="tabs">
-    <button data-tab="consultants" class="active">顾问管理 <span class="tab-count" id="consCount"></span></button>
+    {% if role != 'store_manager' %}
+    <button data-tab="consultants" class="active">员工管理 <span class="tab-count" id="consCount"></span></button>
+    <button data-tab="stores">门店管理 <span class="tab-count" id="storeCount"></span></button>
+    <button data-tab="admins">管理员账号 <span class="tab-count" id="adminCount"></span></button>
+    <button data-tab="tagdict">标签词典 <span class="tab-count" id="tagDictCount"></span></button>
     <button data-tab="customers">顾客管理 <span class="tab-count" id="custCount"></span></button>
+    <button data-tab="customer-merge">客户合并 <span class="tab-count" id="mergeDupCount"></span></button>
+    {% endif %}
     <button data-tab="high-risk">差评高风险预警 <span id="hrBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
+    <button data-tab="pipeline">接诊卡点 <span id="pipelineBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
+    {% if role != 'store_manager' %}<button data-tab="reminder-cfg">提醒设置</button>{% endif %}
+    <button data-tab="unbound">未绑定录音 <span class="tab-count" id="unboundCount"></span></button>
+    <button data-tab="tagstats">标签统计</button>
+    {% if role != 'store_manager' %}
     <button data-tab="delete-requests">删除申请 <span id="drBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
     <button data-tab="rebind-requests">换绑/解绑记录</button>
+    {% endif %}
     {% if role == 'super' %}<button data-tab="companies">公司管理</button>{% endif %}
     <button data-tab="ops-dashboard">运营看板</button>
   </div>
@@ -71,36 +83,177 @@ html,body{overflow-x:hidden;max-width:100%}
       <div class="tip">支持 CSV / XLSX。列序：<b>顾问姓名</b>、<b>工号</b>、<b>手机号</b>（可选第四列：初始密码；不填则用手机号后 6 位）。<b>顾问用手机号登录</b>（无手机号时退回用工号登录）。</div>
       <div class="row">
         <input type="file" id="impConsFile" accept=".csv,.xlsx,.xls">
+        <select id="impConsStore" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px"></select>
         <button class="btn" onclick="importConsultants()">上传并导入</button>
       </div>
       <div class="msg" id="impConsMsg"></div>
     </div>
 
     <div class="card">
-      <h3>新建单个顾问账号</h3>
+      <h3>新建单个员工账号</h3>
       <div class="row">
-        <input id="cName" placeholder="顾问姓名 *">
+        <input id="cName" placeholder="姓名 *">
         <input id="cEmp" placeholder="工号（用作用户名）*">
         <input id="cPhone" placeholder="手机号">
         <input id="cPwd" placeholder="初始密码 *" type="text">
+        <select id="cStore" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px"></select>
+        <select id="cRole" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
+          <option value="consultant">顾问</option>
+          <option value="store_manager">店长</option>
+        </select>
         <button class="btn" onclick="createConsultant()">创建</button>
       </div>
+      <div class="tip">店长 = 拥有顾问的全部功能（上传/绑定/换绑接诊单），同时能看本店运营看板。</div>
       <div class="msg" id="newConsMsg"></div>
     </div>
 
     <div class="card">
-      <h3>顾问账号列表 <span id="consTotal" style="font-size:12px;color:#666;font-weight:normal">（加载中…）</span></h3>
+      <h3>员工账号列表 <span id="consTotal" style="font-size:12px;color:#666;font-weight:normal">（加载中…）</span></h3>
       <div class="row">
         <input id="qCons" placeholder="按姓名/工号/手机号搜索（服务端）" oninput="onConsSearch()">
+        <select id="consStoreFilter" onchange="loadConsultants(document.getElementById('qCons').value.trim())" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px"></select>
         <button class="btn sec" onclick="loadConsultants()">刷新</button>
       </div>
       <table class="tbl">
         <thead><tr>
-          <th>姓名</th><th>工号</th><th>用户名</th><th>手机号</th>
+          <th>姓名</th><th>角色</th><th>门店</th><th>工号</th><th>用户名</th><th>手机号</th>
           {% if role == 'super' %}<th>公司</th>{% endif %}
-          <th>创建时间</th><th>操作</th>
+          <th>操作</th>
         </tr></thead>
-        <tbody id="consBody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+        <tbody id="consBody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 门店管理 -->
+  <div id="tab-stores" class="panel">
+    <div class="card">
+      <h3>新建门店</h3>
+      <div class="row">
+        <input id="stName" placeholder="门店名 *">
+        <input id="stRegion" placeholder="区域 / 城市（选填）">
+        <button class="btn" onclick="createStore()">创建</button>
+      </div>
+      <div class="msg" id="newStoreMsg"></div>
+    </div>
+    <div class="card">
+      <h3>门店列表 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadStores()">刷新</button></h3>
+      <div class="tip">删除门店前需先把该店的员工调到其它门店；有历史接诊的门店不可删除。</div>
+      <table class="tbl">
+        <thead><tr>
+          {% if role == 'super' %}<th>公司</th>{% endif %}
+          <th>门店名</th><th>区域</th><th>顾问数</th><th>店长</th><th>操作</th>
+        </tr></thead>
+        <tbody id="storeBody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 管理员账号 -->
+  <div id="tab-admins" class="panel">
+    <div class="card">
+      <h3>新建管理员账号</h3>
+      <div class="tip">管理员可看本公司全盘数据、管理员工/门店/顾客，但不接诊。</div>
+      <div class="row">
+        <input id="adName" placeholder="显示名（如：王经理）">
+        <input id="adUser" placeholder="登录用户名 *">
+        <input id="adPwd" placeholder="初始密码 *" type="text">
+        {% if role == 'super' %}<select id="adCompany" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px"></select>{% endif %}
+        <button class="btn" onclick="createAdmin()">创建</button>
+      </div>
+      <div class="msg" id="newAdminMsg"></div>
+    </div>
+    <div class="card">
+      <h3>管理员列表 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadAdmins()">刷新</button></h3>
+      <table class="tbl">
+        <thead><tr>
+          {% if role == 'super' %}<th>公司</th>{% endif %}
+          <th>显示名</th><th>用户名</th><th>创建时间</th><th>操作</th>
+        </tr></thead>
+        <tbody id="adminBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 标签词典 -->
+  <div id="tab-tagdict" class="panel">
+    <div class="card">
+      <h3>待归类标签池 <span id="unclassCount" style="font-size:12px;color:#666;font-weight:normal"></span>
+        <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadUnclassified()">刷新</button></h3>
+      <div class="tip">AI 提取出、还没归到标准词的原始标签，按<b>服务次数</b>排序。归类后"店里流行什么/竞品纵览"等统计才准。每个标签可：并入已有标准词、新建为标准词、或拉黑（竞品黑名单，今后不再统计）。</div>
+      <table class="tbl">
+        <thead><tr><th>原始标签</th><th>服务次数</th><th>并入标准词</th><th>操作</th></tr></thead>
+        <tbody id="unclassBody"><tr><td colspan="4" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>新建标准词</h3>
+      <div class="row">
+        <input id="tdCanon" placeholder="标准词 *">
+        <select id="tdCat" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px"></select>
+        <button class="btn" onclick="createTagDict()">创建</button>
+      </div>
+      <div class="msg" id="newTdMsg"></div>
+    </div>
+
+    <div class="card">
+      <h3>标签词典 <span id="tagDictTotal" style="font-size:12px;color:#666;font-weight:normal"></span>
+        <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadTagDict()">刷新</button></h3>
+      <table class="tbl">
+        <thead><tr><th>分类</th><th>标准词</th><th>同义词</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="tagDictBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 标签统计 -->
+  <div id="tab-tagstats" class="panel">
+    <div class="card">
+      <h3>筛选</h3>
+      <div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">
+        {% if role != 'store_manager' %}
+        <select id="tsStore" onchange="loadTagStats()" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px"></select>
+        {% endif %}
+        <input id="tsFrom" type="date" onchange="loadTagStats()" style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:13px">
+        <span style="color:#888">—</span>
+        <input id="tsTo" type="date" onchange="loadTagStats()" style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:13px">
+        <button class="btn sec" style="padding:5px 10px;font-size:12px" onclick="tsQuick(30)">近30天</button>
+        <button class="btn sec" style="padding:5px 10px;font-size:12px" onclick="tsQuick(90)">90天</button>
+        <button class="btn sec" style="padding:5px 10px;font-size:12px" onclick="tsQuick(180)">180天</button>
+        <button class="btn sec" style="padding:5px 10px;font-size:12px" onclick="tsQuick(365)">1年</button>
+        <button class="btn sec" style="padding:5px 10px;font-size:12px" onclick="tsQuick(0)">至今</button>
+      </div>
+      <div class="tip">服务次数 = 有多少次接诊提到该标签（去重接诊）。用来判断店里近期在流行什么、该进什么货。竞品行可一键拉黑，拉黑后不再统计、不再出现在竞品分析里。</div>
+    </div>
+    {% if role != 'store_manager' %}
+    <div class="card">
+      <h3>当月主推项目清单 · <span id="mpMonth"></span></h3>
+      <div class="tip">设置本月主推的活动/项目 + 命中关键词，系统按录音转写检测客人是否提及，结果显示在「顾客档案」的服务时间线上。不填关键词则默认用项目名。</div>
+      <div class="row">
+        <input id="mpName" placeholder="项目名 *">
+        <input id="mpKw" placeholder="命中关键词（顿号、或逗号分隔）" style="min-width:240px">
+        <button class="btn" onclick="createMonthlyProject()">添加</button>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>项目名</th><th>命中关键词</th><th>操作</th></tr></thead>
+        <tbody id="mpBody"><tr><td colspan="3" class="muted">加载中…</td></tr></tbody>
+      </table>
+      <div class="msg" id="mpMsg"></div>
+    </div>
+    {% endif %}
+    <div class="card">
+      <h3>顾客标签统计 · 店里在流行什么 <span id="tsCustCount" style="font-size:12px;color:#666;font-weight:normal"></span></h3>
+      <table class="tbl">
+        <thead><tr><th style="width:40px">#</th><th>标签</th><th>分类</th><th>服务次数</th><th>涉及客人</th></tr></thead>
+        <tbody id="tsCustBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>竞品标签纵览 <span id="tsCompCount" style="font-size:12px;color:#666;font-weight:normal"></span></h3>
+      <table class="tbl">
+        <thead><tr><th style="width:40px">#</th><th>竞品标签</th><th>服务次数</th><th>涉及客人</th><th>操作</th></tr></thead>
+        <tbody id="tsCompBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -148,6 +301,63 @@ html,body{overflow-x:hidden;max-width:100%}
       </table>
     </div>
   </div>
+
+  {% if role != 'store_manager' %}
+  <!-- 客户合并 / 拆分 -->
+  <div id="tab-customer-merge" class="panel">
+    <div class="card">
+      <h3>疑似重复客人
+        <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadDuplicates()">刷新</button>
+      </h3>
+      <div class="tip">同公司内未被合并的客人中，按「同名 / 会员卡号相同 / 手机尾号相同」找出疑似同一人的配对。确认是同一人后，选保留为主的客人并填写原因，把其余的合并进去。</div>
+      <div id="dupGroups"><div class="muted">加载中…</div></div>
+      <div class="msg" id="dupMsg"></div>
+    </div>
+
+    <div class="card">
+      <h3>手动合并</h3>
+      <div class="tip">搜索并选中两个客人：A 会被合并进 B（B 为保留下来的主客人）。A 名下的接诊、标签、今日接诊都会改挂到 B，A 不再出现在顾客列表。可在下方「合并历史」撤销。</div>
+      <div class="row" style="margin-bottom:8px">
+        <div style="flex:1;min-width:220px">
+          <div class="muted" style="margin-bottom:4px">A（被合并掉）</div>
+          <input id="mergeFromInput" placeholder="搜索姓名 / 会员卡号" oninput="onMergeSearch('from')" autocomplete="off">
+          <div id="mergeFromList" class="merge-suggest"></div>
+          <div id="mergeFromPicked" class="merge-picked"></div>
+        </div>
+        <div style="flex:1;min-width:220px">
+          <div class="muted" style="margin-bottom:4px">B（保留为主）</div>
+          <input id="mergeIntoInput" placeholder="搜索姓名 / 会员卡号" oninput="onMergeSearch('into')" autocomplete="off">
+          <div id="mergeIntoList" class="merge-suggest"></div>
+          <div id="mergeIntoPicked" class="merge-picked"></div>
+        </div>
+      </div>
+      <div class="row">
+        <input id="mergeReason" placeholder="合并原因（建议填写）" style="flex:1;min-width:240px">
+        <button class="btn" onclick="doManualMerge()">合并 A → B</button>
+      </div>
+      <div class="msg" id="manualMergeMsg"></div>
+    </div>
+
+    <div class="card">
+      <h3>合并历史
+        <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadMergeLog()">刷新</button>
+      </h3>
+      <table class="tbl">
+        <thead><tr><th>时间</th><th>被合并 (A)</th><th>合并进 (B)</th><th>操作人</th><th>原因</th><th>影响</th><th>状态</th><th>操作</th></tr></thead>
+        <tbody id="mergeLogBody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+      </table>
+      <div class="msg" id="mergeLogMsg"></div>
+    </div>
+  </div>
+  <style>
+    .merge-suggest{position:relative}
+    .merge-suggest .opt{border:1px solid var(--border);border-top:none;padding:6px 10px;font-size:13px;cursor:pointer;background:#fff}
+    .merge-suggest .opt:hover{background:#f1f5ff}
+    .merge-suggest .opt:first-child{border-top:1px solid var(--border)}
+    .merge-picked{margin-top:6px;font-size:13px;color:var(--navy)}
+    .merge-picked .chip{display:inline-block;background:#eef3ff;border:1px solid #c7d7ff;border-radius:4px;padding:3px 8px}
+  </style>
+  {% endif %}
 
   {% if role == 'super' %}
   <!-- 公司管理（super only） -->
@@ -230,6 +440,96 @@ html,body{overflow-x:hidden;max-width:100%}
     </div>
   </div>
 
+  <!-- 接诊卡点 -->
+  <div id="tab-pipeline" class="panel">
+    <div class="card">
+      <h3>接诊状态分桶 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPipeline()">刷新</button></h3>
+      <div class="tip">统一口径下每条录音/接诊归到一个状态。未绑定 &gt;2h、完成未查看 &gt;2h 会进入下方「卡住的项」，超 24 小时标红。</div>
+      <div id="pipelineBuckets" style="display:flex;flex-wrap:wrap;gap:10px;margin:12px 0"></div>
+    </div>
+    <div class="card">
+      <h3>卡住的项</h3>
+      <table class="tbl">
+        <thead><tr><th>类型</th><th>顾问</th><th>对象</th><th>已卡(小时)</th><th>时间</th></tr></thead>
+        <tbody id="pipelineStuckBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="card">
+      <h3>提醒日志 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadReminderLog()">刷新</button></h3>
+      <div class="row" style="margin-bottom:8px">
+        <select id="rlKindFilter" onchange="loadReminderLog()" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
+          <option value="">全部类型</option>
+          <option value="unbound">未绑定</option>
+          <option value="unviewed">未查看</option>
+        </select>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>时间</th><th>类型</th><th>级别</th><th>渠道</th><th>对象</th><th>目标</th><th>内容</th><th>结果</th><th>已处理</th></tr></thead>
+        <tbody id="reminderLogBody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 提醒设置 -->
+  {% if role != 'store_manager' %}
+  <div id="tab-reminder-cfg" class="panel">
+    <div class="card" style="max-width:560px">
+      <h3>提醒设置（公司默认）</h3>
+      <div class="tip">控制未绑定录音 / 未查看报告的分级提醒。站内消息与看板标红始终启用；电话提醒为<b>可插拔渠道占位</b>，目前只把"本应外呼"写进提醒日志（result=stub），不接真实运营商。</div>
+      <div class="row" style="margin:10px 0"><label style="width:200px">几小时后开始提醒</label>
+        <input id="rcAfterHours" type="number" min="1" style="width:90px;border:1px solid var(--border);border-radius:4px;padding:6px"> 小时</div>
+      <div class="row" style="margin:10px 0"><label style="width:200px">每天最多提醒次数</label>
+        <input id="rcMaxPerDay" type="number" min="1" style="width:90px;border:1px solid var(--border);border-radius:4px;padding:6px"> 次</div>
+      <div class="row" style="margin:10px 0"><label style="width:200px"><input id="rcEnablePhone" type="checkbox"> 启用电话提醒(stub)</label></div>
+      <div class="row" style="margin:10px 0"><label style="width:200px"><input id="rcAvoidOffwork" type="checkbox"> 电话避开非工作时间</label></div>
+      <div class="row" style="margin:10px 0"><label style="width:200px">工作时间</label>
+        <input id="rcWorkStart" type="time" style="border:1px solid var(--border);border-radius:4px;padding:6px"> —
+        <input id="rcWorkEnd" type="time" style="border:1px solid var(--border);border-radius:4px;padding:6px"></div>
+      <div class="row" style="margin:10px 0"><label style="width:200px"><input id="rcRetryOnFail" type="checkbox"> 电话失败重拨(stub)</label></div>
+      <div class="row" style="margin:10px 0"><label style="width:200px"><input id="rcLogResults" type="checkbox"> 记录提醒结果</label></div>
+      <div style="margin-top:12px"><button class="btn" onclick="saveReminderConfig()">保存</button></div>
+      <div class="msg" id="rcMsg"></div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- 未绑定录音 -->
+  <div id="tab-unbound" class="panel">
+    <div class="card">
+      <h3>未绑定录音 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadUnbound()">刷新</button></h3>
+      <div class="tip">这里是尚未归档到任何接诊包的录音。可试听全程后，点「代绑」把它绑给某位顾问当日的客人，绑定后顾问端会自动看到并触发分析。</div>
+      <table class="tbl">
+        <thead><tr><th>上传人/顾问</th><th>录音时间</th><th>时长</th><th>门店</th><th>状态</th><th>试听</th><th>操作</th></tr></thead>
+        <tbody id="unboundBody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+      </table>
+      <div class="msg" id="unboundMsg"></div>
+    </div>
+  </div>
+
+  <!-- 代绑弹窗 -->
+  <div id="abMask" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000">
+    <div style="background:#fff;max-width:480px;margin:60px auto;border-radius:8px;padding:20px;max-height:80vh;overflow:auto">
+      <h3 style="margin-top:0">代绑录音 <span style="float:right;cursor:pointer" onclick="abClose()">✕</span></h3>
+      <div id="abRecInfo" class="tip" style="margin-bottom:10px"></div>
+      <div class="row" style="margin-bottom:8px"><label style="width:80px">顾问</label>
+        <select id="abAdvisor" onchange="abLoadReception()" style="flex:1;border:1px solid var(--border);border-radius:4px;padding:6px"></select></div>
+      <div class="row" style="margin-bottom:8px"><label style="width:80px">服务日期</label>
+        <input id="abDate" type="date" onchange="abLoadReception()" style="flex:1;border:1px solid var(--border);border-radius:4px;padding:6px"></div>
+      <div class="row" style="margin-bottom:8px"><label style="width:80px">选客人</label>
+        <select id="abCustomer" style="flex:1;border:1px solid var(--border);border-radius:4px;padding:6px"></select></div>
+      <div style="margin:10px 0;font-size:12px;color:#888">— 或新增一个客人加入该顾问当日接诊 —</div>
+      <div class="row" style="margin-bottom:8px"><label style="width:80px">姓名</label>
+        <input id="abName" placeholder="新增客人姓名" style="flex:1;border:1px solid var(--border);border-radius:4px;padding:6px"></div>
+      <div class="row" style="margin-bottom:8px"><label style="width:80px">手机尾号</label>
+        <input id="abPhone" placeholder="4 位数字" maxlength="4" style="flex:1;border:1px solid var(--border);border-radius:4px;padding:6px"></div>
+      <div class="msg" id="abMsg"></div>
+      <div style="text-align:right;margin-top:12px">
+        <button class="btn sec" onclick="abClose()">取消</button>
+        <button class="btn" onclick="abSubmit()">确认代绑</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 删除申请 -->
   <div id="tab-delete-requests" class="panel">
     <div class="card">
@@ -279,8 +579,16 @@ let _custCache = [];
 // tab switch — 切换是纯 CSS 操作（瞬时），首次进入该 tab 时才懒加载该列表
 const _tabLoaders = {
   consultants: () => loadConsultants(),
+  stores: () => loadStores(),
+  admins: () => loadAdmins(),
+  tagdict: () => loadTagDict(),
+  tagstats: () => loadTagStats(),
   customers: () => loadCustomers(),
+  'customer-merge': () => { loadDuplicates(); loadMergeLog(); },
   'high-risk': () => loadHighRisk(),
+  pipeline: () => { loadPipeline(); loadReminderLog(); },
+  'reminder-cfg': () => loadReminderConfig(),
+  unbound: () => loadUnbound(),
   'delete-requests': () => loadDeleteRequests(),
   'rebind-requests': () => loadRebindRequests(),
   companies: () => (typeof loadCompanies === 'function') && loadCompanies(),
@@ -311,8 +619,33 @@ function showMsg(id, text, isErr) {
 }
 
 // ---- 顾问 ----
+function storeOptionsHtml(selectedId) {
+  return '<option value="">未分配</option>' + _storesCache.map(s =>
+    `<option value="${s.id}" ${String(s.id)===String(selectedId)?'selected':''}>${s.name}</option>`).join('');
+}
+function changeStaffStore(uid, sel) {
+  fetch(BASE + '/api/admin/consultants/' + uid, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({store_id: sel.value || null}),
+  }).then(r => r.json()).then(d => { if (d.error) { alert(d.error); loadConsultants(); } });
+}
+function changeStaffRole(uid, sel) {
+  fetch(BASE + '/api/admin/consultants/' + uid, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({role: sel.value}),
+  }).then(r => r.json()).then(d => { if (d.error) { alert(d.error); loadConsultants(); } });
+}
 function loadConsultants(q) {
-  const url = BASE + '/api/admin/consultants' + (q ? ('?q=' + encodeURIComponent(q)) : '');
+  // 确保门店缓存就绪（行内下拉要用）
+  const ready = _storesCache.length ? Promise.resolve() : loadStores();
+  ready.then(() => _loadConsultants(q));
+}
+function _loadConsultants(q) {
+  const params = [];
+  if (q) params.push('q=' + encodeURIComponent(q));
+  const filt = document.getElementById('consStoreFilter');
+  if (filt && filt.value) params.push('store_id=' + filt.value);
+  const url = BASE + '/api/admin/consultants' + (params.length ? ('?' + params.join('&')) : '');
   fetch(url).then(r => r.json()).then(d => {
     const tb = document.getElementById('consBody');
     const cc = document.getElementById('consCount');
@@ -332,18 +665,28 @@ function loadConsultants(q) {
       }
     }
     if (!list.length) {
-      tb.innerHTML = '<tr><td colspan="7" class="muted">暂无顾问</td></tr>';
+      tb.innerHTML = '<tr><td colspan="8" class="muted">暂无员工</td></tr>';
       return;
     }
     d.consultants = list;
     tb.innerHTML = d.consultants.map(c => `
       <tr>
         <td>${c.advisor_name || '—'}</td>
+        <td>
+          <select onchange="changeStaffRole(${c.id}, this)" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px">
+            <option value="consultant" ${c.role==='consultant'?'selected':''}>顾问</option>
+            <option value="store_manager" ${c.role==='store_manager'?'selected':''}>店长</option>
+          </select>
+        </td>
+        <td>
+          <select onchange="changeStaffStore(${c.id}, this)" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px">
+            ${storeOptionsHtml(c.store_id)}
+          </select>
+        </td>
         <td>${c.employee_id || '—'}</td>
         <td>${c.username}</td>
         <td>${c.phone || '—'}</td>
         ${ROLE === 'super' ? `<td>${c.company_id}</td>` : ''}
-        <td>${c.created_at || ''}</td>
         <td>
           <button class="btn sec" onclick="resetPwd(${c.id})">重置密码</button>
           <button class="btn danger" onclick="delConsultant(${c.id}, '${(c.advisor_name||'').replace(/'/g,'')}'  )">删除</button>
@@ -358,6 +701,8 @@ function createConsultant() {
     username: document.getElementById('cEmp').value.trim(),
     phone: document.getElementById('cPhone').value.trim(),
     password: document.getElementById('cPwd').value.trim(),
+    store_id: document.getElementById('cStore').value || null,
+    role: document.getElementById('cRole').value,
   };
   if (!body.advisor_name || !body.employee_id || !body.password) {
     showMsg('newConsMsg', '姓名、工号、密码必填', true); return;
@@ -393,6 +738,8 @@ function importConsultants() {
   const f = document.getElementById('impConsFile').files[0];
   if (!f) { showMsg('impConsMsg', '请选择文件', true); return; }
   const fd = new FormData(); fd.append('file', f);
+  const impS = document.getElementById('impConsStore');
+  if (impS && impS.value) fd.append('store_id', impS.value);
   showMsg('impConsMsg', '上传中…');
   fetch(BASE + '/api/admin/import/consultants', {method: 'POST', body: fd})
     .then(r => r.json()).then(d => {
@@ -402,6 +749,359 @@ function importConsultants() {
       showMsg('impConsMsg', msg);
       loadConsultants();
     });
+}
+
+// ---- 门店 ----
+let _storesCache = [];
+function loadStores() {
+  return fetch(BASE + '/api/admin/stores').then(r => r.json()).then(d => {
+    _storesCache = d.stores || [];
+    const sc = document.getElementById('storeCount');
+    if (sc) sc.textContent = `(${_storesCache.length})`;
+    fillStoreSelects();
+    const tb = document.getElementById('storeBody');
+    if (tb) {
+      if (!_storesCache.length) {
+        tb.innerHTML = '<tr><td colspan="6" class="muted">暂无门店</td></tr>';
+      } else {
+        tb.innerHTML = _storesCache.map(s => `
+          <tr>
+            ${ROLE === 'super' ? `<td>${s.company_name || s.company_id}</td>` : ''}
+            <td>${s.name}</td>
+            <td>${s.region || '—'}</td>
+            <td>${s.consultant_count || 0}</td>
+            <td>${s.managers || '—'}</td>
+            <td>
+              <button class="btn sec" onclick="renameStore(${s.id}, '${(s.name||'').replace(/'/g,'')}')">改名</button>
+              <button class="btn danger" onclick="delStore(${s.id}, '${(s.name||'').replace(/'/g,'')}')">删除</button>
+            </td>
+          </tr>`).join('');
+      }
+    }
+    return _storesCache;
+  });
+}
+function fillStoreSelects() {
+  // 创建员工 / 导入 / 列表筛选 的门店下拉
+  const opts = _storesCache.map(s => `<option value="${s.id}">${ROLE==='super' ? (s.company_name||'') + ' / ' : ''}${s.name}</option>`).join('');
+  const cStore = document.getElementById('cStore');
+  if (cStore) cStore.innerHTML = '<option value="">未分配门店</option>' + opts;
+  const impStore = document.getElementById('impConsStore');
+  if (impStore) impStore.innerHTML = '<option value="">导入到：未分配</option>' + opts;
+  const filt = document.getElementById('consStoreFilter');
+  if (filt) {
+    const cur = filt.value;
+    filt.innerHTML = '<option value="">全部门店</option>' + opts;
+    filt.value = cur;
+  }
+}
+function createStore() {
+  const body = {
+    name: document.getElementById('stName').value.trim(),
+    region: document.getElementById('stRegion').value.trim(),
+  };
+  if (!body.name) { showMsg('newStoreMsg', '门店名必填', true); return; }
+  fetch(BASE + '/api/admin/stores', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(d => {
+    if (d.error) showMsg('newStoreMsg', d.error, true);
+    else { showMsg('newStoreMsg', '已创建'); document.getElementById('stName').value=''; document.getElementById('stRegion').value=''; loadStores(); }
+  });
+}
+function renameStore(id, oldName) {
+  const nm = prompt('新门店名', oldName);
+  if (!nm || nm.trim() === oldName) return;
+  fetch(BASE + '/api/admin/stores/' + id, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name: nm.trim()}),
+  }).then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadStores(); });
+}
+function delStore(id, name) {
+  if (!confirm(`确认删除门店「${name}」？`)) return;
+  fetch(BASE + '/api/admin/stores/' + id, {method: 'DELETE'})
+    .then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadStores(); });
+}
+
+// ---- 管理员账号 ----
+function loadAdmins() {
+  // super 建账号要选公司：顺带拉公司列表填下拉
+  if (ROLE === 'super') {
+    const sel = document.getElementById('adCompany');
+    if (sel && !sel.dataset.loaded) {
+      fetch(BASE + '/api/admin/companies').then(r => r.json()).then(d => {
+        sel.innerHTML = (d.companies || []).map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+        sel.dataset.loaded = '1';
+      });
+    }
+  }
+  fetch(BASE + '/api/admin/admins').then(r => r.json()).then(d => {
+    const list = d.admins || [];
+    const ac = document.getElementById('adminCount');
+    if (ac) ac.textContent = `(${list.length})`;
+    const tb = document.getElementById('adminBody');
+    if (!list.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">暂无管理员</td></tr>'; return; }
+    tb.innerHTML = list.map(a => `
+      <tr>
+        ${ROLE === 'super' ? `<td>${a.company_name || a.company_id}</td>` : ''}
+        <td>${a.advisor_name || '—'}</td>
+        <td>${a.username}</td>
+        <td>${a.created_at || ''}</td>
+        <td>
+          <button class="btn sec" onclick="resetAdminPwd(${a.id})">重置密码</button>
+          <button class="btn danger" onclick="delAdmin(${a.id}, '${(a.username||'').replace(/'/g,'')}')">删除</button>
+        </td>
+      </tr>`).join('');
+  });
+}
+function createAdmin() {
+  const body = {
+    advisor_name: document.getElementById('adName').value.trim(),
+    username: document.getElementById('adUser').value.trim(),
+    password: document.getElementById('adPwd').value.trim(),
+  };
+  const co = document.getElementById('adCompany');
+  if (co) body.company_id = co.value;
+  if (!body.username || !body.password) { showMsg('newAdminMsg', '用户名、密码必填', true); return; }
+  fetch(BASE + '/api/admin/admins', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(d => {
+    if (d.error) showMsg('newAdminMsg', d.error, true);
+    else { showMsg('newAdminMsg', '已创建'); ['adName','adUser','adPwd'].forEach(i => document.getElementById(i).value=''); loadAdmins(); }
+  });
+}
+function resetAdminPwd(id) {
+  const pw = prompt('请输入新密码（>=4 位）');
+  if (!pw || pw.length < 4) return;
+  fetch(BASE + '/api/admin/admins/' + id, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({password: pw}),
+  }).then(r => r.json()).then(d => alert(d.error || '密码已重置'));
+}
+function delAdmin(id, name) {
+  if (!confirm(`确认删除管理员 ${name}？`)) return;
+  fetch(BASE + '/api/admin/admins/' + id, {method: 'DELETE'})
+    .then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadAdmins(); });
+}
+
+// ---- 标签词典 ----
+let _dictEntries = [];   // 当前词典，供"并入"下拉用
+function _esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function loadTagDict() {
+  return fetch(BASE + '/api/admin/tag_dictionary').then(r => r.json()).then(d => {
+    _dictEntries = d.entries || [];
+    const tc = document.getElementById('tagDictCount');
+    if (tc) tc.textContent = `(${_dictEntries.length})`;
+    const tot = document.getElementById('tagDictTotal');
+    if (tot) tot.textContent = `（共 ${_dictEntries.length} 条）`;
+    // 分类下拉（含竞品/其他）
+    const cats = Array.from(new Set([...(d.categories||[]), '竞品', '其他']));
+    const sel = document.getElementById('tdCat');
+    if (sel) sel.innerHTML = cats.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('');
+    // 词典表
+    const tb = document.getElementById('tagDictBody');
+    if (!_dictEntries.length) tb.innerHTML = '<tr><td colspan="5" class="muted">暂无</td></tr>';
+    else tb.innerHTML = _dictEntries.map(e => {
+      const isBl = e.status === 'blacklist';
+      const syn = (e.synonyms||[]).join('、');
+      return `<tr ${isBl?'style="opacity:.6"':''}>
+        <td>${_esc(e.category||'其他')}</td>
+        <td><b>${_esc(e.canonical_tag)}</b>${isBl?' <span style="color:#e74c3c;font-size:11px">[黑名单]</span>':''}</td>
+        <td style="font-size:12px;color:#555">${_esc(syn)||'—'}</td>
+        <td>${isBl?'黑名单':'启用'}</td>
+        <td style="white-space:nowrap">
+          <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick='editSyn(${e.id}, ${JSON.stringify(e.synonyms||[])})'>同义词</button>
+          <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="toggleBl(${e.id}, '${isBl?'active':'blacklist'}')">${isBl?'恢复':'拉黑'}</button>
+          <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="mergeInto(${e.id}, '${_esc(e.canonical_tag)}')">合并入此</button>
+          <button class="btn danger" style="padding:3px 8px;font-size:12px" onclick="delTagDict(${e.id}, '${_esc(e.canonical_tag)}')">删除</button>
+        </td>
+      </tr>`;
+    }).join('');
+    loadUnclassified();
+  });
+}
+function _dictOptions(selectedNone) {
+  return `<option value="">— 选标准词 —</option>` + _dictEntries
+    .filter(e => e.status !== 'blacklist')
+    .map(e => `<option value="${e.id}">${_esc(e.canonical_tag)}（${_esc(e.category||'')}）</option>`).join('');
+}
+function loadUnclassified() {
+  return fetch(BASE + '/api/admin/tag_unclassified').then(r => r.json()).then(d => {
+    const items = d.items || [];
+    const uc = document.getElementById('unclassCount');
+    if (uc) uc.textContent = `（${items.length} 个待处理）`;
+    const tb = document.getElementById('unclassBody');
+    if (!items.length) { tb.innerHTML = '<tr><td colspan="4" class="muted">没有待归类标签 🎉</td></tr>'; return; }
+    tb.innerHTML = items.map(x => `
+      <tr data-raw="${_esc(x.tag)}">
+        <td><b>${_esc(x.tag)}</b></td>
+        <td>${x.service_count}</td>
+        <td><select class="uc-sel" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;max-width:200px">${_dictOptions()}</select></td>
+        <td style="white-space:nowrap">
+          <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="assignUnclass(this,'merge')">并入</button>
+          <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="assignUnclass(this,'new')">新建标准词</button>
+          <button class="btn sec" style="padding:3px 8px;font-size:12px;color:#e74c3c;border-color:#e74c3c" onclick="assignUnclass(this,'blacklist')">拉黑</button>
+        </td>
+      </tr>`).join('');
+  });
+}
+function createTagDict() {
+  const canon = document.getElementById('tdCanon').value.trim();
+  const category = document.getElementById('tdCat').value;
+  if (!canon) { showMsg('newTdMsg', '标准词必填', true); return; }
+  fetch(BASE + '/api/admin/tag_dictionary', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({canonical_tag: canon, category}),
+  }).then(r => r.json()).then(d => {
+    if (d.error) showMsg('newTdMsg', d.error, true);
+    else { showMsg('newTdMsg', '已创建'); document.getElementById('tdCanon').value=''; loadTagDict(); }
+  });
+}
+function editSyn(id, cur) {
+  const v = prompt('同义词（用顿号、或逗号分隔）', (cur||[]).join('、'));
+  if (v === null) return;
+  const syns = v.split(/[、,，]/).map(s => s.trim()).filter(Boolean);
+  fetch(BASE + '/api/admin/tag_dictionary/' + id, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({synonyms: syns}),
+  }).then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadTagDict(); });
+}
+function toggleBl(id, status) {
+  fetch(BASE + '/api/admin/tag_dictionary/' + id, {
+    method: 'PATCH', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({status}),
+  }).then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadTagDict(); });
+}
+function delTagDict(id, name) {
+  if (!confirm(`删除标准词「${name}」？归在它名下的标签会回到待归类。`)) return;
+  fetch(BASE + '/api/admin/tag_dictionary/' + id, {method:'DELETE'})
+    .then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadTagDict(); });
+}
+function mergeInto(targetId, targetName) {
+  const fromName = prompt(`把哪个标准词并入「${targetName}」？输入要被合并掉的标准词全名：`);
+  if (!fromName) return;
+  const src = _dictEntries.find(e => e.canonical_tag === fromName.trim());
+  if (!src) { alert('没找到该标准词'); return; }
+  if (src.id === targetId) { alert('不能并入自己'); return; }
+  fetch(BASE + '/api/admin/tag_dictionary/' + targetId + '/merge', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({from_id: src.id}),
+  }).then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadTagDict(); });
+}
+function assignUnclass(btn, action) {
+  const tr = btn.closest('tr');
+  const raw = tr.dataset.raw;
+  const body = {raw_tag: raw, action};
+  if (action === 'merge') {
+    const sel = tr.querySelector('.uc-sel');
+    if (!sel || !sel.value) { alert('请先在下拉里选一个标准词'); return; }
+    body.target_id = parseInt(sel.value);
+  } else if (action === 'new') {
+    const canon = prompt('新建为标准词（默认用原词）', raw);
+    if (canon === null) return;
+    body.canonical_tag = canon.trim() || raw;
+    const cat = prompt('归到哪个分类？(如 顾客画像 / 竞品 / 其他)', '其他');
+    if (cat === null) return;
+    body.category = cat.trim() || '其他';
+  } else if (action === 'blacklist') {
+    if (!confirm(`拉黑「${raw}」？该标签今后不再进入统计与竞品分析。`)) return;
+  }
+  fetch(BASE + '/api/admin/tag_unclassified/assign', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadTagDict(); });
+}
+
+// ---- 标签统计 ----
+let _tsStoreFilled = false;
+function _tsParams() {
+  const p = [];
+  const st = document.getElementById('tsStore');
+  if (st && st.value) p.push('store_id=' + st.value);
+  const f = document.getElementById('tsFrom'), t = document.getElementById('tsTo');
+  if (f && f.value) p.push('from=' + f.value);
+  if (t && t.value) p.push('to=' + t.value);
+  return p.join('&');
+}
+function tsQuick(days) {
+  const f = document.getElementById('tsFrom'), t = document.getElementById('tsTo');
+  if (!days) { f.value=''; t.value=''; }
+  else {
+    const now = new Date(); const from = new Date(now.getTime() - days*86400000);
+    const fmt = d => d.toISOString().slice(0,10);
+    f.value = fmt(from); t.value = fmt(now);
+  }
+  loadTagStats();
+}
+function loadTagStats() {
+  loadMonthlyProjects();
+  // 门店下拉（仅 admin/super）首次填充
+  const st = document.getElementById('tsStore');
+  if (st && !_tsStoreFilled) {
+    const fill = () => { st.innerHTML = '<option value="">全部门店</option>' + _storesCache.map(s => `<option value="${s.id}">${ROLE==='super'?(s.company_name||'')+' / ':''}${_esc(s.name)}</option>`).join(''); _tsStoreFilled = true; };
+    if (_storesCache.length) fill(); else loadStores().then(fill);
+  }
+  const qs = _tsParams();
+  // 顾客标签
+  fetch(BASE + '/api/admin/tag_stats?scope=customer' + (qs?('&'+qs):'')).then(r=>r.json()).then(d=>{
+    const rows = d.rows || [];
+    document.getElementById('tsCustCount').textContent = `（${rows.length} 个标签）`;
+    const tb = document.getElementById('tsCustBody');
+    tb.innerHTML = rows.length ? rows.map((x,i)=>`
+      <tr><td>${i+1}</td><td><b>${_esc(x.tag)}</b></td><td style="color:#888;font-size:12px">${_esc(x.category||'待归类')}</td>
+      <td><b style="color:var(--navy)">${x.service_count}</b></td><td>${x.customer_count}</td></tr>`).join('')
+      : '<tr><td colspan="5" class="muted">该条件下暂无数据</td></tr>';
+  });
+  // 竞品纵览
+  fetch(BASE + '/api/admin/tag_stats?scope=competitor' + (qs?('&'+qs):'')).then(r=>r.json()).then(d=>{
+    const rows = d.rows || [];
+    document.getElementById('tsCompCount').textContent = `（${rows.length} 个竞品）`;
+    const tb = document.getElementById('tsCompBody');
+    tb.innerHTML = rows.length ? rows.map((x,i)=>`
+      <tr data-tag="${_esc(x.tag)}"><td>${i+1}</td><td><b>${_esc(x.tag)}</b></td>
+      <td><b style="color:#e67e22">${x.service_count}</b></td><td>${x.customer_count}</td>
+      <td><button class="btn sec" style="padding:3px 8px;font-size:12px;color:#e74c3c;border-color:#e74c3c" onclick="blacklistComp(this)">拉黑</button></td></tr>`).join('')
+      : '<tr><td colspan="5" class="muted">暂无竞品标签（随接诊分析积累）</td></tr>';
+  });
+}
+// 当月主推项目
+function loadMonthlyProjects() {
+  if (!document.getElementById('mpBody')) return;  // 店长无此卡片
+  fetch(BASE + '/api/admin/monthly_projects').then(r=>r.json()).then(d=>{
+    const ml = document.getElementById('mpMonth'); if (ml) ml.textContent = d.month || '';
+    const tb = document.getElementById('mpBody');
+    const ps = d.projects || [];
+    tb.innerHTML = ps.length ? ps.map(p=>`
+      <tr><td><b>${_esc(p.name)}</b></td><td style="font-size:12px;color:#555">${_esc((p.keywords||[]).join('、'))}</td>
+      <td><button class="btn danger" style="padding:3px 8px;font-size:12px" onclick="delMonthlyProject(${p.id})">删除</button></td></tr>`).join('')
+      : '<tr><td colspan="3" class="muted">本月还没设置主推项目</td></tr>';
+  });
+}
+function createMonthlyProject() {
+  const name = document.getElementById('mpName').value.trim();
+  const kw = document.getElementById('mpKw').value.split(/[、,，]/).map(s=>s.trim()).filter(Boolean);
+  if (!name) { showMsg('mpMsg','项目名必填',true); return; }
+  fetch(BASE + '/api/admin/monthly_projects', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, keywords: kw}),
+  }).then(r=>r.json()).then(d=>{
+    if (d.error) showMsg('mpMsg', d.error, true);
+    else { showMsg('mpMsg','已添加'); document.getElementById('mpName').value=''; document.getElementById('mpKw').value=''; loadMonthlyProjects(); }
+  });
+}
+function delMonthlyProject(id) {
+  if (!confirm('删除该主推项目？')) return;
+  fetch(BASE + '/api/admin/monthly_projects/' + id, {method:'DELETE'})
+    .then(r=>r.json()).then(d=>{ if(d.error) alert(d.error); else loadMonthlyProjects(); });
+}
+function blacklistComp(btn) {
+  const tag = btn.closest('tr').dataset.tag;
+  if (!confirm(`拉黑竞品「${tag}」？拉黑后不再统计、不再出现在竞品分析里。`)) return;
+  fetch(BASE + '/api/admin/tag_unclassified/assign', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({raw_tag: tag, action:'blacklist'}),
+  }).then(r=>r.json()).then(d=>{ if(d.error) alert(d.error); else loadTagStats(); });
 }
 
 // ---- 顾客 ----
@@ -447,7 +1147,10 @@ function renderCustomers(list) {
       <td>${c.member_card || '—'}</td>
       ${ROLE === 'super' ? `<td>${c.company_id}</td>` : ''}
       <td>${c.created_at || ''}</td>
-      <td><button class="btn danger" onclick="delCustomer(${c.id})">删除</button></td>
+      <td>
+        <a class="btn sec" style="text-decoration:none;display:inline-block" href="${BASE}/customer/${c.id}">档案</a>
+        <button class="btn danger" onclick="delCustomer(${c.id})">删除</button>
+      </td>
     </tr>`).join('');
 }
 function filterCustomers() {
@@ -477,6 +1180,141 @@ function delCustomer(id) {
   if (!confirm('确认删除该顾客？')) return;
   fetch(BASE + '/api/admin/customers/' + id, {method: 'DELETE'})
     .then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadCustomers(); });
+}
+
+// ---- 客户合并 / 拆分 ----
+function _custLabel(c){
+  const bits = [];
+  if (c.member_card) bits.push('卡' + c.member_card);
+  if (c.phone_tail) bits.push('尾' + c.phone_tail);
+  if (typeof c.session_count === 'number') bits.push(c.session_count + '次接诊');
+  return _esc(c.name) + (bits.length ? ` <span class="muted">(${bits.join('，')})</span>` : '');
+}
+function loadDuplicates(){
+  const box = document.getElementById('dupGroups');
+  box.innerHTML = '<div class="muted">加载中…</div>';
+  fetch(BASE + '/api/admin/customers/duplicates').then(r => r.json()).then(d => {
+    if (d.error){ box.innerHTML = '<div class="muted">'+_esc(d.error)+'</div>'; return; }
+    const groups = d.groups || [];
+    const cnt = document.getElementById('mergeDupCount');
+    if (cnt) cnt.textContent = groups.length ? `(${groups.length})` : '';
+    if (!groups.length){ box.innerHTML = '<div class="muted">未发现疑似重复。</div>'; return; }
+    box.innerHTML = groups.map((g, gi) => {
+      const opts = g.candidates.map(c =>
+        `<option value="${c.id}">${_esc(c.name)}${c.member_card?(' / '+_esc(c.member_card)):''}${c.phone_tail?(' / 尾'+_esc(c.phone_tail)):''} · ${c.session_count}次</option>`).join('');
+      const rows = g.candidates.map(c => `<li>${_custLabel(c)}</li>`).join('');
+      return `<div style="border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:12px">
+        <div style="font-size:12px;color:#888;margin-bottom:6px">疑似原因：<b>${_esc(g.reason)}</b>（${_esc(g.key)}）</div>
+        <ul style="margin:0 0 10px 18px;font-size:13px">${rows}</ul>
+        <div class="row">
+          <span class="muted">保留为主：</span>
+          <select id="dupInto_${gi}" style="border:1px solid var(--border);border-radius:4px;padding:6px">${opts}</select>
+          <input id="dupReason_${gi}" placeholder="合并原因" style="flex:1;min-width:160px">
+          <button class="btn" onclick='dupMergeGroup(${JSON.stringify(g.candidates.map(c=>c.id))}, ${gi})'>把其余合并到此</button>
+        </div>
+      </div>`;
+    }).join('');
+  });
+}
+function dupMergeGroup(ids, gi){
+  const intoId = parseInt(document.getElementById('dupInto_'+gi).value, 10);
+  const reason = document.getElementById('dupReason_'+gi).value.trim();
+  const others = ids.filter(x => x !== intoId);
+  if (!others.length){ showMsg('dupMsg', '该组只有一个候选可保留，无需合并', true); return; }
+  if (!confirm(`确认把 ${others.length} 个客人合并进选中的主客人？此操作可在合并历史撤销。`)) return;
+  // 逐个合并
+  (async () => {
+    for (const fromId of others){
+      const r = await fetch(BASE + '/api/admin/customers/merge', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({from_id: fromId, into_id: intoId, reason}),
+      });
+      const d = await r.json();
+      if (d.error){ showMsg('dupMsg', '合并失败：'+d.error, true); break; }
+    }
+    showMsg('dupMsg', '合并完成');
+    loadDuplicates(); loadMergeLog();
+    if (_tabLoaded['customers']) loadCustomers();
+  })();
+}
+let _mergePicked = {from: null, into: null};
+let _mergeSearchTimer = {from: null, into: null};
+function onMergeSearch(which){
+  clearTimeout(_mergeSearchTimer[which]);
+  const q = document.getElementById('merge'+(which==='from'?'From':'Into')+'Input').value.trim();
+  _mergeSearchTimer[which] = setTimeout(() => {
+    fetch(BASE + '/api/customers/search' + (q?('?q='+encodeURIComponent(q)):'')).then(r=>r.json()).then(d=>{
+      const list = document.getElementById('merge'+(which==='from'?'From':'Into')+'List');
+      const cs = d.customers || [];
+      if (!cs.length){ list.innerHTML = '<div class="opt muted">无匹配</div>'; return; }
+      list.innerHTML = cs.map(c =>
+        `<div class="opt" onclick='pickMerge("${which}", ${JSON.stringify(c).replace(/'/g,"&#39;")})'>${_esc(c.name)}${c.member_card?(' <span class="muted">/ '+_esc(c.member_card)+'</span>'):''}</div>`).join('');
+    });
+  }, 250);
+}
+function pickMerge(which, c){
+  _mergePicked[which] = c;
+  document.getElementById('merge'+(which==='from'?'From':'Into')+'List').innerHTML = '';
+  document.getElementById('merge'+(which==='from'?'From':'Into')+'Input').value = '';
+  document.getElementById('merge'+(which==='from'?'From':'Into')+'Picked').innerHTML =
+    `<span class="chip">${_esc(c.name)}${c.member_card?(' / '+_esc(c.member_card)):''} <a href="#" onclick='clearMerge("${which}");return false' style="color:#e74c3c;text-decoration:none">✕</a></span>`;
+}
+function clearMerge(which){
+  _mergePicked[which] = null;
+  document.getElementById('merge'+(which==='from'?'From':'Into')+'Picked').innerHTML = '';
+}
+function doManualMerge(){
+  const a = _mergePicked.from, b = _mergePicked.into;
+  if (!a || !b){ showMsg('manualMergeMsg', '请先选择 A 和 B', true); return; }
+  if (a.id === b.id){ showMsg('manualMergeMsg', 'A 和 B 不能是同一人', true); return; }
+  const reason = document.getElementById('mergeReason').value.trim();
+  if (!confirm(`确认把「${a.name}」合并进「${b.name}」？可在合并历史撤销。`)) return;
+  fetch(BASE + '/api/admin/customers/merge', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({from_id: a.id, into_id: b.id, reason}),
+  }).then(r=>r.json()).then(d=>{
+    if (d.error){ showMsg('manualMergeMsg', d.error, true); return; }
+    showMsg('manualMergeMsg', `已合并：迁移 ${d.moved_sessions} 个接诊、${d.moved_tags} 个标签`);
+    clearMerge('from'); clearMerge('into');
+    document.getElementById('mergeReason').value = '';
+    loadMergeLog(); loadDuplicates();
+    if (_tabLoaded['customers']) loadCustomers();
+  });
+}
+function loadMergeLog(){
+  const tb = document.getElementById('mergeLogBody');
+  fetch(BASE + '/api/admin/customers/merge_log').then(r=>r.json()).then(d=>{
+    const logs = d.logs || [];
+    if (!logs.length){ tb.innerHTML = '<tr><td colspan="8" class="muted">暂无合并记录</td></tr>'; return; }
+    tb.innerHTML = logs.map(l => {
+      const s = l.affected_summary || {};
+      const inf = `接诊${s.sessions||0} / 标签${s.tags||0} / 接诊单${s.daily_reception||0}${s.daily_reception_deleted?(' (删'+s.daily_reception_deleted+')'):''}`;
+      const status = l.undone ? `<span class="muted">已撤销</span>` : '<span style="color:#22c55e">生效中</span>';
+      const op = l.undone ? '—' : `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="unmerge(${l.id})">撤销</button>`;
+      return `<tr>
+        <td>${_esc(l.created_at||'')}</td>
+        <td>${_esc(l.from_name||'')} <span class="muted">#${l.from_customer_id}</span></td>
+        <td>${_esc(l.into_name||'')} <span class="muted">#${l.into_customer_id}</span></td>
+        <td>${_esc(l.operator_name||'')}</td>
+        <td>${_esc(l.reason||'')||'—'}</td>
+        <td style="font-size:12px">${inf}</td>
+        <td>${status}</td>
+        <td>${op}</td>
+      </tr>`;
+    }).join('');
+  });
+}
+function unmerge(logId){
+  if (!confirm('确认撤销这次合并？接诊/标签/接诊单会还原到原客人。\n注意：因冲突删除的接诊单无法恢复。')) return;
+  fetch(BASE + '/api/admin/customers/unmerge', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({log_id: logId}),
+  }).then(r=>r.json()).then(d=>{
+    if (d.error){ showMsg('mergeLogMsg', d.error, true); return; }
+    showMsg('mergeLogMsg', '已撤销');
+    loadMergeLog(); loadDuplicates();
+    if (_tabLoaded['customers']) loadCustomers();
+  });
 }
 function importCustomers() {
   const f = document.getElementById('impCustFile').files[0];
@@ -863,9 +1701,170 @@ function markHrViewed(sid) {
       refreshAdminStats();
     });
 }
+// ============ 未绑定录音 + 代绑 ============
+let _abAdvisors = [];
+function loadUnbound() {
+  fetch(BASE + '/api/admin/unbound_recordings').then(r => r.json()).then(d => {
+    const tb = document.getElementById('unboundBody');
+    if (d.error) { tb.innerHTML = `<tr><td colspan="7" class="err">${_esc(d.error)}</td></tr>`; return; }
+    const items = d.items || [];
+    document.getElementById('unboundCount').textContent = items.length ? `(${items.length})` : '';
+    if (!items.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">暂无未绑定录音</td></tr>'; return; }
+    tb.innerHTML = items.map(r => {
+      const audio = r.audio_url
+        ? `<audio controls preload="none" style="height:30px;max-width:200px" src="${_esc(r.audio_url)}"></audio>
+           <a href="${_esc(r.audio_url)}" download style="font-size:12px;margin-left:6px">下载</a>`
+        : '<span class="muted">无</span>';
+      return `<tr>
+        <td>${_esc(r.uploader)}</td>
+        <td>${_esc(r.recorded_at || '')}</td>
+        <td>${_esc(r.duration_label || '')}</td>
+        <td>${_esc(r.store_name || '')}</td>
+        <td>${_esc(r.asr_status || '')}</td>
+        <td>${audio}</td>
+        <td><button class="btn" style="padding:3px 10px;font-size:12px" onclick='abOpen(${r.id}, ${JSON.stringify(r.rec_date)})'>代绑</button></td>
+      </tr>`;
+    }).join('');
+  });
+}
+
+function abOpen(rid, recDate) {
+  document.getElementById('abMask').dataset.rid = rid;
+  document.getElementById('abRecInfo').textContent = `录音 #${rid}，录音日期 ${recDate || ''}`;
+  document.getElementById('abDate').value = recDate || '';
+  document.getElementById('abName').value = '';
+  document.getElementById('abPhone').value = '';
+  showMsg('abMsg', '');
+  document.getElementById('abMask').style.display = 'block';
+  // 顾问下拉（缓存）
+  const fill = () => {
+    const sel = document.getElementById('abAdvisor');
+    sel.innerHTML = '<option value="">请选择顾问</option>' +
+      _abAdvisors.map(a => `<option value="${a.id}">${_esc(a.name)}</option>`).join('');
+    document.getElementById('abCustomer').innerHTML = '<option value="">（先选顾问与日期）</option>';
+  };
+  if (_abAdvisors.length) fill();
+  else fetch(BASE + '/api/admin/bind_advisors').then(r => r.json()).then(d => { _abAdvisors = d.items || []; fill(); });
+}
+function abClose() { document.getElementById('abMask').style.display = 'none'; }
+function abLoadReception() {
+  const aid = document.getElementById('abAdvisor').value;
+  const date = document.getElementById('abDate').value;
+  const sel = document.getElementById('abCustomer');
+  if (!aid || !date) { sel.innerHTML = '<option value="">（先选顾问与日期）</option>'; return; }
+  fetch(BASE + `/api/admin/advisor_reception?advisor_user_id=${aid}&date=${date}`)
+    .then(r => r.json()).then(d => {
+      const items = d.items || [];
+      sel.innerHTML = '<option value="">— 不选已有客人（用下方新增）—</option>' +
+        items.map(c => `<option value="${c.customer_id}">${_esc(c.name)}${c.phone_tail ? ' (尾号' + _esc(c.phone_tail) + ')' : ''}</option>`).join('');
+    });
+}
+function abSubmit() {
+  const rid = document.getElementById('abMask').dataset.rid;
+  const body = {
+    advisor_user_id: document.getElementById('abAdvisor').value,
+    date: document.getElementById('abDate').value,
+    customer_id: document.getElementById('abCustomer').value || null,
+    name: document.getElementById('abName').value.trim(),
+    phone_tail: document.getElementById('abPhone').value.trim(),
+  };
+  if (!body.advisor_user_id) { showMsg('abMsg', '请选择顾问', true); return; }
+  if (!body.customer_id && !body.name) { showMsg('abMsg', '请选已有客人或填写新增客人', true); return; }
+  fetch(BASE + `/api/admin/recordings/${rid}/admin_bind`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }).then(r => r.json()).then(d => {
+    if (d.error) { showMsg('abMsg', d.error, true); return; }
+    abClose();
+    showMsg('unboundMsg', '代绑成功，已触发分析');
+    loadUnbound();
+  });
+}
+
+// ============ 模块4：接诊卡点 + 提醒设置 ============
+const _PIPE_COLORS = {orphan:'#e67e22', bound_unanalyzed:'#7f8c8d', analyzing:'#3498db',
+  done_unviewed:'#e74c3c', viewed:'#27ae60', error:'#c0392b'};
+function loadPipeline() {
+  fetch(BASE + '/api/admin/pipeline_status').then(r => r.json()).then(d => {
+    if (d.error) { return; }
+    const wrap = document.getElementById('pipelineBuckets');
+    wrap.innerHTML = (d.buckets || []).map(b =>
+      `<div style="border:1px solid var(--border);border-left:4px solid ${_PIPE_COLORS[b.key]||'#999'};border-radius:6px;padding:8px 14px;min-width:120px">
+         <div style="font-size:22px;font-weight:700">${b.count}</div>
+         <div class="muted" style="font-size:12px">${_esc(b.label)}</div>
+       </div>`).join('');
+    const tb = document.getElementById('pipelineStuckBody');
+    const stuck = d.stuck || [];
+    let redCount = 0;
+    if (!stuck.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">暂无卡住的项 🎉</td></tr>'; }
+    else {
+      tb.innerHTML = stuck.map(s => {
+        if (s.red) redCount++;
+        const kindTxt = s.kind === 'unbound' ? '未绑定录音' : '完成未查看';
+        const obj = s.ref_type === 'recording' ? ('录音#' + s.ref_id) : ('接诊#' + s.ref_id);
+        const style = s.red ? 'background:#fdecea' : '';
+        return `<tr style="${style}"><td>${_esc(kindTxt)}${s.red?' <span style="color:#e74c3c">●</span>':''}</td>
+          <td>${_esc(s.advisor)}</td><td>${_esc(obj)}</td>
+          <td>${s.hours}</td><td class="muted" style="font-size:12px">${_esc(s.when||'')}</td></tr>`;
+      }).join('');
+    }
+    const badge = document.getElementById('pipelineBadge');
+    if (redCount > 0) { badge.style.display = ''; badge.textContent = redCount; }
+    else { badge.style.display = 'none'; }
+  });
+}
+function loadReminderLog() {
+  const kind = document.getElementById('rlKindFilter').value;
+  const qs = kind ? ('?kind=' + kind) : '';
+  fetch(BASE + '/api/admin/reminder_log' + qs).then(r => r.json()).then(d => {
+    const tb = document.getElementById('reminderLogBody');
+    const items = d.items || [];
+    if (!items.length) { tb.innerHTML = '<tr><td colspan="9" class="muted">暂无提醒记录</td></tr>'; return; }
+    tb.innerHTML = items.map(it => {
+      const kindTxt = it.kind === 'unbound' ? '未绑定' : '未查看';
+      const obj = (it.ref_type === 'recording' ? '录音#' : '接诊#') + it.ref_id;
+      return `<tr><td class="muted" style="font-size:12px">${_esc(it.created_at||'')}</td>
+        <td>${_esc(kindTxt)}</td><td>L${it.level}</td><td>${_esc(it.channel)}</td>
+        <td>${_esc(obj)}</td><td>${_esc(it.target_name||'')}</td>
+        <td style="font-size:12px">${_esc(it.message||'')}</td>
+        <td class="muted" style="font-size:12px">${_esc(it.result||'')}</td>
+        <td>${it.processed ? '✓' : ''}</td></tr>`;
+    }).join('');
+  });
+}
+function loadReminderConfig() {
+  fetch(BASE + '/api/admin/reminder_config').then(r => r.json()).then(d => {
+    if (d.error) { return; }
+    document.getElementById('rcAfterHours').value = d.remind_after_hours;
+    document.getElementById('rcMaxPerDay').value = d.max_per_day;
+    document.getElementById('rcEnablePhone').checked = !!d.enable_phone;
+    document.getElementById('rcAvoidOffwork').checked = !!d.avoid_offwork;
+    document.getElementById('rcWorkStart').value = d.work_start || '09:00';
+    document.getElementById('rcWorkEnd').value = d.work_end || '21:00';
+    document.getElementById('rcRetryOnFail').checked = !!d.retry_on_fail;
+    document.getElementById('rcLogResults').checked = !!d.log_results;
+  });
+}
+function saveReminderConfig() {
+  const body = {
+    remind_after_hours: +document.getElementById('rcAfterHours').value || 2,
+    max_per_day: +document.getElementById('rcMaxPerDay').value || 3,
+    enable_phone: document.getElementById('rcEnablePhone').checked,
+    avoid_offwork: document.getElementById('rcAvoidOffwork').checked,
+    work_start: document.getElementById('rcWorkStart').value || '09:00',
+    work_end: document.getElementById('rcWorkEnd').value || '21:00',
+    retry_on_fail: document.getElementById('rcRetryOnFail').checked,
+    log_results: document.getElementById('rcLogResults').checked,
+  };
+  fetch(BASE + '/api/admin/reminder_config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
+  }).then(r => r.json()).then(d => {
+    showMsg('rcMsg', d.error ? d.error : '已保存', !!d.error);
+  });
+}
+
 refreshAdminStats();
-// 默认 tab 顾问，立即加载它的列表
-activateTab('consultants');
+// 默认 tab：管理员/超管进员工管理；店长无管理类 tab，直接进运营看板
+activateTab(ROLE === 'store_manager' ? 'ops-dashboard' : 'consultants');
 </script>
 </body>
 </html>

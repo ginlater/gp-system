@@ -608,6 +608,216 @@ def init_db():
         conn.execute(
             "UPDATE users SET password_hash=? WHERE id=?", (boss_hash, row[0])
         )
+
+    # 2026-05-29 门店层级：stores 表 + 事件表 store_id + 回填默认门店
+    # store_id 只加在「服务事件」相关表（users/sessions/recordings/daily_reception）；
+    # company_customers 是公司级共享主档（同一客人可跨店消费），不按门店切分。
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS stores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            region TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(company_id, name),
+            FOREIGN KEY (company_id) REFERENCES companies(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_stores_company ON stores(company_id)")
+    for _tbl in ("users", "sessions", "recordings", "daily_reception"):
+        _cols = {r[1] for r in conn.execute(f"PRAGMA table_info({_tbl})").fetchall()}
+        if "store_id" not in _cols:
+            conn.execute(f"ALTER TABLE {_tbl} ADD COLUMN store_id INTEGER")
+    # 每个公司：仅当存在 store_id 为空的行时，才建「默认门店」兜底回填。
+    # （幂等关键：首次迁移把存量数据归入默认门店；之后没有 NULL 行就不再创建，
+    #  否则用户把默认门店改名后，每次重启都会重复生成一个空的「默认门店」。）
+    for (_cid,) in conn.execute("SELECT id FROM companies").fetchall():
+        _need = conn.execute(
+            "SELECT (SELECT COUNT(*) FROM users WHERE company_id=? AND store_id IS NULL)"
+            " + (SELECT COUNT(*) FROM sessions WHERE company_id=? AND store_id IS NULL)"
+            " + (SELECT COUNT(*) FROM recordings WHERE company_id=? AND store_id IS NULL)"
+            " + (SELECT COUNT(*) FROM daily_reception WHERE company_id=? AND store_id IS NULL)",
+            (_cid, _cid, _cid, _cid)).fetchone()[0]
+        if not _need:
+            continue
+        conn.execute("INSERT OR IGNORE INTO stores (company_id, name) VALUES (?, '默认门店')", (_cid,))
+        _sid = conn.execute(
+            "SELECT id FROM stores WHERE company_id=? AND name='默认门店'", (_cid,)
+        ).fetchone()[0]
+        conn.execute("UPDATE users SET store_id=? WHERE company_id=? AND store_id IS NULL", (_sid, _cid))
+        conn.execute("UPDATE sessions SET store_id=? WHERE company_id=? AND store_id IS NULL", (_sid, _cid))
+        conn.execute("UPDATE recordings SET store_id=? WHERE company_id=? AND store_id IS NULL", (_sid, _cid))
+        conn.execute("UPDATE daily_reception SET store_id=? WHERE company_id=? AND store_id IS NULL", (_sid, _cid))
+    # 兜底：仍有 NULL 门店的（company_id 异常），且确有「默认门店」时归入
+    _def1 = conn.execute("SELECT id FROM stores WHERE company_id=1 AND name='默认门店'").fetchone()
+    if _def1 and conn.execute(
+        "SELECT 1 FROM (SELECT store_id FROM users UNION ALL SELECT store_id FROM sessions "
+        "UNION ALL SELECT store_id FROM recordings UNION ALL SELECT store_id FROM daily_reception) "
+        "WHERE store_id IS NULL LIMIT 1").fetchone():
+        for _tbl in ("users", "sessions", "recordings", "daily_reception"):
+            conn.execute(f"UPDATE {_tbl} SET store_id=? WHERE store_id IS NULL", (_def1[0],))
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_store ON sessions(store_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_recordings_store ON recordings(store_id)")
+
+    # 2026-05-29 取消"多说话人(>2)误录确认"机制：清掉历史警告标记（幂等）
+    conn.execute("UPDATE recordings SET asr_speaker_warning=0 WHERE asr_speaker_warning=1")
+
+    # 2026-05-29 模块2 标签归一化词典
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tag_dictionary (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            category TEXT,
+            canonical_tag TEXT NOT NULL,
+            synonyms TEXT DEFAULT '[]',      -- JSON 数组
+            status TEXT NOT NULL DEFAULT 'active',  -- active | blacklist
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            UNIQUE(company_id, canonical_tag)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tagdict_company ON tag_dictionary(company_id)")
+    # customer_tags 加 canonical_tag(归一标准词) + service_date(接诊日期，为时间筛选铺路)
+    ct_cols2 = {r[1] for r in conn.execute("PRAGMA table_info(customer_tags)").fetchall()}
+    if "canonical_tag" not in ct_cols2:
+        conn.execute("ALTER TABLE customer_tags ADD COLUMN canonical_tag TEXT")
+    if "service_date" not in ct_cols2:
+        conn.execute("ALTER TABLE customer_tags ADD COLUMN service_date TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ct_canonical ON customer_tags(canonical_tag)")
+    # 预填：用 tag_taxonomy 里 6 个"顾客标签"大类做种子（顾问话术/流程类不算顾客标签）
+    try:
+        import json as _json
+        _kbp = globals().get("KB_PATH")
+        with open(_kbp, encoding="utf-8") as _f:
+            _l2 = ((_json.load(_f) or {}).get("tag_taxonomy") or {}).get("L2_categories") or {}
+        _seed_cats = ("客人新老", "顾客类型", "顾客画像", "顾客痛点", "顾客状态", "需求类型")
+        _seed_pairs = [(c, v) for c in _seed_cats for v in (_l2.get(c) or [])]
+        for (_cid,) in conn.execute("SELECT id FROM companies").fetchall():
+            for _cat, _val in _seed_pairs:
+                conn.execute(
+                    "INSERT OR IGNORE INTO tag_dictionary (company_id, category, canonical_tag, synonyms, status) "
+                    "VALUES (?, ?, ?, '[]', 'active')",
+                    (_cid, _cat, _val),
+                )
+    except Exception as _e:
+        print(f"[tag_dictionary seed] 跳过：{_e}", flush=True)
+    # 回填：service_date 取自来源 session；canonical_tag 仅对"恰好等于某标准词"的做精确归一（其余留待归类）
+    conn.execute(
+        """UPDATE customer_tags SET service_date = (
+               SELECT s.service_date FROM sessions s WHERE s.id = customer_tags.source_session_id
+           ) WHERE service_date IS NULL AND source_session_id IS NOT NULL"""
+    )
+    conn.execute(
+        """UPDATE customer_tags SET canonical_tag = tag
+           WHERE canonical_tag IS NULL AND EXISTS (
+               SELECT 1 FROM tag_dictionary d
+               JOIN sessions s ON s.id = customer_tags.source_session_id
+               WHERE d.company_id = s.company_id
+                 AND d.canonical_tag = customer_tags.tag
+                 AND d.status = 'active'
+           )"""
+    )
+
+    # 2026-05-29 画像-4 当月重点项目清单（按公司+月份）
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS monthly_projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            month TEXT NOT NULL,          -- 'YYYY-MM'
+            name TEXT NOT NULL,           -- 项目名
+            keywords TEXT DEFAULT '[]',   -- JSON 数组：命中关键词
+            created_at TEXT DEFAULT (datetime('now', 'localtime'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_mp_company_month ON monthly_projects(company_id, month)")
+
+    # 2026-05-29 画像-5 客户价值预测缓存（按公司+客人）
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS customer_value_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            customer_id INTEGER,
+            customer_name TEXT,
+            content TEXT,                 -- JSON：各维度结果
+            source_signature TEXT,        -- 历史 session 指纹，变了则过期
+            model TEXT,
+            generated_at TEXT,
+            UNIQUE(company_id, customer_id, customer_name)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cvc_lookup ON customer_value_cache(company_id, customer_id, customer_name)")
+
+    # 2026-05-29 客户合并/拆分工具：company_customers 加 merged_into（NULL=有效；非空=已被合并进该 id）
+    cc_cols2 = {r[1] for r in conn.execute("PRAGMA table_info(company_customers)").fetchall()}
+    if "merged_into" not in cc_cols2:
+        conn.execute("ALTER TABLE company_customers ADD COLUMN merged_into INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_merged ON company_customers(merged_into)")
+    # 合并日志（affected 存被改动行快照，供拆分还原）
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS customer_merge_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER,
+            from_customer_id INTEGER,
+            from_name TEXT,
+            into_customer_id INTEGER,
+            into_name TEXT,
+            operator_user_id INTEGER,
+            operator_name TEXT,
+            reason TEXT,
+            affected TEXT,                -- JSON 快照
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            undone INTEGER DEFAULT 0,
+            undone_at TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cml_company ON customer_merge_log(company_id, id)")
+
+    # 2026-05-29 模块4 提醒系统：reminder_config（按公司，store_id 可空=公司默认） + reminder_log
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reminder_config (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            store_id INTEGER,                       -- NULL = 公司默认配置
+            enable_phone INTEGER DEFAULT 0,         -- 是否启用电话提醒（stub）
+            remind_after_hours INTEGER DEFAULT 2,   -- 几小时后开始提醒（一级阈值）
+            max_per_day INTEGER DEFAULT 3,          -- 每天最多对同一对象提醒几次
+            avoid_offwork INTEGER DEFAULT 1,        -- 是否避开非工作时间（仅影响电话级）
+            work_start TEXT DEFAULT '09:00',
+            work_end TEXT DEFAULT '21:00',
+            retry_on_fail INTEGER DEFAULT 0,        -- 提醒（电话）失败是否重拨（stub 占位）
+            log_results INTEGER DEFAULT 1,          -- 是否记录提醒结果
+            updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+        )
+    """)
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_reminder_config "
+        "ON reminder_config(company_id, IFNULL(store_id, -1))"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reminder_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER,
+            store_id INTEGER,
+            target_user_id INTEGER,
+            target_name TEXT,
+            kind TEXT,                              -- 'unbound' | 'unviewed'
+            level INTEGER,                          -- 1 / 2 / 3
+            channel TEXT,                           -- 'inapp' | 'phone' | 'sms' | 'wecom' | 'board'
+            ref_type TEXT,                          -- 'recording' | 'session'
+            ref_id INTEGER,
+            message TEXT,
+            result TEXT,
+            processed INTEGER DEFAULT 0,
+            processed_at TEXT,
+            created_at TEXT DEFAULT (datetime('now', 'localtime'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reminder_log_company ON reminder_log(company_id, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reminder_log_target ON reminder_log(target_user_id, processed)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reminder_log_dedup "
+        "ON reminder_log(kind, ref_type, ref_id, level, created_at)"
+    )
+
     conn.commit()
     conn.close()
 
@@ -812,11 +1022,24 @@ def oss_signed_url(oss_key, expires=7200):
 
 
 # ============ Session 管理 ============
+def store_for_advisor(advisor, company_id):
+    """按顾问姓名解析其所属门店 store_id（用于新建 session/recording 时归店）。找不到返回 None。"""
+    if not advisor:
+        return None
+    r = db_fetchone(
+        "SELECT store_id FROM users WHERE advisor_name=? AND company_id=? "
+        "AND store_id IS NOT NULL ORDER BY id LIMIT 1",
+        (advisor, company_id or 1),
+    )
+    return r["store_id"] if r else None
+
+
 def get_or_create_session(advisor, customer, service_date, company_id=1, customer_id=None):
     """根据 (advisor, customer_id, service_date) 找或创建 session（兼容旧逻辑）。"""
     if not (advisor and customer and service_date):
         return None
 
+    _sid = store_for_advisor(advisor, company_id)
     if customer_id:
         row = db_fetchone(
             "SELECT id FROM sessions WHERE advisor=? AND customer_id=? AND service_date=? AND company_id=?",
@@ -825,9 +1048,9 @@ def get_or_create_session(advisor, customer, service_date, company_id=1, custome
         if row:
             return row["id"]
         db_write(
-            "INSERT OR IGNORE INTO sessions (advisor, customer, customer_id, service_date, company_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (advisor, customer, customer_id, service_date, company_id or 1),
+            "INSERT OR IGNORE INTO sessions (advisor, customer, customer_id, service_date, company_id, store_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (advisor, customer, customer_id, service_date, company_id or 1, _sid),
         )
         row = db_fetchone(
             "SELECT id FROM sessions WHERE advisor=? AND customer_id=? AND service_date=? AND company_id=?",
@@ -843,8 +1066,8 @@ def get_or_create_session(advisor, customer, service_date, company_id=1, custome
     if row:
         return row["id"]
     db_write(
-        "INSERT OR IGNORE INTO sessions (advisor, customer, service_date, company_id) VALUES (?, ?, ?, ?)",
-        (advisor, customer, service_date, company_id or 1),
+        "INSERT OR IGNORE INTO sessions (advisor, customer, service_date, company_id, store_id) VALUES (?, ?, ?, ?, ?)",
+        (advisor, customer, service_date, company_id or 1, _sid),
     )
     row = db_fetchone(
         "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=? AND customer_id IS NULL",
@@ -863,8 +1086,9 @@ def get_or_create_orphan_session(advisor, customer, oss_key, company_id=1):
     if row:
         return row["id"]
     return db_write(
-        "INSERT INTO sessions (advisor, customer, service_date, company_id) VALUES (?, ?, ?, ?)",
-        (advisor or "(未填顾问)", customer or "(未填顾客)", fake_date, company_id or 1),
+        "INSERT INTO sessions (advisor, customer, service_date, company_id, store_id) VALUES (?, ?, ?, ?, ?)",
+        (advisor or "(未填顾问)", customer or "(未填顾客)", fake_date, company_id or 1,
+         store_for_advisor(advisor, company_id)),
     )
 
 
@@ -1082,7 +1306,9 @@ def run_asr(recording_id):
 
         transcript = "\n".join(transcript_lines)
         spk_count = len(speaker_set)
-        warning = 1 if spk_count > 2 else 0
+        # 用户要求：即使 >2 个说话人也照常分析、不弹"误录确认"提示。
+        # 仍记录说话人数(asr_speaker_count)作信息展示，但不再打 warning 拦截。
+        warning = 0
         db_write(
             """UPDATE recordings SET asr_status='done',
                asr_result_json=?, asr_transcript=?,
@@ -3140,6 +3366,60 @@ def get_missing_tasks(session_id):
             if ts.get(tid, {}).get("status") != "done"]
 
 
+# ============ 标签归一化词典 ============
+_tag_dict_cache: dict = {}      # company_id -> {norm_key: (canonical_tag, status)}
+_tag_dict_lock = threading.Lock()
+
+
+def _norm_key(s):
+    return (s or "").strip().lower()
+
+
+def invalidate_tag_dict(company_id=None):
+    """词典变更后清缓存。company_id=None 清全部。"""
+    with _tag_dict_lock:
+        if company_id is None:
+            _tag_dict_cache.clear()
+        else:
+            _tag_dict_cache.pop(company_id, None)
+
+
+def get_tag_dict_map(company_id):
+    """返回 {归一化key: (canonical_tag, status)}，canonical 本名和每个同义词都映射到该 canonical。"""
+    cid = company_id or 1
+    with _tag_dict_lock:
+        cached = _tag_dict_cache.get(cid)
+    if cached is not None:
+        return cached
+    rows = db_fetchall(
+        "SELECT canonical_tag, synonyms, status FROM tag_dictionary WHERE company_id=?",
+        (cid,),
+    )
+    m = {}
+    for r in rows:
+        canon = r["canonical_tag"]
+        status = r["status"] or "active"
+        m[_norm_key(canon)] = (canon, status)
+        try:
+            for syn in (json.loads(r["synonyms"] or "[]") or []):
+                k = _norm_key(syn)
+                if k:
+                    m[k] = (canon, status)
+        except (json.JSONDecodeError, TypeError):
+            pass
+    with _tag_dict_lock:
+        _tag_dict_cache[cid] = m
+    return m
+
+
+def normalize_tag(raw, company_id):
+    """把原始标签归一。返回 (canonical_tag, status)：
+    - 命中词典 → (标准词, 'active'/'blacklist')
+    - 未命中 → (None, None)  表示待归类"""
+    hit = get_tag_dict_map(company_id).get(_norm_key(raw))
+    return hit if hit else (None, None)
+
+
 def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
     """把本次分析生成的顾客标签写入 customer_tags 表（去重，先删本 session 来源的旧记录）"""
     if not customer_name:
@@ -3176,25 +3456,59 @@ def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
             _add(tag, 1)
 
     # 3) 三类竞品 → "XX用户" 标签
+    competitor_raw = set()
     for cat in ("medical_aesthetics", "other_institutions", "external_brands"):
         for item in ext.get(cat) or []:
             brand = (item.get("item") if isinstance(item, dict) else "") or ""
             if brand:
-                _add(f"{brand.strip()}用户", 1)
+                ctag = f"{brand.strip()}用户"
+                _add(ctag, 1)
+                competitor_raw.add(ctag)
 
     if not tags:
         return
+
+    # 取来源 session 的公司 / 接诊日期，用于归一化和时间筛选
+    srow = db_fetchone(
+        "SELECT company_id, service_date FROM sessions WHERE id=?", (session_id,)
+    )
+    company_id = (srow["company_id"] if srow else None) or 1
+    service_date = srow["service_date"] if srow else None
+
+    # 竞品标签自动登记进词典(category=竞品)，使竞品纵览可统计、可拉黑；已在词典(含黑名单)的不动
+    dmap = get_tag_dict_map(company_id)
+    new_comp = [ct for ct in competitor_raw if _norm_key(ct) not in dmap]
+    if new_comp:
+        def _reg_comp(conn):
+            conn.executemany(
+                "INSERT OR IGNORE INTO tag_dictionary (company_id, category, canonical_tag, synonyms, status) "
+                "VALUES (?, '竞品', ?, '[]', 'active')",
+                [(company_id, ct) for ct in new_comp],
+            )
+            conn.commit()
+        db_batch(_reg_comp)
+        invalidate_tag_dict(company_id)
 
     # 重跑时先清掉本 session 之前写入的标签，避免重复累计
     db_write(
         "DELETE FROM customer_tags WHERE source_session_id=?", (session_id,)
     )
-    rows = [(customer_name, advisor_name, t, session_id, c) for t, c in tags.items()]
+    # 归一化：命中词典→canonical_tag；命中黑名单→跳过不入库；未命中→canonical_tag=NULL（待归类）
+    rows = []
+    for t, c in tags.items():
+        canon, status = normalize_tag(t, company_id)
+        if status == "blacklist":
+            continue
+        rows.append((customer_name, advisor_name, t, canon, session_id, c, service_date))
+    if not rows:
+        return
+
     def _insert_tags(conn):
         conn.executemany(
             """INSERT INTO customer_tags
-               (customer_name, advisor_name, tag, source_session_id, mention_count)
-               VALUES (?, ?, ?, ?, ?)""",
+               (customer_name, advisor_name, tag, canonical_tag,
+                source_session_id, mention_count, service_date)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             rows,
         )
         conn.commit()
@@ -3770,13 +4084,24 @@ def ingest_recording(oss_key, *, source, size_bytes=None,
         except Exception:
             size_bytes = 0
 
+    # 录音归店：有 session 继承 session 门店；否则用上传者门店；再退到按顾问解析
+    rec_store_id = None
+    if session_id:
+        _srow = db_fetchone("SELECT store_id FROM sessions WHERE id=?", (session_id,))
+        rec_store_id = _srow["store_id"] if _srow else None
+    if not rec_store_id and uploader_user_id:
+        _urow = db_fetchone("SELECT store_id FROM users WHERE id=?", (uploader_user_id,))
+        rec_store_id = _urow["store_id"] if _urow else None
+    if not rec_store_id:
+        rec_store_id = store_for_advisor(advisor, company_id)
+
     rid = db_write(
         """INSERT INTO recordings
            (session_id, oss_key, advisor, customer, recorded_at,
-            duration_label, size_bytes, source, company_id, uploader_user_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            duration_label, size_bytes, source, company_id, uploader_user_id, store_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (session_id, oss_key, advisor, customer, recorded_at,
-         duration_label, size_bytes, source, company_id or 1, uploader_user_id),
+         duration_label, size_bytes, source, company_id or 1, uploader_user_id, rec_store_id),
     )
 
     # 新增录音会让 session 之前的分析结果过期；标 pending 等流水线
@@ -4038,7 +4363,7 @@ def current_user():
     if not uid:
         return None
     return db_fetchone(
-        "SELECT id, username, role, company_id, advisor_name, employee_id, phone FROM users WHERE id=?",
+        "SELECT id, username, role, company_id, advisor_name, employee_id, phone, store_id FROM users WHERE id=?",
         (uid,),
     )
 
@@ -4046,6 +4371,46 @@ def current_user():
 def current_company_id():
     u = current_user()
     return u["company_id"] if u else None
+
+
+def current_store_id():
+    return session.get("store_id")
+
+
+def store_scope_sql(col="s.store_id", allow_filter=True):
+    """门店作用域。返回 (裸条件, params)，裸条件不带前导 AND（调用方按需拼接）。
+    - store_manager：强制收口到本店；没绑门店则 '1=0'（看不到任何数据）。
+    - admin / super：默认不限门店；若 allow_filter 且带 ?store_id= 则按所选门店筛选。
+    - consultant：不按门店过滤（本人隔离另行处理）。"""
+    role = session.get("role")
+    if role == "store_manager":
+        sid = session.get("store_id")
+        return (f"{col} = ?", [sid]) if sid else ("1=0", [])
+    if allow_filter and role in ("admin", "super"):
+        req = (request.args.get("store_id") or "").strip()
+        if req:
+            try:
+                return f"{col} = ?", [int(req)]
+            except ValueError:
+                pass
+    return "", []
+
+
+def current_store_filter():
+    """返回需要按门店过滤的 store_id（int），None 表示不按门店过滤。
+    - store_manager：本店（未绑门店返回 0，等于查不到任何数据）。
+    - admin / super：带 ?store_id= 时按其筛选，否则 None。"""
+    role = session.get("role")
+    if role == "store_manager":
+        return session.get("store_id") or 0
+    if role in ("admin", "super"):
+        req = (request.args.get("store_id") or "").strip()
+        if req:
+            try:
+                return int(req)
+            except ValueError:
+                return None
+    return None
 
 
 def admin_required(f):
@@ -4065,6 +4430,20 @@ def super_required(f):
     def wrapped(*args, **kwargs):
         if session.get("role") != "super":
             return jsonify({"error": "需要超级管理员"}), 403
+        return f(*args, **kwargs)
+    return wrapped
+
+
+def manager_required(f):
+    """管理类只读视图（看板等）：admin / super / store_manager 都可进；
+    store_manager 的数据由 store_scope_sql() 收口到本店。
+    注意：建店、改员工、改配置等"写"操作仍用 admin_required（店长无权）。"""
+    @wraps(f)
+    def wrapped(*args, **kwargs):
+        if not session.get("logged_in"):
+            return jsonify({"error": "未登录", "code": "auth_required"}), 401
+        if session.get("role") not in ("admin", "super", "store_manager"):
+            return jsonify({"error": "需要管理权限"}), 403
         return f(*args, **kwargs)
     return wrapped
 
@@ -4094,7 +4473,7 @@ def login():
         u = (request.form.get("username") or "").strip()
         p = request.form.get("password") or ""
         row = db_fetchone(
-            "SELECT id, username, password_hash, role, company_id, advisor_name FROM users WHERE username=?",
+            "SELECT id, username, password_hash, role, company_id, advisor_name, store_id FROM users WHERE username=?",
             (u,),
         )
         if row and row["password_hash"] == _hash_pw(p):
@@ -4103,13 +4482,14 @@ def login():
             session["username"] = row["username"]
             session["role"] = row["role"]
             session["company_id"] = row["company_id"]
+            session["store_id"] = row["store_id"]
             session["advisor_name"] = row["advisor_name"] or ""
             session.permanent = True
             # 顾问默认跳 consultant 页
             nxt = _safe_next(request.args.get("next"))
             if nxt:
                 return redirect(nxt)
-            if row["role"] == "consultant":
+            if row["role"] in ("consultant", "store_manager"):
                 return redirect(url_for("consultant_page"))
             return redirect(url_for("index"))
         error = "用户名或密码错误"
@@ -4136,10 +4516,21 @@ def index():
 
 
 @app.route("/admin")
-@admin_required
+@manager_required
 def admin_page():
     return render_template(
         "admin.html",
+        username=session.get("username"),
+        role=session.get("role"),
+    )
+
+
+@app.route("/customer/<int:customer_id>")
+@manager_required
+def customer_profile_page(customer_id):
+    return render_template(
+        "customer_profile.html",
+        customer_id=customer_id,
         username=session.get("username"),
         role=session.get("role"),
     )
@@ -4190,29 +4581,8 @@ def session_detail(sid):
         bool(sess_d.get("analysis_result")),
     )
 
-    # 该顾客历次接诊累积标签（去重，按出现次数倒序）
-    # 排除当前 session，只取历史接诊的标签；若无历史则为第一次来访
-    customer_tags_history = []
-    is_first_visit = True
-    if sess_d.get("customer"):
-        session_count_row = db_fetchone(
-            """SELECT COUNT(DISTINCT source_session_id) AS n
-               FROM customer_tags
-               WHERE customer_name=? AND source_session_id != ?""",
-            (sess_d["customer"], sid),
-        )
-        is_first_visit = (not session_count_row) or (session_count_row["n"] == 0)
-        if not is_first_visit:
-            tag_rows = db_fetchall(
-                """SELECT tag, SUM(COALESCE(mention_count,1)) AS cnt
-                   FROM customer_tags
-                   WHERE customer_name=? AND source_session_id != ?
-                   GROUP BY tag
-                   ORDER BY cnt DESC, MAX(created_at) DESC
-                   LIMIT 30""",
-                (sess_d["customer"], sid),
-            )
-            customer_tags_history = [{"tag": r["tag"], "count": r["cnt"]} for r in tag_rows]
+    # 顾客标签（本次/历史累积、按服务次数、时间区间）改由前端调
+    # /api/session/<sid>/customer_tags 动态加载，这里不再服务端计算。
 
     resp = app.make_response(render_template(
         "report.html",
@@ -4220,8 +4590,6 @@ def session_detail(sid):
         recordings=recordings,
         report=report,
         evaluations=evals,
-        customer_tags_history=customer_tags_history,
-        is_first_visit=is_first_visit,
         username=session.get("username"),
         role=session.get("role"),
     ))
@@ -4229,6 +4597,61 @@ def session_detail(sid):
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
     return resp
+
+
+@app.route("/api/session/<int:sid>/customer_tags")
+@login_required
+def api_session_customer_tags(sid):
+    """接诊详情页「顾客标签」：本次标签(标记是否新增) + 历史累积(按服务次数, 支持时间区间)。
+    口径：分组用 COALESCE(canonical_tag, tag) 归一；计数 = COUNT(DISTINCT source_session_id) 服务次数。"""
+    sess = db_fetchone(
+        "SELECT id, customer, company_id, advisor FROM sessions WHERE id=?", (sid,))
+    if not sess:
+        return jsonify({"error": "not found"}), 404
+    # 可见性：顾问仅本人；admin/店长 本公司；super 全部
+    role = session.get("role")
+    if role == "consultant" and (sess["advisor"] or "") != (session.get("advisor_name") or ""):
+        return jsonify({"error": "无权查看"}), 403
+    if (role in ("admin", "store_manager") and sess["company_id"]
+            and session.get("company_id") and sess["company_id"] != session.get("company_id")):
+        return jsonify({"error": "无权查看"}), 403
+
+    customer = sess["customer"]
+    rng = (request.args.get("range") or "all").strip()
+    days_map = {"30": 30, "90": 90, "180": 180, "365": 365}
+    cutoff = None
+    if rng in days_map:
+        cutoff = (datetime.now() - timedelta(days=days_map[rng])).strftime("%Y-%m-%d")
+
+    if not customer:
+        return jsonify({"first_visit": True, "current_tags": [], "history": [], "range": rng})
+
+    EFF = "COALESCE(NULLIF(canonical_tag,''), tag)"
+    # 本次标签（去重）
+    cur_rows = db_fetchall(
+        f"SELECT DISTINCT {EFF} AS t FROM customer_tags WHERE source_session_id=?", (sid,))
+    current = [r["t"] for r in cur_rows if r["t"]]
+    # 历史出现过的标签集合（判断"本次新增"，不受时间区间限制）
+    seen_rows = db_fetchall(
+        f"SELECT DISTINCT {EFF} AS t FROM customer_tags "
+        f"WHERE customer_name=? AND source_session_id<>?", (customer, sid))
+    seen = {r["t"] for r in seen_rows if r["t"]}
+    current_tags = [{"tag": t, "is_new": t not in seen} for t in current]
+
+    # 历史累积：按服务次数(去重 session)，可按 service_date 过滤区间
+    where = "customer_name=? AND source_session_id<>?"
+    params = [customer, sid]
+    if cutoff:
+        where += " AND service_date IS NOT NULL AND service_date >= ?"
+        params.append(cutoff)
+    hist_rows = db_fetchall(
+        f"""SELECT {EFF} AS t, COUNT(DISTINCT source_session_id) AS cnt
+            FROM customer_tags WHERE {where}
+            GROUP BY {EFF} ORDER BY cnt DESC, MAX(created_at) DESC LIMIT 60""",
+        tuple(params))
+    history = [{"tag": r["t"], "count": r["cnt"]} for r in hist_rows if r["t"]]
+    return jsonify({"first_visit": len(seen) == 0, "current_tags": current_tags,
+                    "history": history, "range": rng})
 
 
 # ============ API ============
@@ -4299,11 +4722,16 @@ def api_sessions():
         if cid:
             where.append("(s.company_id IS NULL OR s.company_id = ?)")
             params.append(cid)
-    elif role == "admin":
+    elif role in ("admin", "store_manager"):
         if cid:
             where.append("(s.company_id IS NULL OR s.company_id = ?)")
             params.append(cid)
-    # super 不过滤
+    # super 不过滤公司
+    # 店长强制本店；admin/super 可选 ?store_id= 按门店筛选
+    _sc, _scp = store_scope_sql("s.store_id")
+    if _sc:
+        where.append(_sc)
+        params.extend(_scp)
     if advisor:
         where.append("s.advisor LIKE ?")
         params.append(f"%{advisor}%")
@@ -4435,10 +4863,13 @@ def api_sessions_status_counts():
         if cid:
             where.append("(s.company_id IS NULL OR s.company_id = ?)")
             params.append(cid)
-    elif role == "admin":
+    elif role in ("admin", "store_manager"):
         if cid:
             where.append("(s.company_id IS NULL OR s.company_id = ?)")
             params.append(cid)
+    _sc0, _scp0 = store_scope_sql("s.store_id")
+    if _sc0:
+        where.append(_sc0); params.extend(_scp0)
     # 额外筛选参数（与列表页保持一致）
     advisor_q = request.args.get("advisor", "").strip()
     customer_q = request.args.get("customer", "").strip()
@@ -5345,15 +5776,18 @@ def _invalidate_admin_stats():
         _admin_stats_cache["ts"] = 0.0
 
 
-def _compute_admin_stats(cid, is_super):
+def _compute_admin_stats(cid, is_super, store_filter=None):
+    # store_filter：店长本店 / admin 选店时，把顾问数、高风险数收口到该门店
+    _stc = " AND store_id=?" if store_filter is not None else ""
+    _stp = [store_filter] if store_filter is not None else []
     if is_super:
-        c1 = db_fetchone("SELECT COUNT(*) AS n FROM users WHERE role='consultant'")["n"]
+        c1 = db_fetchone(f"SELECT COUNT(*) AS n FROM users WHERE role='consultant'{_stc}", tuple(_stp))["n"]
         c2 = db_fetchone("SELECT COUNT(*) AS n FROM company_customers")["n"]
         c3 = db_fetchone("SELECT COUNT(*) AS n FROM delete_requests WHERE status='pending'")["n"]
     else:
         c1 = db_fetchone(
-            "SELECT COUNT(*) AS n FROM users WHERE role='consultant' AND company_id=?",
-            (cid,),
+            f"SELECT COUNT(*) AS n FROM users WHERE role='consultant' AND company_id=?{_stc}",
+            tuple([cid] + _stp),
         )["n"]
         c2 = db_fetchone(
             "SELECT COUNT(*) AS n FROM company_customers WHERE company_id=?",
@@ -5370,15 +5804,16 @@ def _compute_admin_stats(cid, is_super):
         "json_extract(s.analysis_result, '$.deal_diagnosis.risk_alert') = 1 "
         "OR json_extract(s.analysis_result, '$.deal_diagnosis.risk_level') = 'high'"
     )
+    _s4c = " AND s.store_id=?" if store_filter is not None else ""
     if is_super:
         c4_row = db_fetchone(
             f"""SELECT COUNT(*) AS n FROM sessions s
                 LEFT JOIN high_risk_views v
                   ON v.session_id = s.id AND v.user_id = ?
                 WHERE s.analysis_result IS NOT NULL
-                  AND ({risk_where})
+                  AND ({risk_where}){_s4c}
                   AND v.session_id IS NULL""",
-            (uid,),
+            tuple([uid] + _stp),
         )
     else:
         c4_row = db_fetchone(
@@ -5387,9 +5822,9 @@ def _compute_admin_stats(cid, is_super):
                   ON v.session_id = s.id AND v.user_id = ?
                 WHERE s.analysis_result IS NOT NULL
                   AND (s.company_id IS NULL OR s.company_id = ?)
-                  AND ({risk_where})
+                  AND ({risk_where}){_s4c}
                   AND v.session_id IS NULL""",
-            (uid, cid),
+            tuple([uid, cid] + _stp),
         )
     c4 = c4_row["n"] if c4_row else 0
     return {"consultants": c1, "customers": c2,
@@ -5398,7 +5833,7 @@ def _compute_admin_stats(cid, is_super):
 
 
 @app.route("/api/admin/high_risk_sessions")
-@admin_required
+@manager_required
 def api_admin_high_risk_sessions():
     """差评高风险预警列表。管理员每日浏览：unread=true 表示当前管理员尚未点过"已查看"。"""
     cid = session.get("company_id")
@@ -5421,6 +5856,9 @@ def api_admin_high_risk_sessions():
     if not is_super and cid:
         where.append("(s.company_id IS NULL OR s.company_id = ?)")
         params.append(cid)
+    _sc, _scp = store_scope_sql("s.store_id")
+    if _sc:
+        where.append(_sc); params.extend(_scp)
     if only_unread:
         where.append("v.session_id IS NULL")
     where_sql = "WHERE " + " AND ".join(where)
@@ -5455,7 +5893,7 @@ def api_admin_high_risk_sessions():
 
 
 @app.route("/api/admin/high_risk_sessions/<int:sid>/view", methods=["POST"])
-@admin_required
+@manager_required
 def api_admin_high_risk_mark_viewed(sid):
     uid = session.get("user_id")
     if not uid:
@@ -5524,7 +5962,7 @@ def api_report_view_part():
 
 
 @app.route("/api/admin/report_view_stats")
-@admin_required
+@manager_required
 def api_admin_report_view_stats():
     cid = session.get("company_id")
     is_super = session.get("role") == "super"
@@ -5537,7 +5975,12 @@ def api_admin_report_view_stats():
         where += " AND company_id=?"
         params.append(cid)
     # 只统计顾问/admin 自己看（super 看的不计入对外汇总，但 super 视角下显示全部）
-    where += " AND role IN ('consultant','admin','super')"
+    where += " AND role IN ('consultant','admin','super','store_manager')"
+    # 店长只看本店成员；admin/super 可选门店筛选（按查看者所属门店）
+    _sf = current_store_filter()
+    if _sf is not None:
+        where += " AND user_id IN (SELECT id FROM users WHERE store_id=?)"
+        params.append(_sf)
 
     # 1) 每个顾问汇总
     rows = db_fetchall(f"""
@@ -5585,10 +6028,11 @@ def api_admin_report_view_stats():
 
 
 @app.route("/api/admin/ops_dashboard")
-@admin_required
+@manager_required
 def api_admin_ops_dashboard():
     cid = session.get("company_id")
     is_super = session.get("role") == "super"
+    _sf = current_store_filter()  # 店长=本店；admin/super 可选 ?store_id=
 
     today = datetime.now().strftime("%Y-%m-%d")
     week_start = (datetime.now() - timedelta(days=datetime.now().weekday())).strftime("%Y-%m-%d")
@@ -5685,11 +6129,16 @@ def api_admin_ops_dashboard():
             })
         return jsonify({"is_super": True, "today": today, "week_start": week_start, "companies": result})
     else:
+        # 店长/按门店筛选：在公司过滤基础上再叠加 store_id 条件
+        store_cond = " AND store_id=?" if _sf is not None else ""
+        store_p = [_sf] if _sf is not None else []
         today_s, week_s, fails = _session_stats(
-            "AND (company_id IS NULL OR company_id=?)",
-            (today, cid), (week_start, cid), (cid,)
+            "AND (company_id IS NULL OR company_id=?)" + store_cond,
+            tuple([today, cid] + store_p),
+            tuple([week_start, cid] + store_p),
+            tuple([cid] + store_p),
         )
-        advisors_rows = db_fetchall("""
+        advisors_rows = db_fetchall(f"""
             SELECT
                 advisor,
                 COUNT(*) AS total,
@@ -5700,11 +6149,11 @@ def api_admin_ops_dashboard():
                     THEN (julianday(analysis_finished_at) - julianday(analysis_started_at)) * 1440
                     ELSE NULL END) AS avg_min
             FROM sessions
-            WHERE (company_id IS NULL OR company_id=?)
+            WHERE (company_id IS NULL OR company_id=?){store_cond}
               AND REPLACE(service_date,'-','') >= REPLACE(?,'-','')
             GROUP BY advisor
             ORDER BY total DESC
-        """, (cid, week_start))
+        """, tuple([cid] + store_p + [week_start]))
         advisors = []
         for a in advisors_rows:
             total = a["total"] or 0
@@ -5731,12 +6180,13 @@ def api_admin_ops_dashboard():
 
 
 @app.route("/api/admin/stats")
-@admin_required
+@manager_required
 def api_admin_stats():
     cid = session.get("company_id")
     is_super = session.get("role") == "super"
     uid = session.get("user_id") or 0
-    cache_key = ("super", uid) if is_super else ("cid", cid, uid)
+    sf = current_store_filter()
+    cache_key = ("super", uid, sf) if is_super else ("cid", cid, uid, sf)
     import time as _time
     now = _time.time()
     with _admin_stats_lock:
@@ -5745,7 +6195,7 @@ def api_admin_stats():
         if cached and cached.get("_key") == cache_key and now - ts < 30:
             out = {k: v for k, v in cached.items() if k != "_key"}
             return jsonify(out)
-    data = _compute_admin_stats(cid, is_super)
+    data = _compute_admin_stats(cid, is_super, sf)
     data["_key"] = cache_key
     with _admin_stats_lock:
         _admin_stats_cache["data"] = data
@@ -5753,30 +6203,50 @@ def api_admin_stats():
     return jsonify({k: v for k, v in data.items() if k != "_key"})
 
 
+def _validate_store(raw, company_id):
+    """校验 store_id 属于该公司。返回：int(合法) / None(未指定) / False(非法)。"""
+    if raw in (None, "", 0, "0"):
+        return None
+    try:
+        sid = int(raw)
+    except (ValueError, TypeError):
+        return False
+    row = db_fetchone("SELECT id FROM stores WHERE id=? AND company_id=?", (sid, company_id))
+    return sid if row else False
+
+
 @app.route("/api/admin/consultants", methods=["GET"])
 @admin_required
 def api_admin_consultants_list():
     cid = session.get("company_id")
     q = (request.args.get("q") or "").strip()
+    store_filter = (request.args.get("store_id") or "").strip()
     is_super = session.get("role") == "super"
-    base_where = "role='consultant'" if is_super else "role='consultant' AND company_id=?"
-    base_params = [] if is_super else [cid]
+    # 员工 = 顾问 + 店长（统一在一个列表管理；店长由此处分配角色）
+    base_where = "u.role IN ('consultant','store_manager')"
+    base_params = []
+    if not is_super:
+        base_where += " AND u.company_id=?"; base_params.append(cid)
+    if store_filter:
+        base_where += " AND u.store_id=?"; base_params.append(int(store_filter))
     if q:
-        where = base_where + " AND (advisor_name LIKE ? OR employee_id LIKE ? OR phone LIKE ? OR username LIKE ?)"
+        where = base_where + " AND (u.advisor_name LIKE ? OR u.employee_id LIKE ? OR u.phone LIKE ? OR u.username LIKE ?)"
         params = base_params + [f"%{q}%"] * 4
     else:
         where = base_where
         params = base_params
     rows = db_fetchall(
-        f"SELECT id, username, role, company_id, advisor_name, employee_id, phone, created_at "
-        f"FROM users WHERE {where} ORDER BY id DESC LIMIT 100",
+        f"SELECT u.id, u.username, u.role, u.company_id, u.advisor_name, u.employee_id, "
+        f"u.phone, u.created_at, u.store_id, st.name AS store_name "
+        f"FROM users u LEFT JOIN stores st ON st.id=u.store_id "
+        f"WHERE {where} ORDER BY u.id DESC LIMIT 100",
         tuple(params),
     )
     total = db_fetchone(
-        f"SELECT COUNT(*) AS n FROM users WHERE {where}", tuple(params)
+        f"SELECT COUNT(*) AS n FROM users u WHERE {where}", tuple(params)
     )["n"]
     total_all = db_fetchone(
-        f"SELECT COUNT(*) AS n FROM users WHERE {base_where}", tuple(base_params)
+        f"SELECT COUNT(*) AS n FROM users u WHERE {base_where}", tuple(base_params)
     )["n"]
     return jsonify({
         "consultants": [dict(r) for r in rows],
@@ -5797,15 +6267,22 @@ def api_admin_consultants_create():
     username = phone or employee_id or (data.get("username") or "").strip()
     if not advisor_name or not username or not password:
         return jsonify({"error": "姓名、登录账号（手机号或工号）、密码必填"}), 400
+    role = (data.get("role") or "consultant").strip()
+    if role not in ("consultant", "store_manager"):
+        return jsonify({"error": "角色只能是 顾问 或 店长"}), 400
     cid = session.get("company_id") or 1
     if session.get("role") == "super":
         cid = int(data.get("company_id") or cid)
+    store_id = _validate_store(data.get("store_id"), cid)
+    if store_id is False:
+        return jsonify({"error": "所选门店不属于本公司"}), 400
     try:
         uid = db_write(
             """INSERT INTO users (username, password_hash, role, company_id,
-                                  advisor_name, employee_id, phone)
-               VALUES (?, ?, 'consultant', ?, ?, ?, ?)""",
-            (username, _hash_pw(password), cid, advisor_name, employee_id or None, phone or None),
+                                  advisor_name, employee_id, phone, store_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (username, _hash_pw(password), role, cid, advisor_name,
+             employee_id or None, phone or None, store_id),
         )
     except sqlite3.IntegrityError:
         return jsonify({"error": f"账号 {username} 已存在"}), 409
@@ -5816,8 +6293,8 @@ def api_admin_consultants_create():
 @admin_required
 def api_admin_consultants_update(uid):
     row = db_fetchone("SELECT id, company_id, role FROM users WHERE id=?", (uid,))
-    if not row or row["role"] != "consultant":
-        return jsonify({"error": "顾问不存在"}), 404
+    if not row or row["role"] not in ("consultant", "store_manager"):
+        return jsonify({"error": "员工不存在"}), 404
     if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
         return jsonify({"error": "无权操作"}), 403
     data = request.get_json(silent=True) or {}
@@ -5829,6 +6306,16 @@ def api_admin_consultants_update(uid):
         if f in data:
             sets.append(f"{f}=?")
             params.append((data[f] or "").strip() or None)
+    if "role" in data:
+        nr = (data["role"] or "").strip()
+        if nr not in ("consultant", "store_manager"):
+            return jsonify({"error": "角色只能是 顾问 或 店长"}), 400
+        sets.append("role=?"); params.append(nr)
+    if "store_id" in data:
+        sv = _validate_store(data.get("store_id"), row["company_id"])
+        if sv is False:
+            return jsonify({"error": "所选门店不属于本公司"}), 400
+        sets.append("store_id=?"); params.append(sv)
     if not sets:
         return jsonify({"error": "无修改字段"}), 400
     params.append(uid)
@@ -5840,8 +6327,8 @@ def api_admin_consultants_update(uid):
 @admin_required
 def api_admin_consultants_delete(uid):
     row = db_fetchone("SELECT id, company_id, role FROM users WHERE id=?", (uid,))
-    if not row or row["role"] != "consultant":
-        return jsonify({"error": "顾问不存在"}), 404
+    if not row or row["role"] not in ("consultant", "store_manager"):
+        return jsonify({"error": "员工不存在"}), 404
     if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
         return jsonify({"error": "无权操作"}), 403
     db_write("DELETE FROM users WHERE id=?", (uid,))
@@ -5897,6 +6384,9 @@ def api_admin_import_consultants():
     if rows and _looks_like_header(rows[0], ["姓名", "工号", "手机", "name", "phone"]):
         rows = rows[1:]
     cid = session.get("company_id") or 1
+    imp_store = _validate_store(request.form.get("store_id"), cid)
+    if imp_store is False:
+        return jsonify({"error": "所选门店不属于本公司"}), 400
     created, skipped, failed = 0, 0, []
     for r in rows:
         name = (r[0] if len(r) > 0 else "").strip()
@@ -5912,9 +6402,9 @@ def api_admin_import_consultants():
         try:
             db_write(
                 """INSERT INTO users (username, password_hash, role, company_id,
-                                      advisor_name, employee_id, phone)
-                   VALUES (?, ?, 'consultant', ?, ?, ?, ?)""",
-                (username, _hash_pw(pwd), cid, name, emp or None, phone or None),
+                                      advisor_name, employee_id, phone, store_id)
+                   VALUES (?, ?, 'consultant', ?, ?, ?, ?, ?)""",
+                (username, _hash_pw(pwd), cid, name, emp or None, phone or None, imp_store),
             )
             created += 1
         except sqlite3.IntegrityError:
@@ -5929,7 +6419,8 @@ def api_admin_customers_list():
     cid = session.get("company_id")
     q = (request.args.get("q") or "").strip()
     is_super = session.get("role") == "super"
-    base_where = "1=1" if is_super else "company_id=?"
+    # 排除已被合并的客人（merged_into IS NOT NULL），避免合并后还出现两条
+    base_where = ("1=1" if is_super else "company_id=?") + " AND merged_into IS NULL"
     base_params = [] if is_super else [cid]
     if q:
         where = base_where + " AND (name LIKE ? OR member_card LIKE ?)"
@@ -6014,6 +6505,324 @@ def api_admin_customers_delete(cid):
         return jsonify({"error": "无权操作"}), 403
     db_write("DELETE FROM company_customers WHERE id=?", (cid,))
     return jsonify({"ok": True})
+
+
+# ============ 客户合并 / 拆分（公司级数据治理） ============
+@app.route("/api/admin/customers/merge", methods=["POST"])
+@admin_required
+def api_admin_customers_merge():
+    """把误判为两个人的客人 A(from) 合并进 B(into)。
+    - 改挂 sessions / customer_tags / daily_reception 到 B；
+    - 删冲突的 daily_reception 行（UNIQUE 约束）；
+    - 删 A、B 的 customer_value_cache（历史变了，缓存作废）；
+    - A.merged_into=B；写 customer_merge_log（含可还原快照）。"""
+    data = request.get_json(silent=True) or {}
+    from_id = data.get("from_id")
+    into_id = data.get("into_id")
+    reason = (data.get("reason") or "").strip()
+    try:
+        from_id = int(from_id)
+        into_id = int(into_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "缺少有效的 from_id / into_id"}), 400
+    if from_id == into_id:
+        return jsonify({"error": "不能把客人合并到自己"}), 400
+    is_super = session.get("role") == "super"
+    my_cid = session.get("company_id")
+    a = db_fetchone("SELECT id, company_id, name, merged_into FROM company_customers WHERE id=?", (from_id,))
+    b = db_fetchone("SELECT id, company_id, name, merged_into FROM company_customers WHERE id=?", (into_id,))
+    if not a or not b:
+        return jsonify({"error": "客人不存在"}), 404
+    if a["company_id"] != b["company_id"]:
+        return jsonify({"error": "不允许跨公司合并"}), 400
+    if not is_super and (a["company_id"] != my_cid or b["company_id"] != my_cid):
+        return jsonify({"error": "无权操作"}), 403
+    if a["merged_into"] is not None:
+        return jsonify({"error": "源客人已被合并，请先撤销"}), 409
+    if b["merged_into"] is not None:
+        return jsonify({"error": "目标客人已被合并，不能作为合并目标"}), 409
+
+    cid = a["company_id"]
+    from_name = a["name"]
+    into_name = b["name"]
+    u = current_user()
+    operator_user_id = u["id"] if u else session.get("user_id")
+    operator_name = (u["advisor_name"] or u["username"]) if u else session.get("username")
+
+    # 快照：将要改动的行 id
+    sess_rows = db_fetchall("SELECT id FROM sessions WHERE customer_id=?", (from_id,))
+    sess_ids = [r["id"] for r in sess_rows]
+    tag_rows = db_fetchall(
+        "SELECT id FROM customer_tags WHERE customer_name=?", (from_name,)
+    )
+    tag_ids = [r["id"] for r in tag_rows]
+    dr_rows = db_fetchall(
+        "SELECT id, advisor_user_id, service_date FROM daily_reception WHERE customer_id=?",
+        (from_id,),
+    )
+
+    affected = {
+        "session_ids": sess_ids,
+        "customer_tag_ids": tag_ids,
+        "from_name": from_name,
+        "into_name": into_name,
+        "daily_reception": [],   # 改挂成功的行 id
+        "daily_reception_deleted": [],  # 因 UNIQUE 冲突删除的行 id
+    }
+
+    def _do(conn):
+        conn.execute("BEGIN")
+        # daily_reception：逐行改挂，冲突则删除该行（避免 IntegrityError）
+        kept, deleted = [], []
+        for r in dr_rows:
+            dr_id = r["id"]
+            conflict = conn.execute(
+                "SELECT id FROM daily_reception "
+                "WHERE advisor_user_id=? AND customer_id=? AND service_date=? AND id<>?",
+                (r["advisor_user_id"], into_id, r["service_date"], dr_id),
+            ).fetchone()
+            if conflict:
+                conn.execute("DELETE FROM daily_reception WHERE id=?", (dr_id,))
+                deleted.append(dr_id)
+            else:
+                conn.execute(
+                    "UPDATE daily_reception SET customer_id=? WHERE id=?",
+                    (into_id, dr_id),
+                )
+                kept.append(dr_id)
+        # sessions：改 customer_id 并刷新姓名快照
+        if sess_ids:
+            conn.execute(
+                "UPDATE sessions SET customer_id=?, customer=? WHERE customer_id=?",
+                (into_id, into_name, from_id),
+            )
+        # customer_tags 按姓名关联
+        conn.execute(
+            "UPDATE customer_tags SET customer_name=? WHERE customer_name=?",
+            (into_name, from_name),
+        )
+        # 价值预测缓存作废（A、B 都删）
+        conn.execute(
+            "DELETE FROM customer_value_cache WHERE customer_id IN (?, ?)",
+            (from_id, into_id),
+        )
+        # 标记已合并
+        conn.execute(
+            "UPDATE company_customers SET merged_into=? WHERE id=?",
+            (into_id, from_id),
+        )
+        affected["daily_reception"] = kept
+        affected["daily_reception_deleted"] = deleted
+        log_id = conn.execute(
+            "INSERT INTO customer_merge_log "
+            "(company_id, from_customer_id, from_name, into_customer_id, into_name, "
+            " operator_user_id, operator_name, reason, affected) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (cid, from_id, from_name, into_id, into_name,
+             operator_user_id, operator_name, reason, json.dumps(affected, ensure_ascii=False)),
+        ).lastrowid
+        conn.commit()
+        return log_id
+
+    log_id = db_batch(_do)
+    return jsonify({
+        "ok": True,
+        "log_id": log_id,
+        "moved_sessions": len(sess_ids),
+        "moved_tags": len(tag_ids),
+        "moved_daily_reception": len(affected["daily_reception"]),
+        "deleted_daily_reception": len(affected["daily_reception_deleted"]),
+    })
+
+
+@app.route("/api/admin/customers/unmerge", methods=["POST"])
+@admin_required
+def api_admin_customers_unmerge():
+    """按 log.affected 快照撤销一次合并：把 sessions/daily_reception/customer_tags 还原到 from。
+    注意：UNIQUE 冲突删除的 daily_reception 行无法还原（数据已不在）。"""
+    data = request.get_json(silent=True) or {}
+    log_id = data.get("log_id")
+    try:
+        log_id = int(log_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "缺少有效的 log_id"}), 400
+    log = db_fetchone("SELECT * FROM customer_merge_log WHERE id=?", (log_id,))
+    if not log:
+        return jsonify({"error": "合并记录不存在"}), 404
+    if log["undone"]:
+        return jsonify({"error": "该合并已撤销"}), 409
+    is_super = session.get("role") == "super"
+    if not is_super and log["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+
+    from_id = log["from_customer_id"]
+    into_id = log["into_customer_id"]
+    try:
+        affected = json.loads(log["affected"] or "{}")
+    except Exception:
+        affected = {}
+    from_name = affected.get("from_name") or log["from_name"]
+    into_name = affected.get("into_name") or log["into_name"]
+    sess_ids = affected.get("session_ids") or []
+    tag_ids = affected.get("customer_tag_ids") or []
+    dr_kept = affected.get("daily_reception") or []
+
+    def _do(conn):
+        conn.execute("BEGIN")
+        # sessions 还原（仅快照里的那些行）
+        for sid in sess_ids:
+            conn.execute(
+                "UPDATE sessions SET customer_id=?, customer=? WHERE id=?",
+                (from_id, from_name, sid),
+            )
+        # customer_tags 还原（仅快照里的那些行；姓名改回 from_name）
+        for tid in tag_ids:
+            conn.execute(
+                "UPDATE customer_tags SET customer_name=? WHERE id=?",
+                (from_name, tid),
+            )
+        # daily_reception 还原（成功改挂过的那些行；UNIQUE 冲突删掉的无法恢复）
+        for dr_id in dr_kept:
+            # 还原时也可能与 from_id 现存行冲突，谨慎跳过
+            row = conn.execute(
+                "SELECT advisor_user_id, service_date FROM daily_reception WHERE id=?",
+                (dr_id,),
+            ).fetchone()
+            if not row:
+                continue
+            conflict = conn.execute(
+                "SELECT id FROM daily_reception "
+                "WHERE advisor_user_id=? AND customer_id=? AND service_date=? AND id<>?",
+                (row[0], from_id, row[1], dr_id),
+            ).fetchone()
+            if conflict:
+                conn.execute("DELETE FROM daily_reception WHERE id=?", (dr_id,))
+            else:
+                conn.execute(
+                    "UPDATE daily_reception SET customer_id=? WHERE id=?",
+                    (from_id, dr_id),
+                )
+        # 清 merged_into
+        conn.execute(
+            "UPDATE company_customers SET merged_into=NULL WHERE id=?",
+            (from_id,),
+        )
+        # 缓存作废（两边都删）
+        conn.execute(
+            "DELETE FROM customer_value_cache WHERE customer_id IN (?, ?)",
+            (from_id, into_id),
+        )
+        conn.execute(
+            "UPDATE customer_merge_log SET undone=1, undone_at=datetime('now','localtime') WHERE id=?",
+            (log_id,),
+        )
+        conn.commit()
+
+    db_batch(_do)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/customers/duplicates", methods=["GET"])
+@admin_required
+def api_admin_customers_duplicates():
+    """同公司内、未被合并的客人中，找疑似同一人的配对：
+    同名、或 member_card 相同(非空)、或 phone_tail 相同(非空)。返回分组。"""
+    is_super = session.get("role") == "super"
+    if is_super:
+        cid = request.args.get("company_id", type=int)
+    else:
+        cid = session.get("company_id")
+    if not cid:
+        return jsonify({"groups": [], "error": None})
+
+    rows = db_fetchall(
+        "SELECT id, name, member_card, phone_tail FROM company_customers "
+        "WHERE company_id=? AND merged_into IS NULL",
+        (cid,),
+    )
+    # 接诊次数（按 customer_id 聚合）
+    cnt_rows = db_fetchall(
+        "SELECT customer_id, COUNT(*) AS n FROM sessions "
+        "WHERE company_id=? AND customer_id IS NOT NULL GROUP BY customer_id",
+        (cid,),
+    )
+    cnt_map = {r["customer_id"]: r["n"] for r in cnt_rows}
+
+    def _cust(r):
+        return {
+            "id": r["id"],
+            "name": r["name"],
+            "member_card": r["member_card"],
+            "phone_tail": r["phone_tail"],
+            "session_count": cnt_map.get(r["id"], 0),
+        }
+
+    # 按三种 key 分桶
+    by_name, by_card, by_phone = {}, {}, {}
+    for r in rows:
+        by_name.setdefault((r["name"] or "").strip(), []).append(r)
+        mc = (r["member_card"] or "").strip()
+        if mc:
+            by_card.setdefault(mc, []).append(r)
+        pt = (r["phone_tail"] or "").strip()
+        if pt:
+            by_phone.setdefault(pt, []).append(r)
+
+    groups = []
+    seen_signatures = set()
+    for reason, bucket in (("同名", by_name), ("会员卡号相同", by_card), ("手机尾号相同", by_phone)):
+        for key, members in bucket.items():
+            if not key or len(members) < 2:
+                continue
+            sig = (reason, key, tuple(sorted(m["id"] for m in members)))
+            if sig in seen_signatures:
+                continue
+            seen_signatures.add(sig)
+            groups.append({
+                "reason": reason,
+                "key": key,
+                "candidates": [_cust(m) for m in members],
+            })
+    return jsonify({"groups": groups, "company_id": cid})
+
+
+@app.route("/api/admin/customers/merge_log", methods=["GET"])
+@admin_required
+def api_admin_customers_merge_log():
+    """合并历史。admin/super 看本公司；super 可带 ?company_id。"""
+    is_super = session.get("role") == "super"
+    if is_super:
+        cid = request.args.get("company_id", type=int)
+        if cid:
+            rows = db_fetchall(
+                "SELECT * FROM customer_merge_log WHERE company_id=? ORDER BY id DESC LIMIT 200",
+                (cid,),
+            )
+        else:
+            rows = db_fetchall(
+                "SELECT * FROM customer_merge_log ORDER BY id DESC LIMIT 200"
+            )
+    else:
+        rows = db_fetchall(
+            "SELECT * FROM customer_merge_log WHERE company_id=? ORDER BY id DESC LIMIT 200",
+            (session.get("company_id"),),
+        )
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            aff = json.loads(d.get("affected") or "{}")
+        except Exception:
+            aff = {}
+        d["affected_summary"] = {
+            "sessions": len(aff.get("session_ids") or []),
+            "tags": len(aff.get("customer_tag_ids") or []),
+            "daily_reception": len(aff.get("daily_reception") or []),
+            "daily_reception_deleted": len(aff.get("daily_reception_deleted") or []),
+        }
+        d.pop("affected", None)
+        out.append(d)
+    return jsonify({"logs": out})
 
 
 # 导入任务进度（in-memory；gunicorn -w 1 单 worker 够用）
@@ -6154,15 +6963,819 @@ def api_admin_companies_create():
         cid = db_write("INSERT INTO companies (name) VALUES (?)", (name,))
     except sqlite3.IntegrityError:
         return jsonify({"error": "公司名已存在"}), 409
+    # 新公司自动建「默认门店」，管理员（admin 看全公司，门店仅作占位）也归入
+    store_id = db_write(
+        "INSERT OR IGNORE INTO stores (company_id, name) VALUES (?, '默认门店')", (cid,)
+    )
+    srow = db_fetchone("SELECT id FROM stores WHERE company_id=? AND name='默认门店'", (cid,))
+    store_id = srow["id"] if srow else None
     try:
         db_write(
-            """INSERT INTO users (username, password_hash, role, company_id, advisor_name)
-               VALUES (?, ?, 'admin', ?, ?)""",
-            (au, _hash_pw(ap), cid, an),
+            """INSERT INTO users (username, password_hash, role, company_id, advisor_name, store_id)
+               VALUES (?, ?, 'admin', ?, ?, ?)""",
+            (au, _hash_pw(ap), cid, an, store_id),
         )
     except sqlite3.IntegrityError:
         return jsonify({"error": "管理员用户名已存在（公司已创建，请单独再加管理员）"}), 409
     return jsonify({"id": cid})
+
+
+# ============ 门店管理 ============
+@app.route("/api/admin/stores", methods=["GET"])
+@manager_required
+def api_admin_stores_list():
+    """门店列表（含每店顾问数/店长名）。super 看全部公司；admin/店长 看本公司。"""
+    is_super = session.get("role") == "super"
+    cid = session.get("company_id")
+    if is_super:
+        where, params = "1=1", []
+    else:
+        where, params = "s.company_id=?", [cid]
+    rows = db_fetchall(
+        f"""SELECT s.id, s.name, s.region, s.company_id, s.created_at,
+                   co.name AS company_name,
+                   (SELECT COUNT(*) FROM users u WHERE u.store_id=s.id AND u.role='consultant') AS consultant_count,
+                   (SELECT COUNT(*) FROM users u WHERE u.store_id=s.id AND u.role='store_manager') AS manager_count,
+                   (SELECT GROUP_CONCAT(u.advisor_name, '、') FROM users u
+                      WHERE u.store_id=s.id AND u.role='store_manager') AS managers
+            FROM stores s LEFT JOIN companies co ON co.id=s.company_id
+            WHERE {where} ORDER BY s.company_id, s.id""",
+        tuple(params),
+    )
+    return jsonify({"stores": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/stores", methods=["POST"])
+@admin_required
+def api_admin_stores_create():
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    region = (data.get("region") or "").strip() or None
+    if not name:
+        return jsonify({"error": "门店名必填"}), 400
+    cid = session.get("company_id") or 1
+    if session.get("role") == "super" and data.get("company_id"):
+        cid = int(data["company_id"])
+    try:
+        sid = db_write(
+            "INSERT INTO stores (company_id, name, region) VALUES (?, ?, ?)",
+            (cid, name, region),
+        )
+    except sqlite3.IntegrityError:
+        return jsonify({"error": f"门店「{name}」已存在"}), 409
+    return jsonify({"id": sid, "name": name})
+
+
+@app.route("/api/admin/stores/<int:sid>", methods=["PATCH"])
+@admin_required
+def api_admin_stores_update(sid):
+    row = db_fetchone("SELECT id, company_id FROM stores WHERE id=?", (sid,))
+    if not row:
+        return jsonify({"error": "门店不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    data = request.get_json(silent=True) or {}
+    sets, params = [], []
+    if "name" in data:
+        nm = (data["name"] or "").strip()
+        if not nm:
+            return jsonify({"error": "门店名不能为空"}), 400
+        sets.append("name=?"); params.append(nm)
+    if "region" in data:
+        sets.append("region=?"); params.append((data["region"] or "").strip() or None)
+    if not sets:
+        return jsonify({"error": "无修改字段"}), 400
+    params.append(sid)
+    try:
+        db_write(f"UPDATE stores SET {', '.join(sets)} WHERE id=?", tuple(params))
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "门店名重复"}), 409
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/stores/<int:sid>", methods=["DELETE"])
+@admin_required
+def api_admin_stores_delete(sid):
+    row = db_fetchone("SELECT id, company_id FROM stores WHERE id=?", (sid,))
+    if not row:
+        return jsonify({"error": "门店不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    # 有员工或历史接诊挂在该门店时禁止删除（先把人/数据迁走）
+    n_users = db_fetchone("SELECT COUNT(*) AS n FROM users WHERE store_id=?", (sid,))["n"]
+    if n_users:
+        return jsonify({"error": f"该门店下还有 {n_users} 个账号，请先把他们调到别的门店"}), 409
+    n_sess = db_fetchone("SELECT COUNT(*) AS n FROM sessions WHERE store_id=?", (sid,))["n"]
+    if n_sess:
+        return jsonify({"error": f"该门店下有 {n_sess} 条历史接诊，禁止删除"}), 409
+    db_write("DELETE FROM stores WHERE id=?", (sid,))
+    return jsonify({"ok": True})
+
+
+# ============ 管理员账号管理 ============
+@app.route("/api/admin/admins", methods=["GET"])
+@admin_required
+def api_admin_admins_list():
+    """管理员账号列表。admin 看本公司；super 看全部（带公司名）。"""
+    is_super = session.get("role") == "super"
+    if is_super:
+        rows = db_fetchall(
+            """SELECT u.id, u.username, u.advisor_name, u.company_id, u.created_at,
+                      co.name AS company_name
+               FROM users u LEFT JOIN companies co ON co.id=u.company_id
+               WHERE u.role='admin' ORDER BY u.company_id, u.id DESC""")
+    else:
+        rows = db_fetchall(
+            """SELECT u.id, u.username, u.advisor_name, u.company_id, u.created_at,
+                      co.name AS company_name
+               FROM users u LEFT JOIN companies co ON co.id=u.company_id
+               WHERE u.role='admin' AND u.company_id=? ORDER BY u.id DESC""",
+            (session.get("company_id"),))
+    return jsonify({"admins": [dict(r) for r in rows]})
+
+
+@app.route("/api/admin/admins", methods=["POST"])
+@admin_required
+def api_admin_admins_create():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    name = (data.get("advisor_name") or "").strip() or "管理员"
+    password = (data.get("password") or "").strip()
+    if not username or not password:
+        return jsonify({"error": "登录用户名、密码必填"}), 400
+    cid = session.get("company_id") or 1
+    if session.get("role") == "super" and data.get("company_id"):
+        cid = int(data["company_id"])
+    try:
+        uid = db_write(
+            """INSERT INTO users (username, password_hash, role, company_id, advisor_name)
+               VALUES (?, ?, 'admin', ?, ?)""",
+            (username, _hash_pw(password), cid, name))
+    except sqlite3.IntegrityError:
+        return jsonify({"error": f"用户名 {username} 已存在"}), 409
+    return jsonify({"id": uid, "username": username})
+
+
+@app.route("/api/admin/admins/<int:uid>", methods=["PATCH"])
+@admin_required
+def api_admin_admins_update(uid):
+    row = db_fetchone("SELECT id, company_id, role FROM users WHERE id=?", (uid,))
+    if not row or row["role"] != "admin":
+        return jsonify({"error": "管理员不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    data = request.get_json(silent=True) or {}
+    sets, params = [], []
+    if data.get("password"):
+        sets.append("password_hash=?"); params.append(_hash_pw(data["password"]))
+    if "advisor_name" in data:
+        sets.append("advisor_name=?"); params.append((data["advisor_name"] or "").strip() or "管理员")
+    if not sets:
+        return jsonify({"error": "无修改字段"}), 400
+    params.append(uid)
+    db_write(f"UPDATE users SET {', '.join(sets)} WHERE id=?", tuple(params))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/admins/<int:uid>", methods=["DELETE"])
+@admin_required
+def api_admin_admins_delete(uid):
+    row = db_fetchone("SELECT id, company_id, role FROM users WHERE id=?", (uid,))
+    if not row or row["role"] != "admin":
+        return jsonify({"error": "管理员不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    if uid == session.get("user_id"):
+        return jsonify({"error": "不能删除自己"}), 400
+    n = db_fetchone(
+        "SELECT COUNT(*) AS n FROM users WHERE role='admin' AND company_id=?",
+        (row["company_id"],))["n"]
+    if n <= 1:
+        return jsonify({"error": "这是该公司最后一个管理员，不能删除"}), 400
+    db_write("DELETE FROM users WHERE id=?", (uid,))
+    return jsonify({"ok": True})
+
+
+# ============ 标签归一化词典（管理端） ============
+def _dict_company_id():
+    """词典操作针对哪个公司：admin=本公司；super=?company_id 或 1。"""
+    if session.get("role") == "super":
+        try:
+            return int(request.args.get("company_id") or (request.get_json(silent=True) or {}).get("company_id") or 1)
+        except (ValueError, TypeError):
+            return 1
+    return session.get("company_id") or 1
+
+
+def renormalize_company_tags(company_id):
+    """词典变更后，把该公司所有 customer_tags 重新归一：
+    黑名单→删除该标签记录；命中标准词→写 canonical_tag；未命中→canonical_tag=NULL（待归类）。"""
+    invalidate_tag_dict(company_id)
+    m = get_tag_dict_map(company_id)
+    rows = db_fetchall(
+        """SELECT ct.id, ct.tag FROM customer_tags ct
+           JOIN sessions s ON s.id = ct.source_session_id
+           WHERE (s.company_id IS NULL AND ?=1) OR s.company_id = ?""",
+        (company_id, company_id),
+    )
+    to_del, to_set = [], []
+    for r in rows:
+        hit = m.get(_norm_key(r["tag"]))
+        if hit and hit[1] == "blacklist":
+            to_del.append((r["id"],))
+        else:
+            to_set.append((hit[0] if hit else None, r["id"]))
+
+    def _apply(conn):
+        if to_del:
+            conn.executemany("DELETE FROM customer_tags WHERE id=?", to_del)
+        if to_set:
+            conn.executemany("UPDATE customer_tags SET canonical_tag=? WHERE id=?", to_set)
+        conn.commit()
+    db_batch(_apply)
+    return {"updated": len(to_set), "deleted": len(to_del)}
+
+
+@app.route("/api/admin/tag_dictionary", methods=["GET"])
+@admin_required
+def api_tag_dict_list():
+    cid = _dict_company_id()
+    rows = db_fetchall(
+        "SELECT id, category, canonical_tag, synonyms, status FROM tag_dictionary "
+        "WHERE company_id=? ORDER BY (status='blacklist'), category, canonical_tag",
+        (cid,),
+    )
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["synonyms"] = json.loads(r["synonyms"] or "[]") or []
+        except (json.JSONDecodeError, TypeError):
+            d["synonyms"] = []
+        out.append(d)
+    cats = sorted({(r["category"] or "其他") for r in rows})
+    return jsonify({"entries": out, "categories": cats, "company_id": cid})
+
+
+@app.route("/api/admin/tag_dictionary", methods=["POST"])
+@admin_required
+def api_tag_dict_create():
+    data = request.get_json(silent=True) or {}
+    cid = _dict_company_id()
+    canon = (data.get("canonical_tag") or "").strip()
+    category = (data.get("category") or "其他").strip() or "其他"
+    status = (data.get("status") or "active").strip()
+    if status not in ("active", "blacklist"):
+        status = "active"
+    syns = data.get("synonyms") or []
+    if not canon:
+        return jsonify({"error": "标准词必填"}), 400
+    syns = [s.strip() for s in syns if isinstance(s, str) and s.strip() and s.strip() != canon]
+    try:
+        did = db_write(
+            "INSERT INTO tag_dictionary (company_id, category, canonical_tag, synonyms, status) VALUES (?, ?, ?, ?, ?)",
+            (cid, category, canon, json.dumps(syns, ensure_ascii=False), status),
+        )
+    except sqlite3.IntegrityError:
+        return jsonify({"error": f"标准词「{canon}」已存在"}), 409
+    stats = renormalize_company_tags(cid)
+    return jsonify({"id": did, "renormalized": stats})
+
+
+@app.route("/api/admin/tag_dictionary/<int:did>", methods=["PATCH"])
+@admin_required
+def api_tag_dict_update(did):
+    row = db_fetchone("SELECT id, company_id FROM tag_dictionary WHERE id=?", (did,))
+    if not row:
+        return jsonify({"error": "词典项不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    data = request.get_json(silent=True) or {}
+    sets, params = [], []
+    if "category" in data:
+        sets.append("category=?"); params.append((data["category"] or "其他").strip() or "其他")
+    if "canonical_tag" in data:
+        nm = (data["canonical_tag"] or "").strip()
+        if not nm:
+            return jsonify({"error": "标准词不能为空"}), 400
+        sets.append("canonical_tag=?"); params.append(nm)
+    if "synonyms" in data:
+        syns = [s.strip() for s in (data["synonyms"] or []) if isinstance(s, str) and s.strip()]
+        sets.append("synonyms=?"); params.append(json.dumps(syns, ensure_ascii=False))
+    if "status" in data:
+        st = (data["status"] or "active").strip()
+        if st not in ("active", "blacklist"):
+            return jsonify({"error": "状态非法"}), 400
+        sets.append("status=?"); params.append(st)
+    if not sets:
+        return jsonify({"error": "无修改字段"}), 400
+    params.append(did)
+    try:
+        db_write(f"UPDATE tag_dictionary SET {', '.join(sets)} WHERE id=?", tuple(params))
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "标准词重复"}), 409
+    stats = renormalize_company_tags(row["company_id"])
+    return jsonify({"ok": True, "renormalized": stats})
+
+
+@app.route("/api/admin/tag_dictionary/<int:did>", methods=["DELETE"])
+@admin_required
+def api_tag_dict_delete(did):
+    row = db_fetchone("SELECT id, company_id FROM tag_dictionary WHERE id=?", (did,))
+    if not row:
+        return jsonify({"error": "词典项不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    db_write("DELETE FROM tag_dictionary WHERE id=?", (did,))
+    stats = renormalize_company_tags(row["company_id"])
+    return jsonify({"ok": True, "renormalized": stats})
+
+
+@app.route("/api/admin/tag_dictionary/<int:did>/merge", methods=["POST"])
+@admin_required
+def api_tag_dict_merge(did):
+    """把 from_id 并入 did：from 的标准词+同义词都变成 did 的同义词，删除 from。"""
+    data = request.get_json(silent=True) or {}
+    from_id = data.get("from_id")
+    tgt = db_fetchone("SELECT id, company_id, canonical_tag, synonyms FROM tag_dictionary WHERE id=?", (did,))
+    src = db_fetchone("SELECT id, company_id, canonical_tag, synonyms FROM tag_dictionary WHERE id=?", (from_id,))
+    if not tgt or not src:
+        return jsonify({"error": "词典项不存在"}), 404
+    if tgt["company_id"] != src["company_id"]:
+        return jsonify({"error": "不能跨公司合并"}), 400
+    if session.get("role") != "super" and tgt["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    def _parse(s):
+        try:
+            return json.loads(s or "[]") or []
+        except (json.JSONDecodeError, TypeError):
+            return []
+    merged = _parse(tgt["synonyms"]) + [src["canonical_tag"]] + _parse(src["synonyms"])
+    # 去重 + 去掉与目标标准词同名的
+    seen, syns = set(), []
+    for s in merged:
+        s = (s or "").strip()
+        if s and s != tgt["canonical_tag"] and s.lower() not in seen:
+            seen.add(s.lower()); syns.append(s)
+    db_write("UPDATE tag_dictionary SET synonyms=? WHERE id=?",
+             (json.dumps(syns, ensure_ascii=False), did))
+    db_write("DELETE FROM tag_dictionary WHERE id=?", (src["id"],))
+    stats = renormalize_company_tags(tgt["company_id"])
+    return jsonify({"ok": True, "renormalized": stats})
+
+
+@app.route("/api/admin/tag_unclassified", methods=["GET"])
+@admin_required
+def api_tag_unclassified():
+    """待归类池：canonical_tag 为空的原始标签，按服务次数(去重 session)排序。"""
+    cid = _dict_company_id()
+    rows = db_fetchall(
+        """SELECT ct.tag AS tag,
+                  COUNT(DISTINCT ct.source_session_id) AS service_count,
+                  COUNT(*) AS row_count
+           FROM customer_tags ct
+           JOIN sessions s ON s.id = ct.source_session_id
+           WHERE ct.canonical_tag IS NULL
+             AND ((s.company_id IS NULL AND ?=1) OR s.company_id = ?)
+           GROUP BY ct.tag
+           ORDER BY service_count DESC, row_count DESC
+           LIMIT 300""",
+        (cid, cid),
+    )
+    return jsonify({"items": [dict(r) for r in rows], "company_id": cid})
+
+
+@app.route("/api/admin/tag_unclassified/assign", methods=["POST"])
+@admin_required
+def api_tag_unclassified_assign():
+    """把一个待归类原始标签处理掉：
+    - action=merge: 加为 target_id 词典项的同义词
+    - action=new:   新建标准词（category + canonical_tag，原词作同义词）
+    - action=blacklist: 建一个黑名单词条（原词作标准词），该标签今后不再入库/统计"""
+    data = request.get_json(silent=True) or {}
+    cid = _dict_company_id()
+    raw = (data.get("raw_tag") or "").strip()
+    action = (data.get("action") or "").strip()
+    if not raw:
+        return jsonify({"error": "缺少 raw_tag"}), 400
+
+    def _parse(s):
+        try:
+            return json.loads(s or "[]") or []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    if action == "merge":
+        tid = data.get("target_id")
+        row = db_fetchone("SELECT id, company_id, canonical_tag, synonyms FROM tag_dictionary WHERE id=?", (tid,))
+        if not row or row["company_id"] != cid:
+            return jsonify({"error": "目标标准词不存在"}), 404
+        syns = _parse(row["synonyms"])
+        if raw != row["canonical_tag"] and raw.lower() not in {x.lower() for x in syns}:
+            syns.append(raw)
+        db_write("UPDATE tag_dictionary SET synonyms=? WHERE id=?",
+                 (json.dumps(syns, ensure_ascii=False), tid))
+    elif action == "new":
+        canon = (data.get("canonical_tag") or raw).strip()
+        category = (data.get("category") or "其他").strip() or "其他"
+        syns = [raw] if raw != canon else []
+        try:
+            db_write(
+                "INSERT INTO tag_dictionary (company_id, category, canonical_tag, synonyms, status) VALUES (?, ?, ?, ?, 'active')",
+                (cid, category, canon, json.dumps(syns, ensure_ascii=False)),
+            )
+        except sqlite3.IntegrityError:
+            return jsonify({"error": f"标准词「{canon}」已存在，请改用合并"}), 409
+    elif action == "blacklist":
+        try:
+            db_write(
+                "INSERT INTO tag_dictionary (company_id, category, canonical_tag, synonyms, status) VALUES (?, '竞品', ?, '[]', 'blacklist')",
+                (cid, raw),
+            )
+        except sqlite3.IntegrityError:
+            db_write("UPDATE tag_dictionary SET status='blacklist' WHERE company_id=? AND canonical_tag=?", (cid, raw))
+    else:
+        return jsonify({"error": "未知 action"}), 400
+
+    stats = renormalize_company_tags(cid)
+    return jsonify({"ok": True, "renormalized": stats})
+
+
+@app.route("/api/admin/tag_stats")
+@manager_required
+def api_admin_tag_stats():
+    """标签统计：scope=customer(顾客标签/店里流行什么) | competitor(竞品纵览)。
+    口径：按 COALESCE(canonical_tag,tag) 归一，服务次数 = COUNT(DISTINCT source_session_id)。
+    支持门店(store_manager锁本店/admin可选) + 起止日期(service_date) 筛选。"""
+    scope = (request.args.get("scope") or "customer").strip()
+    is_super = session.get("role") == "super"
+    EFF = "COALESCE(NULLIF(ct.canonical_tag,''), ct.tag)"
+    # 竞品判定：已归竞品类，或 待归类(无词典项)且以"用户"结尾（兼容存量未归类的竞品标签）
+    # 用 COALESCE 避免 d.category 为 NULL 时三值逻辑把"待归类顾客标签"误排除
+    COMP = "(COALESCE(d.category,'')='竞品' OR (d.id IS NULL AND ct.tag LIKE '%用户'))"
+
+    where = ["s.service_date LIKE '____-__-__'", "COALESCE(d.status,'active') <> 'blacklist'"]
+    params = []
+    if not is_super:
+        where.append("(s.company_id IS NULL OR s.company_id=?)")
+        params.append(session.get("company_id"))
+    elif request.args.get("company_id"):
+        where.append("s.company_id=?"); params.append(int(request.args["company_id"]))
+    sf = current_store_filter()
+    if sf is not None:
+        where.append("s.store_id=?"); params.append(sf)
+    frm = (request.args.get("from") or "").strip()
+    to = (request.args.get("to") or "").strip()
+    if frm:
+        where.append("s.service_date >= ?"); params.append(frm)
+    if to:
+        where.append("s.service_date <= ?"); params.append(to)
+    where.append(COMP if scope == "competitor" else f"NOT {COMP}")
+
+    rows = db_fetchall(
+        f"""SELECT {EFF} AS tag, MAX(d.category) AS category,
+                   COUNT(DISTINCT ct.source_session_id) AS service_count,
+                   COUNT(DISTINCT ct.customer_name) AS customer_count
+            FROM customer_tags ct
+            JOIN sessions s ON s.id = ct.source_session_id
+            LEFT JOIN tag_dictionary d
+                   ON d.company_id = s.company_id AND d.canonical_tag = {EFF}
+            WHERE {' AND '.join(where)}
+            GROUP BY {EFF}
+            ORDER BY service_count DESC, customer_count DESC
+            LIMIT 200""",
+        tuple(params),
+    )
+    return jsonify({"scope": scope, "rows": [dict(r) for r in rows]})
+
+
+# ============ 画像-4 当月重点项目 ============
+def _this_month():
+    return datetime.now().strftime("%Y-%m")
+
+
+@app.route("/api/admin/monthly_projects", methods=["GET"])
+@manager_required
+def api_monthly_projects_list():
+    cid = session.get("company_id") or 1
+    if session.get("role") == "super":
+        cid = int(request.args.get("company_id") or cid)
+    month = (request.args.get("month") or _this_month()).strip()
+    rows = db_fetchall(
+        "SELECT id, month, name, keywords FROM monthly_projects WHERE company_id=? AND month=? ORDER BY id",
+        (cid, month))
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["keywords"] = json.loads(r["keywords"] or "[]") or []
+        except (json.JSONDecodeError, TypeError):
+            d["keywords"] = []
+        out.append(d)
+    return jsonify({"month": month, "projects": out})
+
+
+@app.route("/api/admin/monthly_projects", methods=["POST"])
+@admin_required
+def api_monthly_projects_create():
+    data = request.get_json(silent=True) or {}
+    cid = session.get("company_id") or 1
+    if session.get("role") == "super" and data.get("company_id"):
+        cid = int(data["company_id"])
+    month = (data.get("month") or _this_month()).strip()
+    name = (data.get("name") or "").strip()
+    kws = data.get("keywords") or []
+    kws = [k.strip() for k in kws if isinstance(k, str) and k.strip()]
+    if not name:
+        return jsonify({"error": "项目名必填"}), 400
+    if not kws:
+        kws = [name]  # 没填关键词就用项目名做命中词
+    pid = db_write(
+        "INSERT INTO monthly_projects (company_id, month, name, keywords) VALUES (?, ?, ?, ?)",
+        (cid, month, name, json.dumps(kws, ensure_ascii=False)))
+    return jsonify({"id": pid})
+
+
+@app.route("/api/admin/monthly_projects/<int:pid>", methods=["DELETE"])
+@admin_required
+def api_monthly_projects_delete(pid):
+    row = db_fetchone("SELECT id, company_id FROM monthly_projects WHERE id=?", (pid,))
+    if not row:
+        return jsonify({"error": "不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    db_write("DELETE FROM monthly_projects WHERE id=?", (pid,))
+    return jsonify({"ok": True})
+
+
+def _project_hits(transcript, projects):
+    """transcript 命中了 projects 里哪些项目（关键词子串匹配）。projects: [{name, keywords}]。"""
+    if not transcript:
+        return []
+    low = transcript.lower()
+    hits = []
+    for p in projects:
+        for kw in (p.get("keywords") or []):
+            if kw and kw.lower() in low:
+                hits.append(p["name"])
+                break
+    return hits
+
+
+# ============ 画像-3 顾客档案 ============
+def _customer_session_clause(customer_id, name, company_id):
+    """匹配某客人的所有 session：优先 customer_id，兼容旧的按姓名。"""
+    clause = "((s.customer_id IS NOT NULL AND s.customer_id=?) OR (s.customer_id IS NULL AND s.customer=? AND (s.company_id IS NULL OR s.company_id=?)))"
+    return clause, [customer_id, name, company_id]
+
+
+@app.route("/api/admin/customer_profile")
+@manager_required
+def api_customer_profile():
+    """客人粒度档案：基本信息 + 累积标签(按服务次数,可时间区间) + 服务时间线(每次接诊:日期/顾问/标签/当月项目命中)。"""
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+    try:
+        customer_id = int(request.args.get("customer_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "缺少 customer_id"}), 400
+    cust = db_fetchone(
+        "SELECT id, company_id, name, member_card, phone_tail FROM company_customers WHERE id=?",
+        (customer_id,))
+    if not cust:
+        return jsonify({"error": "顾客不存在"}), 404
+    if not is_super and cust["company_id"] != cid:
+        return jsonify({"error": "无权查看"}), 403
+    comp = cust["company_id"]
+
+    sclause, sparams = _customer_session_clause(customer_id, cust["name"], comp)
+    where = [sclause]
+    params = list(sparams)
+    sc, scp = store_scope_sql("s.store_id")
+    if sc:
+        where.append(sc); params.extend(scp)
+    sess_rows = db_fetchall(
+        f"""SELECT s.id, s.service_date, s.advisor, s.store_id, s.analysis_status,
+                   st.name AS store_name
+            FROM sessions s LEFT JOIN stores st ON st.id=s.store_id
+            WHERE {' AND '.join(where)}
+            ORDER BY s.service_date DESC, s.id DESC""",
+        tuple(params))
+    sess_ids = [r["id"] for r in sess_rows]
+
+    # 当月项目：按各 session 所属月份加载项目清单
+    months = {(r["service_date"] or "")[:7] for r in sess_rows if r["service_date"]}
+    proj_by_month = {}
+    if months:
+        qmarks = ",".join("?" * len(months))
+        prows = db_fetchall(
+            f"SELECT month, name, keywords FROM monthly_projects WHERE company_id=? AND month IN ({qmarks})",
+            tuple([comp] + list(months)))
+        for pr in prows:
+            try:
+                kws = json.loads(pr["keywords"] or "[]") or []
+            except (json.JSONDecodeError, TypeError):
+                kws = []
+            proj_by_month.setdefault(pr["month"], []).append({"name": pr["name"], "keywords": kws})
+
+    EFF = "COALESCE(NULLIF(canonical_tag,''), tag)"
+    sessions = []
+    for r in sess_rows:
+        sid = r["id"]
+        tag_rows = db_fetchall(
+            f"SELECT DISTINCT {EFF} AS t FROM customer_tags WHERE source_session_id=?", (sid,))
+        tags = [x["t"] for x in tag_rows if x["t"]]
+        # 当月项目命中
+        month = (r["service_date"] or "")[:7]
+        hits = []
+        projs = proj_by_month.get(month)
+        if projs:
+            tr_rows = db_fetchall("SELECT asr_transcript FROM recordings WHERE session_id=?", (sid,))
+            transcript = "\n".join((x["asr_transcript"] or "") for x in tr_rows)
+            hits = _project_hits(transcript, projs)
+        sessions.append({
+            "id": sid, "service_date": r["service_date"], "advisor": r["advisor"],
+            "store_name": r["store_name"], "analysis_status": r["analysis_status"],
+            "tags": tags, "project_hits": hits,
+        })
+
+    # 累积标签（按服务次数，时间区间）
+    rng = (request.args.get("range") or "all").strip()
+    days_map = {"30": 30, "90": 90, "180": 180, "365": 365}
+    acc = []
+    if sess_ids:
+        qmarks = ",".join("?" * len(sess_ids))
+        tw = [f"source_session_id IN ({qmarks})"]
+        tp = list(sess_ids)
+        if rng in days_map:
+            cutoff = (datetime.now() - timedelta(days=days_map[rng])).strftime("%Y-%m-%d")
+            tw.append("service_date IS NOT NULL AND service_date >= ?"); tp.append(cutoff)
+        acc_rows = db_fetchall(
+            f"""SELECT {EFF} AS t, COUNT(DISTINCT source_session_id) AS cnt
+                FROM customer_tags WHERE {' AND '.join(tw)}
+                GROUP BY {EFF} ORDER BY cnt DESC, MAX(created_at) DESC LIMIT 80""",
+            tuple(tp))
+        acc = [{"tag": x["t"], "count": x["cnt"]} for x in acc_rows if x["t"]]
+
+    return jsonify({
+        "info": {"id": cust["id"], "name": cust["name"],
+                 "member_card": cust["member_card"], "phone_tail": cust["phone_tail"]},
+        "accumulated_tags": acc, "sessions": sessions,
+        "session_count": len(sess_ids), "range": rng,
+    })
+
+
+# ============ 画像-5 客户价值预测（按需生成 + 缓存）============
+VALUE_TOOL = {
+    "name": "customer_value",
+    "description": "基于历史接待综合产出的客户价值多维分析",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "value_rebuild": {"type": "string", "description": "客户价值评估：基于历次真实画像重建，这个客人的价值、消费潜力、忠诚度判断"},
+            "battle_plan": {"type": "string", "description": "可攻破痛点 + 完整作战方案：下次怎么攻坚这个客人"},
+            "project_plan": {"type": "string", "description": "竞品分析 + 曾做过/可做的项目 + 顾问售后学习清单"},
+            "biz_plan": {"type": "string", "description": "下一步动作 + 回店规划（经营规划）"},
+            "advisor_match": {
+                "type": "array",
+                "description": "按接待过的顾问分别评估：该顾问与这个客人的匹配度（喜不喜欢、接得怎么样）",
+                "items": {"type": "object", "properties": {
+                    "advisor": {"type": "string"}, "assessment": {"type": "string"}},
+                    "required": ["advisor", "assessment"]},
+            },
+        },
+        "required": ["value_rebuild", "battle_plan", "project_plan", "biz_plan", "advisor_match"],
+    },
+}
+
+
+def _value_signature(sess_rows):
+    """历史已分析 session 的指纹：id+完成时间。变了则缓存过期。"""
+    parts = [f"{r['id']}:{r['analysis_finished_at'] or ''}" for r in sess_rows]
+    return hashlib.md5("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def _gather_value_input(sess_rows):
+    """把客人历次 done 分析的关键字段拼成 LLM 输入（控制 token，取近 20 次）。"""
+    blocks = []
+    for r in sess_rows[:20]:
+        try:
+            ar = json.loads(r["analysis_result"] or "null") or {}
+        except (json.JSONDecodeError, TypeError):
+            ar = {}
+        persona = (ar.get("persona") or {})
+        diag = (ar.get("deal_diagnosis") or {})
+        pains = ar.get("pain_points") or {}
+        ext = ar.get("external_signals") or {}
+        seg = [f"### {r['service_date'] or '?'} · 顾问：{r['advisor'] or '?'}"]
+        if persona.get("summary"):
+            seg.append(f"画像：{persona['summary']}")
+        if pains:
+            seg.append(f"痛点：{json.dumps(pains, ensure_ascii=False)[:600]}")
+        if diag:
+            seg.append(f"成交诊断：成交={diag.get('deal_result')} 金额={diag.get('deal_amount')} 风险={diag.get('risk_level')}")
+        if ext:
+            seg.append(f"外部信号/竞品：{json.dumps(ext, ensure_ascii=False)[:500]}")
+        blocks.append("\n".join(seg))
+    return "\n\n".join(blocks)
+
+
+def _load_customer_done_sessions(customer_id, name, company_id):
+    sclause, sparams = _customer_session_clause(customer_id, name, company_id)
+    return db_fetchall(
+        f"""SELECT s.id, s.service_date, s.advisor, s.analysis_status,
+                   s.analysis_finished_at, s.analysis_result
+            FROM sessions s
+            WHERE {sclause} AND s.analysis_status='done' AND s.analysis_result IS NOT NULL
+            ORDER BY s.service_date DESC, s.id DESC""",
+        tuple(sparams))
+
+
+@app.route("/api/admin/customer_value", methods=["GET"])
+@manager_required
+def api_customer_value_get():
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+    try:
+        customer_id = int(request.args.get("customer_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "缺少 customer_id"}), 400
+    cust = db_fetchone("SELECT id, company_id, name FROM company_customers WHERE id=?", (customer_id,))
+    if not cust:
+        return jsonify({"error": "顾客不存在"}), 404
+    if not is_super and cust["company_id"] != cid:
+        return jsonify({"error": "无权查看"}), 403
+    done = _load_customer_done_sessions(customer_id, cust["name"], cust["company_id"])
+    cur_sig = _value_signature(done) if done else None
+    cache = db_fetchone(
+        "SELECT content, source_signature, model, generated_at FROM customer_value_cache "
+        "WHERE company_id=? AND customer_id=?", (cust["company_id"], customer_id))
+    content = None
+    if cache and cache["content"]:
+        try:
+            content = json.loads(cache["content"])
+        except (json.JSONDecodeError, TypeError):
+            content = None
+    stale = bool(cache) and cache["source_signature"] != cur_sig
+    return jsonify({
+        "content": content,
+        "generated_at": cache["generated_at"] if cache else None,
+        "model": cache["model"] if cache else None,
+        "stale": stale,
+        "done_count": len(done),
+        "has_cache": content is not None,
+    })
+
+
+@app.route("/api/admin/customer_value", methods=["POST"])
+@manager_required
+def api_customer_value_generate():
+    """按需生成客户价值预测并缓存。一次 LLM 调用，结果存表。"""
+    data = request.get_json(silent=True) or {}
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+    try:
+        customer_id = int(data.get("customer_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "缺少 customer_id"}), 400
+    cust = db_fetchone("SELECT id, company_id, name FROM company_customers WHERE id=?", (customer_id,))
+    if not cust:
+        return jsonify({"error": "顾客不存在"}), 404
+    if not is_super and cust["company_id"] != cid:
+        return jsonify({"error": "无权操作"}), 403
+    done = _load_customer_done_sessions(customer_id, cust["name"], cust["company_id"])
+    if not done:
+        return jsonify({"error": "该客人还没有已完成的接诊分析，无法生成"}), 400
+
+    model = (data.get("model") or DEFAULT_MODEL)
+    if model not in MODEL_PROVIDER:
+        model = DEFAULT_MODEL
+    sys_prompt = (
+        "你是高端医美/美容院的客户经营顾问。基于该客人历次接待的分析记录，"
+        "综合产出对这个客人的价值评估与经营规划。要具体、可执行，不要空话套话。"
+        "按顾问分别评估匹配度时，只评估实际接待过的顾问。")
+    user_prompt = (
+        f"客人：{cust['name']}（历史接待 {len(done)} 次）\n\n"
+        f"以下是历次接待的关键分析：\n\n{_gather_value_input(done)}")
+    try:
+        result = _call_llm_with_retry(model, sys_prompt, user_prompt, tool=VALUE_TOOL,
+                                      max_tokens=8000, stage_label="客户价值预测")
+    except Exception as e:
+        return jsonify({"error": f"生成失败：{str(e)[:200]}"}), 502
+    if not isinstance(result, dict):
+        return jsonify({"error": "生成结果异常"}), 502
+
+    sig = _value_signature(done)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db_write(
+        """INSERT INTO customer_value_cache (company_id, customer_id, customer_name, content, source_signature, model, generated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(company_id, customer_id, customer_name)
+           DO UPDATE SET content=excluded.content, source_signature=excluded.source_signature,
+                         model=excluded.model, generated_at=excluded.generated_at""",
+        (cust["company_id"], customer_id, cust["name"], json.dumps(result, ensure_ascii=False),
+         sig, model, now))
+    return jsonify({"content": result, "generated_at": now, "model": model, "stale": False})
 
 
 # ============ 顾客下拉搜索（顾问/管理员通用） ============
@@ -6171,7 +7784,7 @@ def api_admin_companies_create():
 def api_customers_search():
     q = (request.args.get("q") or "").strip()
     cid = session.get("company_id") or 1
-    sql = "SELECT id, name, member_card FROM company_customers WHERE company_id=?"
+    sql = "SELECT id, name, member_card FROM company_customers WHERE company_id=? AND merged_into IS NULL"
     params = [cid]
     if q:
         sql += " AND (name LIKE ? OR member_card LIKE ?)"
@@ -6186,8 +7799,10 @@ import uuid as _uuid
 
 
 def _consultant_required():
-    if session.get("role") != "consultant":
-        return jsonify({"error": "仅顾问账号可用"}), 403
+    # 店长(store_manager)也是一线服务者，拥有全部顾问功能（上传/绑定/换绑/今日接诊）；
+    # 纯管理员(admin/super)不做一线接诊，故不放行。
+    if session.get("role") not in ("consultant", "store_manager"):
+        return jsonify({"error": "仅顾问 / 店长账号可用"}), 403
     return None
 
 
@@ -6593,9 +8208,9 @@ def api_consultant_today_reception_add():
     try:
         db_write(
             """INSERT OR IGNORE INTO daily_reception
-               (company_id, advisor_user_id, advisor_name, customer_id, service_date)
-               VALUES (?, ?, ?, ?, ?)""",
-            (cid, u["id"], advisor_name, customer_id, date),
+               (company_id, advisor_user_id, advisor_name, customer_id, service_date, store_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (cid, u["id"], advisor_name, customer_id, date, u["store_id"]),
         )
     except sqlite3.IntegrityError:
         pass
@@ -6976,6 +8591,426 @@ def api_consultant_rebind_request(rid):
          to_cust["id"], to_cust["name"], reason),
     )
     return jsonify({"ok": True, "request_id": req_id})
+
+
+# ============ 管理动线：未绑定录音 / 代绑 / 详情页换绑 ============
+def _advisor_user_for_manager(advisor_user_id, cid):
+    """解析代绑目标顾问 user 行，并校验权限：
+    - admin/super：本公司任意 consultant / store_manager。
+    - store_manager：仅限本店 consultant / store_manager。
+    返回 (user_row, error_jsonify_tuple)；成功时 error 为 None。"""
+    au = db_fetchone(
+        "SELECT id, username, role, company_id, advisor_name, store_id FROM users WHERE id=?",
+        (advisor_user_id,),
+    )
+    if not au or au["role"] not in ("consultant", "store_manager"):
+        return None, (jsonify({"error": "所选顾问不存在"}), 404)
+    if au["company_id"] != cid:
+        return None, (jsonify({"error": "所选顾问不属于本公司"}), 403)
+    if session.get("role") == "store_manager":
+        my_store = session.get("store_id")
+        if not my_store or au["store_id"] != my_store:
+            return None, (jsonify({"error": "店长只能代本店顾问操作"}), 403)
+    return au, None
+
+
+@app.route("/api/admin/unbound_recordings")
+@manager_required
+def api_admin_unbound_recordings():
+    """未绑定录音列表（session_id IS NULL）。admin/super 看本公司；
+    store_manager 收口到本店（recordings.store_id）。"""
+    cid = session.get("company_id") or 1
+    is_super = session.get("role") == "super"
+    where = "r.session_id IS NULL"
+    params = []
+    if not is_super:
+        where += " AND r.company_id=?"
+        params.append(cid)
+    store_filter = current_store_filter()
+    if store_filter is not None:
+        where += " AND r.store_id=?"
+        params.append(store_filter)
+    rows = db_fetchall(
+        f"""SELECT r.id, r.advisor, r.recorded_at, r.duration_label, r.asr_status,
+                   r.oss_key, r.uploader_user_id, r.store_id,
+                   u.advisor_name AS uploader_advisor_name, u.username AS uploader_username,
+                   st.name AS store_name
+            FROM recordings r
+            LEFT JOIN users u ON u.id=r.uploader_user_id
+            LEFT JOIN stores st ON st.id=r.store_id
+            WHERE {where}
+            ORDER BY r.recorded_at DESC, r.id DESC LIMIT 300""",
+        tuple(params),
+    )
+    out = []
+    for r in rows:
+        # 上传人/顾问：优先 recording.advisor，否则取 uploader 的 advisor_name/username
+        who = r["advisor"] or r["uploader_advisor_name"] or r["uploader_username"] or ""
+        try:
+            url = oss_signed_url(r["oss_key"]) if r["oss_key"] else None
+        except Exception:
+            url = None
+        out.append({
+            "id": r["id"],
+            "uploader": who,
+            "recorded_at": r["recorded_at"],
+            "duration_label": r["duration_label"],
+            "asr_status": r["asr_status"],
+            "store_id": r["store_id"],
+            "store_name": r["store_name"],
+            "audio_url": url,
+            "rec_date": _rec_date_of(r),
+        })
+    return jsonify({"items": out})
+
+
+@app.route("/api/admin/recordings/<int:rid>/admin_bind", methods=["POST"])
+@manager_required
+def api_admin_recording_admin_bind(rid):
+    """管理员/店长代绑：把未绑定录音绑给"某顾问当日的客人"。
+    - 选顾问 + 服务日期 + 客人（已有 daily_reception 客人 或 新增客人）。
+    - 校验客人必须在该顾问该日 daily_reception 内（新增则先写入）。
+    - 设 recording 的 advisor/customer/store_id/session_id，触发流水线。
+    - 审计 action='admin_bind' status='done'。"""
+    u = current_user()
+    cid = u["company_id"] or 1
+    data = request.get_json(silent=True) or {}
+    advisor_user_id = data.get("advisor_user_id")
+    if not advisor_user_id:
+        return jsonify({"error": "请选择顾问"}), 400
+    au, err = _advisor_user_for_manager(advisor_user_id, cid)
+    if err:
+        return err
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    if rec["company_id"] and rec["company_id"] != cid and session.get("role") != "super":
+        return jsonify({"error": "无权操作其他公司录音"}), 403
+    if rec["session_id"]:
+        return jsonify({"error": "该录音已绑定，请用换绑"}), 400
+    if session.get("role") == "store_manager":
+        if rec["store_id"] and rec["store_id"] != session.get("store_id"):
+            return jsonify({"error": "店长只能操作本店录音"}), 403
+    if _has_pending_delete_request(rid):
+        return jsonify({"error": "该录音正在申请删除，请先处理删除申请"}), 409
+
+    # 服务日期：默认录音日期
+    date = _norm_date(data.get("date")) or _rec_date_of(rec)
+    if not _parse_ymd(date):
+        return jsonify({"error": "日期格式不正确"}), 400
+
+    customer_id = data.get("customer_id")
+    # 新增客人加入该顾问当日接诊
+    if not customer_id:
+        name = (data.get("name") or "").strip()
+        phone_tail = _check_phone_tail(data.get("phone_tail"))
+        member_card = (data.get("member_card") or "").strip() or None
+        if not name:
+            return jsonify({"error": "请填写顾客姓名"}), 400
+        if not phone_tail:
+            return jsonify({"error": "请填写手机尾号（4 位数字）"}), 400
+        existed = db_fetchone(
+            """SELECT id FROM company_customers
+               WHERE company_id=? AND name=? AND COALESCE(phone_tail,'')=?""",
+            (cid, name, phone_tail),
+        )
+        if existed:
+            customer_id = existed["id"]
+        else:
+            try:
+                customer_id = db_write(
+                    """INSERT INTO company_customers (company_id, name, phone_tail, member_card)
+                       VALUES (?, ?, ?, ?)""",
+                    (cid, name, phone_tail, member_card),
+                )
+            except sqlite3.IntegrityError:
+                row = db_fetchone(
+                    "SELECT id, phone_tail FROM company_customers WHERE company_id=? AND name=?",
+                    (cid, name),
+                )
+                if not row:
+                    return jsonify({"error": "新增顾客失败"}), 500
+                if not row["phone_tail"]:
+                    db_write("UPDATE company_customers SET phone_tail=?, member_card=COALESCE(member_card,?) WHERE id=?",
+                             (phone_tail, member_card, row["id"]))
+                customer_id = row["id"]
+    cust = db_fetchone(
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        (customer_id, cid),
+    )
+    if not cust:
+        return jsonify({"error": "顾客不存在"}), 404
+
+    advisor_name = au["advisor_name"] or au["username"]
+    # 确保客人在该顾问该日 daily_reception 内（新增/已选都执行 INSERT OR IGNORE）
+    try:
+        db_write(
+            """INSERT OR IGNORE INTO daily_reception
+               (company_id, advisor_user_id, advisor_name, customer_id, service_date, store_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (cid, au["id"], advisor_name, customer_id, date, au["store_id"]),
+        )
+    except sqlite3.IntegrityError:
+        pass
+    dr = db_fetchone(
+        """SELECT id FROM daily_reception
+           WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
+        (au["id"], customer_id, date),
+    )
+    if not dr:
+        return jsonify({"error": "客人未在该顾问当日接诊列表"}), 400
+
+    sid = get_or_create_session(advisor_name, cust["name"], date, company_id=cid, customer_id=customer_id)
+    if not sid:
+        return jsonify({"error": "创建/查找接诊包失败"}), 500
+    locked_row = db_fetchone("SELECT locked FROM sessions WHERE id=?", (sid,))
+    if locked_row and locked_row["locked"]:
+        return jsonify({"error": "该接诊包已锁定，无法再添加录音"}), 409
+
+    # OSS 重命名（顾问端新格式录音），失败回滚
+    try:
+        new_key, old_key_to_del = _maybe_rename_consultant_oss(rec, cust["name"], advisor_name)
+    except Exception as e:
+        return jsonify({"error": f"OSS 重命名失败：{e}"}), 500
+    try:
+        db_write(
+            """UPDATE recordings SET session_id=?, customer=?, advisor=?, oss_key=?, store_id=?,
+               asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
+               WHERE id=?""",
+            (sid, cust["name"], advisor_name, new_key, au["store_id"], rid),
+        )
+    except Exception as e:
+        if old_key_to_del and new_key != old_key_to_del:
+            _oss_delete_quiet(new_key)
+        return jsonify({"error": f"绑定失败：{e}"}), 500
+    if old_key_to_del and new_key != old_key_to_del:
+        _oss_delete_quiet(old_key_to_del)
+    trigger_pipeline_for_recording(rid)
+
+    db_write(
+        """INSERT INTO rebind_requests
+           (company_id, recording_id, rec_date, requester_user_id, requester_name,
+            from_session_id, from_customer_id, from_customer_name,
+            to_customer_id, to_customer_name, reason, status, action,
+            reviewer_user_id, reviewer_name, reviewed_at)
+           VALUES (?,?,?,?,?,NULL,NULL,'(未绑定)',?,?,?,'done','admin_bind',?,?,datetime('now','localtime'))""",
+        (cid, rid, date, u["id"], u["advisor_name"] or u["username"],
+         cust["id"], cust["name"], data.get("reason") or "(管理员代绑)",
+         u["id"], u["advisor_name"] or u["username"]),
+    )
+    return jsonify({"ok": True, "session_id": sid})
+
+
+@app.route("/api/admin/session/<int:sid>/rebind", methods=["POST"])
+@manager_required
+def api_admin_session_rebind(sid):
+    """管理员/店长在详情页换绑：把该 session（及其录音）换绑到另一个客人。
+    目标客人必须在该 session 顾问(s.advisor 对应 user)当日(s.service_date)的 daily_reception 内。
+    店长仅限本店 session。沿用顾问端换绑：作废旧分析(outdated)、写审计 action='rebind'。"""
+    u = current_user()
+    cid = u["company_id"] or 1
+    data = request.get_json(silent=True) or {}
+    to_customer_id = data.get("to_customer_id")
+    reason = (data.get("reason") or "").strip()
+    if not to_customer_id:
+        return jsonify({"error": "请选择换绑目标顾客"}), 400
+    if not reason:
+        return jsonify({"error": "请填写换绑理由"}), 400
+    sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (sid,))
+    if not sess:
+        return jsonify({"error": "接诊包不存在"}), 404
+    if sess["company_id"] and sess["company_id"] != cid and session.get("role") != "super":
+        return jsonify({"error": "无权操作其他公司接诊包"}), 403
+    if session.get("role") == "store_manager":
+        if sess["store_id"] and sess["store_id"] != session.get("store_id"):
+            return jsonify({"error": "店长只能操作本店接诊包"}), 403
+
+    advisor = sess["advisor"]
+    service_date = sess["service_date"]
+    # 解析该 session 顾问对应 user（用于查 daily_reception）
+    au = db_fetchone(
+        "SELECT id, advisor_name FROM users WHERE advisor_name=? AND company_id=? "
+        "AND role IN ('consultant','store_manager') ORDER BY id LIMIT 1",
+        (advisor, sess["company_id"] or cid),
+    )
+    if not au:
+        return jsonify({"error": "无法定位该接诊顾问账号，无法校验当日接诊"}), 400
+
+    to_cust = db_fetchone(
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        (to_customer_id, sess["company_id"] or cid),
+    )
+    if not to_cust:
+        return jsonify({"error": "目标顾客不存在"}), 404
+    dr = db_fetchone(
+        """SELECT id FROM daily_reception
+           WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
+        (au["id"], to_customer_id, service_date),
+    )
+    if not dr:
+        return jsonify({"error": "目标顾客不在该顾问当日接诊列表"}), 400
+
+    new_sid = get_or_create_session(advisor, to_cust["name"], service_date,
+                                    company_id=sess["company_id"] or cid, customer_id=to_customer_id)
+    if not new_sid:
+        return jsonify({"error": "创建目标接诊包失败"}), 500
+    if new_sid == sid:
+        return jsonify({"error": "目标顾客与当前一致，无需换绑"}), 400
+    new_locked = db_fetchone("SELECT locked FROM sessions WHERE id=?", (new_sid,))
+    if new_locked and new_locked["locked"]:
+        return jsonify({"error": "目标接诊包已锁定，无法换绑"}), 409
+
+    recs = db_fetchall("SELECT * FROM recordings WHERE session_id=?", (sid,))
+    # 逐条搬录音（含 OSS 重命名）
+    for rec in recs:
+        try:
+            new_key, old_key_to_del = _maybe_rename_consultant_oss(rec, to_cust["name"], advisor)
+        except Exception as e:
+            return jsonify({"error": f"OSS 重命名失败：{e}"}), 500
+        try:
+            db_write(
+                """UPDATE recordings SET session_id=?, customer=?, oss_key=?, speaker_confirmed=0,
+                   asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
+                   WHERE id=?""",
+                (new_sid, to_cust["name"], new_key, rec["id"]),
+            )
+        except Exception as e:
+            if old_key_to_del and new_key != old_key_to_del:
+                _oss_delete_quiet(new_key)
+            return jsonify({"error": f"换绑失败：{e}"}), 500
+        if old_key_to_del and new_key != old_key_to_del:
+            _oss_delete_quiet(old_key_to_del)
+
+    # 新 session：作废旧分析（仅 done/failed 标 outdated）
+    db_write(
+        """UPDATE sessions SET locked=0,
+               analysis_status=CASE WHEN analysis_status IN ('done','failed') THEN 'outdated' ELSE analysis_status END
+           WHERE id=?""",
+        (new_sid,),
+    )
+    # 旧 session：变空则清分析，非空则作废
+    from_cust_name = sess["customer"] or ""
+    from_cust = db_fetchone(
+        "SELECT id FROM company_customers WHERE company_id=? AND name=?",
+        (sess["company_id"] or cid, from_cust_name),
+    )
+    from_cust_id = from_cust["id"] if from_cust else None
+    cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (sid,))
+    if not cnt or not cnt["n"]:
+        db_write(
+            """UPDATE sessions SET locked=0,
+                   analysis_status=NULL, analysis_result=NULL, analysis_error=NULL,
+                   analysis_started_at=NULL, analysis_finished_at=NULL,
+                   analysis_signature=NULL, analysis_scores=NULL,
+                   analysis_progress=NULL, task_status=NULL
+               WHERE id=?""",
+            (sid,),
+        )
+    else:
+        db_write(
+            """UPDATE sessions SET locked=0,
+                   analysis_status=CASE WHEN analysis_status IN ('done','failed') THEN 'outdated' ELSE analysis_status END
+               WHERE id=?""",
+            (sid,),
+        )
+
+    rec_date = service_date
+    db_write(
+        """INSERT INTO rebind_requests
+           (company_id, recording_id, rec_date, requester_user_id, requester_name,
+            from_session_id, from_customer_id, from_customer_name,
+            to_customer_id, to_customer_name, reason, status, action,
+            reviewer_user_id, reviewer_name, reviewed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,'done','rebind',?,?,datetime('now','localtime'))""",
+        (sess["company_id"] or cid, recs[0]["id"] if recs else None, rec_date,
+         u["id"], u["advisor_name"] or u["username"],
+         sid, from_cust_id, from_cust_name,
+         to_cust["id"], to_cust["name"], reason,
+         u["id"], u["advisor_name"] or u["username"]),
+    )
+    # 触发新 session 分析（如有录音）
+    if recs:
+        maybe_trigger_session_analysis(new_sid)
+    return jsonify({"ok": True, "new_session_id": new_sid})
+
+
+@app.route("/api/admin/session/<int:sid>/rebind_candidates")
+@manager_required
+def api_admin_session_rebind_candidates(sid):
+    """详情页换绑：列出该 session 顾问当日接诊白名单中的客人（候选目标）。"""
+    cid = session.get("company_id") or 1
+    sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (sid,))
+    if not sess:
+        return jsonify({"error": "接诊包不存在"}), 404
+    if sess["company_id"] and sess["company_id"] != cid and session.get("role") != "super":
+        return jsonify({"error": "无权查看"}), 403
+    if session.get("role") == "store_manager":
+        if sess["store_id"] and sess["store_id"] != session.get("store_id"):
+            return jsonify({"error": "无权查看"}), 403
+    au = db_fetchone(
+        "SELECT id FROM users WHERE advisor_name=? AND company_id=? "
+        "AND role IN ('consultant','store_manager') ORDER BY id LIMIT 1",
+        (sess["advisor"], sess["company_id"] or cid),
+    )
+    if not au:
+        return jsonify({"items": [], "service_date": sess["service_date"], "advisor": sess["advisor"]})
+    rows = db_fetchall(
+        """SELECT dr.customer_id, c.name, c.phone_tail, c.member_card
+           FROM daily_reception dr JOIN company_customers c ON c.id=dr.customer_id
+           WHERE dr.advisor_user_id=? AND dr.service_date=?
+           ORDER BY dr.id DESC""",
+        (au["id"], sess["service_date"]),
+    )
+    items = [{"customer_id": r["customer_id"], "name": r["name"],
+              "phone_tail": r["phone_tail"], "member_card": r["member_card"]} for r in rows]
+    return jsonify({"items": items, "service_date": sess["service_date"], "advisor": sess["advisor"],
+                    "current_customer": sess["customer"], "current_customer_id": sess["customer_id"]})
+
+
+@app.route("/api/admin/bind_advisors")
+@manager_required
+def api_admin_bind_advisors():
+    """代绑弹窗：可选顾问列表（本公司 consultant/store_manager；店长仅本店）。"""
+    cid = session.get("company_id") or 1
+    is_super = session.get("role") == "super"
+    where = "role IN ('consultant','store_manager')"
+    params = []
+    if not is_super:
+        where += " AND company_id=?"
+        params.append(cid)
+    if session.get("role") == "store_manager":
+        where += " AND store_id=?"
+        params.append(session.get("store_id") or 0)
+    rows = db_fetchall(
+        f"SELECT id, advisor_name, username, store_id FROM users WHERE {where} ORDER BY advisor_name",
+        tuple(params),
+    )
+    out = [{"id": r["id"], "name": r["advisor_name"] or r["username"], "store_id": r["store_id"]} for r in rows]
+    return jsonify({"items": out})
+
+
+@app.route("/api/admin/advisor_reception")
+@manager_required
+def api_admin_advisor_reception():
+    """代绑弹窗：某顾问某日已有的接诊客人列表。"""
+    cid = session.get("company_id") or 1
+    advisor_user_id = request.args.get("advisor_user_id")
+    date = _norm_date(request.args.get("date"))
+    if not advisor_user_id or not date:
+        return jsonify({"items": []})
+    au, err = _advisor_user_for_manager(advisor_user_id, cid)
+    if err:
+        return err
+    rows = db_fetchall(
+        """SELECT dr.customer_id, c.name, c.phone_tail, c.member_card
+           FROM daily_reception dr JOIN company_customers c ON c.id=dr.customer_id
+           WHERE dr.advisor_user_id=? AND dr.service_date=?
+           ORDER BY dr.id DESC""",
+        (au["id"], date),
+    )
+    items = [{"customer_id": r["customer_id"], "name": r["name"],
+              "phone_tail": r["phone_tail"], "member_card": r["member_card"]} for r in rows]
+    return jsonify({"items": items})
 
 
 @app.route("/api/admin/rebind_requests")
@@ -7979,6 +10014,563 @@ def task_health_check_loop():
 
 
 threading.Thread(target=task_health_check_loop, daemon=True).start()
+
+
+# ============================================================================
+# 模块4：提醒系统（状态机 + 卡点看板 + 分级提醒调度器 + 站内提醒）
+# ----------------------------------------------------------------------------
+# 渠道取舍：
+#   - 站内系统消息(inapp) / 看板标红(board)：真实落库实现。
+#   - 电话(phone)/短信(sms)/企业微信(wecom)：仅做可插拔渠道 stub，不接任何
+#     真实运营商（无账号/凭证）。send_phone_reminder() 只把"本应外呼"写进
+#     reminder_log(result='stub_logged') 并打日志。真实接入点见该函数注释。
+# ============================================================================
+
+# 状态枚举（统一口径）
+PIPELINE_STATES = ("orphan", "bound_unanalyzed", "analyzing", "done_unviewed", "viewed", "error")
+PIPELINE_STATE_LABELS = {
+    "orphan": "未绑定",
+    "bound_unanalyzed": "已绑定未分析",
+    "analyzing": "分析中",
+    "done_unviewed": "分析完成未查看",
+    "viewed": "已查看",
+    "error": "异常",
+}
+
+
+def get_reminder_config(company_id, store_id=None):
+    """取某公司/门店的提醒配置：优先门店级，回退公司默认，再回退硬编码默认。
+    返回 dict（始终非空，带默认值）。"""
+    defaults = {
+        "enable_phone": 0, "remind_after_hours": 2, "max_per_day": 3,
+        "avoid_offwork": 1, "work_start": "09:00", "work_end": "21:00",
+        "retry_on_fail": 0, "log_results": 1,
+    }
+    row = None
+    if store_id is not None:
+        row = db_fetchone(
+            "SELECT * FROM reminder_config WHERE company_id=? AND store_id=?",
+            (company_id, store_id),
+        )
+    if not row:
+        row = db_fetchone(
+            "SELECT * FROM reminder_config WHERE company_id=? AND store_id IS NULL",
+            (company_id,),
+        )
+    if not row:
+        return dict(defaults)
+    d = dict(row)
+    for k, v in defaults.items():
+        if d.get(k) is None:
+            d[k] = v
+    return d
+
+
+def _user_for_advisor(company_id, advisor_name):
+    """按 advisor_name 找该顾问的 user 行（用于定位提醒目标 + 门店）。找不到返回 None。"""
+    if not advisor_name:
+        return None
+    return db_fetchone(
+        "SELECT id, advisor_name, store_id FROM users "
+        "WHERE company_id=? AND advisor_name=? AND role IN ('consultant','store_manager') "
+        "ORDER BY id LIMIT 1",
+        (company_id, advisor_name),
+    )
+
+
+def _within_work_hours(now, cfg):
+    """是否在工作时间窗口内（用于电话级避让）。窗口跨午夜也兼容。"""
+    try:
+        ws = datetime.strptime(cfg["work_start"], "%H:%M").time()
+        we = datetime.strptime(cfg["work_end"], "%H:%M").time()
+    except Exception:
+        return True
+    t = now.time()
+    if ws <= we:
+        return ws <= t <= we
+    return t >= ws or t <= we  # 跨午夜窗口
+
+
+def send_phone_reminder(company_id, store_id, target_user_id, target_name,
+                        kind, ref_type, ref_id, message, cfg):
+    """电话提醒「可插拔渠道」stub。
+
+    !!! 真实接入点 !!!
+    目前不接任何运营商：没有阿里云/腾讯云语音的 AppKey/Token/被叫号绑定关系。
+    要真实外呼时，在此处替换为：
+      - 阿里云语音通知 SingleCallByTts（dyvmsapi）/ 腾讯云语音 VoiceMessage；
+      - 或绑定虚拟号(AXB)做真人回呼。
+    需要：账号 AK/SK、已报备的语音模板 ID、被叫人手机号（users.phone）。
+    现在仅把"本应外呼"这件事落库 + 打日志，result='stub_logged'。
+    """
+    phone = None
+    if target_user_id:
+        urow = db_fetchone("SELECT phone FROM users WHERE id=?", (target_user_id,))
+        phone = urow["phone"] if urow else None
+    result = f"stub_logged (would call {phone or 'N/A'})"
+    print(f"[reminder][phone-stub] company={company_id} target={target_name}({phone}) "
+          f"kind={kind} ref={ref_type}:{ref_id} msg={message}", flush=True)
+    if int(cfg.get("log_results") or 1):
+        db_write(
+            """INSERT INTO reminder_log
+               (company_id, store_id, target_user_id, target_name, kind, level, channel,
+                ref_type, ref_id, message, result)
+               VALUES (?, ?, ?, ?, ?, 2, 'phone', ?, ?, ?, ?)""",
+            (company_id, store_id, target_user_id, target_name, kind,
+             ref_type, ref_id, message, result),
+        )
+    return result
+
+
+def _already_reminded(kind, ref_type, ref_id, level, channel, day):
+    """幂等去重：同一对象、同一级、同一渠道、同一天是否已写过提醒。"""
+    row = db_fetchone(
+        "SELECT 1 FROM reminder_log WHERE kind=? AND ref_type=? AND ref_id=? "
+        "AND level=? AND channel=? AND date(created_at)=? LIMIT 1",
+        (kind, ref_type, ref_id, level, channel, day),
+    )
+    return row is not None
+
+
+def _reminders_today_count(target_user_id, ref_type, ref_id, day):
+    """某对象当天已产生的"主动提醒"条数（用于 max_per_day 限流；不含 board/processed 修正）。"""
+    row = db_fetchone(
+        "SELECT COUNT(*) AS c FROM reminder_log WHERE target_user_id=? AND ref_type=? "
+        "AND ref_id=? AND channel IN ('inapp','phone','sms','wecom') AND date(created_at)=?",
+        (target_user_id, ref_type, ref_id, day),
+    )
+    return row["c"] if row else 0
+
+
+def _emit_reminder(company_id, store_id, target_user_id, target_name, kind, level,
+                   channel, ref_type, ref_id, message, result="generated"):
+    """写一条提醒（已假定过了去重 + 限流判断）。返回 lastrowid。"""
+    return db_write(
+        """INSERT INTO reminder_log
+           (company_id, store_id, target_user_id, target_name, kind, level, channel,
+            ref_type, ref_id, message, result)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (company_id, store_id, target_user_id, target_name, kind, level, channel,
+         ref_type, ref_id, message, result),
+    )
+
+
+def _hours_since(ts_str, now):
+    """ts_str（localtime 字符串）距 now 的小时数；无法解析返回 None。"""
+    if not ts_str:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            dt = datetime.strptime(str(ts_str)[:26], fmt)
+            return (now - dt).total_seconds() / 3600.0
+        except ValueError:
+            continue
+    return None
+
+
+def run_reminder_scan(now=None):
+    """扫描所有公司，按 reminder_config 产生分级提醒并写 reminder_log（幂等）。
+    可直接调用（自测/定时器都用它）。返回统计 dict。
+
+    规则：
+      未绑定录音(unbound)：阈值 H=remind_after_hours
+        L1 >H → inapp（提醒该顾问）
+        L2 当日结束仍未绑定 → phone(stub，需 enable_phone)
+        L3 >24h → board（通知店长/管理员，看板标红）
+      报告未查看(unviewed)：
+        L1 完成 >H → inapp（提醒顾问）
+        L2 次日仍未看 → inapp（顾问，messsage 注明同时通知店长）+ board 给店长
+        L3 >24h → board（管理员看板标红）
+    去重：同对象同级同渠道同天只写一次；inapp/phone 受 max_per_day 限流。
+    闭环：对象已不满足条件 → 把该对象旧的未处理 inapp/phone 提醒置 processed=1。
+    """
+    now = now or datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    stats = {"unbound_l1": 0, "unbound_l2": 0, "unbound_l3": 0,
+             "unviewed_l1": 0, "unviewed_l2": 0, "unviewed_l3": 0,
+             "closed": 0, "scanned_companies": 0}
+
+    companies = db_fetchall("SELECT id FROM companies")
+    for crow in companies:
+        cid = crow["id"]
+        stats["scanned_companies"] += 1
+
+        # ---------- 1) 未绑定录音 ----------
+        # 未绑定 = session_id IS NULL 且非 ASR 失败（失败属"异常"，不催绑）
+        orphans = db_fetchall(
+            """SELECT id, advisor, uploader_user_id, store_id, created_at, recorded_at, asr_status
+               FROM recordings
+               WHERE company_id=? AND session_id IS NULL
+                 AND IFNULL(asr_status,'') NOT IN ('failed')""",
+            (cid,),
+        )
+        active_orphan_ids = set()
+        for r in orphans:
+            active_orphan_ids.add(r["id"])
+            base_ts = r["created_at"] or r["recorded_at"]
+            hrs = _hours_since(base_ts, now)
+            if hrs is None:
+                continue
+            # 定位目标顾问 + 门店
+            tu_id, tu_name, store_id = None, (r["advisor"] or "未知顾问"), r["store_id"]
+            if r["uploader_user_id"]:
+                u = db_fetchone("SELECT id, advisor_name, store_id FROM users WHERE id=?",
+                                (r["uploader_user_id"],))
+                if u:
+                    tu_id, tu_name = u["id"], (u["advisor_name"] or tu_name)
+                    store_id = store_id or u["store_id"]
+            if tu_id is None:
+                u = _user_for_advisor(cid, r["advisor"])
+                if u:
+                    tu_id, tu_name = u["id"], (u["advisor_name"] or tu_name)
+                    store_id = store_id or u["store_id"]
+            cfg = get_reminder_config(cid, store_id)
+            H = int(cfg.get("remind_after_hours") or 2)
+
+            # L1：>H 小时未绑定 → 站内提醒顾问
+            if hrs >= H and tu_id:
+                if (not _already_reminded("unbound", "recording", r["id"], 1, "inapp", today)
+                        and _reminders_today_count(tu_id, "recording", r["id"], today) < int(cfg.get("max_per_day") or 3)):
+                    _emit_reminder(cid, store_id, tu_id, tu_name, "unbound", 1, "inapp",
+                                   "recording", r["id"],
+                                   f"有一条录音已超过 {H} 小时未绑定客人，请尽快归档。")
+                    stats["unbound_l1"] += 1
+
+            # L2：当日结束仍未绑定（录音不是今天产生的 → 已跨过当日）→ 电话提醒(stub)
+            rec_day = (str(base_ts)[:10]) if base_ts else None
+            if rec_day and rec_day < today and tu_id and int(cfg.get("enable_phone") or 0):
+                offwork_ok = (not int(cfg.get("avoid_offwork") or 0)) or _within_work_hours(now, cfg)
+                if (offwork_ok
+                        and not _already_reminded("unbound", "recording", r["id"], 2, "phone", today)
+                        and _reminders_today_count(tu_id, "recording", r["id"], today) < int(cfg.get("max_per_day") or 3)):
+                    send_phone_reminder(cid, store_id, tu_id, tu_name, "unbound",
+                                        "recording", r["id"],
+                                        "您有当日录音始终未绑定客人，请尽快处理。", cfg)
+                    stats["unbound_l2"] += 1
+
+            # L3：>24h → 看板标红（通知店长/管理员）
+            if hrs >= 24:
+                if not _already_reminded("unbound", "recording", r["id"], 3, "board", today):
+                    _emit_reminder(cid, store_id, tu_id, tu_name, "unbound", 3, "board",
+                                   "recording", r["id"],
+                                   f"录音超过 24 小时未绑定（顾问：{tu_name}），看板标红。")
+                    stats["unbound_l3"] += 1
+
+        # 闭环：已绑定/已消失的录音 → 关掉旧的未处理 inapp/phone 未绑定提醒
+        closed = _close_resolved_reminders(cid, "unbound", "recording", active_orphan_ids)
+        stats["closed"] += closed
+
+        # ---------- 2) 报告未查看 ----------
+        # done 且无 report_view_events(enter) = 完成未查看
+        unviewed = db_fetchall(
+            """SELECT s.id, s.advisor, s.store_id, s.analysis_finished_at
+               FROM sessions s
+               WHERE s.company_id=? AND s.analysis_status='done'
+                 AND NOT EXISTS (
+                     SELECT 1 FROM report_view_events rve
+                     WHERE rve.session_id=s.id AND rve.event='enter'
+                 )""",
+            (cid,),
+        )
+        active_unviewed_ids = set()
+        for s in unviewed:
+            active_unviewed_ids.add(s["id"])
+            hrs = _hours_since(s["analysis_finished_at"], now)
+            if hrs is None:
+                continue
+            u = _user_for_advisor(cid, s["advisor"])
+            tu_id = u["id"] if u else None
+            tu_name = (u["advisor_name"] if u else None) or (s["advisor"] or "未知顾问")
+            store_id = s["store_id"] or (u["store_id"] if u else None)
+            cfg = get_reminder_config(cid, store_id)
+            H = int(cfg.get("remind_after_hours") or 2)
+
+            # L1：完成 >H 未查看 → 提醒顾问
+            if hrs >= H and tu_id:
+                if (not _already_reminded("unviewed", "session", s["id"], 1, "inapp", today)
+                        and _reminders_today_count(tu_id, "session", s["id"], today) < int(cfg.get("max_per_day") or 3)):
+                    _emit_reminder(cid, store_id, tu_id, tu_name, "unviewed", 1, "inapp",
+                                   "session", s["id"],
+                                   f"您有一份分析报告已生成超过 {H} 小时尚未查看，请及时复盘。")
+                    stats["unviewed_l1"] += 1
+
+            # L2：次日仍未看（>24h 但还没到 L3 的多次提醒前）→ 顾问 + 店长(board)
+            if hrs >= 24:
+                if tu_id and not _already_reminded("unviewed", "session", s["id"], 2, "inapp", today) \
+                        and _reminders_today_count(tu_id, "session", s["id"], today) < int(cfg.get("max_per_day") or 3):
+                    _emit_reminder(cid, store_id, tu_id, tu_name, "unviewed", 2, "inapp",
+                                   "session", s["id"],
+                                   "报告隔日仍未查看，已同步提醒店长，请尽快查看。")
+                    stats["unviewed_l2"] += 1
+                if not _already_reminded("unviewed", "session", s["id"], 2, "board", today):
+                    _emit_reminder(cid, store_id, tu_id, tu_name, "unviewed", 2, "board",
+                                   "session", s["id"],
+                                   f"报告隔日仍未查看（顾问：{tu_name}），请店长跟进。")
+
+            # L3：>48h（多次/长时间未看）→ 管理员看板标红
+            if hrs >= 48:
+                if not _already_reminded("unviewed", "session", s["id"], 3, "board", today):
+                    _emit_reminder(cid, store_id, tu_id, tu_name, "unviewed", 3, "board",
+                                   "session", s["id"],
+                                   f"报告超过 48 小时未查看（顾问：{tu_name}），管理员看板标红。")
+                    stats["unviewed_l3"] += 1
+
+        # 闭环：已查看的报告 → 关掉旧的未处理 inapp 未查看提醒
+        stats["closed"] += _close_resolved_reminders(cid, "unviewed", "session", active_unviewed_ids)
+
+    return stats
+
+
+def _close_resolved_reminders(company_id, kind, ref_type, active_ids):
+    """把"对象已不满足条件"的旧未处理站内/电话提醒置 processed=1。
+    active_ids = 当前仍满足该 kind 条件的 ref_id 集合；不在其中的即已解决。"""
+    rows = db_fetchall(
+        "SELECT id, ref_id FROM reminder_log WHERE company_id=? AND kind=? AND ref_type=? "
+        "AND channel IN ('inapp','phone','sms','wecom') AND processed=0",
+        (company_id, kind, ref_type),
+    )
+    n = 0
+    for r in rows:
+        if r["ref_id"] not in active_ids:
+            db_write(
+                "UPDATE reminder_log SET processed=1, processed_at=datetime('now','localtime') WHERE id=?",
+                (r["id"],),
+            )
+            n += 1
+    return n
+
+
+def reminder_scheduler_loop():
+    """后台 daemon 线程：周期（每 10 分钟）跑一次 run_reminder_scan。
+    不用 APScheduler，just while True + sleep。"""
+    import time as _t
+    _t.sleep(60)  # 启动后稍等，避开 init 高峰
+    while True:
+        try:
+            st = run_reminder_scan()
+            print(f"[reminder_scheduler] scan done: {st}", flush=True)
+        except Exception as e:
+            print(f"[reminder_scheduler] error: {e}", flush=True)
+        _t.sleep(600)
+
+
+threading.Thread(target=reminder_scheduler_loop, daemon=True, name="reminder-scheduler").start()
+
+
+# ---------- 接诊卡点：状态分桶 + 卡住项 ----------
+@app.route("/api/admin/pipeline_status")
+@manager_required
+def api_admin_pipeline_status():
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+    sf, sf_params = store_scope_sql("store_id")
+
+    def _co(prefix=""):
+        # 公司过滤（super 看全部）
+        if is_super:
+            return "", []
+        col = f"{prefix}company_id" if prefix else "company_id"
+        return f"{col}=?", [cid]
+
+    buckets = {k: 0 for k in PIPELINE_STATES}
+
+    # orphan：未绑定录音
+    co, cop = _co()
+    where = [w for w in [co, sf] if w]
+    params = cop + sf_params
+    row = db_fetchone(
+        "SELECT COUNT(*) AS c FROM recordings WHERE session_id IS NULL "
+        "AND IFNULL(asr_status,'') NOT IN ('failed')"
+        + ("".join(" AND " + w for w in where)),
+        params,
+    )
+    buckets["orphan"] = row["c"] if row else 0
+
+    # asr failed 录音算异常
+    row = db_fetchone(
+        "SELECT COUNT(*) AS c FROM recordings WHERE session_id IS NULL AND asr_status='failed'"
+        + ("".join(" AND " + w for w in where)),
+        params,
+    )
+    err_rec = row["c"] if row else 0
+
+    # session 维度：按 analysis_status + 是否查看分桶
+    sco, scop = _co()
+    swhere = [w for w in [sco, sf] if w]
+    sparams = scop + sf_params
+    sql = (
+        "SELECT analysis_status AS st, "
+        "  EXISTS(SELECT 1 FROM report_view_events r WHERE r.session_id=sessions.id AND r.event='enter') AS viewed, "
+        "  COUNT(*) AS c "
+        "FROM sessions WHERE service_date NOT LIKE '?-%' "
+        + ("".join(" AND " + w for w in swhere))
+        + " GROUP BY st, viewed"
+    )
+    for r in db_fetchall(sql, sparams):
+        st = r["st"] or "pending"
+        viewed = r["viewed"]
+        c = r["c"]
+        if st in ("queued", "running"):
+            buckets["analyzing"] += c
+        elif st == "done":
+            buckets["done_unviewed" if not viewed else "viewed"] += c
+        elif st in ("failed", "outdated"):
+            buckets["error"] += c
+        else:  # pending 等：已绑定未分析
+            buckets["bound_unanalyzed"] += c
+    buckets["error"] += err_rec
+
+    # 卡住项明细：未绑定 >2h、完成未查看 >2h，超 24h 标红
+    now = datetime.now()
+    stuck = []
+    orphan_rows = db_fetchall(
+        "SELECT id, advisor, recorded_at, created_at, store_id FROM recordings "
+        "WHERE session_id IS NULL AND IFNULL(asr_status,'') NOT IN ('failed')"
+        + ("".join(" AND " + w for w in where))
+        + " ORDER BY id DESC LIMIT 500",
+        params,
+    )
+    for r in orphan_rows:
+        hrs = _hours_since(r["created_at"] or r["recorded_at"], now)
+        if hrs is not None and hrs >= 2:
+            stuck.append({
+                "kind": "unbound", "ref_type": "recording", "ref_id": r["id"],
+                "advisor": r["advisor"] or "未知顾问",
+                "hours": round(hrs, 1), "red": hrs >= 24,
+                "when": r["created_at"] or r["recorded_at"],
+            })
+    unviewed_rows = db_fetchall(
+        "SELECT id, advisor, analysis_finished_at FROM sessions "
+        "WHERE analysis_status='done' AND service_date NOT LIKE '?-%' "
+        "AND NOT EXISTS (SELECT 1 FROM report_view_events r WHERE r.session_id=sessions.id AND r.event='enter')"
+        + ("".join(" AND " + w for w in swhere))
+        + " ORDER BY id DESC LIMIT 500",
+        sparams,
+    )
+    for r in unviewed_rows:
+        hrs = _hours_since(r["analysis_finished_at"], now)
+        if hrs is not None and hrs >= 2:
+            stuck.append({
+                "kind": "unviewed", "ref_type": "session", "ref_id": r["id"],
+                "advisor": r["advisor"] or "未知顾问",
+                "hours": round(hrs, 1), "red": hrs >= 24,
+                "when": r["analysis_finished_at"],
+            })
+    stuck.sort(key=lambda x: x["hours"], reverse=True)
+
+    return jsonify({
+        "buckets": [{"key": k, "label": PIPELINE_STATE_LABELS[k], "count": buckets[k]}
+                    for k in PIPELINE_STATES],
+        "stuck": stuck[:200],
+        "labels": PIPELINE_STATE_LABELS,
+    })
+
+
+# ---------- 提醒设置：读写 reminder_config ----------
+@app.route("/api/admin/reminder_config", methods=["GET"])
+@manager_required
+def api_admin_reminder_config_get():
+    cid = session.get("company_id")
+    sid = request.args.get("store_id")
+    sid = int(sid) if (sid and sid.strip().isdigit()) else None
+    # store_manager 锁本店
+    if session.get("role") == "store_manager":
+        sid = session.get("store_id")
+    cfg = get_reminder_config(cid, sid)
+    cfg["store_id"] = sid
+    return jsonify(cfg)
+
+
+@app.route("/api/admin/reminder_config", methods=["POST"])
+@admin_required
+def api_admin_reminder_config_post():
+    cid = session.get("company_id")
+    data = request.get_json(silent=True) or {}
+    raw_sid = data.get("store_id")
+    sid = int(raw_sid) if (raw_sid not in (None, "", "null")) else None
+
+    def _i(key, default):
+        try:
+            return int(data.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    enable_phone = 1 if data.get("enable_phone") else 0
+    remind_after_hours = max(1, _i("remind_after_hours", 2))
+    max_per_day = max(1, _i("max_per_day", 3))
+    avoid_offwork = 1 if data.get("avoid_offwork") else 0
+    work_start = (data.get("work_start") or "09:00")[:5]
+    work_end = (data.get("work_end") or "21:00")[:5]
+    retry_on_fail = 1 if data.get("retry_on_fail") else 0
+    log_results = 1 if data.get("log_results", True) else 0
+
+    existing = db_fetchone(
+        "SELECT id FROM reminder_config WHERE company_id=? AND IFNULL(store_id,-1)=IFNULL(?,-1)",
+        (cid, sid),
+    )
+    if existing:
+        db_write(
+            """UPDATE reminder_config SET enable_phone=?, remind_after_hours=?, max_per_day=?,
+               avoid_offwork=?, work_start=?, work_end=?, retry_on_fail=?, log_results=?,
+               updated_at=datetime('now','localtime') WHERE id=?""",
+            (enable_phone, remind_after_hours, max_per_day, avoid_offwork, work_start,
+             work_end, retry_on_fail, log_results, existing["id"]),
+        )
+    else:
+        db_write(
+            """INSERT INTO reminder_config
+               (company_id, store_id, enable_phone, remind_after_hours, max_per_day,
+                avoid_offwork, work_start, work_end, retry_on_fail, log_results)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (cid, sid, enable_phone, remind_after_hours, max_per_day, avoid_offwork,
+             work_start, work_end, retry_on_fail, log_results),
+        )
+    return jsonify({"ok": True})
+
+
+# ---------- 提醒日志（管理端查看） ----------
+@app.route("/api/admin/reminder_log")
+@manager_required
+def api_admin_reminder_log():
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+    sf, sf_params = store_scope_sql("store_id")
+    where, params = [], []
+    if not is_super:
+        where.append("company_id=?")
+        params.append(cid)
+    if sf:
+        where.append(sf)
+        params += sf_params
+    kind = request.args.get("kind")
+    if kind in ("unbound", "unviewed"):
+        where.append("kind=?")
+        params.append(kind)
+    sql = "SELECT * FROM reminder_log"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY id DESC LIMIT 300"
+    rows = [dict(r) for r in db_fetchall(sql, params)]
+    return jsonify({"items": rows})
+
+
+# ---------- 顾问端站内提醒 ----------
+@app.route("/api/consultant/reminders")
+@login_required
+def api_consultant_reminders():
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    rows = db_fetchall(
+        """SELECT id, kind, level, channel, ref_type, ref_id, message, created_at
+           FROM reminder_log
+           WHERE target_user_id=? AND processed=0 AND channel IN ('inapp','phone')
+           ORDER BY id DESC LIMIT 100""",
+        (u["id"],),
+    )
+    items = [dict(r) for r in rows]
+    return jsonify({"count": len(items), "items": items})
 
 
 def reap_running_on_boot():
