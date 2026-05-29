@@ -913,18 +913,37 @@ function submitUploadForm() {
   const msg = document.getElementById('uploadMsg');
   btn.disabled = true; btn.textContent = '上传中…';
   msg.textContent = `上传中…(${files.length} 个文件)`;
-  fetch(BASE + '/api/upload', {method:'POST', body: fd}).then(r => r.json()).then(d => {
-    if (d.error) { err.textContent = d.error; btn.disabled = false; btn.textContent = '上传并分析'; msg.textContent = ''; return; }
-    msg.textContent = `已上传 ${(d.created||[]).length} 个文件，正在自动 ASR + 分析…`;
+  fetch(BASE + '/api/upload', {method:'POST', body: fd}).then(parseJsonSafe).then(d => {
+    if (d.error) {
+      const detail = (d.failed && d.failed.length > 1) ? `（${d.failed.length} 个文件失败）` : '';
+      err.textContent = d.error + detail;
+      btn.disabled = false; btn.textContent = '上传并分析'; msg.textContent = '';
+      return;
+    }
+    const okN = (d.created||[]).length, badN = (d.failed||[]).length;
+    if (badN) err.textContent = `${badN} 个文件上传失败：${d.failed[0].error}`;
+    msg.textContent = `已上传 ${okN} 个文件，正在自动 ASR + 分析…`;
     btn.disabled = false; btn.textContent = '上传并分析';
-    closeUploadModal();
-    loadList(1);
+    if (okN) { closeUploadModal(); loadList(1); }
     setTimeout(() => msg.textContent = '', 6000);
   }).catch(e => {
-    err.textContent = '上传失败：' + e;
+    err.textContent = '上传失败：' + (e && e.message ? e.message : e);
     btn.disabled = false; btn.textContent = '上传并分析';
     msg.textContent = '';
   });
+}
+
+// 安全解析响应：服务端返回非 JSON（如 nginx 502/500 HTML 错误页）时给出可读提示，
+// 而不是抛 "Unexpected token '<'"
+async function parseJsonSafe(r) {
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    if (r.status === 413) throw new Error('文件过大，服务器拒绝接收');
+    if (r.status === 502 || r.status === 504) throw new Error(`网关错误(${r.status})，请稍后重试`);
+    throw new Error(`服务器返回异常(${r.status})，请稍后重试或联系管理员`);
+  }
 }
 
 async function deleteSessionRecs(sid, btn) {

@@ -688,6 +688,33 @@ def parse_filename(filename):
     }
 
 
+_OSS_ERROR_HINTS = {
+    "UserDisable": "OSS 账号被禁用（多为欠费或账号冻结），请登录阿里云控制台检查账单/账号状态",
+    "AccessDenied": "OSS 拒绝访问，请检查 AccessKey 权限或 Bucket 策略",
+    "InvalidAccessKeyId": "OSS AccessKey 无效，请检查配置",
+    "SignatureDoesNotMatch": "OSS 签名不匹配，请检查 AccessKeySecret 配置",
+    "NoSuchBucket": "OSS Bucket 不存在，请检查 Bucket 名称/Region 配置",
+    "RequestTimeTooSkewed": "服务器时间与 OSS 偏差过大，请校准系统时间",
+}
+
+
+def _friendly_oss_error(e):
+    """把 OSS/网络异常翻译成中文可读提示，避免前端只看到一串机器码。"""
+    # oss2.exceptions.OssError 带 .code / .details["Code"]
+    code = getattr(e, "code", None)
+    if not code:
+        details = getattr(e, "details", None)
+        if isinstance(details, dict):
+            code = details.get("Code")
+    if code and code in _OSS_ERROR_HINTS:
+        return _OSS_ERROR_HINTS[code]
+    msg = str(e) or e.__class__.__name__
+    for key, hint in _OSS_ERROR_HINTS.items():
+        if key in msg:
+            return hint
+    return f"存储服务异常：{msg}"
+
+
 def _sanitize_name_for_oss(s):
     """OSS 文件名安全化：白名单保留中文/英文/数字，其它清掉，截断到 20 字符。"""
     if not s:
@@ -4585,6 +4612,7 @@ def api_upload():
     use_struct_name = bool(customer and advisor and service_date)
 
     created = []
+    failed = []
     for idx, f in enumerate(files):
         if not f or not f.filename:
             continue
@@ -4598,40 +4626,47 @@ def api_upload():
             if lbl:
                 per_dur_label = lbl
 
-        if use_struct_name:
-            c = _sanitize_name_for_oss(customer)
-            a = _sanitize_name_for_oss(advisor)
-            dur = per_dur_label or "未知时长"
-            base = f"{c}_{a}_{service_date}_{dur}.{ext}"
-            oss_key = f"upload/{service_date.replace('-','')}/{base}"
-            if oss_bucket.object_exists(oss_key):
-                stem, _, ex = oss_key.rpartition(".")
-                oss_key = f"{stem}_{uuid.uuid4().hex[:4]}.{ex}"
-        else:
-            oss_key = orig_name
-            if "/" in oss_key or "\\" in oss_key:
-                oss_key = oss_key.replace("/", "_").replace("\\", "_")
-            if oss_bucket.object_exists(oss_key):
-                oss_key = f"upload/{datetime.now().strftime('%Y%m%d')}/{uuid.uuid4().hex[:6]}_{oss_key}"
+        try:
+            if use_struct_name:
+                c = _sanitize_name_for_oss(customer)
+                a = _sanitize_name_for_oss(advisor)
+                dur = per_dur_label or "未知时长"
+                base = f"{c}_{a}_{service_date}_{dur}.{ext}"
+                oss_key = f"upload/{service_date.replace('-','')}/{base}"
+                if oss_bucket.object_exists(oss_key):
+                    stem, _, ex = oss_key.rpartition(".")
+                    oss_key = f"{stem}_{uuid.uuid4().hex[:4]}.{ex}"
+            else:
+                oss_key = orig_name
+                if "/" in oss_key or "\\" in oss_key:
+                    oss_key = oss_key.replace("/", "_").replace("\\", "_")
+                if oss_bucket.object_exists(oss_key):
+                    oss_key = f"upload/{datetime.now().strftime('%Y%m%d')}/{uuid.uuid4().hex[:6]}_{oss_key}"
 
-        f.stream.seek(0)
-        oss_bucket.put_object(oss_key, f.stream)
+            f.stream.seek(0)
+            oss_bucket.put_object(oss_key, f.stream)
 
-        rid = ingest_recording(
-            oss_key,
-            source="upload",
-            advisor=advisor,
-            customer=customer,
-            recorded_at=recorded_at,
-            service_date=service_date,
-            duration_label=per_dur_label,
-            company_id=company_id,
-            customer_id=customer_id,
-        )
-        rec = db_fetchone("SELECT session_id FROM recordings WHERE id=?", (rid,))
-        created.append({"id": rid, "oss_key": oss_key, "session_id": rec["session_id"]})
+            rid = ingest_recording(
+                oss_key,
+                source="upload",
+                advisor=advisor,
+                customer=customer,
+                recorded_at=recorded_at,
+                service_date=service_date,
+                duration_label=per_dur_label,
+                company_id=company_id,
+                customer_id=customer_id,
+            )
+            rec = db_fetchone("SELECT session_id FROM recordings WHERE id=?", (rid,))
+            created.append({"id": rid, "oss_key": oss_key, "session_id": rec["session_id"]})
+        except Exception as e:
+            app.logger.exception("上传文件失败: %s", orig_name)
+            failed.append({"filename": orig_name, "error": _friendly_oss_error(e)})
 
-    return jsonify({"created": created})
+    if failed and not created:
+        # 全部失败：返回 500 + 结构化错误，前端能直接读到原因
+        return jsonify({"error": failed[0]["error"], "failed": failed}), 500
+    return jsonify({"created": created, "failed": failed})
 
 
 @app.route("/api/recording/<int:rid>/url")
@@ -6186,7 +6221,8 @@ def api_consultant_upload():
     try:
         oss_bucket.put_object(oss_key, data)
     except Exception as e:
-        return jsonify({"error": f"上传 OSS 失败：{e}"}), 500
+        app.logger.exception("顾问端上传 OSS 失败")
+        return jsonify({"error": _friendly_oss_error(e)}), 500
     rid = ingest_recording(
         oss_key, source="consultant-upload", size_bytes=len(data),
         advisor=advisor, customer=None,
