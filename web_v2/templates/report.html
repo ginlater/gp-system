@@ -1571,9 +1571,15 @@ async function downloadCurrentRec() {
     document.body.appendChild(a); a.click(); a.remove();
   } catch (e) { alert('下载失败：' + e.message); }
 }
-let _arbAll = [];           // 本公司全部可选客人
+let _arbAll = [];           // 当前列表里的客人（当日接诊 / 搜索结果）
 let _arbCurId = null;       // 当前客人 id（从列表排除）
 let _arbAdded = new Set();  // 本次弹窗里新建的客人 id（仅这些显示删除）
+let _arbSel = null;         // 已选中的客人对象
+let _arbSearchTimer = null;
+function _arbAvatarColor(s) {
+  let h = 0; for (let i = 0; i < (s||'').length; i++) h = (h*31 + s.charCodeAt(i)) % 360;
+  return `hsl(${h},52%,58%)`;
+}
 function openRecRebind() {
   const rec = _curRec();
   if (!rec) { alert('请先选择一段录音'); return; }
@@ -1581,32 +1587,62 @@ function openRecRebind() {
   if (!mask) {
     mask = document.createElement('div');
     mask.id = 'arbMask';
-    mask.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000';
+    mask.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(20,28,46,.55);z-index:2000';
     mask.innerHTML = `
-      <div style="background:#fff;max-width:460px;margin:70px auto;border-radius:8px;padding:20px;color:#222">
-        <h3 style="margin-top:0">换绑当前录音段 <span style="float:right;cursor:pointer" onclick="document.getElementById('arbMask').style.display='none'">✕</span></h3>
-        <div id="arbInfo" style="font-size:13px;color:#666;margin-bottom:10px"></div>
-        <div style="margin-bottom:6px"><label style="display:block;margin-bottom:4px">换绑到客人（可选已有客人，或新增）</label>
-          <input id="arbSearch" placeholder="搜索 姓名 / 会员号 / 尾号（共上万客人，输入即查）" oninput="onArbSearchInput()" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:6px;margin-bottom:5px">
-          <select id="arbCustomer" size="6" onchange="onArbSelect()" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:4px"></select>
-          <div style="text-align:right;margin-top:3px">
-            <a href="javascript:;" id="arbDelLink" onclick="deleteSelectedNewCust()" style="display:none;font-size:12px;color:#d9534f">✕ 删除选中的新增客人</a>
+      <style>
+        #arbMask .arb-card{background:#fff;max-width:440px;margin:64px auto;border-radius:16px;padding:0;color:#1f2d3d;box-shadow:0 18px 50px rgba(20,28,46,.3);overflow:hidden}
+        #arbMask .arb-hd{display:flex;align-items:center;justify-content:space-between;padding:15px 20px;background:linear-gradient(135deg,#3f6fd6,#5b8def);color:#fff}
+        #arbMask .arb-hd h3{margin:0;font-size:16px;font-weight:700}
+        #arbMask .arb-x{cursor:pointer;font-size:18px;opacity:.9}
+        #arbMask .arb-bd{padding:16px 20px 18px}
+        #arbMask .arb-info{font-size:12.5px;color:#7a8699;margin-bottom:12px;line-height:1.5}
+        #arbMask .arb-lbl{display:block;font-size:12.5px;font-weight:600;color:#46536b;margin:0 0 6px}
+        #arbMask .arb-input,#arbMask .arb-ta{width:100%;border:1px solid #dce2ec;border-radius:9px;padding:9px 11px;font-size:13.5px;font-family:inherit;box-sizing:border-box;transition:border-color .15s}
+        #arbMask .arb-input:focus,#arbMask .arb-ta:focus{outline:none;border-color:#5b8def}
+        #arbMask .arb-list{max-height:226px;overflow-y:auto;border:1px solid #e6eaf1;border-radius:10px;margin-top:8px;background:#fafbfd}
+        #arbMask .arb-row{display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;border-bottom:1px solid #eef1f6}
+        #arbMask .arb-row:last-child{border-bottom:none}
+        #arbMask .arb-row:hover{background:#eef4ff}
+        #arbMask .arb-row.sel{background:#e4eeff;box-shadow:inset 3px 0 0 #3f6fd6}
+        #arbMask .arb-av{width:32px;height:32px;border-radius:50%;color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+        #arbMask .arb-main{flex:1;min-width:0}
+        #arbMask .arb-nm{font-weight:600;font-size:13.5px;color:#1f2d3d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        #arbMask .arb-mt{font-size:11px;color:#9aa3b2;margin-top:1px}
+        #arbMask .arb-chip{display:inline-block;font-size:10px;padding:1px 7px;border-radius:9px;margin-left:6px;vertical-align:middle;font-weight:600}
+        #arbMask .arb-chip-day{background:#e2f4ea;color:#27915f}
+        #arbMask .arb-chip-new{background:#fff1d6;color:#c4860f}
+        #arbMask .arb-ck{color:#3f6fd6;font-weight:700;font-size:15px;flex:0 0 auto}
+        #arbMask .arb-del{color:#d9534f;font-size:11.5px;cursor:pointer;flex:0 0 auto;padding:3px 7px;border:1px solid #f0c2c0;border-radius:7px}
+        #arbMask .arb-del:hover{background:#fdecec}
+        #arbMask .arb-empty{padding:20px 12px;text-align:center;color:#9aa3b2;font-size:12.5px;line-height:1.6}
+        #arbMask .arb-add-link{display:inline-block;margin-top:10px;font-size:12.5px;color:#3f6fd6;cursor:pointer}
+        #arbMask .arb-addbox{display:none;margin-top:8px;padding:11px;border:1px dashed #c8d2e0;border-radius:10px;background:#f7f9fc}
+        #arbMask .arb-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+        #arbMask .arb-btn{border:none;border-radius:9px;padding:9px 18px;font-size:13.5px;cursor:pointer;font-weight:600}
+        #arbMask .arb-btn-ghost{background:#eef1f6;color:#46536b}
+        #arbMask .arb-btn-go{background:linear-gradient(135deg,#3f6fd6,#5b8def);color:#fff}
+        #arbMask .arb-btn-sm{border:1px solid #cfd8e6;background:#fff;border-radius:8px;padding:7px 13px;font-size:12.5px;cursor:pointer;color:#46536b}
+      </style>
+      <div class="arb-card">
+        <div class="arb-hd"><h3>换绑当前录音段</h3><span class="arb-x" onclick="document.getElementById('arbMask').style.display='none'">✕</span></div>
+        <div class="arb-bd">
+          <div id="arbInfo" class="arb-info"></div>
+          <label class="arb-lbl">换绑到客人</label>
+          <input id="arbSearch" class="arb-input" placeholder="默认列该顾问当日接诊客人；搜姓名/会员号/尾号绑别人" oninput="onArbSearchInput()">
+          <div id="arbList" class="arb-list"></div>
+          <span class="arb-add-link" onclick="toggleAddCust()">＋ 新增客人（自动生成会员号）</span>
+          <div id="arbAddBox" class="arb-addbox">
+            <input id="arbNewName" class="arb-input" placeholder="客人姓名（必填）" style="margin-bottom:6px">
+            <input id="arbNewTail" class="arb-input" placeholder="手机尾号 4 位（选填）" maxlength="4" style="margin-bottom:6px">
+            <div style="text-align:right"><button class="arb-btn-sm" onclick="addDayCustomer()">新增并选中</button></div>
           </div>
-        </div>
-        <div style="margin-bottom:8px">
-          <a href="javascript:;" onclick="toggleAddCust()" style="font-size:12px;color:#2a6fb0">＋ 新增客人（自动生成会员号）</a>
-          <div id="arbAddBox" style="display:none;margin-top:6px;padding:8px;border:1px dashed #ccc;border-radius:5px">
-            <input id="arbNewName" placeholder="客人姓名（必填）" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:6px;margin-bottom:5px">
-            <input id="arbNewTail" placeholder="手机尾号 4 位（选填）" maxlength="4" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:6px;margin-bottom:5px">
-            <div style="text-align:right"><button class="rec-btn rec-btn-sec" onclick="addDayCustomer()">新增并选中</button></div>
+          <label class="arb-lbl" style="margin-top:14px">换绑理由（必填）</label>
+          <textarea id="arbReason" class="arb-ta" rows="2"></textarea>
+          <div id="arbMsg" style="color:#d9534f;font-size:12.5px;min-height:18px;margin-top:6px"></div>
+          <div class="arb-foot">
+            <button class="arb-btn arb-btn-ghost" onclick="document.getElementById('arbMask').style.display='none'">取消</button>
+            <button class="arb-btn arb-btn-go" onclick="submitRecRebind()">确认换绑</button>
           </div>
-        </div>
-        <div style="margin-bottom:8px"><label style="display:block;margin-bottom:4px">换绑理由（必填）</label>
-          <textarea id="arbReason" rows="2" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:7px"></textarea></div>
-        <div id="arbMsg" style="color:#e74c3c;font-size:13px;min-height:18px"></div>
-        <div style="text-align:right;margin-top:10px">
-          <button class="rec-btn rec-btn-sec" onclick="document.getElementById('arbMask').style.display='none'">取消</button>
-          <button class="rec-btn" onclick="submitRecRebind()">确认换绑</button>
         </div>
       </div>`;
     document.body.appendChild(mask);
@@ -1614,19 +1650,18 @@ function openRecRebind() {
   document.getElementById('arbMsg').textContent = '';
   document.getElementById('arbReason').value = '';
   document.getElementById('arbSearch').value = '';
-  const addBox = document.getElementById('arbAddBox'); if (addBox) addBox.style.display = 'none';
-  _arbAll = []; _arbAdded = new Set();
-  document.getElementById('arbCustomer').innerHTML = '';
+  document.getElementById('arbAddBox').style.display = 'none';
+  _arbAll = []; _arbAdded = new Set(); _arbSel = null;
+  document.getElementById('arbList').innerHTML = '';
   mask.style.display = 'block';
-  loadArbCustomers('');  // 初始：当日接诊客人 + 最近客人
+  loadArbCustomers('');  // 默认：该顾问当日接诊客人
 }
-let _arbSearchTimer = null;
 function onArbSearchInput() {
   clearTimeout(_arbSearchTimer);
   _arbSearchTimer = setTimeout(() =>
     loadArbCustomers((document.getElementById('arbSearch').value || '').trim()), 250);
 }
-// 服务端搜索：客人量上万，不在前端做全量过滤，按词到后端查 LIMIT 50
+// 服务端搜索：默认只回当日接诊客人，有搜索词才 LIKE 命中（客人量上万，不做前端全量过滤）
 function loadArbCustomers(q) {
   const rec = _curRec(); if (!rec) return;
   const url = `${BASE}/api/admin/recordings/${rec.id}/customer_options` + (q ? ('?q=' + encodeURIComponent(q)) : '');
@@ -1637,26 +1672,37 @@ function loadArbCustomers(q) {
     document.getElementById('arbInfo').textContent =
       `顾问 ${d.advisor || ''} · ${d.service_date || ''} · 当前客人 ${rec.customer || d.current_customer || ''} · 第 ${segNo} 段录音`;
     _arbAll = (d.items || []).filter(c => c.customer_id != _arbCurId);
-    renderArbOptions();
+    renderArbList(!!q);
   });
 }
-function renderArbOptions() {
-  const sel = document.getElementById('arbCustomer');
+function renderArbList(isSearch) {
+  const box = document.getElementById('arbList');
   if (!_arbAll.length) {
-    sel.innerHTML = '<option value="">无匹配客人，可用下方"新增客人"</option>'; onArbSelect(); return;
+    box.innerHTML = '<div class="arb-empty">' +
+      (isSearch ? '没找到匹配客人，可在下方「新增客人」' : '该顾问当日还没有其他接诊客人，<br>请搜索姓名/会员号绑别人，或「新增客人」') +
+      '</div>';
+    return;
   }
-  sel.innerHTML = _arbAll.map(c => {
-    const tags = (c.in_day ? ' · 当日接诊' : '') + (_arbAdded.has(c.customer_id) ? ' · 新增' : '');
-    const tail = c.phone_tail ? ' (尾号' + _rbEsc(c.phone_tail) + ')' : '';
-    return `<option value="${c.customer_id}">${_rbEsc(c.name)}${tail}${tags}</option>`;
+  box.innerHTML = _arbAll.map(c => {
+    const sel = _arbSel && _arbSel.customer_id == c.customer_id;
+    const isNew = _arbAdded.has(c.customer_id);
+    const meta = [c.member_card ? ('会员号 ' + _rbEsc(c.member_card)) : '',
+                  c.phone_tail ? ('尾号 ' + _rbEsc(c.phone_tail)) : ''].filter(Boolean).join(' · ');
+    const chips = (c.in_day ? '<span class="arb-chip arb-chip-day">当日接诊</span>' : '') +
+                  (isNew ? '<span class="arb-chip arb-chip-new">新增</span>' : '');
+    const right = isNew
+      ? `<span class="arb-del" onclick="event.stopPropagation();deleteNewCust(${c.customer_id})">✕ 删除</span>`
+      : (sel ? '<span class="arb-ck">✓</span>' : '');
+    const ini = _rbEsc((c.name || '?').slice(0, 1));
+    return `<div class="arb-row${sel ? ' sel' : ''}" onclick="arbPick(${c.customer_id})">
+        <div class="arb-av" style="background:${_arbAvatarColor(c.name)}">${ini}</div>
+        <div class="arb-main"><div class="arb-nm">${_rbEsc(c.name)}${chips}</div>${meta ? `<div class="arb-mt">${meta}</div>` : ''}</div>
+        ${right}</div>`;
   }).join('');
-  onArbSelect();
 }
-function onArbSelect() {
-  const sel = document.getElementById('arbCustomer');
-  const link = document.getElementById('arbDelLink');
-  const id = sel.value ? parseInt(sel.value, 10) : null;
-  link.style.display = (id && _arbAdded.has(id)) ? 'inline' : 'none';
+function arbPick(id) {
+  _arbSel = _arbAll.find(c => c.customer_id == id) || _arbSel;
+  renderArbList(!!(document.getElementById('arbSearch').value || '').trim());
 }
 function toggleAddCust() {
   const box = document.getElementById('arbAddBox');
@@ -1676,26 +1722,25 @@ async function addDayCustomer() {
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || '新增失败');
     _arbAdded.add(d.customer_id);
-    _arbAll.unshift({ customer_id: d.customer_id, name: d.name, phone_tail: d.phone_tail,
-                      member_card: d.member_card, in_day: true });
+    const obj = { customer_id: d.customer_id, name: d.name, phone_tail: d.phone_tail,
+                  member_card: d.member_card, in_day: true };
+    _arbAll = _arbAll.filter(c => c.customer_id != d.customer_id);
+    _arbAll.unshift(obj);
+    _arbSel = obj;  // 新增即选中
     document.getElementById('arbSearch').value = '';
-    renderArbOptions();
-    document.getElementById('arbCustomer').value = String(d.customer_id);
-    onArbSelect();
+    renderArbList(false);
     document.getElementById('arbAddBox').style.display = 'none';
     document.getElementById('arbNewName').value = '';
     document.getElementById('arbNewTail').value = '';
-    msg.textContent = d.member_card ? ('已新增，会员号 ' + d.member_card) : '';
-    document.getElementById('arbMsg').style.color = '#22a36b';
-    setTimeout(() => { const m = document.getElementById('arbMsg'); if (m) m.style.color = '#e74c3c'; }, 2500);
-  } catch (e) { msg.textContent = e.message; }
+    msg.style.color = '#27915f';
+    msg.textContent = d.member_card ? ('已新增并选中，会员号 ' + d.member_card) : '已新增并选中';
+    setTimeout(() => { const m = document.getElementById('arbMsg'); if (m) m.style.color = '#d9534f'; }, 2500);
+  } catch (e) { msg.style.color = '#d9534f'; msg.textContent = e.message; }
 }
-async function deleteSelectedNewCust() {
+async function deleteNewCust(id) {
   const rec = _curRec(); if (!rec) return;
-  const sel = document.getElementById('arbCustomer');
-  const id = sel.value ? parseInt(sel.value, 10) : null;
   const msg = document.getElementById('arbMsg');
-  if (!id || !_arbAdded.has(id)) return;
+  if (!_arbAdded.has(id)) return;
   if (!confirm('确认删除这个新增的客人？仅当它名下还没有任何录音时可删。')) return;
   try {
     const r = await fetch(`${BASE}/api/admin/recordings/${rec.id}/remove_day_customer`, {
@@ -1706,20 +1751,21 @@ async function deleteSelectedNewCust() {
     if (!d.ok) throw new Error(d.error || '删除失败');
     _arbAdded.delete(id);
     _arbAll = _arbAll.filter(c => c.customer_id != id);
-    renderArbOptions();
-    msg.textContent = '';
-  } catch (e) { msg.textContent = e.message; }
+    if (_arbSel && _arbSel.customer_id == id) _arbSel = null;
+    renderArbList(!!(document.getElementById('arbSearch').value || '').trim());
+    msg.style.color = '#d9534f'; msg.textContent = '';
+  } catch (e) { msg.style.color = '#d9534f'; msg.textContent = e.message; }
 }
 function submitRecRebind() {
   const rec = _curRec(); if (!rec) return;
-  const to = document.getElementById('arbCustomer').value;
   const reason = document.getElementById('arbReason').value.trim();
   const msg = document.getElementById('arbMsg');
-  if (!to) { msg.textContent = '请选择换绑目标客人'; return; }
+  msg.style.color = '#d9534f';
+  if (!_arbSel) { msg.textContent = '请先在上方选择或新增一个客人'; return; }
   if (!reason) { msg.textContent = '请填写换绑理由'; return; }
   fetch(`${BASE}/api/admin/recordings/${rec.id}/rebind`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ to_customer_id: to, reason }),
+    body: JSON.stringify({ to_customer_id: _arbSel.customer_id, reason }),
   }).then(r => r.json()).then(d => {
     if (d.error) { msg.textContent = d.error; return; }
     document.getElementById('arbMask').style.display = 'none';
