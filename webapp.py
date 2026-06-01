@@ -9201,11 +9201,33 @@ def api_admin_recording_customer_options(rid):
             "SELECT customer_id FROM daily_reception WHERE advisor_user_id=? AND service_date=?",
             (au["id"], service_date)):
             day_ids.add(r["customer_id"])
-    rows = db_fetchall(
-        "SELECT id, name, member_card, phone_tail FROM company_customers "
-        "WHERE company_id=? AND merged_into IS NULL ORDER BY id DESC",
-        (scid,),
-    )
+    # 客人量可能上万，不能一次全返回：有搜索词则 LIKE 命中 LIMIT 50，
+    # 无搜索词则取最近 50 条；当日接诊客人始终补进来。
+    q = (request.args.get("q") or "").strip()
+    if q:
+        like = f"%{q}%"
+        rows = db_fetchall(
+            "SELECT id, name, member_card, phone_tail FROM company_customers "
+            "WHERE company_id=? AND merged_into IS NULL "
+            "AND (name LIKE ? OR member_card LIKE ? OR phone_tail LIKE ?) "
+            "ORDER BY id DESC LIMIT 50",
+            (scid, like, like, like),
+        )
+    else:
+        rows = db_fetchall(
+            "SELECT id, name, member_card, phone_tail FROM company_customers "
+            "WHERE company_id=? AND merged_into IS NULL ORDER BY id DESC LIMIT 50",
+            (scid,),
+        )
+    rows = list(rows)
+    have = {r["id"] for r in rows}
+    miss = [i for i in day_ids if i not in have] if not q else []
+    if miss:
+        qm = ",".join(["?"] * len(miss))
+        extra = db_fetchall(
+            f"SELECT id, name, member_card, phone_tail FROM company_customers "
+            f"WHERE id IN ({qm}) AND merged_into IS NULL", tuple(miss))
+        rows = list(extra) + rows
     items = [{"customer_id": r["id"], "name": r["name"], "member_card": r["member_card"],
               "phone_tail": r["phone_tail"], "in_day": r["id"] in day_ids} for r in rows]
     # 当日接诊的排前面，方便选

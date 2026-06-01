@@ -1587,7 +1587,7 @@ function openRecRebind() {
         <h3 style="margin-top:0">换绑当前录音段 <span style="float:right;cursor:pointer" onclick="document.getElementById('arbMask').style.display='none'">✕</span></h3>
         <div id="arbInfo" style="font-size:13px;color:#666;margin-bottom:10px"></div>
         <div style="margin-bottom:6px"><label style="display:block;margin-bottom:4px">换绑到客人（可选已有客人，或新增）</label>
-          <input id="arbSearch" placeholder="搜索 姓名 / 会员号 / 尾号" oninput="renderArbOptions()" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:6px;margin-bottom:5px">
+          <input id="arbSearch" placeholder="搜索 姓名 / 会员号 / 尾号（共上万客人，输入即查）" oninput="onArbSearchInput()" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:6px;margin-bottom:5px">
           <select id="arbCustomer" size="6" onchange="onArbSelect()" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:4px"></select>
           <div style="text-align:right;margin-top:3px">
             <a href="javascript:;" id="arbDelLink" onclick="deleteSelectedNewCust()" style="display:none;font-size:12px;color:#d9534f">✕ 删除选中的新增客人</a>
@@ -1616,28 +1616,36 @@ function openRecRebind() {
   document.getElementById('arbSearch').value = '';
   const addBox = document.getElementById('arbAddBox'); if (addBox) addBox.style.display = 'none';
   _arbAll = []; _arbAdded = new Set();
+  document.getElementById('arbCustomer').innerHTML = '';
   mask.style.display = 'block';
-  // 全部已有客人都可选；选中非当日客人换绑时，后端自动把他补登进该顾问当日接诊
-  fetch(`${BASE}/api/admin/recordings/${rec.id}/customer_options`).then(r => r.json()).then(d => {
+  loadArbCustomers('');  // 初始：当日接诊客人 + 最近客人
+}
+let _arbSearchTimer = null;
+function onArbSearchInput() {
+  clearTimeout(_arbSearchTimer);
+  _arbSearchTimer = setTimeout(() =>
+    loadArbCustomers((document.getElementById('arbSearch').value || '').trim()), 250);
+}
+// 服务端搜索：客人量上万，不在前端做全量过滤，按词到后端查 LIMIT 50
+function loadArbCustomers(q) {
+  const rec = _curRec(); if (!rec) return;
+  const url = `${BASE}/api/admin/recordings/${rec.id}/customer_options` + (q ? ('?q=' + encodeURIComponent(q)) : '');
+  fetch(url).then(r => r.json()).then(d => {
     if (d.error) { document.getElementById('arbMsg').textContent = d.error; return; }
+    _arbCurId = d.current_customer_id;
     const segNo = (_currentSegIdx >= 0 ? _currentSegIdx : 0) + 1;
     document.getElementById('arbInfo').textContent =
       `顾问 ${d.advisor || ''} · ${d.service_date || ''} · 当前客人 ${rec.customer || d.current_customer || ''} · 第 ${segNo} 段录音`;
-    _arbCurId = d.current_customer_id;
     _arbAll = (d.items || []).filter(c => c.customer_id != _arbCurId);
     renderArbOptions();
   });
 }
 function renderArbOptions() {
   const sel = document.getElementById('arbCustomer');
-  const q = (document.getElementById('arbSearch').value || '').trim().toLowerCase();
-  let list = _arbAll;
-  if (q) list = list.filter(c =>
-    (c.name || '').toLowerCase().includes(q) ||
-    (c.member_card || '').toLowerCase().includes(q) ||
-    (c.phone_tail || '').includes(q));
-  if (!list.length) { sel.innerHTML = '<option value="">无匹配客人，可用下方"新增客人"</option>'; onArbSelect(); return; }
-  sel.innerHTML = list.map(c => {
+  if (!_arbAll.length) {
+    sel.innerHTML = '<option value="">无匹配客人，可用下方"新增客人"</option>'; onArbSelect(); return;
+  }
+  sel.innerHTML = _arbAll.map(c => {
     const tags = (c.in_day ? ' · 当日接诊' : '') + (_arbAdded.has(c.customer_id) ? ' · 新增' : '');
     const tail = c.phone_tail ? ' (尾号' + _rbEsc(c.phone_tail) + ')' : '';
     return `<option value="${c.customer_id}">${_rbEsc(c.name)}${tail}${tags}</option>`;
