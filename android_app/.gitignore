@@ -1,0 +1,14 @@
+# Local config (machine-specific, never commit)
+local.properties
+keystore.properties
+
+# Build output
+.gradle/
+build/
+app/build/
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+.DS_Store
+captures/
