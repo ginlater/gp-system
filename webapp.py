@@ -70,7 +70,7 @@ ANTHROPIC_PROXY = os.environ.get("ANTHROPIC_PROXY", "http://127.0.0.1:7890")
 # provider: anthropic 走代理；deepseek 直连国内不走代理
 SUPPORTED_MODELS = [
     {"id": "deepseek-v4-pro",   "provider": "deepseek",
-     "label": "DeepSeek V4 Pro（国内直连，含深度思考，默认）"},
+     "label": "DeepSeek V4 Pro（国内直连，默认）"},
     {"id": "claude-sonnet-4-6", "provider": "anthropic",
      "label": "Claude Sonnet 4.6（更强但贵且慢）"},
 ]
