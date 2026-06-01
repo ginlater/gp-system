@@ -103,6 +103,7 @@
     {% if role in ('admin','super','store_manager') %}
     <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
       <button class="rec-btn rec-btn-sec" onclick="downloadCurrentRec()" title="下载当前这段录音文件">⬇ 下载</button>
+      <button class="rec-btn rec-btn-sec" onclick="splitCurrentRec()" title="在播放器当前位置把这段录音切成两段，各自重新转写后可分别换绑">✂ 分割</button>
       <button class="rec-btn rec-btn-sec" onclick="openRecRebind()" title="把当前这段录音换绑到该顾问当日的另一个客人">⇄ 换绑当前录音段</button>
     </div>
     {% endif %}
@@ -1570,6 +1571,26 @@ async function downloadCurrentRec() {
     a.href = d.url; a.download = '';
     document.body.appendChild(a); a.click(); a.remove();
   } catch (e) { alert('下载失败：' + e.message); }
+}
+async function splitCurrentRec() {
+  const rec = _curRec();
+  if (!rec) { alert('请先选择一段录音'); return; }
+  const audio = document.getElementById('recAudio');
+  const t = audio ? (audio.currentTime || 0) : 0;
+  if (t < 0.5) { alert('请先在播放器里把进度条拖到要切分的位置（不要太靠近开头），再点分割'); return; }
+  const mm = Math.floor(t / 60), ss = Math.floor(t % 60);
+  const pos = `${mm}分${ss < 10 ? '0' : ''}${ss}秒`;
+  if (!confirm(`将在 ${pos} 处把这段录音切成两段。\n\n切完两段会各自重新转写(ASR)，都留在当前接诊里，可分别用「换绑当前录音段」绑到对应客人。\n原录音会被替换。确认分割？`)) return;
+  try {
+    const r = await fetch(`${BASE}/api/admin/recordings/${rec.id}/split`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ at_seconds: t }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '分割失败');
+    alert('已切成两段，正在重新转写。刷新后可见两段，可分别换绑。');
+    location.reload();
+  } catch (e) { alert('分割失败：' + e.message); }
 }
 let _arbAll = [];           // 当前列表里的客人（当日接诊 / 搜索结果）
 let _arbCurId = null;       // 当前客人 id（从列表排除）

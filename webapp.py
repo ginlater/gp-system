@@ -9264,6 +9264,94 @@ def api_admin_recording_remove_day_customer(rid):
     return jsonify({"ok": True})
 
 
+def _ffprobe_duration(path):
+    """返回音频时长秒数（float）；失败返回 None。"""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, text=True, timeout=60)
+        return float((out.stdout or "").strip())
+    except Exception:
+        return None
+
+
+def _run_ffmpeg(args):
+    import subprocess
+    r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error"] + args,
+                       capture_output=True, text=True, timeout=600)
+    if r.returncode != 0:
+        raise RuntimeError(f"ffmpeg 失败: {(r.stderr or '')[:300]}")
+
+
+@app.route("/api/admin/recordings/<int:rid>/split", methods=["POST"])
+@manager_required
+def api_admin_recording_split(rid):
+    """把一条录音在指定秒数处切成两段：统一转码 mp3、各自重新 ASR、都留在原接诊里
+    （切完用「按录音换绑」分别绑定到该顾问当日客人）。原录音删除（OSS+DB）。"""
+    import tempfile, shutil
+    data = request.get_json(silent=True) or {}
+    try:
+        at = float(data.get("at_seconds"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "切分位置无效"}), 400
+    rec, old_sess, scid, err = _admin_rec_scope_check(rid)
+    if err:
+        return err
+    if _has_pending_delete_request(rid):
+        return jsonify({"error": "该录音正在申请删除，请先处理删除申请再操作"}), 409
+    if not rec["oss_key"]:
+        return jsonify({"error": "录音文件缺失"}), 400
+    base = rec["oss_key"].rsplit("/", 1)[-1]
+    src_ext = (base.rsplit(".", 1)[-1] if "." in base else "webm").lower()
+    tmpdir = tempfile.mkdtemp(prefix="recsplit_")
+    src_path = os.path.join(tmpdir, f"src.{src_ext}")
+    p1 = os.path.join(tmpdir, "p1.mp3")
+    p2 = os.path.join(tmpdir, "p2.mp3")
+    k1 = k2 = None
+    parts_created = False
+    try:
+        oss_bucket.get_object_to_file(rec["oss_key"], src_path)
+        dur = _ffprobe_duration(src_path)
+        if dur is None:
+            return jsonify({"error": "无法读取录音时长，可能文件损坏"}), 500
+        if at <= 0.5 or at >= dur - 0.5:
+            return jsonify({"error": f"切分位置要在 0 与总时长（约 {dur:.0f} 秒）之间，且距两端至少 0.5 秒"}), 400
+        # 转码 mp3 切两段：part1=[0,at]，part2=[at,end]；-ss 放在 -i 之后保证精确
+        _run_ffmpeg(["-i", src_path, "-t", f"{at:.3f}", "-vn", "-acodec", "libmp3lame", "-q:a", "4", p1])
+        _run_ffmpeg(["-i", src_path, "-ss", f"{at:.3f}", "-vn", "-acodec", "libmp3lame", "-q:a", "4", p2])
+        stem = rec["oss_key"][:-(len(src_ext) + 1)] if "." in base else rec["oss_key"]
+        k1 = f"{stem}_p1_{_uuid.uuid4().hex[:8]}.mp3"
+        k2 = f"{stem}_p2_{_uuid.uuid4().hex[:8]}.mp3"
+        oss_bucket.put_object_from_file(k1, p1)
+        oss_bucket.put_object_from_file(k2, p2)
+        common = dict(source="split", advisor=old_sess["advisor"], customer=old_sess["customer"],
+                      recorded_at=rec["recorded_at"], service_date=old_sess["service_date"],
+                      company_id=scid, uploader_user_id=rec["uploader_user_id"],
+                      customer_id=old_sess["customer_id"])
+        id1 = ingest_recording(k1, size_bytes=os.path.getsize(p1),
+                               duration_label=_format_duration_label(_ffprobe_duration(p1)), **common)
+        id2 = ingest_recording(k2, size_bytes=os.path.getsize(p2),
+                               duration_label=_format_duration_label(_ffprobe_duration(p2)), **common)
+        parts_created = True
+        # 删原录音（两段已建好且各自触发了 ASR）
+        _oss_delete_quiet(rec["oss_key"])
+        db_write("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
+        db_write("DELETE FROM recordings WHERE id=?", (rid,))
+        return jsonify({"ok": True, "parts": [id1, id2], "session_id": rec["session_id"]})
+    except Exception as e:
+        if not parts_created:
+            if k1:
+                _oss_delete_quiet(k1)
+            if k2:
+                _oss_delete_quiet(k2)
+        app.logger.exception("录音分割失败")
+        return jsonify({"error": f"分割失败：{str(e)[:200]}"}), 500
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 @app.route("/api/admin/bind_advisors")
 @manager_required
 def api_admin_bind_advisors():
