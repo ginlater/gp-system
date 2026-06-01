@@ -436,23 +436,29 @@ function appToggleRecord(){
   try { window.AndroidBridge.startRecording(appRecSource); } catch(e){}
 }
 
-// 右上角来源切换按钮
-function appUpdateSourceBtn(){
-  var b = document.getElementById('appSourceBtn'); if (!b) return;
-  if (appRecSource === 'pen') b.textContent = appPenConnected() ? '🖊 录音笔' : '🖊 录音笔·未连';
-  else b.textContent = '🎤 手机录音';
+// 录音来源切换：录音卡片里、录音按钮上方一行「录音方式：🖊录音笔 / 🎤手机」，选中高亮，默认录音笔
+var APP_SRC_BTN_BASE = 'border-radius:99px;padding:5px 14px;font-size:13px;cursor:pointer;font-family:inherit;border:1px solid var(--border,#d9d9e3);transition:all .15s';
+function appSrcBtnStyle(active){
+  return APP_SRC_BTN_BASE + (active
+    ? ';background:var(--blue,#3b6ef6);color:#fff;border-color:var(--blue,#3b6ef6);font-weight:700'
+    : ';background:#fff;color:var(--text-mid,#555)');
 }
-function appToggleSource(){
+function appUpdateSourceRow(){
+  var pen = document.getElementById('appSrcPen'), pho = document.getElementById('appSrcPhone');
+  if (!pen || !pho) return;
+  pen.textContent = appPenConnected() ? '🖊 录音笔' : '🖊 录音笔·未连';
+  pho.textContent = '🎤 手机';
+  pen.style.cssText = appSrcBtnStyle(appRecSource === 'pen');
+  pho.style.cssText = appSrcBtnStyle(appRecSource === 'phone');
+}
+function appSelectSource(src){
   if (window.__appRecording || window.uploading) return;
-  if (appRecSource === 'phone') {
-    appRecSource = 'pen';
-    try { localStorage.setItem(APP_SRC_KEY,'pen'); } catch(e){}
-    if (!appPenConnected() && confirm('切换到录音笔，现在去连接蓝牙？')) { try { window.AndroidBridge.connectPen(); } catch(e){} }
-  } else {
-    appRecSource = 'phone';
-    try { localStorage.setItem(APP_SRC_KEY,'phone'); } catch(e){}
+  appRecSource = src;
+  try { localStorage.setItem(APP_SRC_KEY, src); } catch(e){}
+  if (src === 'pen' && !appPenConnected() && confirm('录音笔还没连接蓝牙，现在去连接？')) {
+    try { window.AndroidBridge.connectPen(); } catch(e){}
   }
-  appUpdateSourceBtn();
+  appUpdateSourceRow();
 }
 
 // 原生录音引擎状态回推 → 更新本页录音按钮/状态/计时
@@ -478,8 +484,8 @@ window.__onNativeRecState = function(state, msg, durSec){
     if (t) t.textContent = '00:00';
   }
 };
-// 录音笔连接状态变化 → 刷新右上角按钮
-window.__onPenConnChanged = function(connected){ appUpdateSourceBtn(); };
+// 录音笔连接状态变化 → 刷新录音方式行（录音笔 已连/未连）
+window.__onPenConnChanged = function(connected){ appUpdateSourceRow(); };
 
 // 原生上传完一段录音后：刷新未归档列表并自动打开绑定弹窗（复用本页既有流程）
 window.__onNativeUploaded = function(id){
@@ -492,15 +498,25 @@ window.__onNativeUploaded = function(id){
 if (IN_APP) {
   // 隐藏之前那条"用底部录音条"的提示（已不需要）
   var _h = document.getElementById('appRecHint'); if (_h) _h.style.display = 'none';
-  // 右上角注入来源切换按钮
-  var _hu = document.querySelector('.header-user');
-  if (_hu) {
-    var _sb = document.createElement('button');
-    _sb.id = 'appSourceBtn'; _sb.className = 'skin-toggle'; _sb.title = '录音来源';
-    _sb.style.marginLeft = '6px';
-    _sb.onclick = appToggleSource;
-    _hu.appendChild(_sb);
-    appUpdateSourceBtn();
+  // 录音卡片里、录音按钮上方注入「录音方式」来源切换行（醒目，默认录音笔）
+  var _area = document.querySelector('#recCard .rec-area');
+  var _recBtn = document.getElementById('recBtn');
+  if (_area && _recBtn && !document.getElementById('appSrcRow')) {
+    var _row = document.createElement('div');
+    _row.id = 'appSrcRow';
+    _row.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin:6px 0 14px';
+    var _lbl = document.createElement('span');
+    _lbl.textContent = '录音方式：';
+    _lbl.style.cssText = 'font-size:13px;color:var(--text-mute,#888)';
+    var _pen = document.createElement('button');
+    _pen.id = 'appSrcPen'; _pen.type = 'button';
+    _pen.onclick = function(){ appSelectSource('pen'); };
+    var _pho = document.createElement('button');
+    _pho.id = 'appSrcPhone'; _pho.type = 'button';
+    _pho.onclick = function(){ appSelectSource('phone'); };
+    _row.appendChild(_lbl); _row.appendChild(_pen); _row.appendChild(_pho);
+    _area.insertBefore(_row, _recBtn);
+    appUpdateSourceRow();
   }
   // 若返回本页时原生仍在录音/上传（例如录音中切到接诊列表又切回），同步一下按钮状态
   try {
