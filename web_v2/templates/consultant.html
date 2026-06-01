@@ -205,7 +205,7 @@ body.skin-cute .dlg{border-radius:18px}
   </a>
 
   <!-- 录音 -->
-  <div class="card">
+  <div class="card" id="recCard">
     <h3><span class="t-pro">录音</span><span class="t-cute">✨ 开启美丽时光</span></h3>
     <div class="rec-area">
       <div class="rec-timer" id="timer">00:00</div>
@@ -214,6 +214,9 @@ body.skin-cute .dlg{border-radius:18px}
       <div class="msg" id="recMsg"></div>
     </div>
   </div>
+
+  <!-- App 内提示：录音由底部原生录音条负责（仅 App 内显示，浏览器永不显示） -->
+  <div id="appRecHint" class="muted" style="display:none;font-size:12px;margin:-6px 0 16px;padding:8px 10px;background:#f7f9fc;border-radius:6px">请使用 App 底部的录音按钮进行录音。</div>
 
   <!-- 接诊列表入口（底部 / 录音卡片下方）-->
   <a class="list-entry bottom" href="{{ url_for('index') }}">
@@ -391,6 +394,33 @@ body.skin-cute .dlg{border-radius:18px}
 <script>
 const BASE = {{ request.script_root|tojson }};
 const ADVISOR = {{ advisor_name|tojson }};
+
+// ============ App（WebView）环境检测 ============
+// 仅当被 Android App 的 WebView 加载、且 AndroidBridge.isApp() 为 true 时为 true。
+// 普通浏览器里恒为 false，下面所有 IN_APP 分支都不会执行，行为 100% 不变。
+var IN_APP = !!(window.AndroidBridge && window.AndroidBridge.isApp && window.AndroidBridge.isApp());
+
+// App 内：隐藏页面自带录音卡片（录音由原生底部录音条负责），并显示一句小提示。
+if (IN_APP) {
+  var _recCard = document.getElementById('recCard');
+  if (_recCard) _recCard.style.display = 'none';
+  var _appRecHint = document.getElementById('appRecHint');
+  if (_appRecHint) _appRecHint.style.display = '';
+}
+
+// App 原生回调（浏览器里定义了也无害，永不会被调用）：
+// 原生上传完一段录音后调用，刷新未归档列表并自动打开绑定弹窗。
+// 函数声明会被提升，loadPending / openBind 在同一 script 内，可正常引用。
+window.__onNativeUploaded = function(id){
+  try {
+    if (typeof loadPending === 'function') loadPending();
+    if (id && id > 0 && typeof openBind === 'function') openBind(id);
+  } catch(e) { console.warn(e); }
+};
+// 原生录音状态变化回调（预留，可更新页内小指示器）。保持最简、不报错即可。
+window.__onNativeRecState = function(state, msg, durSec){
+  /* 预留：可更新页内小指示器 */
+};
 
 // ============ 皮肤切换（专业版 / 萌系卡通） ============
 function isCute(){ return document.body.classList.contains('skin-cute'); }

@@ -1,18 +1,5 @@
-buildscript {
-    repositories {
-        maven { url "/usr/share/maven-repo" }
-        google()
-        mavenCentral()
-    }
-    dependencies {
-        classpath "com.android.tools.build:gradle:2.2.2"
-    }
-}
-
-allprojects {
-    repositories {
-        maven { url "/usr/share/maven-repo" }
-        google()
-        mavenCentral()
-    }
+// Top-level build file
+plugins {
+    id 'com.android.application' version '8.13.1' apply false
+    id 'com.android.library' version '8.13.1' apply false
 }

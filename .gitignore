@@ -9,3 +9,11 @@ android_app/release.keystore
 android_app/release.keystore.password
 android_app/*.apk
 android_app/*.idsig
+
+# macOS 垃圾
+.DS_Store
+**/.DS_Store
+
+# 录音笔 SDK 原始压缩包（内容已解压进 android_app/，无需入库；iOS 待 iOS 阶段再加）
+AIRECBleDemo2.zip
+AIRECIOSBleDemo(3).zip

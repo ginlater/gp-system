@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  允许明文(http)访问，方便用服务器 IP / 未上 https 的域名测试。
+  生产建议把 START_URL 指向 https 域名；如需收紧，可把 cleartextTrafficPermitted 改为 false 并只放行特定域名。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

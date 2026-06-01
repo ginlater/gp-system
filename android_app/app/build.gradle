@@ -1,38 +1,63 @@
-apply plugin: "com.android.application"
+
+plugins {
+    id 'com.android.application'
+}
 
 android {
-    compileSdkVersion 23
-    buildToolsVersion "29.0.3"
+    namespace 'com.airec.bledemo'
+    compileSdk 34
 
     defaultConfig {
+        // 应用身份用工牌系统的包名（与线上域名一致）；源码包名仍沿用 com.airec.bledemo 以最大化复用 Demo，二者互不影响。
         applicationId "com.aibeautyfulwomen.gongpai"
-        minSdkVersion 23
-        targetSdkVersion 23
-        versionCode 2
-        versionName "1.1.0"
-    }
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "2.0.0"
 
-    signingConfigs {
-        release {
-            def props = new Properties()
-            def propsFile = rootProject.file("keystore.properties")
-            if (propsFile.exists()) {
-                props.load(new FileInputStream(propsFile))
-                storeFile file(props["storeFile"])
-                storePassword props["storePassword"]
-                keyAlias props["keyAlias"]
-                keyPassword props["keyPassword"]
-            }
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a"
         }
     }
 
     buildTypes {
         release {
             minifyEnabled false
-            signingConfig signingConfigs.release
-        }
-        debug {
-            applicationIdSuffix ".debug"
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+
+    // Opus 解码已改用 JNA 直接调用 droidkit libopus.so，无需 CMake/JNI 编译
+    // 如需恢复 JNI 方式，取消注释以下配置：
+    // externalNativeBuild {
+    //     cmake {
+    //         path file("src/main/cpp/CMakeLists.txt")
+    //     }
+    // }
+    // ndkVersion "25.1.8937393"
+}
+
+dependencies {
+    implementation fileTree(dir: 'libs', include: ['*.aar', '*.jar'])
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
+    implementation 'androidx.annotation:annotation:1.7.1'
+    // ExoPlayer（标准格式播放）
+    implementation 'androidx.media3:media3-exoplayer:1.3.1'
+    implementation 'androidx.media3:media3-ui:1.3.1'
+    // droidkit Opus：提供 native libopus.so
+    implementation 'com.droidkit:opus:1.1.1'
+    // JNA：纯 Java 调用 native libopus.so（无需 CMake/JNI 编译）
+    implementation 'net.java.dev.jna:jna:5.14.0'
 }
