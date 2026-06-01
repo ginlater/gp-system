@@ -1012,8 +1012,12 @@ def _maybe_rename_consultant_oss(rec, new_customer, new_advisor):
     return final_key, old_key
 
 
-def oss_signed_url(oss_key, expires=7200):
-    url = oss_bucket.sign_url("GET", oss_key, expires, slash_safe=True)
+def oss_signed_url(oss_key, expires=7200, download_name=None):
+    params = None
+    if download_name:
+        # 强制浏览器下载（而非内联播放）；filename 用纯 ASCII，避免中文编码坑
+        params = {"response-content-disposition": f'attachment; filename="{download_name}"'}
+    url = oss_bucket.sign_url("GET", oss_key, expires, params=params, slash_safe=True)
     # 站点跑在 https，OSS endpoint 未带 scheme 时 sign_url 默认拼 http://，
     # 浏览器会按 mixed content 静默拦截（音频加载失败 / 地址栏不安全提示）。
     if url.startswith("http://"):
@@ -4571,7 +4575,7 @@ def session_detail(sid):
     sess_d = dict(sess)
     recs = db_fetchall("""
         SELECT id, oss_key, recorded_at, duration_label, size_bytes, source,
-               asr_status, asr_transcript, asr_error,
+               customer, asr_status, asr_transcript, asr_error,
                asr_started_at, asr_finished_at,
                asr_speaker_count, asr_speaker_warning, speaker_confirmed
         FROM recordings WHERE session_id=?
@@ -4958,7 +4962,7 @@ def api_session_get(sid):
     out = dict(sess)
     recs = db_fetchall("""
         SELECT id, oss_key, recorded_at, duration_label, size_bytes, source,
-               asr_status, asr_transcript, asr_error,
+               customer, asr_status, asr_transcript, asr_error,
                asr_started_at, asr_finished_at,
                asr_speaker_count, asr_speaker_warning, speaker_confirmed
         FROM recordings WHERE session_id=?
@@ -5115,12 +5119,17 @@ def api_upload():
 @app.route("/api/recording/<int:rid>/url")
 @login_required
 def api_recording_url(rid):
-    """按需签名：返回新鲜的 OSS 播放 URL，1 小时有效。"""
+    """按需签名：返回新鲜的 OSS 播放 URL，1 小时有效。?download=1 时返回强制下载链接。"""
     rec = db_fetchone("SELECT oss_key FROM recordings WHERE id=?", (rid,))
     if not rec or not rec["oss_key"]:
         return jsonify({"error": "not found"}), 404
+    download_name = None
+    if request.args.get("download"):
+        base = rec["oss_key"].rsplit("/", 1)[-1]
+        ext = base.rsplit(".", 1)[-1] if "." in base else "mp3"
+        download_name = f"recording_{rid}.{ext}"
     try:
-        url = oss_signed_url(rec["oss_key"], expires=3600)
+        url = oss_signed_url(rec["oss_key"], expires=3600, download_name=download_name)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"url": url})
@@ -8982,6 +8991,186 @@ def api_admin_session_rebind_candidates(sid):
               "phone_tail": r["phone_tail"], "member_card": r["member_card"]} for r in rows]
     return jsonify({"items": items, "service_date": sess["service_date"], "advisor": sess["advisor"],
                     "current_customer": sess["customer"], "current_customer_id": sess["customer_id"]})
+
+
+def _admin_rec_scope_check(rid):
+    """按录音操作的公共前置：取录音 + 原 session，校验公司/店长权限。
+    返回 (rec, old_sess, scid, error_tuple)；成功时 error 为 None。"""
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return None, None, None, (jsonify({"error": "录音不存在"}), 404)
+    if not rec["session_id"]:
+        return None, None, None, (jsonify({"error": "该录音尚未绑定，请直接绑定即可"}), 400)
+    old_sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (rec["session_id"],))
+    if not old_sess:
+        return None, None, None, (jsonify({"error": "原接诊包不存在"}), 404)
+    cid = session.get("company_id") or 1
+    scid = old_sess["company_id"] or cid
+    if scid != cid and session.get("role") != "super":
+        return None, None, None, (jsonify({"error": "无权操作其他公司录音"}), 403)
+    if session.get("role") == "store_manager":
+        if old_sess["store_id"] and old_sess["store_id"] != session.get("store_id"):
+            return None, None, None, (jsonify({"error": "店长只能操作本店录音"}), 403)
+    return rec, old_sess, scid, None
+
+
+@app.route("/api/admin/recordings/<int:rid>/rebind", methods=["POST"])
+@manager_required
+def api_admin_recording_rebind(rid):
+    """管理员/店长在详情页【按单条录音】换绑到该顾问当日的另一个客人。
+    仿顾问 direct_rebind，但 manager 权限、顾问从录音所属 session 解析、店长限本店。
+    只搬这一条录音；作废旧/新 session 分析；写审计日志 action='rebind'。"""
+    u = current_user()
+    data = request.get_json(silent=True) or {}
+    to_customer_id = data.get("to_customer_id")
+    reason = (data.get("reason") or "").strip()
+    if not to_customer_id:
+        return jsonify({"error": "请选择换绑目标顾客"}), 400
+    if not reason:
+        return jsonify({"error": "请填写换绑理由"}), 400
+    rec, old_sess, scid, err = _admin_rec_scope_check(rid)
+    if err:
+        return err
+    if _has_pending_delete_request(rid):
+        return jsonify({"error": "该录音正在申请删除，请先处理删除申请再操作"}), 409
+
+    advisor = old_sess["advisor"]
+    service_date = old_sess["service_date"]
+    au = db_fetchone(
+        "SELECT id FROM users WHERE advisor_name=? AND company_id=? "
+        "AND role IN ('consultant','store_manager') ORDER BY id LIMIT 1",
+        (advisor, scid),
+    )
+    if not au:
+        return jsonify({"error": "无法定位该接诊顾问账号，无法校验当日接诊"}), 400
+    to_cust = db_fetchone(
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        (to_customer_id, scid),
+    )
+    if not to_cust:
+        return jsonify({"error": "目标顾客不存在"}), 404
+    dr = db_fetchone(
+        """SELECT id FROM daily_reception
+           WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
+        (au["id"], to_customer_id, service_date),
+    )
+    if not dr:
+        return jsonify({"error": "目标顾客不在该顾问当日接诊列表，请先新增"}), 400
+    new_sid = get_or_create_session(advisor, to_cust["name"], service_date,
+                                    company_id=scid, customer_id=to_customer_id)
+    if not new_sid:
+        return jsonify({"error": "创建目标接诊包失败"}), 500
+    if new_sid == rec["session_id"]:
+        return jsonify({"error": "目标顾客与当前一致，无需换绑"}), 400
+    new_locked = db_fetchone("SELECT locked FROM sessions WHERE id=?", (new_sid,))
+    if new_locked and new_locked["locked"]:
+        return jsonify({"error": "目标接诊包已锁定，无法换绑"}), 409
+
+    try:
+        new_key, old_key_to_del = _maybe_rename_consultant_oss(rec, to_cust["name"], advisor)
+    except Exception as e:
+        return jsonify({"error": f"OSS 重命名失败：{e}"}), 500
+    try:
+        db_write(
+            """UPDATE recordings SET session_id=?, customer=?, oss_key=?, speaker_confirmed=0,
+               asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
+               WHERE id=?""",
+            (new_sid, to_cust["name"], new_key, rid),
+        )
+    except Exception as e:
+        if old_key_to_del and new_key != old_key_to_del:
+            _oss_delete_quiet(new_key)
+        return jsonify({"error": f"换绑失败：{e}"}), 500
+    if old_key_to_del and new_key != old_key_to_del:
+        _oss_delete_quiet(old_key_to_del)
+
+    # 新 session：作废旧分析（仅 done/failed 标 outdated）
+    db_write(
+        """UPDATE sessions SET locked=0,
+               analysis_status=CASE WHEN analysis_status IN ('done','failed') THEN 'outdated' ELSE analysis_status END
+           WHERE id=?""",
+        (new_sid,),
+    )
+    # 旧 session：变空则清分析，非空则作废
+    old_sid = rec["session_id"]
+    from_cust_name = old_sess["customer"] or ""
+    from_cust = db_fetchone(
+        "SELECT id FROM company_customers WHERE company_id=? AND name=?",
+        (scid, from_cust_name),
+    )
+    from_cust_id = from_cust["id"] if from_cust else None
+    cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (old_sid,))
+    if not cnt or not cnt["n"]:
+        db_write(
+            """UPDATE sessions SET locked=0,
+                   analysis_status=NULL, analysis_result=NULL, analysis_error=NULL,
+                   analysis_started_at=NULL, analysis_finished_at=NULL,
+                   analysis_signature=NULL, analysis_scores=NULL,
+                   analysis_progress=NULL, task_status=NULL
+               WHERE id=?""",
+            (old_sid,),
+        )
+    else:
+        db_write(
+            """UPDATE sessions SET locked=0,
+                   analysis_status=CASE WHEN analysis_status IN ('done','failed') THEN 'outdated' ELSE analysis_status END
+               WHERE id=?""",
+            (old_sid,),
+        )
+    # 审计日志
+    db_write(
+        """INSERT INTO rebind_requests
+           (company_id, recording_id, rec_date, requester_user_id, requester_name,
+            from_session_id, from_customer_id, from_customer_name,
+            to_customer_id, to_customer_name, reason, status, action,
+            reviewer_user_id, reviewer_name, reviewed_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,'done','rebind',?,?,datetime('now','localtime'))""",
+        (scid, rid, service_date, u["id"], u["advisor_name"] or u["username"],
+         old_sid, from_cust_id, from_cust_name,
+         to_cust["id"], to_cust["name"], reason,
+         u["id"], u["advisor_name"] or u["username"]),
+    )
+    # 触发新 session 分析（录音 ASR 完成后才会真正开跑）
+    maybe_trigger_session_analysis(new_sid)
+    return jsonify({"ok": True, "new_session_id": new_sid})
+
+
+@app.route("/api/admin/recordings/<int:rid>/add_day_customer", methods=["POST"])
+@manager_required
+def api_admin_recording_add_day_customer(rid):
+    """换绑弹窗里"＋新增当日客人"：为该录音所属顾问、当日建一个客人并登记进当日接诊，
+    返回 customer_id 供前端直接作为换绑目标。"""
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    phone_tail = (data.get("phone_tail") or "").strip()
+    if not name:
+        return jsonify({"error": "请填写客人姓名"}), 400
+    if phone_tail and not re.fullmatch(r"\d{4}", phone_tail):
+        return jsonify({"error": "手机尾号必须是 4 位数字"}), 400
+    rec, old_sess, scid, err = _admin_rec_scope_check(rid)
+    if err:
+        return err
+    advisor = old_sess["advisor"]
+    service_date = old_sess["service_date"]
+    au = db_fetchone(
+        "SELECT id, advisor_name, store_id FROM users WHERE advisor_name=? AND company_id=? "
+        "AND role IN ('consultant','store_manager') ORDER BY id LIMIT 1",
+        (advisor, scid),
+    )
+    if not au:
+        return jsonify({"error": "无法定位该接诊顾问账号"}), 400
+    new_cust_id = db_write(
+        "INSERT INTO company_customers (company_id, name, member_card, phone_tail) VALUES (?, ?, ?, ?)",
+        (scid, name, _generate_member_card(scid), phone_tail or None),
+    )
+    db_write(
+        """INSERT OR IGNORE INTO daily_reception
+           (company_id, advisor_user_id, advisor_name, customer_id, service_date, store_id)
+           VALUES (?,?,?,?,?,?)""",
+        (scid, au["id"], au["advisor_name"] or advisor, new_cust_id, service_date, au["store_id"]),
+    )
+    return jsonify({"ok": True, "customer_id": new_cust_id, "name": name,
+                    "phone_tail": phone_tail or None})
 
 
 @app.route("/api/admin/bind_advisors")

@@ -39,9 +39,7 @@
           原始录音
         </button>
         {% endif %}
-        {% if role in ('admin','super','store_manager') %}
-        <button class="rec-btn rec-btn-sec" onclick="openAdminRebind()" title="把本接诊换绑到该顾问当日的另一个客人">⇄ 换绑</button>
-        {% endif %}
+        {# 换绑改为「按单条录音」，入口移到下方录音面板内（openRecRebind） #}
       </div>
       {% if role in ('admin','super') %}
       <div class="nav-actions nav-actions-danger">
@@ -102,6 +100,12 @@
       <div class="rec-transcript-body" id="recTranscriptBody">{{ (recordings[0].asr_transcript or '（暂无转录文本）')|replace('\n','<br>')|safe }}</div>
     </details>
 
+    {% if role in ('admin','super','store_manager') %}
+    <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+      <button class="rec-btn rec-btn-sec" onclick="downloadCurrentRec()" title="下载当前这段录音文件">⬇ 下载</button>
+      <button class="rec-btn rec-btn-sec" onclick="openRecRebind()" title="把当前这段录音换绑到该顾问当日的另一个客人">⇄ 换绑当前录音段</button>
+    </div>
+    {% endif %}
     {% if role in ('admin','super') %}
     <div style="margin-top:10px;text-align:right">
       <button id="delRecBtn" onclick="deleteCurrentRec()"
@@ -1551,7 +1555,25 @@ loadCustomerTags();
 
 // ============ 管理员/店长：详情页换绑 ============
 function _rbEsc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-function openAdminRebind() {
+function _curRec() {
+  const idx = _currentSegIdx >= 0 ? _currentSegIdx : 0;
+  return RECORDINGS[idx] || null;
+}
+async function downloadCurrentRec() {
+  const rec = _curRec();
+  if (!rec) { alert('请先选择一段录音'); return; }
+  try {
+    const r = await fetch(`${BASE}/api/recording/${rec.id}/url?download=1`, { credentials: 'same-origin' });
+    const d = await r.json();
+    if (!d.url) throw new Error(d.error || '获取下载链接失败');
+    const a = document.createElement('a');
+    a.href = d.url; a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) { alert('下载失败：' + e.message); }
+}
+function openRecRebind() {
+  const rec = _curRec();
+  if (!rec) { alert('请先选择一段录音'); return; }
   let mask = document.getElementById('arbMask');
   if (!mask) {
     mask = document.createElement('div');
@@ -1559,44 +1581,89 @@ function openAdminRebind() {
     mask.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000';
     mask.innerHTML = `
       <div style="background:#fff;max-width:460px;margin:80px auto;border-radius:8px;padding:20px;color:#222">
-        <h3 style="margin-top:0">换绑接诊 <span style="float:right;cursor:pointer" onclick="document.getElementById('arbMask').style.display='none'">✕</span></h3>
+        <h3 style="margin-top:0">换绑当前录音段 <span style="float:right;cursor:pointer" onclick="document.getElementById('arbMask').style.display='none'">✕</span></h3>
         <div id="arbInfo" style="font-size:13px;color:#666;margin-bottom:10px"></div>
-        <div style="margin-bottom:8px"><label style="display:block;margin-bottom:4px">换绑到该顾问当日客人</label>
+        <div style="margin-bottom:6px"><label style="display:block;margin-bottom:4px">换绑到该顾问当日客人</label>
           <select id="arbCustomer" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:7px"></select></div>
+        <div style="margin-bottom:8px">
+          <a href="javascript:;" onclick="toggleAddCust()" style="font-size:12px;color:#2a6fb0">＋ 新增当日客人</a>
+          <div id="arbAddBox" style="display:none;margin-top:6px;padding:8px;border:1px dashed #ccc;border-radius:5px">
+            <input id="arbNewName" placeholder="客人姓名（必填）" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:6px;margin-bottom:5px">
+            <input id="arbNewTail" placeholder="手机尾号 4 位（选填）" maxlength="4" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:6px;margin-bottom:5px">
+            <div style="text-align:right"><button class="rec-btn rec-btn-sec" onclick="addDayCustomer()">新增并选中</button></div>
+          </div>
+        </div>
         <div style="margin-bottom:8px"><label style="display:block;margin-bottom:4px">换绑理由（必填）</label>
           <textarea id="arbReason" rows="2" style="width:100%;border:1px solid #ccc;border-radius:4px;padding:7px"></textarea></div>
         <div id="arbMsg" style="color:#e74c3c;font-size:13px;min-height:18px"></div>
         <div style="text-align:right;margin-top:10px">
           <button class="rec-btn rec-btn-sec" onclick="document.getElementById('arbMask').style.display='none'">取消</button>
-          <button class="rec-btn" onclick="submitAdminRebind()">确认换绑</button>
+          <button class="rec-btn" onclick="submitRecRebind()">确认换绑</button>
         </div>
       </div>`;
     document.body.appendChild(mask);
   }
   document.getElementById('arbMsg').textContent = '';
   document.getElementById('arbReason').value = '';
+  const addBox = document.getElementById('arbAddBox'); if (addBox) addBox.style.display = 'none';
   mask.style.display = 'block';
+  // 候选客人按"该顾问当日"取（与会话同日同顾问）
   fetch(`${BASE}/api/admin/session/${SESSION_ID}/rebind_candidates`).then(r => r.json()).then(d => {
     if (d.error) { document.getElementById('arbMsg').textContent = d.error; return; }
+    const segNo = (_currentSegIdx >= 0 ? _currentSegIdx : 0) + 1;
     document.getElementById('arbInfo').textContent =
-      `顾问 ${d.advisor || ''} · ${d.service_date || ''} · 当前客人 ${d.current_customer || ''}`;
-    const sel = document.getElementById('arbCustomer');
-    const items = (d.items || []).filter(c => c.customer_id != d.current_customer_id);
-    if (!items.length) { sel.innerHTML = '<option value="">该顾问当日无其他可换绑客人</option>'; return; }
-    sel.innerHTML = items.map(c =>
-      `<option value="${c.customer_id}">${_rbEsc(c.name)}${c.phone_tail ? ' (尾号' + _rbEsc(c.phone_tail) + ')' : ''}</option>`).join('');
+      `顾问 ${d.advisor || ''} · ${d.service_date || ''} · 当前客人 ${rec.customer || d.current_customer || ''} · 第 ${segNo} 段录音`;
+    fillRebindCustomers(d.items || [], d.current_customer_id);
   });
 }
-function submitAdminRebind() {
+function fillRebindCustomers(items, curId) {
+  const sel = document.getElementById('arbCustomer');
+  const list = (items || []).filter(c => c.customer_id != curId);
+  if (!list.length) { sel.innerHTML = '<option value="">该顾问当日无其他可换绑客人，请用下方"新增当日客人"</option>'; return; }
+  sel.innerHTML = list.map(c =>
+    `<option value="${c.customer_id}">${_rbEsc(c.name)}${c.phone_tail ? ' (尾号' + _rbEsc(c.phone_tail) + ')' : ''}</option>`).join('');
+}
+function toggleAddCust() {
+  const box = document.getElementById('arbAddBox');
+  if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+}
+async function addDayCustomer() {
+  const rec = _curRec(); if (!rec) return;
+  const name = document.getElementById('arbNewName').value.trim();
+  const tail = document.getElementById('arbNewTail').value.trim();
+  const msg = document.getElementById('arbMsg');
+  if (!name) { msg.textContent = '请填写新增客人姓名'; return; }
+  try {
+    const r = await fetch(`${BASE}/api/admin/recordings/${rec.id}/add_day_customer`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, phone_tail: tail }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '新增失败');
+    const sel = document.getElementById('arbCustomer');
+    const empty = sel.querySelector('option[value=""]'); if (empty) sel.innerHTML = '';
+    const opt = document.createElement('option');
+    opt.value = d.customer_id;
+    opt.textContent = d.name + (d.phone_tail ? ' (尾号' + d.phone_tail + ')' : '') + '（新增）';
+    sel.appendChild(opt); sel.value = String(d.customer_id);
+    document.getElementById('arbAddBox').style.display = 'none';
+    document.getElementById('arbNewName').value = '';
+    document.getElementById('arbNewTail').value = '';
+    msg.textContent = '';
+  } catch (e) { msg.textContent = e.message; }
+}
+function submitRecRebind() {
+  const rec = _curRec(); if (!rec) return;
   const to = document.getElementById('arbCustomer').value;
   const reason = document.getElementById('arbReason').value.trim();
-  if (!to) { document.getElementById('arbMsg').textContent = '请选择换绑目标客人'; return; }
-  if (!reason) { document.getElementById('arbMsg').textContent = '请填写换绑理由'; return; }
-  fetch(`${BASE}/api/admin/session/${SESSION_ID}/rebind`, {
+  const msg = document.getElementById('arbMsg');
+  if (!to) { msg.textContent = '请选择换绑目标客人'; return; }
+  if (!reason) { msg.textContent = '请填写换绑理由'; return; }
+  fetch(`${BASE}/api/admin/recordings/${rec.id}/rebind`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ to_customer_id: to, reason }),
   }).then(r => r.json()).then(d => {
-    if (d.error) { document.getElementById('arbMsg').textContent = d.error; return; }
+    if (d.error) { msg.textContent = d.error; return; }
     document.getElementById('arbMask').style.display = 'none';
     alert('换绑成功，正在跳转到新接诊报告');
     location.href = `${BASE}/session/${d.new_session_id}`;
