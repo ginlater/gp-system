@@ -1580,7 +1580,7 @@ async function splitCurrentRec() {
   if (t < 0.5) { alert('请先在播放器里把进度条拖到要切分的位置（不要太靠近开头），再点分割'); return; }
   const mm = Math.floor(t / 60), ss = Math.floor(t % 60);
   const pos = `${mm}分${ss < 10 ? '0' : ''}${ss}秒`;
-  if (!confirm(`将在 ${pos} 处把这段录音切成两段。\n\n切完两段会各自重新转写(ASR)，都留在当前接诊里，可分别用「换绑当前录音段」绑到对应客人。\n原录音会被替换。确认分割？`)) return;
+  if (!confirm(`将在 ${pos} 处把这段录音切成两段。\n\n两段都留在当前接诊里，转录会按切点自动切开（不重新转写），可分别用「换绑当前录音段」绑到对应客人。\n原录音会被替换。确认分割？`)) return;
   try {
     const r = await fetch(`${BASE}/api/admin/recordings/${rec.id}/split`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1588,7 +1588,9 @@ async function splitCurrentRec() {
     });
     const d = await r.json();
     if (!d.ok) throw new Error(d.error || '分割失败');
-    alert('已切成两段，正在重新转写。刷新后可见两段，可分别换绑。');
+    alert(d.reasr
+      ? '已切成两段。原录音尚未转写，两段将各自重新转写，刷新后可分别换绑。'
+      : '已切成两段，转录已按切点切开。刷新后可分别换绑。');
     location.reload();
   } catch (e) { alert('分割失败：' + e.message); }
 }

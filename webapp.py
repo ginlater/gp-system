@@ -9285,17 +9285,61 @@ def _run_ffmpeg(args):
         raise RuntimeError(f"ffmpeg 失败: {(r.stderr or '')[:300]}")
 
 
+def _split_asr_at(asr_json_str, t_ms):
+    """把已有 ASR 结果按 t_ms 切成前后两份，避免重新转写。
+    返回 [(json1,transcript1,spk1),(json2,transcript2,spk2)]；无法解析返回 None。
+    句子按 begin_time 归属；part2 的时间戳整体左移 t_ms。"""
+    import copy
+    try:
+        full = json.loads(asr_json_str) if asr_json_str else None
+    except (json.JSONDecodeError, TypeError):
+        full = None
+    if not full:
+        return None
+
+    def build(which):  # which: 1=前段, 2=后段
+        spk, lines, out = set(), [], []
+        for detailed in full:
+            d2 = copy.deepcopy(detailed)
+            for tr in d2.get("transcripts", []):
+                kept = []
+                for s in tr.get("sentences", []):
+                    bt = s.get("begin_time", 0) or 0
+                    if (which == 1) != (bt < t_ms):
+                        continue
+                    s2 = dict(s)
+                    if which == 2:
+                        s2["begin_time"] = max(0, (s.get("begin_time", 0) or 0) - t_ms)
+                        s2["end_time"] = max(0, (s.get("end_time", 0) or 0) - t_ms)
+                    kept.append(s2)
+                    sp = s.get("speaker_id")
+                    if sp is not None:
+                        spk.add(sp)
+                    speaker = f"说话人{sp}" if sp is not None else "说话人?"
+                    lines.append(f"[{(s2['begin_time'] or 0)/1000.0:.2f}s - "
+                                 f"{(s2['end_time'] or 0)/1000.0:.2f}s] {speaker}: {s.get('text','')}")
+                tr["sentences"] = kept
+                if "text" in tr:
+                    tr["text"] = "".join(x.get("text", "") for x in kept)
+            out.append(d2)
+        return out, "\n".join(lines), len(spk)
+    return [build(1), build(2)]
+
+
 @app.route("/api/admin/recordings/<int:rid>/split", methods=["POST"])
 @manager_required
 def api_admin_recording_split(rid):
-    """把一条录音在指定秒数处切成两段：统一转码 mp3、各自重新 ASR、都留在原接诊里
-    （切完用「按录音换绑」分别绑定到该顾问当日客人）。原录音删除（OSS+DB）。"""
+    """把一条录音在指定秒数处切成两段（转码 mp3），都留在原接诊里，
+    切完用「按录音换绑」分别绑定。默认按已有 ASR 转录切分、不重新转写；
+    原录音若还没转写完才回退重跑 ASR。原录音删除（OSS+DB）。"""
     import tempfile, shutil
     data = request.get_json(silent=True) or {}
     try:
         at = float(data.get("at_seconds"))
     except (TypeError, ValueError):
         return jsonify({"error": "切分位置无效"}), 400
+    if at <= 0.5:
+        return jsonify({"error": "切分位置太靠近开头，请往后一点"}), 400
     rec, old_sess, scid, err = _admin_rec_scope_check(rid)
     if err:
         return err
@@ -9313,33 +9357,69 @@ def api_admin_recording_split(rid):
     parts_created = False
     try:
         oss_bucket.get_object_to_file(rec["oss_key"], src_path)
-        dur = _ffprobe_duration(src_path)
-        if dur is None:
-            return jsonify({"error": "无法读取录音时长，可能文件损坏"}), 500
-        if at <= 0.5 or at >= dur - 0.5:
-            return jsonify({"error": f"切分位置要在 0 与总时长（约 {dur:.0f} 秒）之间，且距两端至少 0.5 秒"}), 400
-        # 转码 mp3 切两段：part1=[0,at]，part2=[at,end]；-ss 放在 -i 之后保证精确
+        # 不读源文件时长（浏览器 webm 常无时长头会返回 N/A）。直接切，再读切出的 mp3 时长校验。
         _run_ffmpeg(["-i", src_path, "-t", f"{at:.3f}", "-vn", "-acodec", "libmp3lame", "-q:a", "4", p1])
         _run_ffmpeg(["-i", src_path, "-ss", f"{at:.3f}", "-vn", "-acodec", "libmp3lame", "-q:a", "4", p2])
+        d1, d2 = _ffprobe_duration(p1), _ffprobe_duration(p2)
+        if not d1 or d1 < 0.3:
+            return jsonify({"error": "切分位置太靠近开头，请往后一点"}), 400
+        if not d2 or d2 < 0.3:
+            return jsonify({"error": "切分位置超出了录音末尾，请往前一点"}), 400
+
+        # 优先按已有转录切分，避免重新 ASR；原录音没转写完才回退重跑
+        split_asr = None
+        if rec["asr_status"] == "done" and rec["asr_result_json"]:
+            split_asr = _split_asr_at(rec["asr_result_json"], int(round(at * 1000)))
+        reasr = split_asr is None
+
         stem = rec["oss_key"][:-(len(src_ext) + 1)] if "." in base else rec["oss_key"]
         k1 = f"{stem}_p1_{_uuid.uuid4().hex[:8]}.mp3"
         k2 = f"{stem}_p2_{_uuid.uuid4().hex[:8]}.mp3"
         oss_bucket.put_object_from_file(k1, p1)
         oss_bucket.put_object_from_file(k2, p2)
-        common = dict(source="split", advisor=old_sess["advisor"], customer=old_sess["customer"],
-                      recorded_at=rec["recorded_at"], service_date=old_sess["service_date"],
-                      company_id=scid, uploader_user_id=rec["uploader_user_id"],
-                      customer_id=old_sess["customer_id"])
-        id1 = ingest_recording(k1, size_bytes=os.path.getsize(p1),
-                               duration_label=_format_duration_label(_ffprobe_duration(p1)), **common)
-        id2 = ingest_recording(k2, size_bytes=os.path.getsize(p2),
-                               duration_label=_format_duration_label(_ffprobe_duration(p2)), **common)
+
+        def _insert_part(oss_key, size, dur, idx):
+            label = _format_duration_label(dur)
+            if split_asr:
+                j, tx, spk = split_asr[idx]
+                return db_write(
+                    """INSERT INTO recordings
+                       (session_id, oss_key, advisor, customer, recorded_at, duration_label,
+                        size_bytes, source, company_id, uploader_user_id, store_id,
+                        asr_status, asr_result_json, asr_transcript, asr_speaker_count,
+                        asr_speaker_warning, speaker_confirmed, asr_finished_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,'done',?,?,?,0,?,datetime('now','localtime'))""",
+                    (rec["session_id"], oss_key, old_sess["advisor"], old_sess["customer"],
+                     rec["recorded_at"], label, size, "split", scid, rec["uploader_user_id"],
+                     rec["store_id"], json.dumps(j, ensure_ascii=False), tx, spk,
+                     rec["speaker_confirmed"] or 0),
+                )
+            new_id = db_write(
+                """INSERT INTO recordings
+                   (session_id, oss_key, advisor, customer, recorded_at, duration_label,
+                    size_bytes, source, company_id, uploader_user_id, store_id, asr_status)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending')""",
+                (rec["session_id"], oss_key, old_sess["advisor"], old_sess["customer"],
+                 rec["recorded_at"], label, size, "split", scid, rec["uploader_user_id"],
+                 rec["store_id"]),
+            )
+            trigger_pipeline_for_recording(new_id)
+            return new_id
+
+        id1 = _insert_part(k1, os.path.getsize(p1), d1, 0)
+        id2 = _insert_part(k2, os.path.getsize(p2), d2, 1)
         parts_created = True
-        # 删原录音（两段已建好且各自触发了 ASR）
+        # 删原录音；录音集变了，原 session 已完成的分析标记过期（不自动重跑）
         _oss_delete_quiet(rec["oss_key"])
         db_write("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
         db_write("DELETE FROM recordings WHERE id=?", (rid,))
-        return jsonify({"ok": True, "parts": [id1, id2], "session_id": rec["session_id"]})
+        db_write(
+            """UPDATE sessions SET analysis_status=CASE WHEN analysis_status IN ('done','failed')
+                   THEN 'outdated' ELSE analysis_status END WHERE id=?""",
+            (rec["session_id"],),
+        )
+        return jsonify({"ok": True, "parts": [id1, id2],
+                        "session_id": rec["session_id"], "reasr": reasr})
     except Exception as e:
         if not parts_created:
             if k1:
