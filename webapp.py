@@ -7765,13 +7765,18 @@ def api_customer_value_generate():
     sys_prompt = (
         "你是高端医美/美容院的客户经营顾问。基于该客人历次接待的分析记录，"
         "综合产出对这个客人的价值评估与经营规划。要具体、可执行，不要空话套话。"
-        "按顾问分别评估匹配度时，只评估实际接待过的顾问。")
+        "按顾问分别评估匹配度时，只评估实际接待过的顾问。\n"
+        "【输出格式要求】内容给不懂技术的老板看，每个字段都用以下轻量 markdown，保持简洁、重点突出：\n"
+        "- 用 `## 小标题` 分小节（每字段 2-4 个小节即可，不要长篇大论）；\n"
+        "- 关键结论用 `**加粗**`；要点用 `- ` 列表，步骤用 `1. ` 编号；\n"
+        "- 涉及评级/程度时用 ★ 星级（如 消费力 ★★★★☆）；\n"
+        "- 每个要点一句话讲透，避免大段文字堆砌。")
     user_prompt = (
         f"客人：{cust['name']}（历史接待 {len(done)} 次）\n\n"
         f"以下是历次接待的关键分析：\n\n{_gather_value_input(done)}")
     try:
         result = _call_llm_with_retry(model, sys_prompt, user_prompt, tool=VALUE_TOOL,
-                                      max_tokens=8000, stage_label="客户价值预测")
+                                      max_tokens=6000, stage_label="客户价值预测")
     except Exception as e:
         return jsonify({"error": f"生成失败：{str(e)[:200]}"}), 502
     if not isinstance(result, dict):

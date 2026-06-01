@@ -27,10 +27,39 @@
   select{border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:12px;font-family:inherit}
   .muted{color:var(--text-mute);font-size:13px}
   .hit{background:#fff7e6;color:#b9770e;border:1px solid #f0c97a;border-radius:4px;padding:1px 7px;font-size:11px;margin-left:4px}
-  .val-block{margin-bottom:14px}
-  .val-block .t{font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px}
-  .val-block .c{font-size:13px;line-height:1.7;color:var(--text-mid);white-space:pre-wrap}
   a.sess-link{color:var(--blue);text-decoration:none;font-size:12px}
+  /* 客户价值预测 · 高级卡片 */
+  .vp-card{border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:16px;box-shadow:0 4px 16px rgba(28,52,97,.06);background:#fff}
+  .vp-head{display:flex;align-items:center;gap:10px;padding:13px 18px;color:#fff;font-weight:700;font-size:15px;letter-spacing:.3px}
+  .vp-ico{width:30px;height:30px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.25);font-size:17px;flex:0 0 auto}
+  .vp-body{padding:15px 20px 17px}
+  .vp-body .md-h{font-size:14px;font-weight:700;color:var(--navy);margin:15px 0 7px;padding-left:10px;border-left:3px solid var(--acc)}
+  .vp-body .md-h:first-child{margin-top:0}
+  .vp-body .md-p{margin:7px 0;font-size:13.5px;line-height:1.85;color:#3a4252}
+  .vp-body .md-ul,.vp-body .md-ol{margin:8px 0;padding:0;list-style:none}
+  .vp-body .md-ol{counter-reset:mdi}
+  .vp-body .md-ul li,.vp-body .md-ol li{position:relative;padding-left:24px;margin:7px 0;font-size:13.5px;line-height:1.8;color:#3a4252}
+  .vp-body .md-ul li::before{content:"";position:absolute;left:7px;top:9px;width:6px;height:6px;border-radius:50%;background:var(--acc)}
+  .vp-body .md-ol li{counter-increment:mdi}
+  .vp-body .md-ol li::before{content:counter(mdi);position:absolute;left:0;top:1px;width:18px;height:18px;border-radius:50%;background:var(--acc);color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center}
+  .vp-body .md-b{font-weight:700;color:var(--navy);background:linear-gradient(transparent 62%, #ffe7a3 62%);padding:0 1px}
+  .vp-body .md-stars{color:#f0a92b;letter-spacing:2px;font-size:15px;vertical-align:middle}
+  .vp-body .md-sub{font-weight:700;color:var(--acc);margin:13px 0 5px;font-size:13.5px}
+  .vp-body .md-ok{color:#22a36b;font-weight:700}
+  .vp-body .md-no{color:#d9534f;font-weight:700}
+  .vp-body .md-table-wrap{overflow-x:auto;margin:11px 0;border-radius:9px;border:1px solid var(--border)}
+  .vp-body .md-table{border-collapse:collapse;width:100%;font-size:13px;min-width:420px}
+  .vp-body .md-table th{background:var(--acc);color:#fff;padding:9px 11px;text-align:left;font-weight:600}
+  .vp-body .md-table td{border-top:1px solid var(--border);padding:9px 11px;color:#3a4252;line-height:1.65;vertical-align:top}
+  .vp-body .md-table td:not(:first-child){border-left:1px solid var(--border)}
+  .vp-body .md-table tr:nth-child(even) td{background:#fafbfd}
+  .vp-advisor{display:flex;gap:12px;padding:12px 0;border-bottom:1px dashed var(--border)}
+  .vp-advisor:last-child{border-bottom:none}
+  .vp-av-badge{flex:0 0 auto;width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#7b5ec7,#9b7fe0);color:#fff;font-weight:700;font-size:16px;display:flex;align-items:center;justify-content:center}
+  .vp-av-name{font-weight:700;color:var(--navy);font-size:14px;margin-bottom:2px}
+  .vp-loading{display:flex;align-items:center;gap:10px;color:var(--text-mid);font-size:13px;padding:18px;background:var(--bg-light);border-radius:10px}
+  .vp-spin{width:18px;height:18px;border:2px solid #d6deec;border-top-color:var(--blue);border-radius:50%;animation:vpspin .8s linear infinite}
+  @keyframes vpspin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -59,9 +88,9 @@
   </div>
 
   <div class="card">
-    <h3>客户价值预测 <span style="font-size:12px;font-weight:normal;color:var(--text-mute)" id="valMeta"></span></h3>
-    <div class="muted" style="margin-bottom:10px">基于该客人历次接待综合产出（结果会缓存，有新接诊分析后可刷新重算）。</div>
-    <div id="valActions"><button class="btn" onclick="genValue()" id="genBtn">生成 / 刷新预测</button></div>
+    <h3>🔮 客户价值预测 <span style="font-size:12px;font-weight:normal;color:var(--text-mute)" id="valMeta"></span></h3>
+    <div class="muted" style="margin-bottom:10px">AI 基于该客人历次接待综合产出（结果会缓存，有新接诊分析后可点刷新重算）。</div>
+    <div id="valActions"><button class="btn" onclick="genValue()" id="genBtn">✨ 生成 / 刷新预测</button></div>
     <div id="valContent" style="margin-top:14px"></div>
   </div>
 
@@ -107,22 +136,75 @@ function loadProfile() {
     });
 }
 
+// markdown-lite → 漂亮 HTML（标题/表格/要点/编号/加粗/星级/勾叉）
+function mdLite(raw) {
+  if (!raw) return '';
+  const lines = esc(raw).split(/\r?\n/);
+  const out = []; let list = null; let tbl = null; let tblHeader = false;
+  const inline = s => s
+    .replace(/\*\*(.+?)\*\*/g, '<strong class="md-b">$1</strong>')
+    .replace(/([★☆]{1,5})/g, '<span class="md-stars">$1</span>')
+    .replace(/✓/g, '<span class="md-ok">✓</span>')
+    .replace(/[✗✘×]/g, '<span class="md-no">✗</span>');
+  const flushList = () => { if (list) { out.push(`<${list.t} class="md-${list.t}">` + list.items.map(i=>`<li>${i}</li>`).join('') + `</${list.t}>`); list = null; } };
+  const flushTbl = () => {
+    if (!tbl) return;
+    let head = '';
+    let body = tbl;
+    if (tblHeader && tbl.length) { head = '<thead><tr>' + tbl[0].map(c=>`<th>${c}</th>`).join('') + '</tr></thead>'; body = tbl.slice(1); }
+    out.push(`<div class="md-table-wrap"><table class="md-table">${head}<tbody>` +
+      body.map(r=>'<tr>'+r.map(c=>`<td>${c}</td>`).join('')+'</tr>').join('') + '</tbody></table></div>');
+    tbl = null; tblHeader = false;
+  };
+  const flushAll = () => { flushList(); flushTbl(); };
+  const cellsOf = t => t.replace(/^\s*\||\|\s*$/g, '').split('|').map(c=>c.trim());
+  const isSep = arr => arr.length > 0 && arr.every(c => /^:?-{2,}:?$/.test(c.replace(/\s/g,'')) || /^-+$/.test(c));
+  for (const ln of lines) {
+    const t = ln.trim();
+    if (!t) { flushAll(); continue; }
+    // 表格行：以 | 开头且含另一个 |
+    if (/^\|.*\|/.test(t)) {
+      flushList();
+      const arr = cellsOf(t);
+      if (isSep(arr)) { if (tbl && tbl.length === 1) tblHeader = true; continue; }
+      (tbl = tbl || []).push(arr.map(inline));
+      continue;
+    }
+    flushTbl();
+    let m;
+    if (m = t.match(/^#{1,6}\s*(.+)$/)) { flushList(); out.push(`<div class="md-h">${inline(m[1])}</div>`); continue; }
+    if (m = t.match(/^[▶▷►]\s*(.+)$/)) { flushList(); out.push(`<div class="md-sub">${inline(m[1])}</div>`); continue; }
+    if (m = t.match(/^[-*•·]\s+(.+)$/)) { if (!list || list.t !== 'ul') { flushList(); list = {t:'ul', items:[]}; } list.items.push(inline(m[1])); continue; }
+    if (m = t.match(/^\d+[.、)]\s*(.+)$/)) { if (!list || list.t !== 'ol') { flushList(); list = {t:'ol', items:[]}; } list.items.push(inline(m[1])); continue; }
+    flushList(); out.push(`<p class="md-p">${inline(t)}</p>`);
+  }
+  flushAll();
+  return out.join('');
+}
+const VP_DIMS = [
+  {key:'value_rebuild', title:'客户价值评估',                   icon:'💎', color:'#b8860b'},
+  {key:'battle_plan',   title:'攻坚作战方案',                   icon:'🎯', color:'#d9534f'},
+  {key:'project_plan',  title:'项目规划（竞品/可做项目/售后学习）', icon:'📋', color:'#4a90d9'},
+  {key:'biz_plan',      title:'经营规划（下一步/回店）',          icon:'📈', color:'#2e9e6b'},
+];
+function vpCard(title, icon, color, bodyHtml) {
+  return `<div class="vp-card" style="--acc:${color}">
+    <div class="vp-head" style="background:linear-gradient(135deg,${color},${color}cc)"><span class="vp-ico">${icon}</span>${title}</div>
+    <div class="vp-body">${bodyHtml}</div></div>`;
+}
 function renderValue(content, meta) {
   const m = document.getElementById('valMeta');
-  m.textContent = meta || '';
+  if (m) m.textContent = meta || '';
   const wrap = document.getElementById('valContent');
   if (!content) { wrap.innerHTML = ''; return; }
-  const blocks = [
-    ['客户价值评估', content.value_rebuild],
-    ['攻坚作战方案', content.battle_plan],
-    ['项目规划（竞品/可做项目/售后学习）', content.project_plan],
-    ['经营规划（下一步/回店）', content.biz_plan],
-  ];
-  let html = blocks.filter(b=>b[1]).map(b=>`<div class="val-block"><div class="t">${b[0]}</div><div class="c">${esc(b[1])}</div></div>`).join('');
+  let html = VP_DIMS.filter(d => content[d.key]).map(d => vpCard(d.title, d.icon, d.color, mdLite(content[d.key]))).join('');
   const am = content.advisor_match || [];
   if (am.length) {
-    html += `<div class="val-block"><div class="t">顾问匹配度</div>` +
-      am.map(a=>`<div class="c" style="margin-bottom:6px">· <b>${esc(a.advisor)}</b>：${esc(a.assessment)}</div>`).join('') + `</div>`;
+    const body = am.map(a => `<div class="vp-advisor">
+        <div class="vp-av-badge">${esc((a.advisor||'?').slice(0,1))}</div>
+        <div style="flex:1"><div class="vp-av-name">${esc(a.advisor)}</div><div>${mdLite(a.assessment)}</div></div>
+      </div>`).join('');
+    html += vpCard('顾问匹配度', '🤝', '#7b5ec7', body);
   }
   wrap.innerHTML = html || '<span class="muted">（无内容）</span>';
 }
@@ -144,15 +226,17 @@ function loadValue() {
 
 function genValue() {
   const btn = document.getElementById('genBtn');
-  btn.disabled = true; btn.textContent = '生成中…（约十几秒）';
+  btn.disabled = true; btn.textContent = '⏳ AI 生成中…';
+  document.getElementById('valContent').innerHTML =
+    '<div class="vp-loading"><div class="vp-spin"></div>AI 正在综合该客人全部历史接待生成深度分析，首次约需 1–2 分钟，请耐心等待…</div>';
   fetch(`${BASE}/api/admin/customer_value`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({customer_id: CUSTOMER_ID}),
   }).then(r => r.json()).then(d => {
-    btn.disabled = false; btn.textContent = '生成 / 刷新预测';
-    if (d.error) { alert(d.error); return; }
+    btn.disabled = false; btn.textContent = '✨ 生成 / 刷新预测';
+    if (d.error) { document.getElementById('valContent').innerHTML = `<span class="muted">生成失败：${esc(d.error)}</span>`; return; }
     renderValue(d.content, `生成于 ${d.generated_at||''}${d.model?(' · '+d.model):''}`);
-  }).catch(e => { btn.disabled = false; btn.textContent = '生成 / 刷新预测'; alert('生成失败'); });
+  }).catch(e => { btn.disabled = false; btn.textContent = '✨ 生成 / 刷新预测'; document.getElementById('valContent').innerHTML = '<span class="muted">生成失败，请重试</span>'; });
 }
 
 loadProfile();
