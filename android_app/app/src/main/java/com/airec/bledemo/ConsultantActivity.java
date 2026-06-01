@@ -14,7 +14,6 @@ import android.os.Looper;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.Settings;
-import android.text.TextUtils;
 import android.webkit.CookieManager;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
@@ -22,9 +21,7 @@ import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.Button;
 import android.widget.ProgressBar;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import com.airec.bledemo.recording.PhoneMicService;
@@ -33,15 +30,15 @@ import com.airec.bledemo.recording.RecordingBus;
 /**
  * 接诊 WebView 壳（启动页）。
  *
- * 复用线上 consultant 网页的全部业务/UI，只把「录音采集」从浏览器 getUserMedia 换成原生：
- *  - 阶段一：手机麦克风前台 Service（切后台/锁屏不中断）
- *  - 阶段二：蓝牙录音笔（彻底不依赖手机进程）
- * 底部自带一个原生录音条，即便网页未接入 Bridge 也能录音上传（便于先期验证）。
+ * 设计：录音的「可见 UI」全部在网页里（登录后的「美丽陪伴」页的录音按钮 + 右上角来源切换）。
+ * 本 Activity 只是全屏 WebView + 看不见的录音引擎：网页通过 window.AndroidBridge 驱动
+ * 手机麦克风（PhoneMicService）或蓝牙录音笔（PenController），录音状态再回推给网页。
+ * ——所以这里没有任何原生录音条，不会在登录页等每个页面都显示一套录音按钮。
  */
 public class ConsultantActivity extends Activity
         implements WebAppBridge.Host, RecordingBus.Listener, PenController.Listener {
 
-    // ★ 唯一需要你确认的配置：接诊页地址。https 域名打不开就改成 http://<服务器IP>/gp/consultant 之类。
+    // ★ 唯一需要确认的配置：接诊页地址。https 打不开就改成 http://<服务器IP>/gp/consultant 之类。
     private static final String START_URL = "https://gp.aibeautyfulwomen.com/consultant";
 
     private static final int REQ_PERMS = 1001;
@@ -50,36 +47,21 @@ public class ConsultantActivity extends Activity
 
     private WebView webView;
     private ProgressBar progress;
-    private Button btnRecord;
-    private Button btnSource;
-    private TextView recStatus;
-    private TextView recTimer;
 
     private ValueCallback<Uri[]> filePathCallback;
     private PermissionRequest pendingWebPermission;
 
     private String state = "idle";           // idle / recording / uploading
+    private String activeSource = null;      // 正在录音的来源：phone / pen
     private long recordingStartMs = 0;
     private boolean batteryAsked = false;
-
-    // 录音来源：phone（手机麦克风）/ pen（蓝牙录音笔）
-    private String recSource = "phone";      // 用户当前选择，用于下一次录音
-    private String activeSource = null;      // 正在录音的来源
     private boolean pendingSelectPenAfterConnect = false;
     private PenController penController;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
-    private final Runnable ticker = new Runnable() {
-        @Override public void run() {
-            if ("recording".equals(state)) {
-                updateTimerText(elapsedSec());
-                ui.postDelayed(this, 500);
-            }
-        }
-    };
 
     private static String uploadUrlFor(String startUrl) {
-        // 去掉结尾的 /consultant，拼成 /api/consultant/upload；兼容根路径或带 /gp 前缀的部署
+        // 去掉结尾 /consultant，拼 /api/consultant/upload；兼容根路径或带 /gp 前缀的部署
         String base = startUrl.replaceAll("/consultant/?$", "");
         return base + "/api/consultant/upload";
     }
@@ -91,17 +73,10 @@ public class ConsultantActivity extends Activity
 
         webView = findViewById(R.id.webview);
         progress = findViewById(R.id.progress);
-        btnRecord = findViewById(R.id.btn_record);
-        btnSource = findViewById(R.id.btn_source);
-        recStatus = findViewById(R.id.rec_status);
-        recTimer = findViewById(R.id.rec_timer);
 
         penController = new PenController(getApplicationContext(), this);
 
         configureWebView();
-        btnRecord.setOnClickListener(v -> onRecordButton());
-        btnSource.setOnClickListener(v -> toggleSource());
-        updateSourceLabel();
         requestRuntimePermissions();
 
         if (savedInstanceState == null) {
@@ -143,7 +118,6 @@ public class ConsultantActivity extends Activity
                 progress.setVisibility(p >= 100 ? android.view.View.GONE : android.view.View.VISIBLE);
             }
             @Override public void onPermissionRequest(PermissionRequest request) {
-                // 网页若直接申请麦克风（getUserMedia 回退路径），在已有系统权限时放行
                 pendingWebPermission = request;
                 if (hasAudioPermission()) {
                     request.grant(request.getResources());
@@ -180,30 +154,22 @@ public class ConsultantActivity extends Activity
             filePathCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
             filePathCallback = null;
         } else if (requestCode == REQ_SCAN) {
-            if (penController != null) penController.activate();
-            if (penController != null && penController.isConnected()) {
-                if (pendingSelectPenAfterConnect) { recSource = "pen"; pendingSelectPenAfterConnect = false; }
+            boolean connected = penController != null && penController.isConnected();
+            if (connected) {
+                penController.activate();
+                if (pendingSelectPenAfterConnect) pendingSelectPenAfterConnect = false;
                 Toast.makeText(this, "录音笔已连接", Toast.LENGTH_SHORT).show();
             }
-            updateSourceLabel();
+            // 通知网页刷新右上角来源切换的连接状态
+            evalJs("if(window.__onPenConnChanged){window.__onPenConnChanged(" + connected + ");}");
         }
     }
 
-    // ============ 原生录音条 / 按钮 ============
-
-    private void onRecordButton() {
-        if ("uploading".equals(state)) return;
-        if ("recording".equals(state)) {
-            stopRecordingInternal();
-        } else {
-            startRecordingInternal(recSource);
-        }
-    }
+    // ============ 录音引擎控制（由网页通过桥驱动）============
 
     private void startRecordingInternal(String source) {
         if (source == null) source = "phone";
         if ("pen".equals(source)) {
-            // 蓝牙录音笔：未连接则去连接，连上后用户再点录音
             if (penController == null || !penController.isConnected()) {
                 pendingSelectPenAfterConnect = true;
                 openScan();
@@ -213,8 +179,6 @@ public class ConsultantActivity extends Activity
             activeSource = "pen";
             recordingStartMs = SystemClock.elapsedRealtime();
             applyState("recording", "录音中…（录音笔）");
-            ui.removeCallbacks(ticker);
-            ui.post(ticker);
             penController.startRecording(
                     CookieManager.getInstance().getCookie(START_URL), uploadUrlFor(START_URL));
             return;
@@ -224,6 +188,7 @@ public class ConsultantActivity extends Activity
         if (!hasAudioPermission()) {
             requestRuntimePermissions();
             Toast.makeText(this, "请先允许麦克风权限", Toast.LENGTH_SHORT).show();
+            evalJs("if(window.__onNativeRecState){window.__onNativeRecState('idle','请允许麦克风权限',0);}");
             return;
         }
         maybeAskBatteryExemption();
@@ -235,8 +200,6 @@ public class ConsultantActivity extends Activity
         startService(i);
         recordingStartMs = SystemClock.elapsedRealtime();
         applyState("recording", "录音中…");
-        ui.removeCallbacks(ticker);
-        ui.post(ticker);
     }
 
     private void stopRecordingInternal() {
@@ -254,33 +217,6 @@ public class ConsultantActivity extends Activity
         applyState("uploading", "上传中…");
     }
 
-    // ============ 录音来源切换 / 录音笔连接 ============
-
-    private void toggleSource() {
-        if ("recording".equals(state) || "uploading".equals(state)) {
-            Toast.makeText(this, "录音/上传中，无法切换来源", Toast.LENGTH_SHORT).show();
-            return;
-        }
-        if ("phone".equals(recSource)) {
-            // 切到录音笔：已连接直接切，否则去连接
-            if (penController != null && penController.isConnected()) {
-                recSource = "pen";
-            } else {
-                pendingSelectPenAfterConnect = true;
-                openScan();
-            }
-        } else {
-            recSource = "phone";
-        }
-        updateSourceLabel();
-    }
-
-    private void updateSourceLabel() {
-        if (btnSource == null) return;
-        boolean pen = "pen".equals(recSource);
-        btnSource.setText(pen ? "🖊 录音笔" : "🎤 手机");
-    }
-
     private void openScan() {
         if (penController != null) penController.activate(); // 连上后回调切回 PenController
         try {
@@ -294,30 +230,14 @@ public class ConsultantActivity extends Activity
     @Override
     public void onPenNeedConnect() {
         ui.post(() -> {
-            Toast.makeText(this, "请先连接录音笔", Toast.LENGTH_SHORT).show();
             pendingSelectPenAfterConnect = true;
             openScan();
         });
     }
 
-    /** 更新本地状态 + 底部录音条 UI，并推给网页。 */
+    /** 只维护状态并回推给网页（无原生 UI）。 */
     private void applyState(String newState, String message) {
         state = newState;
-        if ("recording".equals(newState)) {
-            btnRecord.setText(R.string.rec_stop);
-            btnRecord.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFFE0466B));
-            recStatus.setText(message != null ? message : getString(R.string.rec_recording));
-        } else if ("uploading".equals(newState)) {
-            btnRecord.setText(R.string.rec_start);
-            btnRecord.setEnabled(false);
-            recStatus.setText(message != null ? message : getString(R.string.rec_uploading));
-        } else { // idle
-            btnRecord.setText(R.string.rec_start);
-            btnRecord.setEnabled(true);
-            btnRecord.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xFF3B6EF6));
-            recStatus.setText(message != null ? message : getString(R.string.rec_idle));
-            updateTimerText(0);
-        }
         pushStateToWeb(newState, message);
     }
 
@@ -336,12 +256,7 @@ public class ConsultantActivity extends Activity
         return (int) Math.max(0, (SystemClock.elapsedRealtime() - recordingStartMs) / 1000);
     }
 
-    private void updateTimerText(int sec) {
-        int m = sec / 60, r = sec % 60;
-        recTimer.setText(String.format(java.util.Locale.US, "%02d:%02d", m, r));
-    }
-
-    // ============ RecordingBus 回调（来自 PhoneMicService 的真实状态）============
+    // ============ RecordingBus 回调（来自录音引擎的真实状态）============
 
     @Override
     public void onStatus(String st, String message, int durSec, long recId) {
@@ -349,8 +264,6 @@ public class ConsultantActivity extends Activity
             case PhoneMicService.STATE_RECORDING:
                 if (recordingStartMs == 0) recordingStartMs = SystemClock.elapsedRealtime() - durSec * 1000L;
                 applyState("recording", message);
-                ui.removeCallbacks(ticker);
-                ui.post(ticker);
                 break;
             case PhoneMicService.STATE_UPLOADING:
                 applyState("uploading", message);
@@ -360,7 +273,6 @@ public class ConsultantActivity extends Activity
                 activeSource = null;
                 applyState("idle", message);
                 if (recId >= 0) {
-                    // 通知网页：刷新未归档列表 + 打开绑定弹窗（复用网页现有流程）
                     evalJs("if(window.__onNativeUploaded){window.__onNativeUploaded(" + recId + ");}");
                 }
                 break;
@@ -386,6 +298,12 @@ public class ConsultantActivity extends Activity
     @Override public String bridgeGetState() { return state; }
     @Override public String bridgeGetSources() {
         return (penController != null && penController.isConnected()) ? "phone,pen" : "phone";
+    }
+    @Override public boolean bridgeIsPenConnected() {
+        return penController != null && penController.isConnected();
+    }
+    @Override public void bridgeConnectPen() {
+        ui.post(() -> { pendingSelectPenAfterConnect = true; openScan(); });
     }
     @Override public void bridgeOpenPenManager() {
         ui.post(() -> startActivity(new Intent(this, MainActivity.class)));
@@ -438,21 +356,22 @@ public class ConsultantActivity extends Activity
     protected void onResume() {
         super.onResume();
         RecordingBus.setListener(this);
-        // 若选了录音笔，回到接诊页时夺回 SDK 回调（可能被录音笔管理页抢走过）
-        if (penController != null && "pen".equals(recSource) && penController.isConnected()) {
+        // 回到接诊页：选了/连了录音笔则夺回 SDK 回调
+        if (penController != null && penController.isConnected()) {
             penController.activate();
         }
-        // 重新同步底部录音条（切后台期间 Service 状态可能已变）
-        if (!TextUtils.equals(state, RecordingBus.lastState)) {
-            onStatus(RecordingBus.lastState, RecordingBus.lastMessage, RecordingBus.lastDurSec, -1);
-        }
+        // 把当前录音状态与录音笔连接状态同步回网页
+        evalJs("if(window.__onNativeRecState){window.__onNativeRecState('"
+                + RecordingBus.lastState + "','',"
+                + (recordingStartMs == 0 ? 0 : elapsedSec()) + ");}"
+                + "if(window.__onPenConnChanged){window.__onPenConnChanged("
+                + (penController != null && penController.isConnected()) + ");}");
     }
 
     @Override
     protected void onPause() {
         super.onPause();
         RecordingBus.clear(this);
-        ui.removeCallbacks(ticker);
     }
 
     @Override

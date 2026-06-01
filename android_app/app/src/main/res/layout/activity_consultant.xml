@@ -1,85 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  接诊页：全屏 WebView。
+  录音的可见 UI 全部在网页里（登录后的「美丽陪伴」页的录音按钮 + 右上角来源切换），
+  原生只当看不见的录音引擎（手机麦 PhoneMicService / 录音笔 PenController），通过 WebAppBridge 被网页驱动。
+  ——故这里不再有任何原生录音条，避免在登录页等每个页面都显示。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
+    android:layout_height="match_parent">
 
-    <FrameLayout
+    <WebView
+        android:id="@+id/webview"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1">
+        android:layout_height="match_parent" />
 
-        <WebView
-            android:id="@+id/webview"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
-
-        <ProgressBar
-            android:id="@+id/progress"
-            style="?android:attr/progressBarStyleHorizontal"
-            android:layout_width="match_parent"
-            android:layout_height="3dp"
-            android:layout_gravity="top"
-            android:max="100"
-            android:progress="0" />
-    </FrameLayout>
-
-    <!-- 底部原生录音控制条（前台 Service 录音，切后台/锁屏不中断） -->
-    <LinearLayout
-        android:id="@+id/rec_bar"
+    <ProgressBar
+        android:id="@+id/progress"
+        style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:background="#FFF7FAFF"
-        android:elevation="8dp"
-        android:paddingHorizontal="14dp"
-        android:paddingVertical="10dp">
-
-        <LinearLayout
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
-
-            <TextView
-                android:id="@+id/rec_status"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/rec_idle"
-                android:textColor="#22304A"
-                android:textSize="14sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/rec_timer"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="00:00"
-                android:textColor="#8A93A6"
-                android:textSize="12sp" />
-        </LinearLayout>
-
-        <!-- 录音来源切换：手机麦克风 / 录音笔 -->
-        <Button
-            android:id="@+id/btn_source"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginEnd="8dp"
-            android:minWidth="0dp"
-            android:paddingHorizontal="10dp"
-            android:text="🎤 手机"
-            android:textSize="12sp"
-            android:textColor="#3B6EF6"
-            android:backgroundTint="#EAF0FF" />
-
-        <Button
-            android:id="@+id/btn_record"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minWidth="120dp"
-            android:text="@string/rec_start"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="#3B6EF6" />
-    </LinearLayout>
-</LinearLayout>
+        android:layout_height="3dp"
+        android:layout_gravity="top"
+        android:max="100"
+        android:progress="0" />
+</FrameLayout>

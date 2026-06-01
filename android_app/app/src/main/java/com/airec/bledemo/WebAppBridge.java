@@ -18,6 +18,8 @@ public class WebAppBridge {
         void bridgeStopRecording();
         String bridgeGetState();
         String bridgeGetSources();
+        boolean bridgeIsPenConnected();
+        void bridgeConnectPen();
         void bridgeOpenPenManager();
     }
 
@@ -46,7 +48,15 @@ public class WebAppBridge {
     @JavascriptInterface
     public String getState() { return host.bridgeGetState(); }
 
-    /** 打开录音笔管理页（阶段二）。 */
+    /** 录音笔当前是否已蓝牙连接（网页据此决定默认来源/是否强制提示连接）。 */
+    @JavascriptInterface
+    public boolean isPenConnected() { return host.bridgeIsPenConnected(); }
+
+    /** 打开录音笔扫描/连接页（网页"强制提示连接"时调用）。 */
+    @JavascriptInterface
+    public void connectPen() { host.bridgeConnectPen(); }
+
+    /** 打开录音笔管理页（调试用）。 */
     @JavascriptInterface
     public void openPenManager() { host.bridgeOpenPenManager(); }
 }

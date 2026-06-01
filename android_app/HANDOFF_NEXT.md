@@ -3,6 +3,11 @@
 > 这份文档是跨环境交接用的。上一段工作在一台**没有 Java/Android SDK 的服务器**上完成（只能写代码、不能编译）。
 > 你现在大概率在一台**装了 Android Studio** 的机器上接手，目标是：编译通过 → 装到安卓手机 → 真机验证 → 修 bug。
 
+> **⚠️ 2026-06-02 更新（重要，覆盖下文部分旧描述）**：录音的可见 UI **不再用原生底部录音条**（旧版那条会在每个页面包括登录页都显示，已删除）。
+> 现在：①`activity_consultant.xml` 只剩全屏 WebView；②录音**全部在网页登录后的「美丽陪伴」页**的原有录音按钮上操作，App 内该按钮通过 `window.AndroidBridge` 驱动原生录音引擎；③网页**右上角**注入「🖊录音笔 / 🎤手机录音」来源切换，**默认录音笔**；选了录音笔但没连蓝牙→点录音时 `confirm` 强制提示去连（`AndroidBridge.connectPen()` 打开 ScanActivity）。
+> 桥新增 `isPenConnected()` / `connectPen()`；网页新增 `window.__onNativeRecState/__onPenConnChanged/__onNativeUploaded` 回调驱动按钮/状态/计时。这些改动在 `consultant.html` + `ConsultantActivity.java` + `WebAppBridge.java` + `activity_consultant.xml`。
+> **注意：`consultant.html` 是线上服务器（43.136.130.133）渲染的**，改完要在线上 `git pull` + 重启 Flask 服务，手机 App 才能看到新页面；原生那几个文件改完要在 Android Studio 重新构建装机。两边都到位才完整生效（网页 JS 已做 typeof 容错，单边先上不会崩）。
+
 ---
 
 ## 一、背景：两个需求 + 先后顺序（已定）
