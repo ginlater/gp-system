@@ -18,6 +18,7 @@ import java.util.Map;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.NativeLibrary;
+import com.sun.jna.Pointer;
 
 /**
  * Opus 解码桥接：使用 JNA 直接调用 droidkit libopus.so 解码 BLE 实时 Opus 帧。
@@ -42,21 +43,22 @@ public class OpusBridge {
      */
     public interface LibOpus extends Library {
         /**
-         * opus_decoder_create(int Fs, int channels, int[] error) → native pointer (long)
+         * opus_decoder_create(int Fs, int channels, int[] error) → OpusDecoder*
+         * 用 Pointer（不是 long）：32 位设备指针是 32 位，long(64位) 会让 ABI 错位。
          */
-        long opus_decoder_create(int Fs, int channels, int[] error);
+        Pointer opus_decoder_create(int Fs, int channels, int[] error);
 
         /**
-         * opus_decode(long st, byte[] data, int len,
+         * opus_decode(OpusDecoder* st, byte[] data, int len,
          *             short[] pcm, int frame_size, int decode_fec) → samples
          */
-        int opus_decode(long st, byte[] data, int len,
+        int opus_decode(Pointer st, byte[] data, int len,
                         short[] pcm, int frame_size, int decode_fec);
 
         /**
-         * opus_decoder_destroy(long st)
+         * opus_decoder_destroy(OpusDecoder* st)
          */
-        void opus_decoder_destroy(long st);
+        void opus_decoder_destroy(Pointer st);
     }
 
     // JNA 单例（延迟初始化，线程安全）
@@ -68,41 +70,25 @@ public class OpusBridge {
         if (s_libInitAttempted) return null;
         s_libInitAttempted = true;
 
-        // 策略1: 尝试 System.load(绝对路径) — 最可靠
+        // 策略1（最可靠）：用 nativeLibraryDir 下的绝对路径让 JNA 直接 dlopen。
+        // 前提：build.gradle 开了 useLegacyPackaging=true，libopus.so 才会解压到磁盘。
         String libPath = findNativeLibPath();
         if (libPath != null) {
             try {
-                System.load(libPath);
-                Log.d(TAG, "libopus.so loaded via System.load: " + libPath);
-            } catch (Throwable e) {
-                Log.d(TAG, "System.load(\"" + libPath + "\") failed: " + e.getMessage()
-                        + ", trying JNA Native.load");
-                libPath = null;
-            }
-        }
-
-        if (libPath == null) {
-            // 策略2: JNA Native.load（让系统 linker 搜索标准路径）
-            try {
-                @SuppressWarnings("unchecked")
-                LibOpus lib = (LibOpus) Native.load("opus", LibOpus.class);
-                s_libOpus = lib;
-                Log.d(TAG, "libopus.so loaded via JNA Native.load");
+                s_libOpus = (LibOpus) Native.load(libPath, LibOpus.class);
+                Log.d(TAG, "libopus loaded via JNA absolute path: " + libPath);
                 return s_libOpus;
             } catch (Throwable e) {
-                Log.e(TAG, "JNA Native.load failed: " + e.getMessage());
+                Log.e(TAG, "JNA Native.load(absPath) failed: " + e.getMessage());
             }
         }
 
-        // 策略3: JNA NativeLibrary.getInstance (明确指定库名)
+        // 策略2（兜底）：先用 System.loadLibrary 把 droidkit libopus 载入进程，再让 JNA 按名字绑定。
         try {
-            NativeLibrary libInstance =
-                    NativeLibrary.getInstance("opus");
-            @SuppressWarnings("unchecked")
-            LibOpus lib = (LibOpus) Native.loadLibrary(
-                    "opus", LibOpus.class);
-            s_libOpus = lib;
-            Log.d(TAG, "libopus.so loaded via JNA loadLibrary");
+            try { System.loadLibrary("opus"); } catch (Throwable ignored) {}
+            s_libOpus = (LibOpus) Native.load("opus", LibOpus.class);
+            Log.d(TAG, "libopus loaded via JNA name 'opus'");
+            return s_libOpus;
         } catch (Throwable e) {
             Log.e(TAG, "All JNA strategies failed: " + e.getMessage());
             logLoadedLibraries();
@@ -119,6 +105,21 @@ public class OpusBridge {
     private static String findNativeLibPath() {
         // ABI 优先级（从高到低）
         String[] abis = {"arm64-v8a", "armeabi-v7a", "armeabi", "x86_64", "x86"};
+
+        // 最权威：ApplicationInfo.nativeLibraryDir —— 系统解压 .so 的标准位置
+        try {
+            Context ctx = getApplicationContext();
+            if (ctx != null && ctx.getApplicationInfo() != null) {
+                String nld = ctx.getApplicationInfo().nativeLibraryDir;
+                if (nld != null) {
+                    File f = new File(nld, "libopus.so");
+                    if (f.exists()) {
+                        Log.d(TAG, "Found libopus.so at nativeLibraryDir: " + f.getAbsolutePath());
+                        return f.getAbsolutePath();
+                    }
+                }
+            }
+        } catch (Throwable ignored) {}
 
         // 先尝试通过 Context 获取 nativeLibraryDir
         try {
@@ -227,7 +228,7 @@ public class OpusBridge {
 
     // ─── 实例状态 ────────────────────────────────────────────────────────
 
-    private long decoderPtr = 0;
+    private Pointer decoderPtr = null;
     private int sampleRate = 16000;
     private int channels = 1;
 
@@ -262,13 +263,13 @@ public class OpusBridge {
             decoderPtr = lib.opus_decoder_create(sr, ch, error);
         } catch (Throwable e) {
             Log.e(TAG, "opus_decoder_create exception: " + e.getMessage());
-            decoderPtr = 0;
+            decoderPtr = null;
             return;
         }
 
-        if (error[0] != 0 || decoderPtr == 0) {
+        if (error[0] != 0 || decoderPtr == null) {
             Log.e(TAG, "opus_decoder_create failed: error=" + error[0] + " ptr=" + decoderPtr);
-            decoderPtr = 0;
+            decoderPtr = null;
         } else {
             Log.d(TAG, "OpusBridge decoder started: " + sr + "Hz " + ch + "ch");
         }
@@ -278,7 +279,7 @@ public class OpusBridge {
      * 销毁解码器
      */
     public synchronized void destroy() {
-        if (decoderPtr != 0) {
+        if (decoderPtr != null) {
             LibOpus lib = getLibOpus();
             if (lib != null) {
                 try {
@@ -287,7 +288,7 @@ public class OpusBridge {
                     Log.e(TAG, "opus_decoder_destroy error: " + e.getMessage());
                 }
             }
-            decoderPtr = 0;
+            decoderPtr = null;
         }
     }
 
@@ -298,7 +299,7 @@ public class OpusBridge {
      * @return PCM 字节数组（16bit LE），失败返回 null
      */
     public byte[] decode(byte[] opusFrame) {
-        if (decoderPtr == 0 || opusFrame == null || opusFrame.length == 0) {
+        if (decoderPtr == null || opusFrame == null || opusFrame.length == 0) {
             return null;
         }
 
@@ -358,7 +359,7 @@ public class OpusBridge {
         OpusBridge bridge = new OpusBridge();
         bridge.init(16000, 1);
 
-        if (bridge.decoderPtr == 0) {
+        if (bridge.decoderPtr == null) {
             Log.e(TAG, "Opus decoder init failed");
             bridge.destroy();
             return null;

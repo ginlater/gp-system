@@ -16,7 +16,10 @@ android {
         versionName "2.0.0"
 
         ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a"
+            // 只保留 armeabi-v7a：droidkit:opus 只提供了 v7a 的 libopus.so（无 arm64）。
+            // 若同时打 arm64，64 位设备会优先选 arm64 → 找不到 libopus.so → 录音笔解码失败。
+            // 统一跑 32 位，libopus.so 与 libjnidispatch.so 的 v7a 版都齐全。
+            abiFilters "armeabi-v7a"
         }
     }
 
@@ -34,6 +37,14 @@ android {
 
     buildFeatures {
         viewBinding true
+    }
+
+    packaging {
+        // libopus.so 必须解压到磁盘(extractNativeLibs=true)，JNA 才能用绝对路径 dlopen。
+        // 否则 .so 压在 APK 里(AGP8 默认)，OpusBridge 加载失败 → 录音笔解码报"未知格式"。
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 
     // Opus 解码已改用 JNA 直接调用 droidkit libopus.so，无需 CMake/JNI 编译
@@ -59,5 +70,7 @@ dependencies {
     // droidkit Opus：提供 native libopus.so
     implementation 'com.droidkit:opus:1.1.1'
     // JNA：纯 Java 调用 native libopus.so（无需 CMake/JNI 编译）
-    implementation 'net.java.dev.jna:jna:5.14.0'
+    // 必须用 @aar（Android 版）：它带各 ABI 的 libjnidispatch.so；
+    // 桌面版 jar 的 libjnidispatch 从 classpath 找，Android 上 UnsatisfiedLinkError → JNA 整个不可用。
+    implementation 'net.java.dev.jna:jna:5.14.0@aar'
 }
