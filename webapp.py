@@ -9037,25 +9037,31 @@ def api_admin_recording_rebind(rid):
     advisor = old_sess["advisor"]
     service_date = old_sess["service_date"]
     au = db_fetchone(
-        "SELECT id FROM users WHERE advisor_name=? AND company_id=? "
+        "SELECT id, advisor_name, store_id FROM users WHERE advisor_name=? AND company_id=? "
         "AND role IN ('consultant','store_manager') ORDER BY id LIMIT 1",
         (advisor, scid),
     )
     if not au:
         return jsonify({"error": "无法定位该接诊顾问账号，无法校验当日接诊"}), 400
     to_cust = db_fetchone(
-        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=? AND merged_into IS NULL",
         (to_customer_id, scid),
     )
     if not to_cust:
         return jsonify({"error": "目标顾客不存在"}), 404
+    # 目标可以是任意已有客人；若当天还没登记到该顾问名下，自动补登当日接诊
     dr = db_fetchone(
         """SELECT id FROM daily_reception
            WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
         (au["id"], to_customer_id, service_date),
     )
     if not dr:
-        return jsonify({"error": "目标顾客不在该顾问当日接诊列表，请先新增"}), 400
+        db_write(
+            """INSERT OR IGNORE INTO daily_reception
+               (company_id, advisor_user_id, advisor_name, customer_id, service_date, store_id)
+               VALUES (?,?,?,?,?,?)""",
+            (scid, au["id"], au["advisor_name"] or advisor, to_customer_id, service_date, au["store_id"]),
+        )
     new_sid = get_or_create_session(advisor, to_cust["name"], service_date,
                                     company_id=scid, customer_id=to_customer_id)
     if not new_sid:
@@ -9159,9 +9165,10 @@ def api_admin_recording_add_day_customer(rid):
     )
     if not au:
         return jsonify({"error": "无法定位该接诊顾问账号"}), 400
+    member_card = _generate_member_card(scid)
     new_cust_id = db_write(
         "INSERT INTO company_customers (company_id, name, member_card, phone_tail) VALUES (?, ?, ?, ?)",
-        (scid, name, _generate_member_card(scid), phone_tail or None),
+        (scid, name, member_card, phone_tail or None),
     )
     db_write(
         """INSERT OR IGNORE INTO daily_reception
@@ -9170,7 +9177,75 @@ def api_admin_recording_add_day_customer(rid):
         (scid, au["id"], au["advisor_name"] or advisor, new_cust_id, service_date, au["store_id"]),
     )
     return jsonify({"ok": True, "customer_id": new_cust_id, "name": name,
-                    "phone_tail": phone_tail or None})
+                    "phone_tail": phone_tail or None, "member_card": member_card})
+
+
+@app.route("/api/admin/recordings/<int:rid>/customer_options")
+@manager_required
+def api_admin_recording_customer_options(rid):
+    """换绑弹窗：列出本公司全部可选客人（排除已合并），标出哪些已在该顾问当日接诊。
+    选中非当日客人换绑时，后端会自动把他补登进该顾问当日接诊。"""
+    rec, old_sess, scid, err = _admin_rec_scope_check(rid)
+    if err:
+        return err
+    advisor = old_sess["advisor"]
+    service_date = old_sess["service_date"]
+    au = db_fetchone(
+        "SELECT id FROM users WHERE advisor_name=? AND company_id=? "
+        "AND role IN ('consultant','store_manager') ORDER BY id LIMIT 1",
+        (advisor, scid),
+    )
+    day_ids = set()
+    if au:
+        for r in db_fetchall(
+            "SELECT customer_id FROM daily_reception WHERE advisor_user_id=? AND service_date=?",
+            (au["id"], service_date)):
+            day_ids.add(r["customer_id"])
+    rows = db_fetchall(
+        "SELECT id, name, member_card, phone_tail FROM company_customers "
+        "WHERE company_id=? AND merged_into IS NULL ORDER BY id DESC",
+        (scid,),
+    )
+    items = [{"customer_id": r["id"], "name": r["name"], "member_card": r["member_card"],
+              "phone_tail": r["phone_tail"], "in_day": r["id"] in day_ids} for r in rows]
+    # 当日接诊的排前面，方便选
+    items.sort(key=lambda x: (not x["in_day"],))
+    return jsonify({"advisor": advisor, "service_date": service_date,
+                    "current_customer": old_sess["customer"],
+                    "current_customer_id": old_sess["customer_id"],
+                    "items": items})
+
+
+@app.route("/api/admin/recordings/<int:rid>/remove_day_customer", methods=["POST"])
+@manager_required
+def api_admin_recording_remove_day_customer(rid):
+    """删除误建的客人（如换绑时名字填错）：仅当该客人名下没有任何录音时允许，
+    同时删掉其当日接诊登记、空 session 和客人档案；有数据则拒绝，防误删。"""
+    data = request.get_json(silent=True) or {}
+    customer_id = data.get("customer_id")
+    if not customer_id:
+        return jsonify({"error": "缺少 customer_id"}), 400
+    rec, old_sess, scid, err = _admin_rec_scope_check(rid)
+    if err:
+        return err
+    cust = db_fetchone(
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        (customer_id, scid),
+    )
+    if not cust:
+        return jsonify({"error": "客人不存在"}), 404
+    # 安全闸：名下任一 session 只要有录音就不许删（防误删有历史数据的客人）
+    rec_cnt = db_fetchone(
+        """SELECT COUNT(*) AS n FROM recordings r
+           JOIN sessions s ON s.id=r.session_id WHERE s.customer_id=?""",
+        (customer_id,),
+    )
+    if rec_cnt and rec_cnt["n"]:
+        return jsonify({"error": "该客人名下已有录音/接诊数据，不能删除"}), 409
+    db_write("DELETE FROM sessions WHERE customer_id=?", (customer_id,))
+    db_write("DELETE FROM daily_reception WHERE customer_id=?", (customer_id,))
+    db_write("DELETE FROM company_customers WHERE id=?", (customer_id,))
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin/bind_advisors")
