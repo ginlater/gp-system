@@ -172,23 +172,27 @@ public class PenController {
                     post(PhoneMicService.STATE_ERROR, "下载文件不存在", durSec, -1);
                     return;
                 }
-                String uploadPath = localPath;
-                String ext = extOf(localPath);
+                String uploadPath;
                 String name, mime;
-                if (isAccepted(ext)) {
-                    // 已是后端可识别格式，直接传
-                    name = baseName(localPath);
-                    mime = mimeFor(ext);
-                } else {
-                    // 私有/opus 等：转 wav 再传
-                    String wav = AudioConverter.toWav(localPath);
-                    if (wav == null || !new File(wav).exists()) {
-                        post(PhoneMicService.STATE_ERROR, "录音格式转换失败", durSec, -1);
-                        return;
-                    }
+                // 录音笔下载的是私有分帧(5B50/4B41 同步头 + SILK-WB opus)格式，
+                // 用 libopus 跳 2 字节同步头逐帧解码成 16kHz 单声道 wav 再上传。
+                // （已用真机样本离线验证：408/408 帧解出干净语音，削顶 0%。）
+                String wav = OpusBridge.decodeToWav(localPath, localPath + ".wav");
+                if (wav != null && new File(wav).exists() && new File(wav).length() > 44) {
                     uploadPath = wav;
                     name = stripExt(baseName(localPath)) + ".wav";
                     mime = "audio/wav";
+                } else {
+                    // 不是私有格式：按扩展名当标准音频直传；不认识就报错
+                    String ext = extOf(localPath);
+                    if (isAccepted(ext)) {
+                        uploadPath = localPath;
+                        name = baseName(localPath);
+                        mime = mimeFor(ext);
+                    } else {
+                        post(PhoneMicService.STATE_ERROR, "录音解码失败（未知格式）", durSec, -1);
+                        return;
+                    }
                 }
                 Uploader.Result r = Uploader.upload(new File(uploadPath), durSec, startCookie, startUrl, name, mime);
                 if (r.ok) {

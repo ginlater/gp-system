@@ -231,7 +231,10 @@ public class OpusBridge {
     private int sampleRate = 16000;
     private int channels = 1;
 
-    private static final int FRAME_SIZE = 160; // 10ms @ 16kHz
+    // 解码输出缓冲（每包最大样本数）。这款笔用 SILK-WB 20ms 帧(=320样本)，
+    // 旧值 160 会让 opus_decode 报 BUFFER_TOO_SMALL → 全部解码失败（录音笔噪音 bug 根因之一）。
+    // 取 5760（48kHz/120ms 上限）足够覆盖任何 opus 帧。
+    private static final int FRAME_SIZE = 5760;
 
     /**
      * 初始化 Opus 解码器（默认 16kHz 单声道）
@@ -335,7 +338,12 @@ public class OpusBridge {
      * @return WAV 文件路径，失败返回 null
      */
     public static String decodeToWav(String srcPath, String wavPath) {
-        String format = srcPath.toUpperCase().endsWith(".ATW") ? "ATW" : "KA";
+        // 按内容首字节判格式（不能按扩展名：笔下载的文件名不一定带 .atw/.ka）
+        String format = detectFormatByContent(srcPath);
+        if (format == null) {
+            Log.e(TAG, "decodeToWav: 不是已知私有格式(首字节非 5B50/4B41): " + srcPath);
+            return null;
+        }
         Log.d(TAG, "decodeToWav: " + srcPath + " → " + wavPath + " (" + format + ")");
 
         // 第一步：提取 Opus 帧
@@ -407,6 +415,18 @@ public class OpusBridge {
             try { if (fos != null) fos.close(); } catch (IOException ignored) {}
             bridge.destroy();
         }
+    }
+
+    /** 按内容首 2 字节判私有格式：5B 50→ATW，4B 41→KA，否则 null。 */
+    private static String detectFormatByContent(String path) {
+        try (FileInputStream fis = new FileInputStream(path)) {
+            byte[] h = new byte[2];
+            if (fis.read(h) < 2) return null;
+            int b0 = h[0] & 0xFF, b1 = h[1] & 0xFF;
+            if (b0 == 0x5B && b1 == 0x50) return "ATW";
+            if (b0 == 0x4B && b1 == 0x41) return "KA";
+        } catch (IOException ignored) {}
+        return null;
     }
 
     // ─── 帧提取（与 airecdev reDecodeOpusToWav 完全一致） ────────────────

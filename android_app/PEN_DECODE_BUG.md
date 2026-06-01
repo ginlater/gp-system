@@ -5,6 +5,21 @@
 
 ---
 
+## ✅ 已解决（2026-06-02 服务器侧，用真机样本离线验证）
+
+**它确实是 opus（说明书说的"wav"指最终交付格式）**，不是 PCM。正确解码 = **每 82 字节记录跳过头 2 字节 `5B 50` 同步头，剩下就是一个标准 opus 包（SILK-WB 20ms / config 9 / 320样本），用 libopus 逐帧 `opus_decode`（缓冲≥320）→ 16kHz 单声道 → WAV**。
+
+用真实 libopus 在样本 `debug_samples/pen_sample_*.bin` 上离线验证：**408/408 帧全部解码成功，8.16s，削顶 0%，过零 7.5%（噪音会是 ~49%），wavcheck 判定"真实语音"**。解码产物见 `debug_samples/pen_sample_DECODED.wav`（可直接试听）。
+
+> 顺带澄清第 6 节"下载截断"疑点：**没有截断**。33456B 是压缩后的 opus，解出来正好 261120B PCM，与笔报告的 261676B 几乎一致——笔报告的是解码后大小。
+
+**修复（已提交）**：之前各转码器错在两点——① `AudioConverter`/`decodeWithFixedStride` 把含 `5B` 同步头的整段当 opus 包（5B 是非法 TOC）；② `OpusBridge.decodeToWav` 分帧本来就对（跳 2 字节、步长 82），但 `FRAME_SIZE=160` 太小让 `opus_decode` 报 BUFFER_TOO_SMALL 全失败，且按文件扩展名误判 KA。
+现在：`OpusBridge` 解码缓冲改 `5760`、改按内容首字节判 ATW/KA；`PenController.processAndUpload` 改调 `OpusBridge.decodeToWav`（不再走坏的 `AudioConverter.toWav`）。最终上传的就是 wav。**待 Mac 重新构建装机做真机端到端验证**（录音笔录→停→下载→解码 wav→上传→试听）。
+
+离线复现：`python3` + 系统 `libopus.so.0`，跳 2 字节逐记录 `opus_decode`；或装 `ffmpeg/opus-tools` 后用 `debug_samples/wavcheck.py` 判产物。
+
+---
+
 ## 1. TL;DR
 
 录音笔录的音频上传后**试听一下就结束 / 是噪音**。根因：手机端把录音笔下载文件的**私有分帧头字节当成了 opus 数据**，导致重组出的 OGG 里**每个 opus 包都非法**，ffmpeg 和 droidkit 解码全部失败，解出来的是满幅噪音 / 近乎空白（0.06 秒）。
