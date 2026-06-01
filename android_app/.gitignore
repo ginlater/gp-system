@@ -1,6 +1,7 @@
 # Local config (machine-specific, never commit)
 local.properties
-keystore.properties
+# 注：keystore.properties 与 gongpai-release.jks 应仓库所有者要求**有意提交**到本私有仓库
+# （方便迭代查找，含签名口令）。详见 android_app/RELEASE_SIGNING.md。
 
 # Build output
 .gradle/
