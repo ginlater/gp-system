@@ -3093,6 +3093,8 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
     out_budget = max_tokens or 8000
     # force_tool_choice 与 V4 thinking 互斥：强制 tool_choice 时关掉 thinking
     effective_thinking = enable_thinking and not force_tool_choice
+    # 实际是否启用 V4 thinking
+    use_thinking = is_v4 and effective_thinking
     explicit_tc = {"type": "function", "function": {"name": tool["name"]}}
     payload = {
         "model": model,
@@ -3101,13 +3103,23 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
             {"role": "user", "content": user_prompt},
         ],
         "tools": [openai_tool],
-        # V4 思考模式只支持 "auto"；force_tool_choice 时关掉 thinking 改强制
-        "tool_choice": explicit_tc if (force_tool_choice or not is_v4) else "auto",
         "max_tokens": out_budget,
         "temperature": temperature,
     }
+    # tool_choice 与 thinking 的关系（DeepSeek V4 实测）：
+    #   - thinking 开启时：API 不接受任何 tool_choice（含 "auto"），下发会报
+    #     "Thinking mode does not support this tool_choice"，必须完全省略该字段，
+    #     让模型自然调用工具（空 tool_calls 由上层重试兜底，最后一次会 force 强制）
+    #   - force_tool_choice：显式指定函数强制调用（此时 thinking 已关）
+    #   - 非 V4 模型：显式强制指定函数
+    if use_thinking:
+        pass  # 不下发 tool_choice
+    elif force_tool_choice or not is_v4:
+        payload["tool_choice"] = explicit_tc
+    else:
+        payload["tool_choice"] = "auto"
     # V4 thinking 模式：只在显式开启且未强制 tool_choice 时启用
-    if is_v4 and effective_thinking:
+    if use_thinking:
         payload["reasoning_effort"] = "high"
         payload["thinking"] = {"type": "enabled"}
         # thinking token 计入 max_tokens，预留 24K buffer
