@@ -113,6 +113,25 @@ public class PenController {
         }, 12000);
     }
 
+    /**
+     * 检测并初始化录音笔，使其满足 App 使用条件（每次连接都检查，不达标才设，幂等）：
+     *  - 不自动关机（idleShutdown=0）：避免接诊中途笔自己关机丢录音；
+     *  - 不分段（segmentDuration=0）：避免长录音被切成多段，导致只下到一段丢内容；
+     *  - 开机不自动录音（powerOnRecord=false）：避免笔开机自己录、产生意外文件。
+     * 需在参数已拉到（fetchAllDeviceInfo / onInitParamUpdated 后）调用，读到的是缓存值。
+     */
+    private void ensurePenConfigured() {
+        try {
+            AIRECBleManager mgr = AIRECBleManager.getInstance();
+            if (!mgr.isConnected()) return;
+            if (mgr.getIdleShutdown() != 0)    { mgr.setIdleShutdown(0);      Log.d(TAG, "笔初始化：关闭自动关机"); }
+            if (mgr.getSegmentDuration() != 0) { mgr.setSegmentDuration(0);   Log.d(TAG, "笔初始化：关闭分段(整段录)"); }
+            if (mgr.getPowerOnRecord())        { mgr.setPowerOnRecord(false); Log.d(TAG, "笔初始化：关闭开机自动录音"); }
+        } catch (Exception e) {
+            Log.e(TAG, "ensurePenConfigured failed", e);
+        }
+    }
+
     /** 开始用录音笔录音。未连接则请求 UI 去连接。 */
     public void startRecording(String cookie, String uploadUrl) {
         if (!isConnected()) {
@@ -266,14 +285,18 @@ public class PenController {
         public void onConnected(AIRECBleDevice device) {
             autoConnectMac = null;
             if (listener != null) main.post(() -> listener.onPenConnected(true));
-            // 连上后：① 查询录音状态（用户可能在 App 被杀期间笔仍在录，要同步而非新开）；
-            //         ② 设为不自动关机（开机后一直开着，避免顾问当面反复开关机）。
+            // 连上后查状态+参数（AIREC 需点时间稳定）。参数回来后在 onInitParamUpdated 里按需初始化设置。
             main.postDelayed(() -> {
                 try { AIRECBleManager.getInstance().fetchAllDeviceInfo(); }
                 catch (Exception e) { Log.e(TAG, "fetchAllDeviceInfo failed", e); }
-                try { AIRECBleManager.getInstance().setIdleShutdown(0); }   // 0 = 不自动关机
-                catch (Exception e) { Log.e(TAG, "setIdleShutdown failed", e); }
             }, 600);
+            // 兜底：万一 onInitParamUpdated 没回调，3.5s 后也按当前缓存值检测并初始化
+            main.postDelayed(() -> ensurePenConfigured(), 3500);
+        }
+
+        @Override
+        public void onInitParamUpdated() {
+            ensurePenConfigured();
         }
 
         @Override
