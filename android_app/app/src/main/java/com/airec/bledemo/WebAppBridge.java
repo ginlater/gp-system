@@ -16,6 +16,8 @@ public class WebAppBridge {
     public interface Host {
         void bridgeStartRecording(String source);
         void bridgeStopRecording();
+        void bridgePauseRecording();
+        void bridgeResumeRecording();
         String bridgeGetState();
         String bridgeGetSources();
         boolean bridgeIsPenConnected();
@@ -44,7 +46,15 @@ public class WebAppBridge {
     @JavascriptInterface
     public void stopRecording() { host.bridgeStopRecording(); }
 
-    /** idle / recording / uploading */
+    /** 暂停录音（仅录音笔）。 */
+    @JavascriptInterface
+    public void pauseRecording() { host.bridgePauseRecording(); }
+
+    /** 继续录音（仅录音笔）。 */
+    @JavascriptInterface
+    public void resumeRecording() { host.bridgeResumeRecording(); }
+
+    /** idle / recording / paused / uploading */
     @JavascriptInterface
     public String getState() { return host.bridgeGetState(); }
 

@@ -41,6 +41,14 @@ public class PenController {
     public interface Listener {
         /** 录音笔未连接，需要 UI 去打开扫描/连接页。 */
         void onPenNeedConnect();
+        /** 连上后查到的录音笔当前录音状态（用户可能在 App 退出期间笔仍在物理录音）。 */
+        void onPenRecordStatus(boolean recording);
+        /** 录音笔上报的当前录音时长（秒），用于同步计时。 */
+        void onPenRecordDuration(int durationSec);
+        /** 录音笔连接状态变化（连上/断开），用于刷新网页连接指示。 */
+        void onPenConnected(boolean connected);
+        /** 录音暂停状态变化（暂停/继续）。 */
+        void onPenPaused(boolean paused);
     }
 
     private final Context appCtx;
@@ -54,6 +62,11 @@ public class PenController {
     private volatile boolean waitingForFile = false;
     private volatile String pendingFileName = null;
     private long startElapsedMs = 0;
+    private volatile String autoConnectMac = null;   // App 打开时静默自动连接的目标笔 MAC
+    private volatile boolean penPaused = false;       // 当前是否暂停
+    private volatile boolean appInitiatedPauseResume = false;  // 区分 App 主动 vs 笔上按键触发的暂停
+    private volatile int downloadRetries = 0;          // 下载失败重试计数（笔回 0xFD=文件未就绪时重试）
+    private static final int MAX_DOWNLOAD_RETRIES = 3;
 
     public PenController(Context ctx, Listener l) {
         this.appCtx = ctx.getApplicationContext();
@@ -73,6 +86,33 @@ public class PenController {
         App.setMainCallback(callback); // ScanActivity 连接成功后会切回这个
     }
 
+    /**
+     * App 打开/回到前台时，静默自动连接上次那支笔（不弹扫描页）。
+     * 需调用方已确保有 BLE 扫描/连接权限。已连接或正在自动连则忽略。
+     */
+    public void autoConnect(String savedMac) {
+        if (savedMac == null || savedMac.isEmpty()) return;
+        if (isConnected() || autoConnectMac != null) return;
+        autoConnectMac = savedMac;
+        activate();
+        try {
+            AIRECBleManager.getInstance().startScan();
+            Log.d(TAG, "autoConnect scanning for " + savedMac);
+        } catch (Exception e) {
+            Log.e(TAG, "autoConnect startScan failed", e);
+            autoConnectMac = null;
+            return;
+        }
+        // 超时停扫（扫不到就放弃，用户可手动连）
+        main.postDelayed(() -> {
+            if (autoConnectMac != null) {
+                try { AIRECBleManager.getInstance().stopScan(); } catch (Exception ignored) {}
+                autoConnectMac = null;
+                Log.d(TAG, "autoConnect timeout");
+            }
+        }, 12000);
+    }
+
     /** 开始用录音笔录音。未连接则请求 UI 去连接。 */
     public void startRecording(String cookie, String uploadUrl) {
         if (!isConnected()) {
@@ -83,6 +123,8 @@ public class PenController {
         this.uploadUrl = uploadUrl;
         this.waitingForFile = false;
         this.pendingFileName = null;
+        this.penPaused = false;
+        this.downloadRetries = 0;
         this.startElapsedMs = SystemClock.elapsedRealtime();
         activate();
         try {
@@ -94,8 +136,42 @@ public class PenController {
         }
     }
 
+    /**
+     * 采纳一段“笔已在录、但 App 这边没发起”的录音（用户退出 App 期间笔仍在录的场景）：
+     * 补齐上传所需的 cookie / uploadUrl，使之后停止录音能正常下载并上传。
+     */
+    public void adoptRecording(String cookie, String uploadUrl) {
+        this.cookie = cookie;
+        this.uploadUrl = uploadUrl;
+        this.waitingForFile = false;
+        this.pendingFileName = null;
+        if (this.startElapsedMs == 0) this.startElapsedMs = SystemClock.elapsedRealtime();
+    }
+
+    /** 暂停录音。 */
+    public void pause() {
+        if (penPaused) return;
+        appInitiatedPauseResume = true;
+        penPaused = true;
+        try { AIRECBleManager.getInstance().pauseRecord(); }
+        catch (Exception e) { Log.e(TAG, "pauseRecord failed", e); }
+        if (listener != null) main.post(() -> listener.onPenPaused(true));
+    }
+
+    /** 继续录音。 */
+    public void resume() {
+        if (!penPaused) return;
+        appInitiatedPauseResume = true;
+        penPaused = false;
+        try { AIRECBleManager.getInstance().resumeRecord(); }
+        catch (Exception e) { Log.e(TAG, "resumeRecord failed", e); }
+        if (listener != null) main.post(() -> listener.onPenPaused(false));
+    }
+
     /** 结束录音（笔停止后会触发取文件→下载→上传链路）。 */
     public void stopRecording() {
+        penPaused = false;
+        downloadRetries = 0;
         try {
             post(PhoneMicService.STATE_UPLOADING, "正在保存录音笔文件…", elapsedSec(), -1);
             AIRECBleManager.getInstance().endRecord();
@@ -151,12 +227,85 @@ public class PenController {
 
         @Override
         public void onFileDownloadComplete(AIRECBleFile file, String localPath) {
+            downloadRetries = 0;
             processAndUpload(file, localPath);
         }
 
         @Override
         public void onFileDownloadFailed(AIRECBleFile file, String reason) {
-            post(PhoneMicService.STATE_ERROR, "下载录音失败：" + reason, elapsedSec(), -1);
+            // 暂停过的录音，笔可能还没把文件落盘好（回 0xFD），隔几秒重试取列表+下载。
+            if (downloadRetries < MAX_DOWNLOAD_RETRIES) {
+                downloadRetries++;
+                Log.w(TAG, "download failed (" + reason + ")，第 " + downloadRetries + " 次重试");
+                post(PhoneMicService.STATE_UPLOADING, "录音保存中，重试…", elapsedSec(), -1);
+                waitingForFile = true;
+                main.postDelayed(() -> {
+                    try { AIRECBleManager.getInstance().fetchFileList(); }
+                    catch (Exception e) { Log.e(TAG, "retry fetchFileList failed", e); }
+                }, 2500);
+            } else {
+                downloadRetries = 0;
+                post(PhoneMicService.STATE_ERROR, "下载录音失败：" + reason, elapsedSec(), -1);
+            }
+        }
+
+        @Override
+        public void onDeviceFound(AIRECBleDevice device) {
+            // 静默自动连接：扫到上次那支笔就直接连
+            if (autoConnectMac != null && device != null && autoConnectMac.equals(device.getAddress())) {
+                autoConnectMac = null;
+                try {
+                    AIRECBleManager.getInstance().stopScan();
+                    AIRECBleManager.getInstance().connect(device);
+                    Log.d(TAG, "autoConnect matched, connecting " + device.getAddress());
+                } catch (Exception e) { Log.e(TAG, "autoConnect connect failed", e); }
+            }
+        }
+
+        @Override
+        public void onConnected(AIRECBleDevice device) {
+            autoConnectMac = null;
+            if (listener != null) main.post(() -> listener.onPenConnected(true));
+            // 连上后：① 查询录音状态（用户可能在 App 被杀期间笔仍在录，要同步而非新开）；
+            //         ② 设为不自动关机（开机后一直开着，避免顾问当面反复开关机）。
+            main.postDelayed(() -> {
+                try { AIRECBleManager.getInstance().fetchAllDeviceInfo(); }
+                catch (Exception e) { Log.e(TAG, "fetchAllDeviceInfo failed", e); }
+                try { AIRECBleManager.getInstance().setIdleShutdown(0); }   // 0 = 不自动关机
+                catch (Exception e) { Log.e(TAG, "setIdleShutdown failed", e); }
+            }, 600);
+        }
+
+        @Override
+        public void onDisconnected(AIRECBleDevice device, String reason) {
+            if (listener != null) main.post(() -> listener.onPenConnected(false));
+        }
+
+        @Override
+        public void onRecordStatusQueried(boolean recording, boolean paused, String fileName) {
+            if (recording && !TextUtils.isEmpty(fileName)) pendingFileName = fileName;
+            penPaused = recording && paused;
+            if (listener != null) main.post(() -> {
+                listener.onPenRecordStatus(recording);
+                if (recording) listener.onPenPaused(paused);
+            });
+        }
+
+        @Override
+        public void onRecordPaused() {
+            // 暂停状态切换通知：App 主动发的已处理过；笔上按键触发的则在此 toggle。
+            if (appInitiatedPauseResume) {
+                appInitiatedPauseResume = false;
+                return;
+            }
+            penPaused = !penPaused;
+            final boolean p = penPaused;
+            if (listener != null) main.post(() -> listener.onPenPaused(p));
+        }
+
+        @Override
+        public void onRecordDurationUpdated(long durationSec) {
+            if (listener != null) main.post(() -> listener.onPenRecordDuration((int) durationSec));
         }
     };
 

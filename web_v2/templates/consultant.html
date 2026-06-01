@@ -400,21 +400,20 @@ const ADVISOR = {{ advisor_name|tojson }};
 // 普通浏览器里恒为 false，下面所有 IN_APP 分支都不会执行，行为 100% 不变。
 var IN_APP = !!(window.AndroidBridge && window.AndroidBridge.isApp && window.AndroidBridge.isApp());
 
-// ============ App 内：录音走原生桥（手机麦 / 录音笔），UI 仍是本页这个录音按钮 ============
+// ============ App 内：录音走原生桥（仅录音笔），UI 仍是本页这个录音按钮 ============
 // 录音卡片在 App 内照常显示（不再隐藏），只是「开始/停止」改为驱动原生录音引擎。
-// 右上角加一个「录音笔 / 手机」来源切换，默认录音笔；选了录音笔但没连蓝牙→点录音时强制提示去连。
+// 录音来源固定为录音笔（已去掉手机选项）；没连蓝牙→点开始时由原生自动连上次那支笔。
 window.__appRecording = false;
-var APP_SRC_KEY = 'app_rec_source_v2';
-var appRecSource = 'pen';                 // 默认录音笔
-if (IN_APP) { try { appRecSource = localStorage.getItem(APP_SRC_KEY) || 'pen'; } catch(e){} }
+var appRecSource = 'pen';                 // 固定录音笔（不再提供手机选项）
 var appTimerInt = null, appStartTs = 0;
 
 function appPenConnected(){
   try { return !!(window.AndroidBridge && window.AndroidBridge.isPenConnected && window.AndroidBridge.isPenConnected()); }
   catch(e){ return false; }
 }
-function appStartTimer(){
-  appStartTs = Date.now();
+function appStartTimer(offsetSec){
+  // offsetSec：原生已录秒数（重连到仍在录的笔时用于同步进度），无则从 0 起。
+  appStartTs = Date.now() - (offsetSec > 0 ? offsetSec * 1000 : 0);
   if (appTimerInt) clearInterval(appTimerInt);
   appTimerInt = setInterval(function(){
     var s = Math.floor((Date.now()-appStartTs)/1000), m = Math.floor(s/60), r = s%60;
@@ -428,36 +427,64 @@ function appStopTimer(){ if (appTimerInt){ clearInterval(appTimerInt); appTimerI
 function appToggleRecord(){
   if (window.uploading) return;
   if (window.__appRecording) { try { window.AndroidBridge.stopRecording(); } catch(e){} return; }
-  if (appRecSource === 'pen' && !appPenConnected()) {
-    // 强制提示连接录音笔
-    if (confirm('录音笔还没连接蓝牙，现在去连接？')) { try { window.AndroidBridge.connectPen(); } catch(e){} }
-    return;
-  }
+  // 录音笔未连接也直接调原生：原生会自动连接上次那支笔，连上后自动开始录音（无需手动去扫描页）。
   try { window.AndroidBridge.startRecording(appRecSource); } catch(e){}
 }
 
-// 录音来源切换：录音卡片里、录音按钮上方一行「录音方式：🖊录音笔 / 🎤手机」，选中高亮，默认录音笔
-var APP_SRC_BTN_BASE = 'border-radius:99px;padding:5px 14px;font-size:13px;cursor:pointer;font-family:inherit;border:1px solid var(--border,#d9d9e3);transition:all .15s';
-function appSrcBtnStyle(active){
-  return APP_SRC_BTN_BASE + (active
-    ? ';background:var(--blue,#3b6ef6);color:#fff;border-color:var(--blue,#3b6ef6);font-weight:700'
-    : ';background:#fff;color:var(--text-mid,#555)');
+// 暂停/继续（仅录音笔，仅 App 内）
+function appPauseResume(){
+  if (window.uploading) return;
+  try {
+    if (window.__appPaused) window.AndroidBridge.resumeRecording();
+    else window.AndroidBridge.pauseRecording();
+  } catch(e){}
+}
+// 暂停按钮文案 + 显隐：只有录音中/暂停时显示
+function appUpdatePauseBtn(){
+  var b = document.getElementById('recPauseBtn'); if (!b) return;
+  if (!window.__appRecording) { b.style.display = 'none'; return; }
+  b.style.display = '';
+  b.textContent = window.__appPaused ? (isCute()?'▶️ 继续陪伴':'▶ 继续')
+                                     : (isCute()?'⏸️ 歇一下':'⏸ 暂停');
+}
+
+// 录音笔连接指示：录音卡片里、按钮上方一行。点一下触发连接。
+// 两套皮肤分开渲染：
+//   - pro（专业版）：明确文案「🖊 录音笔 已连接 / 未连接」，专业版不忌讳「录音」字。
+//   - cute（可爱版）：纯图标/含蓄文案，绝不出现「录音」二字（顾客就在旁边看着）。
+//     已连：🖊✨ 已就绪（彩色 + 绿点）；未连：🖊 点我连接小伙伴（灰色 + 灰点）。
+var APP_PEN_BTN_BASE = 'border-radius:99px;padding:5px 14px;font-size:13px;cursor:pointer;font-family:inherit;border:1px solid var(--border,#d9d9e3);transition:all .15s;display:inline-flex;align-items:center;gap:6px';
+function appPenBtnStyle(connected){
+  return APP_PEN_BTN_BASE + (connected
+    ? ';background:#fff;color:var(--text-mid,#555);border-color:var(--blue,#3b6ef6)'
+    : ';background:#fff;color:#aaa;border-color:var(--border,#d9d9e3)');
+}
+// 连接状态小圆点：已连=绿，未连=灰
+function appPenDotHtml(connected){
+  var c = connected ? '#27ae60' : '#bbb';
+  return '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+c+'"></span>';
 }
 function appUpdateSourceRow(){
-  var pen = document.getElementById('appSrcPen'), pho = document.getElementById('appSrcPhone');
-  if (!pen || !pho) return;
-  pen.textContent = appPenConnected() ? '🖊 录音笔' : '🖊 录音笔·未连';
-  pho.textContent = '🎤 手机';
-  pen.style.cssText = appSrcBtnStyle(appRecSource === 'pen');
-  pho.style.cssText = appSrcBtnStyle(appRecSource === 'phone');
-}
-function appSelectSource(src){
-  if (window.__appRecording || window.uploading) return;
-  appRecSource = src;
-  try { localStorage.setItem(APP_SRC_KEY, src); } catch(e){}
-  if (src === 'pen' && !appPenConnected() && confirm('录音笔还没连接蓝牙，现在去连接？')) {
-    try { window.AndroidBridge.connectPen(); } catch(e){}
+  var pen = document.getElementById('appSrcPen');
+  if (!pen) return;
+  var connected = appPenConnected();
+  if (isCute()) {
+    // 可爱皮肤：纯图标 + 含蓄文案，无「录音」字
+    pen.innerHTML = appPenDotHtml(connected) +
+      '<span>' + (connected ? '🖊✨ 已就绪' : '🖊 点我连接小伙伴') + '</span>';
+    pen.title = connected ? '小伙伴已就绪 ✨' : '点我连接小伙伴 💫';
+  } else {
+    // 专业版：明确文案，可含「录音」字
+    pen.innerHTML = appPenDotHtml(connected) +
+      '<span>🖊 录音笔 ' + (connected ? '已连接' : '未连接') + '</span>';
+    pen.title = connected ? '录音笔已连接' : '录音笔未连接，点击连接';
   }
+  pen.style.cssText = appPenBtnStyle(connected);
+}
+// 点击连接指示：未连则触发原生连接（连上次那支笔）
+function appConnectPen(){
+  if (window.__appRecording || window.uploading) return;
+  if (!appPenConnected()) { try { window.AndroidBridge.connectPen(); } catch(e){} }
   appUpdateSourceRow();
 }
 
@@ -467,24 +494,36 @@ window.__onNativeRecState = function(state, msg, durSec){
   var st  = document.getElementById('recStatus');
   var t   = document.getElementById('timer');
   if (state === 'recording') {
-    window.__appRecording = true; window.uploading = false;
+    window.__appRecording = true; window.__appPaused = false; window.uploading = false;
     if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'🌸 结束陪伴':'■ 结束录音'; btn.style.background = isCute()?'':'#e74c3c'; }
     if (st){ st.innerHTML = '<span class="rec-dot"></span>' + (isCute()?'陪伴进行中… 💕':'录音中…'); }
-    if (!appTimerInt) appStartTimer();
+    appStartTimer(durSec);  // 用原生已录秒数同步计时（重连到仍在录的笔也能显示正确进度）
+  } else if (state === 'paused') {
+    window.__appRecording = true; window.__appPaused = true; window.uploading = false;
+    appStopTimer();  // 冻结计时显示
+    if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'🌸 结束陪伴':'■ 结束录音'; }
+    if (st){ st.textContent = isCute()?'已暂停 ⏸️ 轻点继续':'已暂停（点继续恢复）'; }
   } else if (state === 'uploading') {
-    window.__appRecording = false; window.uploading = true;
+    window.__appRecording = false; window.__appPaused = false; window.uploading = true;
     appStopTimer();
     if (btn){ btn.disabled = true; }
-    if (st){ st.textContent = msg || (isCute()?'保存中… ✨':'上传中…'); }
+    // 可爱皮肤绝不显示原生消息（可能含「录音」字），固定含蓄文案
+    if (st){ st.textContent = isCute() ? '保存中… ✨' : (msg || '上传中…'); }
   } else { // idle（含错误后复位，错误消息走 msg）
-    window.__appRecording = false; window.uploading = false;
+    window.__appRecording = false; window.__appPaused = false; window.uploading = false;
     appStopTimer();
     if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'💕 开启陪伴':'● 开始录音'; btn.style.background = ''; }
-    if (st && msg) st.textContent = msg;
+    // 可爱皮肤不显示原生消息（防「录音」字泄漏）：按是否含「失败」给含蓄文案
+    if (st && msg) {
+      if (isCute()) st.textContent = (msg.indexOf('失败') >= 0 || msg.indexOf('错误') >= 0)
+              ? '出了点小问题，再试一次 😢' : '已保存 ✨ 请选择姐妹';
+      else st.textContent = msg;
+    }
     if (t) t.textContent = '00:00';
   }
+  appUpdatePauseBtn();  // 同步暂停/继续按钮的显隐与文案
 };
-// 录音笔连接状态变化 → 刷新录音方式行（录音笔 已连/未连）
+// 录音笔连接状态变化 → 刷新连接指示行（已连/未连）
 window.__onPenConnChanged = function(connected){ appUpdateSourceRow(); };
 
 // 原生上传完一段录音后：刷新未归档列表并自动打开绑定弹窗（复用本页既有流程）
@@ -498,7 +537,8 @@ window.__onNativeUploaded = function(id){
 if (IN_APP) {
   // 隐藏之前那条"用底部录音条"的提示（已不需要）
   var _h = document.getElementById('appRecHint'); if (_h) _h.style.display = 'none';
-  // 录音卡片里、录音按钮上方注入「录音方式」来源切换行（醒目，默认录音笔）
+  // 录音卡片里、按钮上方注入录音笔连接指示行（点一下连接）。
+  // 标签 #appSrcLbl 走双 span 双语：cute 下不出现「录音」字；按钮 #appSrcPen 由 appUpdateSourceRow 按皮肤渲染。
   var _area = document.querySelector('#recCard .rec-area');
   var _recBtn = document.getElementById('recBtn');
   if (_area && _recBtn && !document.getElementById('appSrcRow')) {
@@ -506,28 +546,37 @@ if (IN_APP) {
     _row.id = 'appSrcRow';
     _row.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin:6px 0 14px';
     var _lbl = document.createElement('span');
-    _lbl.textContent = '录音方式：';
+    _lbl.id = 'appSrcLbl';
+    // pro 下显示「录音方式：」，cute 下显示无「录音」字的含蓄文案（CSS t-pro/t-cute 控制）
+    _lbl.innerHTML = '<span class="t-pro">录音方式：</span><span class="t-cute">小伙伴 </span>';
     _lbl.style.cssText = 'font-size:13px;color:var(--text-mute,#888)';
     var _pen = document.createElement('button');
     _pen.id = 'appSrcPen'; _pen.type = 'button';
-    _pen.onclick = function(){ appSelectSource('pen'); };
-    var _pho = document.createElement('button');
-    _pho.id = 'appSrcPhone'; _pho.type = 'button';
-    _pho.onclick = function(){ appSelectSource('phone'); };
-    _row.appendChild(_lbl); _row.appendChild(_pen); _row.appendChild(_pho);
+    _pen.onclick = function(){ appConnectPen(); };
+    _row.appendChild(_lbl); _row.appendChild(_pen);
     _area.insertBefore(_row, _recBtn);
     appUpdateSourceRow();
   }
-  // 若返回本页时原生仍在录音/上传（例如录音中切到接诊列表又切回），同步一下按钮状态
+  // 录音按钮上方注入「暂停/继续」按钮（仅录音中/暂停时显示）
+  if (_area && _recBtn && !document.getElementById('recPauseBtn')) {
+    var _pb = document.createElement('button');
+    _pb.id = 'recPauseBtn'; _pb.type = 'button';
+    _pb.style.cssText = 'display:none;margin:0 auto 10px;padding:8px 22px;border-radius:99px;'
+      + 'border:1px solid var(--blue,#3b6ef6);background:#fff;color:var(--blue,#3b6ef6);'
+      + 'font-size:14px;font-family:inherit;cursor:pointer';
+    _pb.onclick = appPauseResume;
+    _area.insertBefore(_pb, _recBtn);
+  }
+  // 若返回本页时原生仍在录音/暂停/上传（例如切到接诊列表又切回），同步一下按钮状态
   try {
     var _gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
-    if (_gs === 'recording' || _gs === 'uploading') window.__onNativeRecState(_gs, '', 0);
+    if (_gs === 'recording' || _gs === 'paused' || _gs === 'uploading') window.__onNativeRecState(_gs, '', 0);
   } catch(e){}
-  // 默认录音笔但没连：给个非弹窗提示（真正强制连接发生在点录音时）
+  // 录音笔没连：给个非弹窗提示（真正强制连接发生在点开始时）。cute 下不出现「录音」字。
   setTimeout(function(){
-    if (appRecSource === 'pen' && !appPenConnected()) {
+    if (!appPenConnected()) {
       var st = document.getElementById('recStatus');
-      if (st) st.textContent = isCute()?'请先连接录音笔 🖊':'请先连接录音笔';
+      if (st) st.textContent = isCute()?'请先连接小伙伴 🖊':'请先连接录音笔';
     }
   }, 600);
 }
@@ -552,6 +601,9 @@ function applySkin(skin){
     const st = document.getElementById('recStatus');
     if (st && (st.textContent.indexOf('点击') === 0)) st.textContent = isCute() ? '点击开始陪伴 💕' : '点击开始录音';
   }
+  // App 内：连接指示按钮是 JS 渲染的，皮肤切换时重渲染（cute=纯图标无「录音」字 / pro=明确文案）
+  if (document.getElementById('appSrcPen')) appUpdateSourceRow();
+  if (document.getElementById('recPauseBtn')) appUpdatePauseBtn();
 }
 function toggleSkin(){
   const next = isCute() ? 'pro' : 'cute';

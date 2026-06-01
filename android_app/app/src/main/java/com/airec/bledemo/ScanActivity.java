@@ -29,6 +29,11 @@ public class ScanActivity extends AppCompatActivity {
     private DeviceAdapter adapter;
     private final List<AIRECBleDevice> deviceList = new ArrayList<>();
     private static final int REQ_PERMISSION = 100;
+    static final String PEN_PREFS = "pen_prefs";
+    static final String KEY_LAST_MAC = "last_mac";
+    static final String KEY_LAST_NAME = "last_name";
+    private String lastMac;                 // 上次连过的笔 MAC，用于自动连接
+    private boolean autoConnectTried = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -38,6 +43,8 @@ public class ScanActivity extends AppCompatActivity {
         setSupportActionBar(binding.toolbar);
         if (getSupportActionBar() != null) getSupportActionBar().setDisplayHomeAsUpEnabled(true);
         setTitle("扫描设备");
+
+        lastMac = getSharedPreferences(PEN_PREFS, MODE_PRIVATE).getString(KEY_LAST_MAC, null);
 
         adapter = new DeviceAdapter(deviceList, device -> {
             binding.progressBar.setVisibility(View.VISIBLE);
@@ -67,10 +74,23 @@ public class ScanActivity extends AppCompatActivity {
                 deviceList.add(device);
                 adapter.notifyItemInserted(deviceList.size() - 1);
                 binding.tvStatus.setText("发现 " + deviceList.size() + " 台设备，点击连接");
+                // 自动连接上次用过的录音笔（一发现就连，无需手动点）
+                if (!autoConnectTried && lastMac != null && lastMac.equals(device.getAddress())) {
+                    autoConnectTried = true;
+                    binding.progressBar.setVisibility(View.VISIBLE);
+                    binding.tvStatus.setText("自动连接上次的录音笔：" + device.getName() + "…");
+                    AIRECBleManager.getInstance().stopScan();
+                    AIRECBleManager.getInstance().connect(device);
+                }
             }
 
             @Override
             public void onConnected(AIRECBleDevice device) {
+                // 记住这支笔，下次开始录音时自动连
+                getSharedPreferences(PEN_PREFS, MODE_PRIVATE).edit()
+                        .putString(KEY_LAST_MAC, device.getAddress())
+                        .putString(KEY_LAST_NAME, device.getName())
+                        .apply();
                 // 切换到 mainCallback，并手动触发 onConnected 确保 MainActivity 收到
                 AIRECBleCallback main = App.getMainCallback();
                 if (main != null) {
