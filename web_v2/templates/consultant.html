@@ -227,6 +227,19 @@ body.skin-cute .dlg{border-radius:18px}
     <span class="arrow">→</span>
   </a>
 
+  <!-- 客户档案（搜索→打开档案，复用 /customer/<id>） -->
+  <div class="card" id="profileCard">
+    <h3><span class="t-pro">客户档案</span><span class="t-cute">📖 美丽档案</span></h3>
+    <div class="muted" style="margin-bottom:8px;font-size:12px">
+      <span class="t-pro">搜索任意顾客，点开查看其档案与价值预测。（录音只能听本人接待的）</span>
+      <span class="t-cute">搜搜任意姐妹，点开看看她的成长档案 💝</span>
+    </div>
+    <div class="row">
+      <input id="profileSearchQ" placeholder="输入姓名 / 会员卡号" autocomplete="off">
+    </div>
+    <div id="profileSearchList" style="max-height:300px;overflow:auto;margin-top:8px"></div>
+  </div>
+
   <!-- 接诊列表（可切日期） -->
   <div class="card">
     <h3 style="display:flex;align-items:center;justify-content:space-between">
@@ -342,17 +355,43 @@ body.skin-cute .dlg{border-radius:18px}
 <!-- 换绑弹窗（直接执行，无审批） -->
 <div class="mask" id="rebindMask">
   <div class="dlg">
-    <h3>换绑录音到其他顾客</h3>
-    <div class="muted" style="font-size:12px;margin-bottom:8px">直接换绑，无需审批。<b>若已分析将作废，需要重新分析</b>。所有换绑会被管理员留痕。</div>
+    <h3 class="t-pro">换绑这段录音到别的顾客</h3>
+    <h3 class="t-cute">把这段记录归到别的姐妹 💝</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:8px;background:#fff8e6;border:1px solid #ffe3a3;border-radius:6px;padding:8px 10px;line-height:1.6">
+      <b>只移动这一段录音</b>，该顾客其他录音不受影响（不是"换整个顾客"）。换绑后新旧两份报告都会<b>重新生成</b>。直接生效、无需审批，所有操作管理员可见。
+    </div>
     <div id="rebindRecInfo" class="muted" style="font-size:12px;margin-bottom:8px"></div>
-    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">换绑到：（仅显示该录音当天接诊的顾客）</div>
-    <div id="rebindCustList" style="max-height:200px;overflow:auto;margin-bottom:8px"></div>
+
+    <div class="seg">
+      <button id="rbSegPick" class="active" onclick="rbSwitchMode('pick')">选已有顾客</button>
+      <button id="rbSegNew" onclick="rbSwitchMode('new')">＋ 新增当日顾客</button>
+    </div>
+
+    <!-- 模式：选已有顾客（搜索本人接待过的） -->
+    <div id="rbPick">
+      <input id="rbSearchQ" placeholder="搜索本人接待过的顾客：姓名 / 卡号 / 手机尾号" autocomplete="off"
+             style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px">
+      <div class="muted" style="font-size:11px;margin:4px 0 2px">仅能换绑到<b>您本人接待过的顾客</b>。标"当日"的已在该录音当天接诊；其余选中后会自动补登当天接诊。</div>
+      <div id="rebindCustList" style="max-height:220px;overflow:auto;margin-bottom:8px"></div>
+    </div>
+
+    <!-- 模式：新增当日顾客 -->
+    <div id="rbNew" style="display:none">
+      <div class="muted" style="font-size:11px;margin-bottom:6px">新增的顾客会自动发会员号，并补登进该录音当天的接诊（算一次接诊）。</div>
+      <div class="row"><input id="rbNewName" placeholder="顾客姓名 *"></div>
+      <div class="row" style="margin-top:8px"><input id="rbNewTail" placeholder="手机尾号（4位，可选）" maxlength="4" inputmode="numeric"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:8px">
+        <button class="btn" id="rbNewBtn" onclick="rbAddNewCustomer()">新增并选中</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:4px">新增后会自动切回"选已有顾客"并替您勾上。写错了可在列表里点"删除"撤回（名下已有录音则无法删除）。</div>
+    </div>
+
     <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">换绑理由（可选）</div>
     <textarea id="rebindReason" rows="2" placeholder="可选：说明换绑原因，便于管理员复盘" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px;resize:vertical"></textarea>
     <div class="msg" id="rebindMsg"></div>
     <div class="row" style="justify-content:flex-end;margin-top:12px">
       <button class="btn sec" onclick="closeRebind()">取消</button>
-      <button class="btn" id="rebindSubmitBtn" onclick="submitRebind()">确认换绑</button>
+      <button class="btn" id="rebindSubmitBtn" onclick="submitRebind()">确认换绑（仅这段）</button>
     </div>
   </div>
 </div>
@@ -394,6 +433,7 @@ body.skin-cute .dlg{border-radius:18px}
 <script>
 const BASE = {{ request.script_root|tojson }};
 const ADVISOR = {{ advisor_name|tojson }};
+const ROLE = {{ role|tojson }};
 
 // ============ App（WebView）环境检测 ============
 // 仅当被 Android App 的 WebView 加载、且 AndroidBridge.isApp() 为 true 时为 true。
@@ -1456,44 +1496,124 @@ async function confirmEditDate() {
 }
 
 // ============ 换绑 / 退回未归档 ============
+function _rbEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 let rebindRid = null;
-async function openRebind(info) {
+let rbSearchTimer = null;
+function openRebind(info) {
   rebindRid = info.rid;
   document.getElementById('rebindRecInfo').innerHTML =
-    `录音：${info.recorded_at || '—'} · ${info.duration_label || ''}`;
+    `录音：${_rbEsc(info.recorded_at || '—')} · ${_rbEsc(info.duration_label || '')}`;
   document.getElementById('rebindReason').value = '';
   document.getElementById('rebindMsg').textContent = '';
-  const cl = document.getElementById('rebindCustList');
-  cl.innerHTML = '<div class="empty-tip">加载中…</div>';
+  document.getElementById('rbSearchQ').value = '';
+  document.getElementById('rbNewName').value = '';
+  document.getElementById('rbNewTail').value = '';
+  rbSwitchMode('pick');
   const rm = document.getElementById('rebindMask');
   rm.style.zIndex = '60';
   rm.classList.add('show');
-  const recDate = pkgDate || _todayStr();
-  try {
-    const r = await fetch(BASE + '/api/consultant/today_reception?date=' + encodeURIComponent(recDate));
-    const d = await r.json();
-    const items = (d.items || []).filter(x => x.customer_id !== pkgCustomerId);
-    if (!items.length) {
-      cl.innerHTML = `<div class="empty-tip">${recDate} 当天没有其他可换绑的客人。请先关闭→补登${recDate}的客人</div>`;
-    } else {
-      cl.innerHTML = items.map(x => `
-        <label style="display:flex;align-items:center;padding:6px 8px;border-bottom:1px solid #f0f0f0;cursor:pointer">
-          <input type="radio" name="rebindCust" value="${x.customer_id}" style="margin-right:8px">
-          <b>${x.name}</b> <span class="muted" style="font-size:12px;margin-left:6px">${x.phone_tail?'尾号'+x.phone_tail:''}</span>
-        </label>`).join('');
-    }
-  } catch (e) {
-    cl.innerHTML = '<div class="msg err">加载失败：'+e.message+'</div>';
-  }
+  rbLoadCandidates('');
 }
 function closeRebind(){ document.getElementById('rebindMask').classList.remove('show'); rebindRid = null; }
+function rbSwitchMode(m){
+  document.getElementById('rbSegPick').classList.toggle('active', m === 'pick');
+  document.getElementById('rbSegNew').classList.toggle('active', m === 'new');
+  document.getElementById('rbPick').style.display = m === 'pick' ? '' : 'none';
+  document.getElementById('rbNew').style.display = m === 'new' ? '' : 'none';
+}
+document.getElementById('rbSearchQ').addEventListener('input', e => {
+  clearTimeout(rbSearchTimer);
+  rbSearchTimer = setTimeout(() => rbLoadCandidates(e.target.value), 220);
+});
+// 渲染候选列表（仅本人接待过的客人）。selectId：渲染后自动勾选该 id。
+async function rbLoadCandidates(q, selectId) {
+  const cl = document.getElementById('rebindCustList');
+  cl.innerHTML = '<div class="empty-tip">加载中…</div>';
+  if (!rebindRid) { cl.innerHTML = ''; return; }
+  try {
+    const r = await fetch(BASE + '/api/consultant/rebind_candidates?rid=' + encodeURIComponent(rebindRid)
+                          + '&q=' + encodeURIComponent(q || ''));
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    // 不显示该录音当前所属顾客本人
+    const items = (d.items || []).filter(x => x.customer_id !== pkgCustomerId);
+    if (!items.length) {
+      cl.innerHTML = `<div class="empty-tip">没有匹配的客人。${(q||'').trim()?'换个词试试，或':''}点上方"＋ 新增当日顾客"。</div>`;
+      return;
+    }
+    cl.innerHTML = items.map(x => `
+      <label style="display:flex;align-items:center;padding:6px 8px;border-bottom:1px solid #f0f0f0;cursor:pointer">
+        <input type="radio" name="rebindCust" value="${x.customer_id}" style="margin-right:8px">
+        <span style="flex:1">
+          <b>${_rbEsc(x.name)}</b>
+          <span class="muted" style="font-size:12px;margin-left:6px">${x.phone_tail?'尾号'+_rbEsc(x.phone_tail):''}${x.member_card?(' · '+_rbEsc(x.member_card)):''}</span>
+          ${x.in_day?'<span class="tag done" style="margin-left:6px">当日</span>':'<span class="muted" style="font-size:11px;margin-left:6px">选中后将补登当天接诊</span>'}
+        </span>
+        <button class="btn sec" style="padding:2px 8px;font-size:11px" data-cid="${x.customer_id}" data-name="${_rbEsc(x.name)}" onclick="event.preventDefault();rbRemoveCustomer(this)">删除</button>
+      </label>`).join('');
+    if (selectId != null) {
+      const inp = cl.querySelector('input[name="rebindCust"][value="' + selectId + '"]');
+      if (inp) { inp.checked = true; inp.closest('label').scrollIntoView({block:'nearest'}); }
+    }
+  } catch (e) {
+    cl.innerHTML = '<div class="msg err">加载失败：' + _rbEsc(e.message) + '</div>';
+  }
+}
+// 新增当日客人 → 自动会员号 + 补登当天接诊，新增后切回列表并勾选
+async function rbAddNewCustomer() {
+  const name = document.getElementById('rbNewName').value.trim();
+  const tail = document.getElementById('rbNewTail').value.trim();
+  const msg = document.getElementById('rebindMsg');
+  msg.textContent = '';
+  if (!name) { msg.textContent='请填写顾客姓名'; msg.className='msg err'; return; }
+  if (tail && !/^\d{4}$/.test(tail)) { msg.textContent='手机尾号必须是 4 位数字'; msg.className='msg err'; return; }
+  const btn = document.getElementById('rbNewBtn'); btn.disabled = true;
+  try {
+    const body = {name}; if (tail) body.phone_tail = tail;
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/add_day_customer', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    document.getElementById('rbNewName').value = '';
+    document.getElementById('rbNewTail').value = '';
+    document.getElementById('rbSearchQ').value = '';
+    rbSwitchMode('pick');
+    msg.textContent = `已新增「${d.name}」并补登当天接诊，已替您勾选。`; msg.className='msg';
+    await rbLoadCandidates('', d.customer_id);
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  } finally { btn.disabled = false; }
+}
+// 删除误建客人（名下有录音则后端拒绝）
+async function rbRemoveCustomer(btn) {
+  const customer_id = parseInt(btn.dataset.cid, 10);
+  const name = btn.dataset.name || '该顾客';
+  const msg = document.getElementById('rebindMsg');
+  msg.textContent = '';
+  if (!confirm(`确定删除「${name}」？仅当其名下没有任何录音时可删。`)) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/remove_day_customer', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({customer_id}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    msg.textContent = `已删除「${name}」。`; msg.className='msg';
+    rbLoadCandidates(document.getElementById('rbSearchQ').value);
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err'; btn.disabled = false;
+  }
+}
 async function submitRebind() {
   const sel = document.querySelector('input[name="rebindCust"]:checked');
   const msg = document.getElementById('rebindMsg');
-  if (!sel) { msg.textContent='请选择换绑目标顾客'; msg.className='msg err'; return; }
+  if (!sel) { msg.textContent='请先在"选已有顾客"里选中目标，或新增一位'; msg.className='msg err'; return; }
   const tcid = parseInt(sel.value, 10);
   const reason = document.getElementById('rebindReason').value.trim();
-  if (!confirm('确定换绑到该顾客？若已分析将作废，需要重新分析。')) return;
+  if (!confirm('只移动这一段录音到该顾客（该顾客其他录音不受影响），新旧报告将重新生成。确定吗？')) return;
   const btn = document.getElementById('rebindSubmitBtn'); btn.disabled = true;
   try {
     const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/direct_rebind', {
@@ -1550,40 +1670,147 @@ function viewAnalysis(sessionId) {
 
 // ============ 模块4：站内提醒 ============
 function _remEsc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+const IS_MANAGER = (ROLE === 'store_manager');
+
+// 渲染一条「个人提醒」（顾问/店长都有）
+function _renderPersonal(it) {
+  const tag = it.kind === 'unbound' ? '未绑定' : '未查看';
+  const color = it.level >= 2 ? '#e74c3c' : '#e67e22';
+  const link = it.ref_type === 'session'
+    ? `<a href="${BASE}/session/${it.ref_id}?from=reminder" style="color:var(--blue);font-size:12px">查看报告 →</a>` : '';
+  return `<div style="border-bottom:1px solid #f0f0f0;padding:8px 2px">
+    <span style="display:inline-block;font-size:11px;color:#fff;background:${color};border-radius:4px;padding:0 6px;margin-right:4px">${tag} L${it.level}</span>
+    <span style="font-size:13px">${_remEsc(it.message)}</span>
+    <div style="margin-top:3px">${link} <span class="muted" style="font-size:11px">${_remEsc(it.created_at||'')}</span></div>
+  </div>`;
+}
+
+// 渲染一条「本店待跟进升级项」（仅店长）
+function _renderEscalation(it) {
+  const sid = it.session_id != null ? it.session_id : it.ref_id;
+  const done = !!it.is_handled;
+  const advisor = it.advisor_name || ('顾问#' + (it.advisor_user_id || '?'));
+  const btn = done
+    ? `<span class="muted" style="font-size:11px">已跟进 ✓</span>`
+    : `<button class="btn" style="font-size:12px;padding:2px 10px" onclick="handleEscalation(${it.id}, this)">已跟进</button>`;
+  const link = sid != null
+    ? `<a href="${BASE}/session/${sid}?from=reminder" style="color:var(--blue);font-size:12px">查看报告 →</a>` : '';
+  return `<div data-esc-id="${it.id}" style="border-bottom:1px solid #f0f0f0;padding:8px 2px">
+    <span style="display:inline-block;font-size:11px;color:#fff;background:#e74c3c;border-radius:4px;padding:0 6px;margin-right:4px">升级 L${it.level}</span>
+    <span style="font-size:13px;font-weight:600">${_remEsc(advisor)}</span>
+    <div style="font-size:12px;margin-top:2px">${_remEsc(it.message)}</div>
+    <div style="margin-top:5px;display:flex;justify-content:space-between;align-items:center">
+      <span>${link} <span class="muted" style="font-size:11px">${_remEsc(it.created_at||'')}</span></span>
+      ${btn}
+    </div>
+  </div>`;
+}
+
 function loadReminders() {
   fetch(BASE + '/api/consultant/reminders').then(r => r.json()).then(d => {
     if (d.error) return;
     const dot = document.getElementById('reminderDot');
-    const n = d.count || 0;
+    // 店长 badge = 升级项数 + 个人提醒数；顾问 = 个人提醒数（count 即个人数）
+    const escN = d.escalation_count || 0;
+    const persN = (d.personal_count != null) ? d.personal_count : (d.count || 0);
+    const n = IS_MANAGER ? (escN + persN) : persN;
     if (n > 0) { dot.style.display = ''; dot.textContent = n > 99 ? '99+' : n; }
     else { dot.style.display = 'none'; }
+
     const list = document.getElementById('reminderList');
     const items = d.items || [];
-    if (!items.length) { list.innerHTML = '<div class="muted" style="font-size:13px;padding:8px 0">暂无未处理提醒 🎉</div>'; return; }
-    list.innerHTML = items.map(it => {
-      const tag = it.kind === 'unbound' ? '未绑定' : '未查看';
-      const color = it.level >= 2 ? '#e74c3c' : '#e67e22';
-      const link = it.ref_type === 'session'
-        ? `<a href="${BASE}/session/${it.ref_id}?from=reminder" style="color:var(--blue);font-size:12px">查看报告 →</a>` : '';
-      return `<div style="border-bottom:1px solid #f0f0f0;padding:8px 2px">
-        <span style="display:inline-block;font-size:11px;color:#fff;background:${color};border-radius:4px;padding:0 6px;margin-right:4px">${tag} L${it.level}</span>
-        <span style="font-size:13px">${_remEsc(it.message)}</span>
-        <div style="margin-top:3px">${link} <span class="muted" style="font-size:11px">${_remEsc(it.created_at||'')}</span></div>
-      </div>`;
-    }).join('');
+    const escItems = items.filter(it => it.scope === 'escalation');
+    const persItems = items.filter(it => it.scope !== 'escalation');
+
+    let html = '';
+    if (IS_MANAGER && escItems.length) {
+      html += `<div class="muted" style="font-size:11px;margin:2px 0 4px">本店待跟进升级项（${escItems.length}）</div>`;
+      html += escItems.map(_renderEscalation).join('');
+    }
+    if (persItems.length) {
+      if (html) html += `<div class="muted" style="font-size:11px;margin:8px 0 4px">个人提醒（${persItems.length}）</div>`;
+      html += persItems.map(_renderPersonal).join('');
+    }
+    if (!html) html = '<div class="muted" style="font-size:13px;padding:8px 0">暂无未处理提醒 🎉</div>';
+    list.innerHTML = html;
   });
 }
+
+// 店长「已跟进」→ 调后端 handle 接口
+function handleEscalation(rid, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+  fetch(BASE + '/api/manager/reminder/' + rid + '/handle', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) {
+        alert(d.error);
+        if (btn) { btn.disabled = false; btn.textContent = '已跟进'; }
+        return;
+      }
+      loadReminders();
+    })
+    .catch(() => {
+      if (btn) { btn.disabled = false; btn.textContent = '已跟进'; }
+    });
+}
+
 function toggleReminderPanel() {
   const p = document.getElementById('reminderPanel');
   const show = p.style.display === 'none';
   p.style.display = show ? 'block' : 'none';
-  if (show) loadReminders();
+  if (show) loadReminders();  // 展示即拉取；后端在拉取时把升级项置已读
 }
+
+// ============ 客户档案：搜索 → 打开档案（复用 /customer/<id>）============
+// 录音收听权限由后端 /api/recording/<rid>/url 硬闸保证（非本人接待返回 403）；
+// 本页只做「搜到 → 打开档案」，不在此重做档案详情。
+let profileSearchTimer = null;
+function openCustomerProfile(cid) {
+  if (!cid) return;
+  location.href = BASE + '/customer/' + cid;
+}
+async function doProfileSearch(q) {
+  const list = document.getElementById('profileSearchList');
+  let items = [];
+  try {
+    const r = await fetch(BASE + '/api/customers/search?q=' + encodeURIComponent(q || ''));
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    items = d.customers || [];
+  } catch (e) {
+    list.innerHTML = '<div class="msg err" style="padding:8px">' + _remEsc(e.message) + '</div>';
+    return;
+  }
+  if (!items.length) {
+    list.innerHTML = '<div class="muted" style="padding:10px;font-size:12px">' +
+      tx('无匹配顾客', '没有找到这位姐妹 🤔') + '</div>';
+    return;
+  }
+  list.innerHTML = items.map(c => {
+    const cardNo = c.member_card ? ' · ' + _remEsc(c.member_card) : '';
+    return `
+    <div class="suggest-item" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid #f0f0f0">
+      <div><b>${_remEsc(c.name)}</b> <span class="muted" style="font-size:12px">${cardNo}</span></div>
+      <button class="btn sec" style="padding:4px 10px;font-size:12px" onclick="openCustomerProfile(${c.id})">${tx('查看档案', '看档案 →')}</button>
+    </div>`;
+  }).join('');
+}
+(function initProfileSearch(){
+  const inp = document.getElementById('profileSearchQ');
+  if (!inp) return;
+  inp.addEventListener('input', e => {
+    clearTimeout(profileSearchTimer);
+    profileSearchTimer = setTimeout(() => doProfileSearch(e.target.value), 200);
+  });
+})();
 
 loadReception();
 setInterval(() => { if (!currentReceptionDate) loadReception(); }, 20000);
 loadReminders();
 setInterval(loadReminders, 120000);
+// 查看报告等返回本页/重新可见时，主动重拉一次以体现「即时-1」
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadReminders(); });
+window.addEventListener('pageshow', () => loadReminders());
 </script>
 </body>
 </html>

@@ -103,7 +103,7 @@
     {% if role in ('admin','super','store_manager') %}
     <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
       <button class="rec-btn rec-btn-sec" onclick="downloadCurrentRec()" title="下载当前这段录音文件">⬇ 下载</button>
-      <button class="rec-btn rec-btn-sec" onclick="splitCurrentRec()" title="在播放器当前位置把这段录音切成两段，各自重新转写后可分别换绑">✂ 分割</button>
+      <button class="rec-btn rec-btn-sec" onclick="splitCurrentRec()" title="在播放器当前位置把这段录音切成两段；默认按已有转录切开，原录音未转写完才会重新转写，切后可分别换绑">✂ 分割</button>
       <button class="rec-btn rec-btn-sec" onclick="openRecRebind()" title="把当前这段录音换绑到该顾问当日的另一个客人">⇄ 换绑当前录音段</button>
     </div>
     {% endif %}

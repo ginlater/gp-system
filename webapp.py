@@ -59,6 +59,18 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_API_BASE = os.environ.get("DEEPSEEK_API_BASE", "https://api.deepseek.com")
 
+# 豆包（火山方舟 / Ark）OpenAI 兼容接口；豆包用「接入点ID」而非模型名
+# 空字符串视为未配置
+DOUBAO_API_KEY = os.environ.get("DOUBAO_API_KEY", "")
+DOUBAO_API_BASE = os.environ.get("DOUBAO_API_BASE", "https://ark.cn-beijing.volces.com/api/v3")
+DOUBAO_EP_LITE = os.environ.get("DOUBAO_EP_LITE", "")  # 极速版接入点ID
+DOUBAO_EP_PRO = os.environ.get("DOUBAO_EP_PRO", "")    # 进阶版接入点ID
+# 模型 id -> 接入点ID 映射（接入点未配置则为空字符串）
+DOUBAO_ENDPOINTS = {
+    "doubao-2.0-lite": DOUBAO_EP_LITE,
+    "doubao-2.0-pro": DOUBAO_EP_PRO,
+}
+
 DB_PATH = os.environ.get("DB_PATH", str(Path(__file__).parent / "recordings.db"))
 KB_PATH = os.environ.get("KNOWLEDGE_BASE_PATH",
                          str(Path(__file__).parent / "output" / "logic_library.json"))
@@ -69,7 +81,14 @@ ANTHROPIC_PROXY = os.environ.get("ANTHROPIC_PROXY", "http://127.0.0.1:7890")
 # 可选分析模型表（前端下拉用）
 # provider: anthropic 走代理；deepseek 直连国内不走代理
 SUPPORTED_MODELS = [
-    {"id": "deepseek-v4-pro",   "provider": "deepseek",
+    {"id": "doubao-2.0-lite",   "provider": "doubao", "tier_label": "极速版",
+     "name": "豆包 2.0 Lite",
+     "label": "豆包 2.0 极速版（火山方舟，最快最省）"},
+    {"id": "doubao-2.0-pro",    "provider": "doubao", "tier_label": "进阶版",
+     "name": "豆包 2.0 Pro",
+     "label": "豆包 2.0 进阶版（火山方舟，更强）"},
+    {"id": "deepseek-v4-pro",   "provider": "deepseek", "tier_label": "专家版",
+     "name": "DeepSeek V4 Pro",
      "label": "DeepSeek V4 Pro（国内直连，默认）"},
     {"id": "claude-sonnet-4-6", "provider": "anthropic",
      "label": "Claude Sonnet 4.6（更强但贵且慢）"},
@@ -283,7 +302,7 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT NOT NULL UNIQUE,  -- 顾问用手机号；admin 用 env BOSS_USERNAME
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'consultant',  -- super | admin | consultant
+    role TEXT NOT NULL DEFAULT 'consultant',  -- super | admin | consultant | store_manager
     company_id INTEGER,
     advisor_name TEXT,   -- 顾问姓名（用于匹配 sessions.advisor）
     employee_id TEXT,    -- 工号
@@ -817,6 +836,116 @@ def init_db():
         "CREATE INDEX IF NOT EXISTS idx_reminder_log_dedup "
         "ON reminder_log(kind, ref_type, ref_id, level, created_at)"
     )
+
+    # 2026-06-03 提醒子系统大改：升级项(escalation) + 店长「已读/已处理」状态
+    # 新增列：read_at（店长拉取升级项即标已读）、handled_at/handled_by（店长在看板点「已跟进」）
+    rl_cols = {r[1] for r in conn.execute("PRAGMA table_info(reminder_log)").fetchall()}
+    if "read_at" not in rl_cols:
+        conn.execute("ALTER TABLE reminder_log ADD COLUMN read_at TEXT")
+    if "handled_at" not in rl_cols:
+        conn.execute("ALTER TABLE reminder_log ADD COLUMN handled_at TEXT")
+    if "handled_by" not in rl_cols:
+        conn.execute("ALTER TABLE reminder_log ADD COLUMN handled_by INTEGER")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_reminder_log_escalation "
+        "ON reminder_log(channel, store_id, processed)"
+    )
+
+    # 一次性数据清理（带 marker，只跑一次）：
+    # 历史上 inapp 提醒「按天判重」→ 同一对象(kind,ref_type,ref_id,target_user_id,level)
+    # 累积了多行未处理 inapp（12 倍刷屏）。把每组只保留最新 1 行，其余 processed=2。
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS app_migration_marker (
+            name TEXT PRIMARY KEY,
+            done_at TEXT DEFAULT (datetime('now', 'localtime'))
+        )
+    """)
+    _mk = conn.execute(
+        "SELECT 1 FROM app_migration_marker WHERE name=?",
+        ("reminder_inapp_dedup_2026_06_03",),
+    ).fetchone()
+    if not _mk:
+        try:
+            # 折叠未处理 inapp：每个 (kind,ref_type,ref_id,target_user_id,level) 只留最大 id，
+            # 其余置 processed=2（表示被去重折叠，非用户真正处理）。
+            conn.execute("""
+                UPDATE reminder_log SET processed=2,
+                    processed_at=datetime('now','localtime')
+                WHERE channel='inapp' AND processed=0
+                  AND id NOT IN (
+                      SELECT MAX(id) FROM reminder_log
+                      WHERE channel='inapp' AND processed=0
+                      GROUP BY kind, ref_type, ref_id,
+                               IFNULL(target_user_id,-1), IFNULL(level,-1)
+                  )
+            """)
+            # 历史 board 升级行 target 是顾问、店长收不到——本次改用 channel='escalation'。
+            # 把历史 unviewed 的 board 行作废（processed=2），下一轮 scan 会按新模型重建 escalation。
+            conn.execute("""
+                UPDATE reminder_log SET processed=2,
+                    processed_at=datetime('now','localtime')
+                WHERE channel='board' AND kind='unviewed' AND processed=0
+            """)
+            conn.execute(
+                "INSERT INTO app_migration_marker(name) VALUES (?)",
+                ("reminder_inapp_dedup_2026_06_03",),
+            )
+        except Exception as _e:
+            print(f"[migration reminder_inapp_dedup] 跳过：{_e}", flush=True)
+
+    # 2026-06-04 customer_tags 身份地基：加 customer_id 列 + 索引；并回填一次。
+    # 背景：customer_tags 历史只按 customer_name 关联，同名客户（库内多个'测试'/'李女士'等）
+    # 在合并/统计时会互相串。改为以 customer_id 精确归属。
+    ct_cols = {r[1] for r in conn.execute("PRAGMA table_info(customer_tags)").fetchall()}
+    if "customer_id" not in ct_cols:
+        conn.execute("ALTER TABLE customer_tags ADD COLUMN customer_id INTEGER")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ctags_customer ON customer_tags(customer_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sessions_cust_date "
+        "ON sessions(company_id, customer_id, service_date)"
+    )
+
+    # 一次性回填 customer_id（marker 守卫，只跑一次）：
+    # 仅走 source_session_id → sessions.customer_id 这条精确路径；绝不按姓名回填（同名会串）。
+    # source_session_id 为空、或对应 session.customer_id 为空的行，customer_id 留 NULL（本就无法精确归属）。
+    _mk_ctid = conn.execute(
+        "SELECT 1 FROM app_migration_marker WHERE name=?",
+        ("customer_tags_backfill_customer_id_2026_06_04",),
+    ).fetchone()
+    if not _mk_ctid:
+        try:
+            cur = conn.execute("""
+                UPDATE customer_tags
+                SET customer_id = (
+                    SELECT s.customer_id FROM sessions s
+                    WHERE s.id = customer_tags.source_session_id
+                )
+                WHERE source_session_id IS NOT NULL
+                  AND customer_id IS NULL
+                  AND EXISTS (
+                      SELECT 1 FROM sessions s
+                      WHERE s.id = customer_tags.source_session_id
+                        AND s.customer_id IS NOT NULL
+                  )
+            """)
+            filled = cur.rowcount
+            remain = conn.execute(
+                "SELECT COUNT(*) FROM customer_tags WHERE customer_id IS NULL"
+            ).fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM customer_tags").fetchone()[0]
+            print(
+                f"[migration customer_tags_backfill] 回填 customer_id {filled} 行；"
+                f"仍为 NULL {remain} 行（共 {total} 行）",
+                flush=True,
+            )
+            conn.execute(
+                "INSERT INTO app_migration_marker(name) VALUES (?)",
+                ("customer_tags_backfill_customer_id_2026_06_04",),
+            )
+        except Exception as _e:
+            print(f"[migration customer_tags_backfill] 跳过：{_e}", flush=True)
 
     conn.commit()
     conn.close()
@@ -3188,10 +3317,113 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
         )
 
 
+def _call_doubao(model, system_prompt, user_prompt, tool=None, max_tokens=None,
+                 enable_thinking=False, stage_label="", temperature=0.3,
+                 force_tool_choice=False):
+    """调用豆包（火山方舟 / Ark，OpenAI 兼容接口），不走代理。
+
+    豆包用「接入点ID」（endpoint id）而非模型名作为请求里的 model 字段：
+    model='doubao-2.0-lite' -> DOUBAO_EP_LITE，'doubao-2.0-pro' -> DOUBAO_EP_PRO。
+    返回 tool_calls[0].function.arguments dict（与 _call_deepseek 一致）。
+
+    骨架说明：DOUBAO_API_KEY 或对应接入点ID 未配置时直接抛 RuntimeError；
+    配置齐全后该代码路径可直接用于真实请求。
+    """
+    import httpx
+
+    endpoint_id = DOUBAO_ENDPOINTS.get(model, "")
+    if not DOUBAO_API_KEY or not endpoint_id:
+        raise RuntimeError("豆包(火山方舟)未配置，请设置 DOUBAO_API_KEY/接入点ID")
+
+    tool = tool or REPORT_TOOL
+    openai_tool = {
+        "type": "function",
+        "function": {
+            "name": tool["name"],
+            "description": tool["description"],
+            "parameters": tool["input_schema"],
+        },
+    }
+
+    out_budget = max_tokens or 8000
+    explicit_tc = {"type": "function", "function": {"name": tool["name"]}}
+    payload = {
+        # 火山方舟用接入点ID填 model 字段
+        "model": endpoint_id,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "tools": [openai_tool],
+        "max_tokens": out_budget,
+        "temperature": temperature,
+    }
+    # 强制工具调用或默认 auto
+    if force_tool_choice:
+        payload["tool_choice"] = explicit_tc
+    else:
+        payload["tool_choice"] = "auto"
+
+    # trust_env=False：服务器有 http_proxy=7890，豆包国内直连不走代理
+    with httpx.Client(
+        trust_env=False,
+        timeout=httpx.Timeout(connect=15.0, read=600.0, write=60.0, pool=15.0),
+    ) as client:
+        resp = client.post(
+            f"{DOUBAO_API_BASE.rstrip('/')}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {DOUBAO_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(f"豆包 HTTP {resp.status_code}: {resp.text[:500]}")
+    try:
+        data = resp.json()
+    except Exception as json_err:
+        raise RuntimeError(
+            f"豆包 响应不是合法 JSON: {json_err}; "
+            f"HTTP {resp.status_code}; body_head={resp.text[:300]}"
+        )
+    stage_tag = f"[{stage_label}] " if stage_label else ""
+    try:
+        choice0 = data["choices"][0]
+        finish = choice0.get("finish_reason")
+        msg = choice0["message"]
+        tool_calls = msg.get("tool_calls") or []
+        if finish == "length":
+            raise RuntimeError(
+                f"{stage_tag}豆包 输出被 max_tokens 截断（finish_reason=length，"
+                f"out_budget={out_budget}，model={model}）；建议拆分输出或调大预算"
+            )
+        if not tool_calls:
+            raise RuntimeError(
+                f"{stage_tag}豆包 未返回 tool_calls；finish_reason={finish}；"
+                f"content={msg.get('content','')[:200]}"
+            )
+        result = _parse_tool_calls_arguments(tool_calls, stage_label=stage_label)
+        if not result:
+            raise RuntimeError(
+                f"{stage_tag}豆包 tool_calls 解析后为空 dict；finish_reason={finish}"
+            )
+        return _deep_json_unwrap(result)
+    except (KeyError, IndexError, json.JSONDecodeError, AttributeError, TypeError) as e:
+        finish = None
+        try:
+            finish = data["choices"][0].get("finish_reason")
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"{stage_tag}豆包 响应解析失败: {e}; finish_reason={finish}; "
+            f"body_head={json.dumps(data, ensure_ascii=False)[:400]}"
+        )
+
+
 def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None,
               enable_thinking=False, stage_label="", temperature=0.3,
               force_tool_choice=False):
-    """统一入口：根据 model 的 provider 调 Claude 或 DeepSeek。"""
+    """统一入口：根据 model 的 provider 调 Claude / DeepSeek / 豆包。"""
     provider = MODEL_PROVIDER.get(model)
     if provider == "anthropic":
         return _call_anthropic(model, system_prompt, user_prompt, tool=tool,
@@ -3201,6 +3433,11 @@ def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None,
                               max_tokens=max_tokens, enable_thinking=enable_thinking,
                               stage_label=stage_label, temperature=temperature,
                               force_tool_choice=force_tool_choice)
+    if provider == "doubao":
+        return _call_doubao(model, system_prompt, user_prompt, tool=tool,
+                            max_tokens=max_tokens, enable_thinking=enable_thinking,
+                            stage_label=stage_label, temperature=temperature,
+                            force_tool_choice=force_tool_choice)
     raise RuntimeError(f"未知 provider for model {model}")
 
 
@@ -3484,12 +3721,14 @@ def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
     if not tags:
         return
 
-    # 取来源 session 的公司 / 接诊日期，用于归一化和时间筛选
+    # 取来源 session 的公司 / 接诊日期 / 客户身份，用于归一化、时间筛选和精确归属
     srow = db_fetchone(
-        "SELECT company_id, service_date FROM sessions WHERE id=?", (session_id,)
+        "SELECT company_id, service_date, customer_id FROM sessions WHERE id=?",
+        (session_id,),
     )
     company_id = (srow["company_id"] if srow else None) or 1
     service_date = srow["service_date"] if srow else None
+    customer_id = srow["customer_id"] if srow else None  # 取不到则 NULL
 
     # 竞品标签自动登记进词典(category=竞品)，使竞品纵览可统计、可拉黑；已在词典(含黑名单)的不动
     dmap = get_tag_dict_map(company_id)
@@ -3515,7 +3754,7 @@ def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
         canon, status = normalize_tag(t, company_id)
         if status == "blacklist":
             continue
-        rows.append((customer_name, advisor_name, t, canon, session_id, c, service_date))
+        rows.append((customer_name, advisor_name, t, canon, session_id, c, service_date, customer_id))
     if not rows:
         return
 
@@ -3523,8 +3762,8 @@ def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
         conn.executemany(
             """INSERT INTO customer_tags
                (customer_name, advisor_name, tag, canonical_tag,
-                source_session_id, mention_count, service_date)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                source_session_id, mention_count, service_date, customer_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             rows,
         )
         conn.commit()
@@ -4542,7 +4781,7 @@ def admin_page():
 
 
 @app.route("/customer/<int:customer_id>")
-@manager_required
+@login_required  # P1.7：档案"看"对所有登录角色开放（顾问也能看非本人客人档案）；公司作用域仍在数据接口内收口
 def customer_profile_page(customer_id):
     return render_template(
         "customer_profile.html",
@@ -4572,6 +4811,9 @@ def session_detail(sid):
     sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (sid,))
     if not sess:
         abort(404)
+    _u = current_user()
+    if _u and _u["role"] != "super" and sess["company_id"] is not None and sess["company_id"] != _u["company_id"]:
+        abort(403)
     sess_d = dict(sess)
     recs = db_fetchall("""
         SELECT id, oss_key, recorded_at, duration_label, size_bytes, source,
@@ -4959,19 +5201,24 @@ def api_session_get(sid):
     sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (sid,))
     if not sess:
         return jsonify({"error": "not found"}), 404
+    u = current_user()
+    if u and u["role"] != "super" and sess["company_id"] is not None and sess["company_id"] != u["company_id"]:
+        return jsonify({"error": "无权访问"}), 403
     out = dict(sess)
     recs = db_fetchall("""
         SELECT id, oss_key, recorded_at, duration_label, size_bytes, source,
                customer, asr_status, asr_transcript, asr_error,
                asr_started_at, asr_finished_at,
-               asr_speaker_count, asr_speaker_warning, speaker_confirmed
+               asr_speaker_count, asr_speaker_warning, speaker_confirmed,
+               advisor, uploader_user_id, store_id
         FROM recordings WHERE session_id=?
         ORDER BY COALESCE(recorded_at, ''), id
     """, (sid,))
     out["recordings"] = []
     for r in recs:
         d = dict(r)
-        d["audio_url"] = oss_signed_url(r["oss_key"], expires=7200)
+        # P1.7：仅对有权收听者签发音频URL，其余置 None（转写/报告仍可见，符合"档案开放、录音限本人"）
+        d["audio_url"] = oss_signed_url(r["oss_key"], expires=7200) if _can_listen_recording(u, r) else None
         out["recordings"].append(d)
     evs = db_fetchall(
         "SELECT * FROM evaluations WHERE session_id=? ORDER BY id DESC", (sid,)
@@ -5116,13 +5363,44 @@ def api_upload():
     return jsonify({"created": created, "failed": failed})
 
 
+def _can_listen_recording(u, rec):
+    """P1.7 录音收听统一闸：判断用户 u 是否有权收听录音 rec（rec 需含 advisor/uploader_user_id/store_id）。
+    所有会返回签名播放URL/音频的端点都必须经此判定，避免再出现绕过的侧门。
+      - admin/super：放行；store_manager：仅本店；consultant：仅本人 advisor 或 uploader；其它/未登录：拒绝。"""
+    if not u:
+        return False
+    role = u["role"]
+    if role in ("admin", "super"):
+        return True
+    if role == "store_manager":
+        return bool(u["store_id"]) and rec["store_id"] == u["store_id"]
+    if role == "consultant":
+        is_advisor = bool(rec["advisor"]) and rec["advisor"] == u["advisor_name"]
+        is_uploader = bool(rec["uploader_user_id"]) and rec["uploader_user_id"] == u["id"]
+        return is_advisor or is_uploader
+    return False
+
+
 @app.route("/api/recording/<int:rid>/url")
 @login_required
 def api_recording_url(rid):
-    """按需签名：返回新鲜的 OSS 播放 URL，1 小时有效。?download=1 时返回强制下载链接。"""
-    rec = db_fetchone("SELECT oss_key FROM recordings WHERE id=?", (rid,))
+    """按需签名：返回新鲜的 OSS 播放 URL，1 小时有效。?download=1 时返回强制下载链接。
+    P1.7 录音"听"硬闸（后端权限核心，即使前端显示播放按钮也必须拦住）：
+      - admin/super：放行；
+      - store_manager：仅本店录音（recording.store_id==本人 store_id）放行；
+      - consultant：仅当 recording.advisor==本人 advisor_name 或 recording.uploader_user_id==本人 id 放行；
+      - 否则 403 无权收听非本人接待的录音。"""
+    rec = db_fetchone(
+        "SELECT oss_key, advisor, uploader_user_id, store_id, company_id FROM recordings WHERE id=?",
+        (rid,))
     if not rec or not rec["oss_key"]:
         return jsonify({"error": "not found"}), 404
+
+    u = current_user()
+    if not u:
+        return jsonify({"error": "未登录", "code": "auth_required"}), 401
+    if not _can_listen_recording(u, rec):
+        return jsonify({"error": "无权收听非本人接待的录音"}), 403
     download_name = None
     if request.args.get("download"):
         base = rec["oss_key"].rsplit("/", 1)[-1]
@@ -5442,8 +5720,15 @@ def api_models():
     """前端下拉用：列出支持的分析模型及当前默认"""
     available = []
     for m in SUPPORTED_MODELS:
+        provider = m["provider"]
         # DeepSeek 没 key 时禁用
-        disabled = (m["provider"] == "deepseek" and not DEEPSEEK_API_KEY)
+        if provider == "deepseek":
+            disabled = not DEEPSEEK_API_KEY
+        # 豆包：API key 或该档接入点ID 未配置时禁用
+        elif provider == "doubao":
+            disabled = not (DOUBAO_API_KEY and DOUBAO_ENDPOINTS.get(m["id"]))
+        else:
+            disabled = False
         available.append({**m, "disabled": disabled})
     return jsonify({"models": available, "default": DEFAULT_MODEL})
 
@@ -5782,6 +6067,7 @@ def api_me():
         "id": u["id"], "username": u["username"], "role": u["role"],
         "company_id": u["company_id"], "advisor_name": u["advisor_name"],
         "employee_id": u["employee_id"], "phone": u["phone"],
+        "store_id": u["store_id"],
     })
 
 
@@ -5959,6 +6245,17 @@ def api_report_view_enter():
     if not sid:
         return jsonify({"error": "missing session_id"}), 400
     _log_view_event(sid, source, "overall", "enter", 0)
+    # 查看即递减：顾问点开报告 → 该 session 的个人 inapp 提醒 + 升级项(escalation)立刻关闭，
+    # 店长/管理员看板上的升级项一并消失，顾问 badge 即时 -1。
+    try:
+        db_write(
+            "UPDATE reminder_log SET processed=1, processed_at=datetime('now','localtime') "
+            "WHERE ref_type='session' AND ref_id=? AND processed=0 "
+            "AND kind='unviewed' AND channel IN ('inapp','escalation')",
+            (sid,),
+        )
+    except Exception as _e:
+        app.logger.warning("report_view_enter 关闭提醒失败: %s", _e)
     return jsonify({"ok": True})
 
 
@@ -5982,70 +6279,104 @@ def api_report_view_part():
     return jsonify({"ok": True})
 
 
+# P0.5 可展开章节白名单：part2~part11(10) + extra_老板点评(1) = 11 个。
+# 排除 overall（整体进入，非章节）和 part1（默认展开，不计为"展开"）。
+# 既做"展开章节数"的分子(COUNT DISTINCT 命中本集合)，也做 n/11 的分母。
+EXPANDABLE_PARTS = [
+    "part2", "part3", "part4", "part5", "part6",
+    "part7", "part8", "part9", "part10", "part11",
+    "extra_老板点评",
+]
+
+
 @app.route("/api/admin/report_view_stats")
 @manager_required
 def api_admin_report_view_stats():
+    # P1.3：看板由"按用户"改为"按客人(顾问×客人×报告session)分行"。
+    #   每行 = 某查看者(顾问)对某个报告(session)的累计查看。
+    #   一个报告被多人看则多行；展示以顾问视角。
     cid = session.get("company_id")
     is_super = session.get("role") == "super"
     days = int(request.args.get("days", "30"))
     since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
-    where = "created_at >= ?"
+    # 事件表别名 e；门店过滤口径沿用现有（按查看者门店）。
+    where = "e.created_at >= ?"
     params = [since]
     if not is_super:
-        where += " AND company_id=?"
+        where += " AND e.company_id=?"
         params.append(cid)
     # 只统计顾问/admin 自己看（super 看的不计入对外汇总，但 super 视角下显示全部）
-    where += " AND role IN ('consultant','admin','super','store_manager')"
+    where += " AND e.role IN ('consultant','admin','super','store_manager')"
     # 店长只看本店成员；admin/super 可选门店筛选（按查看者所属门店）
     _sf = current_store_filter()
     if _sf is not None:
-        where += " AND user_id IN (SELECT id FROM users WHERE store_id=?)"
+        where += " AND e.user_id IN (SELECT id FROM users WHERE store_id=?)"
         params.append(_sf)
 
-    # 1) 每个顾问汇总
-    rows = db_fetchall(f"""
-        SELECT
-            user_id, username, role,
-            COUNT(DISTINCT session_id) AS sessions_viewed,
-            SUM(CASE WHEN event='enter' AND part_key='overall' THEN 1 ELSE 0 END) AS enter_count,
-            SUM(CASE WHEN event='enter' AND part_key<>'overall' THEN 1 ELSE 0 END) AS part_expand_count,
-            SUM(CASE WHEN event='duration' THEN duration_ms ELSE 0 END) AS total_ms
-        FROM report_view_events
-        WHERE {where}
-        GROUP BY user_id, username, role
-        ORDER BY total_ms DESC
-    """, tuple(params))
+    # P0.5 去重展开章节：COUNT(DISTINCT part_key) 且 part_key 命中白名单。
+    #   用占位符把 EXPANDABLE_PARTS 注入 IN(...)，反复展开同一章只算 1。
+    in_ph = ",".join(["?"] * len(EXPANDABLE_PARTS))
+    expand_expr = (
+        f"COUNT(DISTINCT CASE WHEN e.event='enter' "
+        f"AND e.part_key IN ({in_ph}) THEN e.part_key END)"
+    )
+    total_expandable = len(EXPANDABLE_PARTS)
 
-    # 2) 每人最常看的 PART（不含 overall）
-    fav_rows = db_fetchall(f"""
-        SELECT user_id, part_key, SUM(duration_ms) AS ms
-        FROM report_view_events
-        WHERE {where} AND event='duration' AND part_key<>'overall'
-        GROUP BY user_id, part_key
-    """, tuple(params))
-    fav_map: dict = {}
-    for r in fav_rows:
-        uid = r["user_id"]
-        if uid not in fav_map or r["ms"] > fav_map[uid][1]:
-            fav_map[uid] = (r["part_key"], r["ms"] or 0)
+    # 主查询：JOIN sessions 取客人/顾问/服务日期；GROUP BY 查看者×报告。
+    # 参数顺序：expand_expr 的 IN 列表在 SELECT 中先出现，故先拼进 params。
+    sql = f"""
+        SELECT
+            e.user_id                                AS user_id,
+            e.username                               AS username,
+            e.role                                   AS role,
+            e.session_id                             AS session_id,
+            s.customer                               AS customer,
+            s.advisor                                AS advisor,
+            s.service_date                           AS service_date,
+            MAX(e.created_at)                        AS last_view,
+            {expand_expr}                            AS expanded_chapters,
+            SUM(CASE WHEN e.event='enter' AND e.part_key='overall' THEN 1 ELSE 0 END) AS enter_count,
+            SUM(CASE WHEN e.event='duration' THEN e.duration_ms ELSE 0 END)           AS total_ms
+        FROM report_view_events e
+        JOIN sessions s ON e.session_id = s.id
+        WHERE {where}
+        GROUP BY e.user_id, e.session_id
+        ORDER BY last_view DESC
+    """
+    rows = db_fetchall(sql, tuple(EXPANDABLE_PARTS) + tuple(params))
 
     out = []
     for r in rows:
-        uid = r["user_id"]
         total_ms = int(r["total_ms"] or 0)
-        fav = fav_map.get(uid)
+        expanded = int(r["expanded_chapters"] or 0)
         out.append({
-            "user_id": uid,
-            "username": r["username"],
-            "role": r["role"],
-            "sessions_viewed": int(r["sessions_viewed"] or 0),
-            "enter_count": int(r["enter_count"] or 0),
-            "part_expand_count": int(r["part_expand_count"] or 0),
+            # —— P1.3 新维度字段（按客人）——
+            "customer": r["customer"],
+            "advisor": r["advisor"],
+            "service_date": r["service_date"],
+            "last_view": r["last_view"],
+            "expanded_chapters": expanded,        # 去重命中白名单的章节数
+            "total_expandable": total_expandable,  # 固定 11，供前端显示 n/11
             "total_minutes": round(total_ms / 60000, 1),
-            "favorite_part": fav[0] if fav else None,
+            # 查看者（顾问）信息，便于前端展示/区分多人查看
+            "viewer": r["username"],
+            "user_id": r["user_id"],
+            "session_id": r["session_id"],
+            "role": r["role"],
+            # —— 向后兼容旧字段（旧前端仍可读取，不报错）——
+            "username": r["username"],
+            "sessions_viewed": 1,                 # 每行即一份报告
+            "enter_count": int(r["enter_count"] or 0),
+            "part_expand_count": expanded,         # 旧名→新去重值
+            "favorite_part": None,
         })
-    return jsonify({"days": days, "rows": out})
+    return jsonify({
+        "days": days,
+        "rows": out,
+        "total_expandable": total_expandable,
+        "expandable_parts": EXPANDABLE_PARTS,
+    })
 
 
 @app.route("/api/admin/ops_dashboard")
@@ -6470,6 +6801,88 @@ def api_admin_customers_list():
     })
 
 
+@app.route("/api/admin/customer_profiles", methods=["GET"])
+@manager_required
+def api_admin_customer_profiles():
+    """顾客档案 Tab 专用：分页聚合每个客人的最新接待人 / 最新服务时间 / 是否建档。
+    不改 /api/admin/customers（那是客户管理列表）。
+    - latest_advisor：该客人最近一次 session（按 service_date desc）的 advisor。
+    - latest_service_date：最近 session.service_date；为空则回退该 session 对应录音 recorded_at（精确到年月日）。
+    - has_profile：customer_value_cache 是否存在该客人缓存行 → bool。
+    用相关子查询匹配每客最新 session（沿用 _customer_session_clause：优先 customer_id，旧客 customer_id 为空时按姓名+公司兜底），
+    利用 idx_sessions_cust_date 索引；LEFT JOIN customer_value_cache 判断建档。分页 LIMIT/OFFSET。"""
+    cid = session.get("company_id")
+    is_super = session.get("role") == "super"
+    q = (request.args.get("q") or "").strip()
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", 100))
+    except (TypeError, ValueError):
+        page_size = 100
+    page_size = max(1, min(page_size, 500))
+    offset = (page - 1) * page_size
+
+    base_where = ("1=1" if is_super else "c.company_id=?") + " AND c.merged_into IS NULL"
+    base_params = [] if is_super else [cid]
+    if q:
+        where = base_where + " AND (c.name LIKE ? OR c.member_card LIKE ? OR c.phone_tail LIKE ?)"
+        like = f"%{q}%"
+        params = base_params + [like, like, like]
+    else:
+        where = base_where
+        params = base_params
+
+    total = db_fetchone(
+        f"SELECT COUNT(*) AS n FROM company_customers c WHERE {where}",
+        tuple(params),
+    )["n"]
+
+    # 每客最新一条 session：相关子查询沿用 _customer_session_clause 思路
+    # （优先 customer_id；customer_id 为空的老客户按 name + 公司兜底）。
+    sess_match = (
+        "((s.customer_id IS NOT NULL AND s.customer_id=c.id) OR "
+        "(s.customer_id IS NULL AND s.customer=c.name AND (s.company_id IS NULL OR s.company_id=c.company_id)))"
+    )
+    latest_sess_sql = (
+        f"SELECT s.id FROM sessions s WHERE {sess_match} "
+        "ORDER BY s.service_date DESC, s.id DESC LIMIT 1"
+    )
+    rows = db_fetchall(
+        f"""SELECT c.id, c.name, c.member_card, c.phone_tail,
+                   ls.advisor AS latest_advisor,
+                   COALESCE(ls.service_date, substr(lr.recorded_at, 1, 10)) AS latest_service_date,
+                   CASE WHEN cvc.id IS NOT NULL THEN 1 ELSE 0 END AS has_profile
+            FROM company_customers c
+            LEFT JOIN sessions ls ON ls.id = ({latest_sess_sql})
+            LEFT JOIN recordings lr ON lr.session_id = ls.id
+            LEFT JOIN customer_value_cache cvc
+                   ON cvc.company_id = c.company_id AND cvc.customer_id = c.id
+            WHERE {where}
+            GROUP BY c.id
+            ORDER BY c.id DESC
+            LIMIT ? OFFSET ?""",
+        tuple(params + [page_size, offset]),
+    )
+    items = [{
+        "id": r["id"],
+        "name": r["name"],
+        "member_card": r["member_card"],
+        "phone_tail": r["phone_tail"],
+        "latest_advisor": r["latest_advisor"],
+        "latest_service_date": r["latest_service_date"],
+        "has_profile": bool(r["has_profile"]),
+    } for r in rows]
+    return jsonify({
+        "items": items,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+    })
+
+
 def _generate_member_card(company_id):
     """格式：M + YYMMDD + 4位随机数字。本公司内唯一，冲突重试。"""
     from random import randint
@@ -6573,8 +6986,20 @@ def api_admin_customers_merge():
     # 快照：将要改动的行 id
     sess_rows = db_fetchall("SELECT id FROM sessions WHERE customer_id=?", (from_id,))
     sess_ids = [r["id"] for r in sess_rows]
+    # customer_tags 精确归属（不再按姓名整体改写，避免误伤同名客户）：
+    #  (a) 已有 customer_id 的标签：customer_id=from_id 的直接迁移；
+    #  (b) customer_id 为 NULL 的历史标签：仅当能通过 source_session_id 确认其 session
+    #      当前 customer_id=from_id 时才迁移；否则留着不动（无法精确归属）。
+    # 注意：此处必须在 _do 里 repoint sessions.customer_id 之前采集，
+    #      否则 sessions 已改挂到 into_id，(b) 条件会落空。
     tag_rows = db_fetchall(
-        "SELECT id FROM customer_tags WHERE customer_name=?", (from_name,)
+        """SELECT id FROM customer_tags
+           WHERE customer_id=?
+              OR (customer_id IS NULL AND source_session_id IS NOT NULL
+                  AND source_session_id IN (
+                      SELECT id FROM sessions WHERE customer_id=?
+                  ))""",
+        (from_id, from_id),
     )
     tag_ids = [r["id"] for r in tag_rows]
     dr_rows = db_fetchall(
@@ -6584,7 +7009,9 @@ def api_admin_customers_merge():
 
     affected = {
         "session_ids": sess_ids,
-        "customer_tag_ids": tag_ids,
+        "customer_tag_ids": tag_ids,  # 被迁移的 customer_tags.id 精确集合
+        "from_id": from_id,           # unmerge 据此精确还原 customer_id
+        "into_id": into_id,
         "from_name": from_name,
         "into_name": into_name,
         "daily_reception": [],   # 改挂成功的行 id
@@ -6617,11 +7044,14 @@ def api_admin_customers_merge():
                 "UPDATE sessions SET customer_id=?, customer=? WHERE customer_id=?",
                 (into_id, into_name, from_id),
             )
-        # customer_tags 按姓名关联
-        conn.execute(
-            "UPDATE customer_tags SET customer_name=? WHERE customer_name=?",
-            (into_name, from_name),
-        )
+        # customer_tags 按 customer_id 精确迁移（tag_ids 已在 repoint sessions 前采集，
+        # 含 customer_id=from_id 的行 + 能经 source_session 确认属于 from 的 NULL 行）。
+        # 绝不再用 "WHERE customer_name=from_name" 按名整体改写。
+        if tag_ids:
+            conn.executemany(
+                "UPDATE customer_tags SET customer_id=?, customer_name=? WHERE id=?",
+                [(into_id, into_name, tid) for tid in tag_ids],
+            )
         # 价值预测缓存作废（A、B 都删）
         conn.execute(
             "DELETE FROM customer_value_cache WHERE customer_id IN (?, ?)",
@@ -6696,11 +7126,12 @@ def api_admin_customers_unmerge():
                 "UPDATE sessions SET customer_id=?, customer=? WHERE id=?",
                 (from_id, from_name, sid),
             )
-        # customer_tags 还原（仅快照里的那些行；姓名改回 from_name）
+        # customer_tags 还原（按快照里的 tag id 精确还原 customer_id 与姓名）：
+        # 把 customer_id 还原为 from_id、customer_name 还原为 from_name。不按姓名还原。
         for tid in tag_ids:
             conn.execute(
-                "UPDATE customer_tags SET customer_name=? WHERE id=?",
-                (from_name, tid),
+                "UPDATE customer_tags SET customer_id=?, customer_name=? WHERE id=?",
+                (from_id, from_name, tid),
             )
         # daily_reception 还原（成功改挂过的那些行；UNIQUE 冲突删掉的无法恢复）
         for dr_id in dr_kept:
@@ -6753,8 +7184,23 @@ def api_admin_customers_duplicates():
         cid = request.args.get("company_id", type=int)
     else:
         cid = session.get("company_id")
+
+    # 分页参数：page（默认1）、page_size（默认20，单位=组）
+    page = request.args.get("page", default=1, type=int) or 1
+    page_size = request.args.get("page_size", default=20, type=int) or 20
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 20
+
     if not cid:
-        return jsonify({"groups": [], "error": None})
+        return jsonify({
+            "groups": [],
+            "page": page,
+            "page_size": page_size,
+            "total_groups": 0,
+            "error": None,
+        })
 
     rows = db_fetchall(
         "SELECT id, name, member_card, phone_tail FROM company_customers "
@@ -6804,7 +7250,21 @@ def api_admin_customers_duplicates():
                 "key": key,
                 "candidates": [_cust(m) for m in members],
             })
-    return jsonify({"groups": groups, "company_id": cid})
+
+    # 注意：分桶仍全量加载（上面 SELECT 拉全表后在 Python 内存分桶），
+    # 此处分页只对已算好的 groups 做切片，纯展示/未来增长用途。
+    # 当前实测仅约 11 组、性能无忧；组数大增时需改 SQL（用 GROUP BY ... HAVING COUNT(*)>1
+    # 在数据库侧筛分组并分页），不能再依赖内存全量分桶。
+    total_groups = len(groups)
+    start = (page - 1) * page_size
+    page_groups = groups[start:start + page_size]
+    return jsonify({
+        "groups": page_groups,
+        "page": page,
+        "page_size": page_size,
+        "total_groups": total_groups,
+        "company_id": cid,
+    })
 
 
 @app.route("/api/admin/customers/merge_log", methods=["GET"])
@@ -7551,7 +8011,7 @@ def _customer_session_clause(customer_id, name, company_id):
 
 
 @app.route("/api/admin/customer_profile")
-@manager_required
+@login_required  # P1.7：档案"看"对所有登录角色开放；下方 company_id 作用域仍生效（顾问不能跨公司，super 跨公司）
 def api_customer_profile():
     """客人粒度档案：基本信息 + 累积标签(按服务次数,可时间区间) + 服务时间线(每次接诊:日期/顾问/标签/当月项目命中)。"""
     cid = session.get("company_id")
@@ -7713,7 +8173,7 @@ def _load_customer_done_sessions(customer_id, name, company_id):
 
 
 @app.route("/api/admin/customer_value", methods=["GET"])
-@manager_required
+@login_required  # P1.7：价值预测/作战方案"看"对所有登录角色开放；company_id 作用域仍在下方收口
 def api_customer_value_get():
     cid = session.get("company_id")
     is_super = session.get("role") == "super"
@@ -7749,7 +8209,7 @@ def api_customer_value_get():
 
 
 @app.route("/api/admin/customer_value", methods=["POST"])
-@manager_required
+@manager_required  # P1.7：生成(触发 LLM)仍限 admin/super/store_manager，避免顾问乱触发烧钱；GET 才对所有人开
 def api_customer_value_generate():
     """按需生成客户价值预测并缓存。一次 LLM 调用，结果存表。"""
     data = request.get_json(silent=True) or {}
@@ -8042,6 +8502,98 @@ def _rec_date_of(rec_row):
     return _today_str()
 
 
+def _advisor_received_customer_ids(advisor_user_id, advisor_name, company_id):
+    """该顾问【本人接待过的客人】id 集合（风控候选集，老板拍板：换绑只能选本人接待过的）。
+    口径 = daily_reception(advisor_user_id=本人, 任意日期)
+          ∪ sessions(advisor=本人 advisor_name, 同公司) 关联到的 company_customers。
+    sessions 侧优先用 customer_id；为空时按 (company_id, customer 姓名) 回填匹配。
+    返回有效（未合并）客人 id 的 set。"""
+    ids = set()
+    for r in db_fetchall(
+        "SELECT DISTINCT customer_id FROM daily_reception WHERE advisor_user_id=?",
+        (advisor_user_id,),
+    ):
+        if r["customer_id"]:
+            ids.add(r["customer_id"])
+    # sessions：本人接诊（advisor 名字匹配，限同公司或历史 NULL 公司）
+    sess_rows = db_fetchall(
+        """SELECT customer_id, customer FROM sessions
+           WHERE advisor=? AND (company_id IS NULL OR company_id=?)""",
+        (advisor_name, company_id),
+    )
+    miss_names = set()
+    for r in sess_rows:
+        if r["customer_id"]:
+            ids.add(r["customer_id"])
+        elif r["customer"]:
+            miss_names.add(r["customer"])
+    # 历史 session 无 customer_id 的，按公司+姓名回填到客人档案
+    for nm in miss_names:
+        crow = db_fetchone(
+            "SELECT id FROM company_customers WHERE company_id=? AND name=? AND merged_into IS NULL",
+            (company_id, nm),
+        )
+        if crow:
+            ids.add(crow["id"])
+    # 过滤掉已被合并的客人 id
+    if ids:
+        qm = ",".join(["?"] * len(ids))
+        valid = db_fetchall(
+            f"SELECT id FROM company_customers WHERE id IN ({qm}) AND merged_into IS NULL",
+            tuple(ids),
+        )
+        ids = {r["id"] for r in valid}
+    return ids
+
+
+@app.route("/api/consultant/rebind_candidates")
+@login_required
+def api_consultant_rebind_candidates():
+    """换绑弹窗"选已有客人"候选源：**仅该顾问本人接待过的客人**（老板收窄，不放开全公司）。
+    候选集 = daily_reception(本人,任意日期) ∪ sessions(本人) 关联的 company_customers。
+    参数：rid=录音id（用于标注是否已在该录音当天接诊）、q=模糊词（姓名/会员卡号/手机尾号）。
+    返回每个候选含 in_day（是否已在该录音当天本人 daily_reception，前端可提示"已在当日/将自动补登"）。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    cid = u["company_id"] or 1
+    advisor = u["advisor_name"] or u["username"]
+    rid = request.args.get("rid")
+    q = (request.args.get("q") or "").strip()
+    rec_date = None
+    if rid:
+        rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+        if rec:
+            rec_date = _rec_date_of(rec)
+    cand_ids = _advisor_received_customer_ids(u["id"], advisor, cid)
+    if not cand_ids:
+        return jsonify({"items": [], "service_date": rec_date})
+    # 当天本人 daily_reception 客人 id（用于标注 in_day）
+    day_ids = set()
+    if rec_date:
+        for r in db_fetchall(
+            "SELECT customer_id FROM daily_reception WHERE advisor_user_id=? AND service_date=?",
+            (u["id"], rec_date),
+        ):
+            day_ids.add(r["customer_id"])
+    qm = ",".join(["?"] * len(cand_ids))
+    params = list(cand_ids)
+    sql = (f"SELECT id, name, member_card, phone_tail FROM company_customers "
+           f"WHERE id IN ({qm}) AND merged_into IS NULL")
+    if q:
+        like = f"%{q}%"
+        sql += " AND (name LIKE ? OR member_card LIKE ? OR phone_tail LIKE ?)"
+        params += [like, like, like]
+    sql += " ORDER BY id DESC LIMIT 50"
+    rows = db_fetchall(sql, tuple(params))
+    items = [{"customer_id": r["id"], "name": r["name"], "member_card": r["member_card"],
+              "phone_tail": r["phone_tail"], "in_day": r["id"] in day_ids} for r in rows]
+    # 已在当日接诊的排前面，方便直接选
+    items.sort(key=lambda x: (not x["in_day"],))
+    return jsonify({"items": items, "service_date": rec_date})
+
+
 @app.route("/api/consultant/recordings/<int:rid>/bind", methods=["POST"])
 @login_required
 def api_consultant_recording_bind(rid):
@@ -8189,6 +8741,7 @@ def api_consultant_today_reception_add():
     if not customer_id:
         name = (data.get("name") or "").strip()
         phone_tail = _check_phone_tail(data.get("phone_tail"))
+        # 会员号留空时自动生成（对齐管理端 add_day_customer / _generate_member_card）
         member_card = (data.get("member_card") or "").strip() or None
         if not name:
             return jsonify({"error": "请填写顾客姓名"}), 400
@@ -8203,6 +8756,8 @@ def api_consultant_today_reception_add():
         if existed:
             customer_id = existed["id"]
         else:
+            if not member_card:
+                member_card = _generate_member_card(cid)
             try:
                 customer_id = db_write(
                     """INSERT INTO company_customers (company_id, name, phone_tail, member_card)
@@ -8369,7 +8924,9 @@ def api_consultant_pending_dates():
 @login_required
 def api_consultant_direct_rebind(rid):
     """顾问直接换绑（无需审批），写入 rebind_requests 审计日志（action='rebind', status='done'）。
-    约束：目标顾客必须在录音当天接诊白名单内；旧/新 session 若已分析会被作废（标 outdated）。"""
+    放宽后约束（老板拍板）：目标顾客若不在录音当天接诊白名单，但属于【本人接待过的客人】，
+    则自动补登进当天 daily_reception（算一次接诊）再换绑；若目标完全陌生（从没本人接待过）则拒绝（保留风控）。
+    旧/新 session 若已分析会被作废（标 outdated）。"""
     err = _consultant_required()
     if err:
         return err
@@ -8379,6 +8936,10 @@ def api_consultant_direct_rebind(rid):
     reason = (data.get("reason") or "").strip()
     if not to_customer_id:
         return jsonify({"error": "请选择换绑目标顾客"}), 400
+    try:
+        to_customer_id = int(to_customer_id)  # 统一成 int：风控用 int 集合成员判断，字符串会被误判为陌生客人
+    except (TypeError, ValueError):
+        return jsonify({"error": "换绑目标顾客无效"}), 400
     rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
     if not rec:
         return jsonify({"error": "录音不存在"}), 404
@@ -8392,19 +8953,29 @@ def api_consultant_direct_rebind(rid):
     cid = u["company_id"] or 1
     rec_date = _rec_date_of(rec)
     to_cust = db_fetchone(
-        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=? AND merged_into IS NULL",
         (to_customer_id, cid),
     )
     if not to_cust:
         return jsonify({"error": "目标顾客不存在"}), 404
+    advisor = u["advisor_name"] or u["username"]
     dr = db_fetchone(
         """SELECT id FROM daily_reception
            WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
         (u["id"], to_customer_id, rec_date),
     )
     if not dr:
-        return jsonify({"error": "目标顾客不在录音当天接诊列表，请先补登"}), 400
-    advisor = u["advisor_name"] or u["username"]
+        # 放宽：不直接报错。仅当目标属于【本人接待过的客人】才自动补登进当天接诊（算一次接诊）。
+        # 完全陌生（从没本人接待过）则拒绝，保留风控。
+        cand_ids = _advisor_received_customer_ids(u["id"], advisor, cid)
+        if to_customer_id not in cand_ids:
+            return jsonify({"error": "只能换绑到您本人接待过的客人；该客人不在您的接待记录里，请改用“新增客人”"}), 400
+        db_write(
+            """INSERT OR IGNORE INTO daily_reception
+               (company_id, advisor_user_id, advisor_name, customer_id, service_date, store_id)
+               VALUES (?,?,?,?,?,?)""",
+            (cid, u["id"], advisor, to_customer_id, rec_date, u["store_id"]),
+        )
     new_sid = get_or_create_session(advisor, to_cust["name"], rec_date, company_id=cid)
     if not new_sid:
         return jsonify({"error": "创建目标接诊包失败"}), 500
@@ -8474,6 +9045,118 @@ def api_consultant_direct_rebind(rid):
          u["id"], advisor),
     )
     return jsonify({"ok": True, "new_session_id": new_sid})
+
+
+@app.route("/api/consultant/recordings/<int:rid>/add_day_customer", methods=["POST"])
+@login_required
+def api_consultant_recording_add_day_customer(rid):
+    """换绑弹窗"选不到就＋新增客人"：为本顾问、该录音当天新建一个客人并补登进当日接诊（算一次接诊），
+    返回 customer_id 供前端直接作为换绑目标。会员号留空时自动生成（对齐 _generate_member_card）。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    cid = u["company_id"] or 1
+    data = request.get_json(silent=True) or {}
+    name = (data.get("name") or "").strip()
+    phone_tail = (data.get("phone_tail") or "").strip()
+    if not name:
+        return jsonify({"error": "请填写客人姓名"}), 400
+    if phone_tail and not re.fullmatch(r"\d{4}", phone_tail):
+        return jsonify({"error": "手机尾号必须是 4 位数字"}), 400
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    if rec["uploader_user_id"] and rec["uploader_user_id"] != u["id"]:
+        return jsonify({"error": "无权操作他人录音"}), 403
+    rec_date = _rec_date_of(rec)
+    advisor = u["advisor_name"] or u["username"]
+    # 同 company+name+phone_tail 视为同一人，复用（避免重复建档）；否则新建并自动发会员号
+    existed = None
+    if phone_tail:
+        existed = db_fetchone(
+            """SELECT id, name, member_card, phone_tail FROM company_customers
+               WHERE company_id=? AND name=? AND COALESCE(phone_tail,'')=? AND merged_into IS NULL""",
+            (cid, name, phone_tail),
+        )
+    if existed:
+        new_cust_id = existed["id"]
+        member_card = existed["member_card"]
+    else:
+        member_card = _generate_member_card(cid)
+        try:
+            new_cust_id = db_write(
+                "INSERT INTO company_customers (company_id, name, member_card, phone_tail) VALUES (?, ?, ?, ?)",
+                (cid, name, member_card, phone_tail or None),
+            )
+        except sqlite3.IntegrityError:
+            # 旧 UNIQUE(company_id, name) 撞了：复用同名档案
+            row = db_fetchone(
+                "SELECT id, member_card FROM company_customers WHERE company_id=? AND name=? AND merged_into IS NULL",
+                (cid, name),
+            )
+            if not row:
+                return jsonify({"error": "新增失败"}), 500
+            new_cust_id = row["id"]
+            member_card = row["member_card"]
+    # 补登进【录音当天】本人 daily_reception（算一次接诊）
+    db_write(
+        """INSERT OR IGNORE INTO daily_reception
+           (company_id, advisor_user_id, advisor_name, customer_id, service_date, store_id)
+           VALUES (?,?,?,?,?,?)""",
+        (cid, u["id"], advisor, new_cust_id, rec_date, u["store_id"]),
+    )
+    return jsonify({"ok": True, "customer_id": new_cust_id, "name": name,
+                    "phone_tail": phone_tail or None, "member_card": member_card,
+                    "service_date": rec_date})
+
+
+@app.route("/api/consultant/recordings/<int:rid>/remove_day_customer", methods=["POST"])
+@login_required
+def api_consultant_recording_remove_day_customer(rid):
+    """删除换绑时误建的客人（如名字填错）：仅当该客人名下没有任何录音时允许，
+    同时删掉其当日接诊登记、空 session 和客人档案；名下有录音则拒绝（安全闸，防误删历史数据）。
+    收窄：只允许删本人当天接诊里的客人（避免删到别人 / 历史档案）。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    cid = u["company_id"] or 1
+    data = request.get_json(silent=True) or {}
+    customer_id = data.get("customer_id")
+    if not customer_id:
+        return jsonify({"error": "缺少 customer_id"}), 400
+    rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
+    if not rec:
+        return jsonify({"error": "录音不存在"}), 404
+    if rec["uploader_user_id"] and rec["uploader_user_id"] != u["id"]:
+        return jsonify({"error": "无权操作他人录音"}), 403
+    rec_date = _rec_date_of(rec)
+    cust = db_fetchone(
+        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
+        (customer_id, cid),
+    )
+    if not cust:
+        return jsonify({"error": "客人不存在"}), 404
+    # 收窄：只能删本人当天接诊登记里的客人
+    dr = db_fetchone(
+        "SELECT id FROM daily_reception WHERE advisor_user_id=? AND customer_id=? AND service_date=?",
+        (u["id"], customer_id, rec_date),
+    )
+    if not dr:
+        return jsonify({"error": "该客人不在您当天的接诊登记里，无法删除"}), 400
+    # 安全闸：名下任一 session 只要有录音就不许删（防误删有历史数据的客人）
+    rec_cnt = db_fetchone(
+        """SELECT COUNT(*) AS n FROM recordings r
+           JOIN sessions s ON s.id=r.session_id WHERE s.customer_id=?""",
+        (customer_id,),
+    )
+    if rec_cnt and rec_cnt["n"]:
+        return jsonify({"error": "该客人名下已有录音/接诊数据，不能删除"}), 409
+    db_write("DELETE FROM sessions WHERE customer_id=?", (customer_id,))
+    db_write("DELETE FROM daily_reception WHERE customer_id=?", (customer_id,))
+    db_write("DELETE FROM company_customers WHERE id=?", (customer_id,))
+    return jsonify({"ok": True})
 
 
 @app.route("/api/consultant/recordings/<int:rid>/unbind", methods=["POST"])
@@ -10587,8 +11270,30 @@ def send_phone_reminder(company_id, store_id, target_user_id, target_name,
     return result
 
 
-def _already_reminded(kind, ref_type, ref_id, level, channel, day):
-    """幂等去重：同一对象、同一级、同一渠道、同一天是否已写过提醒。"""
+def _already_reminded(kind, ref_type, ref_id, level, channel, day, target_user_id=None):
+    """幂等去重。
+    - channel='inapp' / 'escalation'：一对象一行，未处理(processed=0)即视为已存在，不带 date。
+      （inapp 还按 target_user_id 区分，保证每个收件人各 1 行；escalation 是全店共享 1 行，
+       target_user_id 仅作标识，不参与判重。）
+    - channel='phone'（及其它外呼类）：保留按天判重，用于每天重拨。
+    """
+    if channel in ("inapp", "escalation"):
+        if channel == "inapp" and target_user_id is not None:
+            row = db_fetchone(
+                "SELECT 1 FROM reminder_log WHERE kind=? AND ref_type=? AND ref_id=? "
+                "AND level=? AND channel='inapp' AND target_user_id=? AND processed=0 LIMIT 1",
+                (kind, ref_type, ref_id, level, target_user_id),
+            )
+        else:
+            # escalation：同 session 升级阶段只保留 1 行（不带 level/target/date 约束，
+            # 按 kind+ref_type+ref_id+channel 判重，processed=0 才算占位）
+            row = db_fetchone(
+                "SELECT 1 FROM reminder_log WHERE kind=? AND ref_type=? AND ref_id=? "
+                "AND channel=? AND processed=0 LIMIT 1",
+                (kind, ref_type, ref_id, channel),
+            )
+        return row is not None
+    # phone / sms / wecom / board：按天判重
     row = db_fetchone(
         "SELECT 1 FROM reminder_log WHERE kind=? AND ref_type=? AND ref_id=? "
         "AND level=? AND channel=? AND date(created_at)=? LIMIT 1",
@@ -10620,6 +11325,26 @@ def _emit_reminder(company_id, store_id, target_user_id, target_name, kind, leve
     )
 
 
+def _emit_escalation(company_id, store_id, advisor_user_id, advisor_name,
+                     ref_id, message, manager_own=False):
+    """写一条「升级项」(channel='escalation')。
+    - 一个 session 升级阶段只保留 1 行（调用前用 _already_reminded(...,'escalation') 判重）。
+    - target_user_id 保留为「报告所属顾问」（标识是谁的报告），不代表收件人。
+    - 升级项同时被本店店长收件箱 + 管理员看板读取，无需给每个店长/管理员各写一行。
+    - manager_own=True：报告所属人本身是店长 → level=3 + result='manager_own'，
+      店长收件箱不显示自己的，仅管理员看板显示。
+    """
+    level = 3 if manager_own else 2
+    result = "manager_own" if manager_own else "escalated"
+    return db_write(
+        """INSERT INTO reminder_log
+           (company_id, store_id, target_user_id, target_name, kind, level, channel,
+            ref_type, ref_id, message, result)
+           VALUES (?, ?, ?, ?, 'unviewed', ?, 'escalation', 'session', ?, ?, ?)""",
+        (company_id, store_id, advisor_user_id, advisor_name, level, ref_id, message, result),
+    )
+
+
 def _hours_since(ts_str, now):
     """ts_str（localtime 字符串）距 now 的小时数；无法解析返回 None。"""
     if not ts_str:
@@ -10643,11 +11368,12 @@ def run_reminder_scan(now=None):
         L2 当日结束仍未绑定 → phone(stub，需 enable_phone)
         L3 >24h → board（通知店长/管理员，看板标红）
       报告未查看(unviewed)：
-        L1 完成 >H → inapp（提醒顾问）
-        L2 次日仍未看 → inapp（顾问，messsage 注明同时通知店长）+ board 给店长
-        L3 >24h → board（管理员看板标红）
-    去重：同对象同级同渠道同天只写一次；inapp/phone 受 max_per_day 限流。
-    闭环：对象已不满足条件 → 把该对象旧的未处理 inapp/phone 提醒置 processed=1。
+        L1 完成 >H → inapp（提醒顾问本人，一对象一行）
+        升级 报告生成"第二天"自然日仍未看 → 1 条 channel='escalation'（store_id=报告门店）
+             普通顾问报告 level=2：本店店长收件箱 + 管理员看板都可见
+             店长本人报告 level=3,result='manager_own'：仅管理员看板，店长收件箱不显示自己
+    去重：inapp/escalation 一对象一行（未处理即不重复，不带 date）；phone 仍按天（重拨）。
+    闭环：对象已不满足条件（报告已被查看）→ 把该对象旧的未处理 inapp/escalation 提醒置 processed=1。
     """
     now = now or datetime.now()
     today = now.strftime("%Y-%m-%d")
@@ -10692,10 +11418,10 @@ def run_reminder_scan(now=None):
             cfg = get_reminder_config(cid, store_id)
             H = int(cfg.get("remind_after_hours") or 2)
 
-            # L1：>H 小时未绑定 → 站内提醒顾问
+            # L1：>H 小时未绑定 → 站内提醒顾问（一对象一行，未处理即不重复）
             if hrs >= H and tu_id:
-                if (not _already_reminded("unbound", "recording", r["id"], 1, "inapp", today)
-                        and _reminders_today_count(tu_id, "recording", r["id"], today) < int(cfg.get("max_per_day") or 3)):
+                if not _already_reminded("unbound", "recording", r["id"], 1, "inapp", today,
+                                         target_user_id=tu_id):
                     _emit_reminder(cid, store_id, tu_id, tu_name, "unbound", 1, "inapp",
                                    "recording", r["id"],
                                    f"有一条录音已超过 {H} 小时未绑定客人，请尽快归档。")
@@ -10749,49 +11475,52 @@ def run_reminder_scan(now=None):
             store_id = s["store_id"] or (u["store_id"] if u else None)
             cfg = get_reminder_config(cid, store_id)
             H = int(cfg.get("remind_after_hours") or 2)
+            # 报告生成日（自然日）；"第二天判定"= 报告生成日 < 今天日期
+            fin_day = (str(s["analysis_finished_at"])[:10]) if s["analysis_finished_at"] else None
+            is_next_day = bool(fin_day and fin_day < today)
+            # 报告所属人是否为店长本人（决定升级项是否对店长隐藏）
+            owner_is_manager = False
+            if tu_id:
+                _orow = db_fetchone("SELECT role FROM users WHERE id=?", (tu_id,))
+                owner_is_manager = bool(_orow and _orow["role"] == "store_manager")
 
-            # L1：完成 >H 未查看 → 提醒顾问
+            # L1：完成 >H 未查看 → 站内提醒顾问本人（一对象一行，未处理即不重复）
             if hrs >= H and tu_id:
-                if (not _already_reminded("unviewed", "session", s["id"], 1, "inapp", today)
-                        and _reminders_today_count(tu_id, "session", s["id"], today) < int(cfg.get("max_per_day") or 3)):
+                if not _already_reminded("unviewed", "session", s["id"], 1, "inapp", today,
+                                         target_user_id=tu_id):
                     _emit_reminder(cid, store_id, tu_id, tu_name, "unviewed", 1, "inapp",
                                    "session", s["id"],
                                    f"您有一份分析报告已生成超过 {H} 小时尚未查看，请及时复盘。")
                     stats["unviewed_l1"] += 1
 
-            # L2：次日仍未看（>24h 但还没到 L3 的多次提醒前）→ 顾问 + 店长(board)
-            if hrs >= 24:
-                if tu_id and not _already_reminded("unviewed", "session", s["id"], 2, "inapp", today) \
-                        and _reminders_today_count(tu_id, "session", s["id"], today) < int(cfg.get("max_per_day") or 3):
-                    _emit_reminder(cid, store_id, tu_id, tu_name, "unviewed", 2, "inapp",
-                                   "session", s["id"],
-                                   "报告隔日仍未查看，已同步提醒店长，请尽快查看。")
+            # 升级：报告生成的"第二天"自然日仍未查看 → 写 1 条 channel='escalation'
+            #   - 普通顾问报告：本店店长收件箱 + 管理员看板都能看到（level=2）
+            #   - 店长本人报告：仅管理员看板（level=3, result='manager_own'），店长收件箱不显示自己
+            if is_next_day:
+                if not _already_reminded("unviewed", "session", s["id"], None, "escalation", today):
+                    if owner_is_manager:
+                        _emit_escalation(cid, store_id, tu_id, tu_name, s["id"],
+                                         f"店长（{tu_name}）本人的报告隔日仍未查看，请管理员关注。",
+                                         manager_own=True)
+                    else:
+                        _emit_escalation(cid, store_id, tu_id, tu_name, s["id"],
+                                         f"报告隔日仍未查看（顾问：{tu_name}），请店长跟进。",
+                                         manager_own=False)
                     stats["unviewed_l2"] += 1
-                if not _already_reminded("unviewed", "session", s["id"], 2, "board", today):
-                    _emit_reminder(cid, store_id, tu_id, tu_name, "unviewed", 2, "board",
-                                   "session", s["id"],
-                                   f"报告隔日仍未查看（顾问：{tu_name}），请店长跟进。")
 
-            # L3：>48h（多次/长时间未看）→ 管理员看板标红
-            if hrs >= 48:
-                if not _already_reminded("unviewed", "session", s["id"], 3, "board", today):
-                    _emit_reminder(cid, store_id, tu_id, tu_name, "unviewed", 3, "board",
-                                   "session", s["id"],
-                                   f"报告超过 48 小时未查看（顾问：{tu_name}），管理员看板标红。")
-                    stats["unviewed_l3"] += 1
-
-        # 闭环：已查看的报告 → 关掉旧的未处理 inapp 未查看提醒
+        # 闭环：已查看的报告 → 关掉旧的未处理 inapp / escalation 未查看提醒
         stats["closed"] += _close_resolved_reminders(cid, "unviewed", "session", active_unviewed_ids)
 
     return stats
 
 
 def _close_resolved_reminders(company_id, kind, ref_type, active_ids):
-    """把"对象已不满足条件"的旧未处理站内/电话提醒置 processed=1。
-    active_ids = 当前仍满足该 kind 条件的 ref_id 集合；不在其中的即已解决。"""
+    """把"对象已不满足条件"的旧未处理站内/电话/升级提醒置 processed=1。
+    active_ids = 当前仍满足该 kind 条件的 ref_id 集合；不在其中的即已解决。
+    （unviewed 的 escalation 升级项也在此随报告被查看而关闭。）"""
     rows = db_fetchall(
         "SELECT id, ref_id FROM reminder_log WHERE company_id=? AND kind=? AND ref_type=? "
-        "AND channel IN ('inapp','phone','sms','wecom') AND processed=0",
+        "AND channel IN ('inapp','phone','sms','wecom','escalation') AND processed=0",
         (company_id, kind, ref_type),
     )
     n = 0
@@ -11019,6 +11748,63 @@ def api_admin_reminder_log():
     return jsonify({"items": rows})
 
 
+# ---------- 管理员升级看板：所有 channel='escalation' 升级项 + 店长已读/已处理状态 ----------
+@app.route("/api/admin/escalations")
+@manager_required
+def api_admin_escalations():
+    """升级项看板。
+    - super：看全部公司；admin：本公司；store_manager：本店（store_scope_sql 收口）。
+    - 每条附：顾问名 / 门店名 / session / 报告生成时间(analysis_finished_at) /
+      店长已读(read_at) / 店长已处理(handled_at + 处理人姓名) / 是否已查看关闭(processed)。
+    - ?pending=1 仅看「待跟进」(processed=0 且 handled_at IS NULL)。
+    """
+    cid = session.get("company_id")
+    role = session.get("role")
+    is_super = role == "super"
+    sf, sf_params = store_scope_sql("rl.store_id")
+    where = ["rl.channel='escalation'"]
+    params = []
+    if not is_super:
+        where.append("rl.company_id=?")
+        params.append(cid)
+    # 店长本人报告的升级项(manager_own)仅管理员可见：店长在本店升级看板上也看不到自己的报告升级项。
+    if role == "store_manager":
+        where.append("COALESCE(rl.result,'') <> 'manager_own'")
+    if sf:
+        where.append(sf)
+        params += sf_params
+    pending = (request.args.get("pending") or "").strip()
+    if pending in ("1", "true", "yes"):
+        where.append("rl.processed=0 AND rl.handled_at IS NULL")
+    sql = (
+        "SELECT rl.id, rl.company_id, rl.store_id, rl.target_user_id AS advisor_user_id, "
+        "       rl.target_name AS advisor_name, rl.kind, rl.level, rl.channel, "
+        "       rl.ref_type, rl.ref_id AS session_id, rl.message, rl.result, "
+        "       rl.processed, rl.processed_at, rl.read_at, rl.handled_at, rl.handled_by, "
+        "       rl.created_at, "
+        "       st.name AS store_name, "
+        "       s.analysis_finished_at AS report_finished_at, "
+        "       hu.advisor_name AS handled_by_name, hu.username AS handled_by_username "
+        "FROM reminder_log rl "
+        "LEFT JOIN stores st ON st.id=rl.store_id "
+        "LEFT JOIN sessions s ON s.id=rl.ref_id "
+        "LEFT JOIN users hu ON hu.id=rl.handled_by "
+    )
+    if where:
+        sql += "WHERE " + " AND ".join(where) + " "
+    sql += "ORDER BY rl.id DESC LIMIT 300"
+    rows = []
+    for r in db_fetchall(sql, params):
+        d = dict(r)
+        d["manager_own"] = (d.get("result") == "manager_own")
+        d["is_read"] = bool(d.get("read_at"))
+        d["is_handled"] = bool(d.get("handled_at"))
+        d["is_closed"] = bool(d.get("processed"))
+        d["handled_by_name"] = d.get("handled_by_name") or d.get("handled_by_username")
+        rows.append(d)
+    return jsonify({"items": rows, "count": len(rows)})
+
+
 # ---------- 顾问端站内提醒 ----------
 @app.route("/api/consultant/reminders")
 @login_required
@@ -11027,15 +11813,97 @@ def api_consultant_reminders():
     if err:
         return err
     u = current_user()
-    rows = db_fetchall(
+    # (1) 个人提醒：给本人的未处理 inapp/phone（顾问 / 店长本人都各自有）
+    personal = db_fetchall(
         """SELECT id, kind, level, channel, ref_type, ref_id, message, created_at
            FROM reminder_log
            WHERE target_user_id=? AND processed=0 AND channel IN ('inapp','phone')
            ORDER BY id DESC LIMIT 100""",
         (u["id"],),
     )
-    items = [dict(r) for r in rows]
-    return jsonify({"count": len(items), "items": items})
+    items = []
+    for r in personal:
+        d = dict(r)
+        d["scope"] = "personal"
+        items.append(d)
+
+    escalations = []
+    # (2) 店长：本店所有未处理升级项（escalation）；不含 manager_own（店长本人的报告）。
+    try:
+        role = u["role"]
+        store_id = u["store_id"]
+    except Exception:
+        role, store_id = None, None
+    if role == "store_manager" and store_id is not None:
+        erows = db_fetchall(
+            """SELECT id, kind, level, channel, ref_type, ref_id, target_user_id,
+                      target_name, message, result, read_at, handled_at, created_at
+               FROM reminder_log
+               WHERE channel='escalation' AND processed=0 AND store_id=?
+                 AND IFNULL(result,'') <> 'manager_own'
+               ORDER BY id DESC LIMIT 200""",
+            (store_id,),
+        )
+        unread_ids = []
+        for r in erows:
+            d = dict(r)
+            d["scope"] = "escalation"
+            d["advisor_user_id"] = d.get("target_user_id")
+            d["advisor_name"] = d.get("target_name")
+            d["session_id"] = d.get("ref_id")
+            d["is_read"] = bool(d.get("read_at"))
+            d["is_handled"] = bool(d.get("handled_at"))
+            if not d.get("read_at"):
+                unread_ids.append(d["id"])
+            escalations.append(d)
+        # 店长拉取到某条升级项 → 若未读则置 read_at=now（表示已读）
+        for rid in unread_ids:
+            try:
+                db_write(
+                    "UPDATE reminder_log SET read_at=datetime('now','localtime') "
+                    "WHERE id=? AND read_at IS NULL",
+                    (rid,),
+                )
+            except Exception as _e:
+                app.logger.warning("escalation 标记已读失败 id=%s: %s", rid, _e)
+
+    items.extend(escalations)
+    return jsonify({
+        "count": len(items),
+        "personal_count": len(personal),
+        "escalation_count": len(escalations),
+        "items": items,
+    })
+
+
+# ---------- 店长「已跟进」升级项 ----------
+@app.route("/api/manager/reminder/<int:rid>/handle", methods=["POST"])
+@manager_required
+def api_manager_reminder_handle(rid):
+    """店长（或管理员）在看板点「已跟进」→ 置 handled_at / handled_by。
+    store_manager 只能处理本店升级项；admin/super 可处理本公司任意升级项。"""
+    u = current_user()
+    if not u:
+        return jsonify({"error": "no user"}), 400
+    row = db_fetchone(
+        "SELECT id, channel, store_id, company_id, processed FROM reminder_log WHERE id=?",
+        (rid,),
+    )
+    if not row or row["channel"] != "escalation":
+        return jsonify({"error": "升级项不存在"}), 404
+    role = session.get("role")
+    if role == "store_manager":
+        if u["store_id"] is None or row["store_id"] != u["store_id"]:
+            return jsonify({"error": "无权处理其它门店的升级项"}), 403
+    else:  # admin / super
+        if role != "super" and row["company_id"] != u["company_id"]:
+            return jsonify({"error": "无权处理其它公司的升级项"}), 403
+    db_write(
+        "UPDATE reminder_log SET handled_at=datetime('now','localtime'), handled_by=?, "
+        "read_at=COALESCE(read_at, datetime('now','localtime')) WHERE id=?",
+        (u["id"], rid),
+    )
+    return jsonify({"ok": True, "id": rid})
 
 
 def reap_running_on_boot():

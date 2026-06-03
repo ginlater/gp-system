@@ -74,7 +74,18 @@ html,body{overflow-x:hidden;max-width:100%}
     {% if role == 'super' %}<button data-tab="companies">公司管理</button>{% endif %}
     <button data-tab="ops-dashboard">运营看板</button>
   </div>
-  <style>.tab-count{font-size:11px;color:#888;font-weight:normal;margin-left:2px}</style>
+  <style>.tab-count{font-size:11px;color:#888;font-weight:normal;margin-left:2px}
+  .subtabs{display:flex;gap:6px;margin-bottom:16px}
+  .subtabs button{background:#f4f6fa;border:1px solid var(--border);border-radius:5px;padding:7px 18px;font-size:13.5px;cursor:pointer;color:var(--text-mid);font-family:inherit}
+  .subtabs button.active{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:600}
+  .subpanel{display:none}
+  .subpanel.active{display:block}
+  .pager{display:flex;align-items:center;gap:10px;margin-top:14px;font-size:13px;color:var(--text-mid);flex-wrap:wrap}
+  .pager button{background:#fff;color:var(--navy);border:1px solid var(--border);border-radius:4px;padding:5px 12px;font-size:13px;cursor:pointer;font-family:inherit}
+  .pager button:disabled{opacity:.45;cursor:not-allowed}
+  .badge-prof{display:inline-block;border-radius:99px;font-size:11px;padding:2px 9px;font-weight:600}
+  .badge-prof.yes{background:#e7f6ed;color:#1a8a4f;border:1px solid #b8e6c9}
+  .badge-prof.no{background:#f1f3f6;color:#8a8f99;border:1px solid #dde1e8}</style>
 
   <!-- 顾问管理 -->
   <div id="tab-consultants" class="panel active">
@@ -260,45 +271,77 @@ html,body{overflow-x:hidden;max-width:100%}
 
   <!-- 顾客管理 -->
   <div id="tab-customers" class="panel">
-    <div class="card">
-      <h3>批量导入顾客</h3>
-      <div class="tip">支持 CSV / XLSX。列序：<b>顾客姓名</b>、<b>会员卡号</b>。重名会更新卡号、不会新增。</div>
-      <div class="row">
-        <input type="file" id="impCustFile" accept=".csv,.xlsx,.xls">
-        <button class="btn" id="impCustBtn" onclick="importCustomers()">上传并导入</button>
+    <div class="subtabs">
+      <button data-subtab="cust-manage" class="active" onclick="activateSubTab('customers','cust-manage')">客户管理</button>
+      <button data-subtab="cust-profiles" onclick="activateSubTab('customers','cust-profiles')">顾客档案</button>
+    </div>
+
+    <!-- 子Tab1：客户管理（批量导入 + 新增单个 + 顾客列表） -->
+    <div id="sub-cust-manage" class="subpanel active">
+      <div class="card">
+        <h3>批量导入顾客</h3>
+        <div class="tip">支持 CSV / XLSX。列序：<b>顾客姓名</b>、<b>会员卡号</b>。重名会更新卡号、不会新增。</div>
+        <div class="row">
+          <input type="file" id="impCustFile" accept=".csv,.xlsx,.xls">
+          <button class="btn" id="impCustBtn" onclick="importCustomers()">上传并导入</button>
+        </div>
+        <div class="msg" id="impCustMsg"></div>
+        <div id="impCustProgress" style="display:none;margin-top:10px">
+          <div style="display:flex;justify-content:space-between;font-size:12px;color:#555;margin-bottom:4px">
+            <span id="impCustProgLabel">解析中…</span>
+            <span id="impCustProgPct">0%</span>
+          </div>
+          <div style="height:8px;background:#eef1f5;border-radius:4px;overflow:hidden">
+            <div id="impCustProgBar" style="height:100%;width:0;background:linear-gradient(90deg,#3b82f6,#2563eb);transition:width .3s"></div>
+          </div>
+        </div>
       </div>
-      <div class="msg" id="impCustMsg"></div>
-      <div id="impCustProgress" style="display:none;margin-top:10px">
-        <div style="display:flex;justify-content:space-between;font-size:12px;color:#555;margin-bottom:4px">
-          <span id="impCustProgLabel">解析中…</span>
-          <span id="impCustProgPct">0%</span>
+
+      <div class="card">
+        <h3>新增单个顾客</h3>
+        <div class="row">
+          <input id="custName" placeholder="顾客姓名 *">
+          <input id="custCard" placeholder="会员卡号">
+          <button class="btn" onclick="createCustomer()">添加</button>
         </div>
-        <div style="height:8px;background:#eef1f5;border-radius:4px;overflow:hidden">
-          <div id="impCustProgBar" style="height:100%;width:0;background:linear-gradient(90deg,#3b82f6,#2563eb);transition:width .3s"></div>
+        <div class="msg" id="newCustMsg"></div>
+      </div>
+
+      <div class="card">
+        <h3>顾客列表 <span id="custTotal" style="font-size:12px;color:#666;font-weight:normal">（加载中…）</span></h3>
+        <div class="row">
+          <input id="qCust" placeholder="按姓名或会员卡号搜索（服务端）" oninput="onCustSearch()">
+          <button class="btn sec" onclick="loadCustomers()">刷新</button>
         </div>
+        <table class="tbl">
+          <thead><tr><th>姓名</th><th>会员卡号</th>{% if role == 'super' %}<th>公司</th>{% endif %}<th>创建时间</th><th>操作</th></tr></thead>
+          <tbody id="custBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+        </table>
       </div>
     </div>
 
-    <div class="card">
-      <h3>新增单个顾客</h3>
-      <div class="row">
-        <input id="custName" placeholder="顾客姓名 *">
-        <input id="custCard" placeholder="会员卡号">
-        <button class="btn" onclick="createCustomer()">添加</button>
+    <!-- 子Tab2：顾客档案（GET /api/admin/customer_profiles 分页） -->
+    <div id="sub-cust-profiles" class="subpanel">
+      <div class="card">
+        <h3>顾客档案 <span id="cpTotal" style="font-size:12px;color:#666;font-weight:normal">（加载中…）</span></h3>
+        <div class="tip">展示每位顾客的最新接待人、最新服务时间与建档状态。点「档案」查看其价值画像与历次接诊。</div>
+        <div class="row">
+          <input id="qCustProfile" placeholder="按姓名 / 会员卡号 / 手机尾号搜索（服务端）" oninput="onCustProfileSearch()">
+          <select id="cpPageSize" onchange="loadCustomerProfiles(1)" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
+            <option value="50">每页 50</option>
+            <option value="100" selected>每页 100</option>
+            <option value="200">每页 200</option>
+          </select>
+          <button class="btn sec" onclick="loadCustomerProfiles(_cpPage)">刷新</button>
+        </div>
+        <table class="tbl">
+          <thead><tr>
+            <th>姓名</th><th>会员卡号</th><th>最新接待人</th><th>最新服务时间</th><th>是否建立档案</th><th>操作</th>
+          </tr></thead>
+          <tbody id="custProfileBody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
+        </table>
+        <div class="pager" id="cpPager"></div>
       </div>
-      <div class="msg" id="newCustMsg"></div>
-    </div>
-
-    <div class="card">
-      <h3>顾客列表 <span id="custTotal" style="font-size:12px;color:#666;font-weight:normal">（加载中…）</span></h3>
-      <div class="row">
-        <input id="qCust" placeholder="按姓名或会员卡号搜索（服务端）" oninput="onCustSearch()">
-        <button class="btn sec" onclick="loadCustomers()">刷新</button>
-      </div>
-      <table class="tbl">
-        <thead><tr><th>姓名</th><th>会员卡号</th>{% if role == 'super' %}<th>公司</th>{% endif %}<th>创建时间</th><th>操作</th></tr></thead>
-        <tbody id="custBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
-      </table>
     </div>
   </div>
 
@@ -306,11 +349,12 @@ html,body{overflow-x:hidden;max-width:100%}
   <!-- 客户合并 / 拆分 -->
   <div id="tab-customer-merge" class="panel">
     <div class="card">
-      <h3>疑似重复客人
-        <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadDuplicates()">刷新</button>
+      <h3>疑似重复客人 <span id="dupTotal" style="font-size:12px;color:#666;font-weight:normal"></span>
+        <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadDuplicates(_dupPage)">刷新</button>
       </h3>
       <div class="tip">同公司内未被合并的客人中，按「同名 / 会员卡号相同 / 手机尾号相同」找出疑似同一人的配对。确认是同一人后，选保留为主的客人并填写原因，把其余的合并进去。</div>
       <div id="dupGroups"><div class="muted">加载中…</div></div>
+      <div class="pager" id="dupPager"></div>
       <div class="msg" id="dupMsg"></div>
     </div>
 
@@ -468,6 +512,21 @@ html,body{overflow-x:hidden;max-width:100%}
         <tbody id="reminderLogBody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
       </table>
     </div>
+    <div class="card">
+      <h3>升级待跟进 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadEscalations()">刷新</button></h3>
+      <div class="tip">报告生成后次日仍无人查看，会升级到本店店长收件箱。这里汇总每条升级项及其「店长已读 / 已处理」状态；顾问查看报告后该项自动关闭。</div>
+      <div class="row" style="margin-bottom:10px">
+        <select id="escPendingFilter" onchange="loadEscalations()" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
+          <option value="1">仅待跟进</option>
+          <option value="0">全部</option>
+        </select>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>顾问</th><th>门店</th><th>报告生成时间</th><th>店长已读</th><th>店长已处理</th><th>是否关闭</th><th>操作</th></tr></thead>
+        <tbody id="escBody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+      </table>
+      <div class="msg" id="escMsg"></div>
+    </div>
   </div>
 
   <!-- 提醒设置 -->
@@ -497,7 +556,7 @@ html,body{overflow-x:hidden;max-width:100%}
   <div id="tab-unbound" class="panel">
     <div class="card">
       <h3>未绑定录音 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadUnbound()">刷新</button></h3>
-      <div class="tip">这里是尚未归档到任何接诊包的录音。可试听全程后，点「代绑」把它绑给某位顾问当日的客人，绑定后顾问端会自动看到并触发分析。</div>
+      <div class="tip">这里是尚未归档到任何接诊包的录音。可试听全程后，点「代绑」把它绑给某位顾问当日的客人。绑定后顾问端即可见；分析为手动，需到接诊列表点「开始分析」。</div>
       <table class="tbl">
         <thead><tr><th>上传人/顾问</th><th>录音时间</th><th>时长</th><th>门店</th><th>状态</th><th>试听</th><th>操作</th></tr></thead>
         <tbody id="unboundBody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
@@ -583,10 +642,10 @@ const _tabLoaders = {
   admins: () => loadAdmins(),
   tagdict: () => loadTagDict(),
   tagstats: () => loadTagStats(),
-  customers: () => loadCustomers(),
+  customers: () => activateSubTab('customers', 'cust-manage'),
   'customer-merge': () => { loadDuplicates(); loadMergeLog(); },
   'high-risk': () => loadHighRisk(),
-  pipeline: () => { loadPipeline(); loadReminderLog(); },
+  pipeline: () => { loadPipeline(); loadReminderLog(); loadEscalations(); },
   'reminder-cfg': () => loadReminderConfig(),
   unbound: () => loadUnbound(),
   'delete-requests': () => loadDeleteRequests(),
@@ -610,6 +669,28 @@ function activateTab(name) {
 document.querySelectorAll('.tabs button').forEach(b => {
   b.onclick = () => activateTab(b.dataset.tab);
 });
+
+// 二级 Tab（纯 CSS 切换 + 首次进入懒加载）
+const _subTabLoaders = {
+  'customers/cust-manage': () => loadCustomers(),
+  'customers/cust-profiles': () => loadCustomerProfiles(1),
+};
+const _subTabLoaded = {};
+function activateSubTab(parent, name){
+  const root = document.getElementById('tab-' + parent);
+  if (!root) return;
+  root.querySelectorAll('.subtabs button').forEach(x => x.classList.remove('active'));
+  root.querySelectorAll('.subpanel').forEach(x => x.classList.remove('active'));
+  const btn = root.querySelector(`.subtabs button[data-subtab="${name}"]`);
+  if (btn) btn.classList.add('active');
+  const panel = document.getElementById('sub-' + name);
+  if (panel) panel.classList.add('active');
+  const key = parent + '/' + name;
+  if (!_subTabLoaded[key] && _subTabLoaders[key]){
+    _subTabLoaded[key] = true;
+    _subTabLoaders[key]();
+  }
+}
 
 function showMsg(id, text, isErr) {
   const el = document.getElementById(id);
@@ -1182,6 +1263,63 @@ function delCustomer(id) {
     .then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadCustomers(); });
 }
 
+// ---- 顾客档案（分页） ----
+let _cpPage = 1;
+let _cpQuery = '';
+let _cpSearchTimer = null;
+function onCustProfileSearch(){
+  clearTimeout(_cpSearchTimer);
+  _cpQuery = document.getElementById('qCustProfile').value.trim();
+  _cpSearchTimer = setTimeout(() => loadCustomerProfiles(1), 250);
+}
+function loadCustomerProfiles(page){
+  _cpPage = page || 1;
+  const pageSize = parseInt(document.getElementById('cpPageSize').value, 10) || 100;
+  const tb = document.getElementById('custProfileBody');
+  tb.innerHTML = '<tr><td colspan="6" class="muted">加载中…</td></tr>';
+  const params = new URLSearchParams({ page: _cpPage, page_size: pageSize });
+  if (_cpQuery) params.set('q', _cpQuery);
+  fetch(BASE + '/api/admin/customer_profiles?' + params.toString())
+    .then(r => r.json()).then(d => {
+      if (d.error){ tb.innerHTML = '<tr><td colspan="6" class="muted">'+_esc(d.error)+'</td></tr>'; document.getElementById('cpPager').innerHTML = ''; return; }
+      const items = d.items || [];
+      const total = (typeof d.total === 'number') ? d.total : items.length;
+      const ps = (typeof d.page_size === 'number') ? d.page_size : pageSize;
+      _cpPage = (typeof d.page === 'number') ? d.page : _cpPage;
+      const tEl = document.getElementById('cpTotal');
+      if (tEl) tEl.textContent = `（共 ${total} 位顾客）`;
+      renderCustomerProfiles(items);
+      renderCpPager(total, ps);
+    });
+}
+function renderCustomerProfiles(list){
+  const tb = document.getElementById('custProfileBody');
+  if (!list.length){ tb.innerHTML = '<tr><td colspan="6" class="muted">暂无顾客</td></tr>'; return; }
+  tb.innerHTML = list.map(c => `
+    <tr>
+      <td>${_esc(c.name)}</td>
+      <td>${c.member_card ? _esc(c.member_card) : '—'}</td>
+      <td>${c.latest_advisor ? _esc(c.latest_advisor) : '—'}</td>
+      <td>${c.latest_service_date ? _esc(c.latest_service_date) : '—'}</td>
+      <td>${c.has_profile
+        ? '<span class="badge-prof yes">已建档</span>'
+        : '<span class="badge-prof no">未建档</span>'}</td>
+      <td>
+        <a class="btn sec" style="text-decoration:none;display:inline-block" href="${BASE}/customer/${c.id}">档案</a>
+      </td>
+    </tr>`).join('');
+}
+function renderCpPager(total, pageSize){
+  const box = document.getElementById('cpPager');
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (totalPages <= 1 && total <= pageSize){ box.innerHTML = `<span class="muted">共 ${total} 位</span>`; return; }
+  const cur = Math.min(Math.max(1, _cpPage), totalPages);
+  box.innerHTML = `
+    <button onclick="loadCustomerProfiles(${cur - 1})" ${cur <= 1 ? 'disabled' : ''}>上一页</button>
+    <span>第 ${cur} / ${totalPages} 页 · 共 ${total} 位</span>
+    <button onclick="loadCustomerProfiles(${cur + 1})" ${cur >= totalPages ? 'disabled' : ''}>下一页</button>`;
+}
+
 // ---- 客户合并 / 拆分 ----
 function _custLabel(c){
   const bits = [];
@@ -1190,15 +1328,26 @@ function _custLabel(c){
   if (typeof c.session_count === 'number') bits.push(c.session_count + '次接诊');
   return _esc(c.name) + (bits.length ? ` <span class="muted">(${bits.join('，')})</span>` : '');
 }
-function loadDuplicates(){
+let _dupPage = 1;
+const _dupPageSize = 20;
+function loadDuplicates(page){
+  _dupPage = page || 1;
   const box = document.getElementById('dupGroups');
   box.innerHTML = '<div class="muted">加载中…</div>';
-  fetch(BASE + '/api/admin/customers/duplicates').then(r => r.json()).then(d => {
+  document.getElementById('dupPager').innerHTML = '';
+  const params = new URLSearchParams({ page: _dupPage, page_size: _dupPageSize });
+  fetch(BASE + '/api/admin/customers/duplicates?' + params.toString()).then(r => r.json()).then(d => {
     if (d.error){ box.innerHTML = '<div class="muted">'+_esc(d.error)+'</div>'; return; }
     const groups = d.groups || [];
+    const totalGroups = (typeof d.total_groups === 'number') ? d.total_groups : groups.length;
+    const ps = (typeof d.page_size === 'number') ? d.page_size : _dupPageSize;
+    _dupPage = (typeof d.page === 'number') ? d.page : _dupPage;
     const cnt = document.getElementById('mergeDupCount');
-    if (cnt) cnt.textContent = groups.length ? `(${groups.length})` : '';
-    if (!groups.length){ box.innerHTML = '<div class="muted">未发现疑似重复。</div>'; return; }
+    if (cnt) cnt.textContent = totalGroups ? `(${totalGroups})` : '';
+    const tEl = document.getElementById('dupTotal');
+    if (tEl) tEl.textContent = totalGroups ? `（共 ${totalGroups} 组）` : '';
+    if (!groups.length){ box.innerHTML = '<div class="muted">未发现疑似重复。</div>'; renderDupPager(totalGroups, ps); return; }
+    // gi 用「本页内序号」即可，控件 id 仅在当前页渲染范围内需唯一
     box.innerHTML = groups.map((g, gi) => {
       const opts = g.candidates.map(c =>
         `<option value="${c.id}">${_esc(c.name)}${c.member_card?(' / '+_esc(c.member_card)):''}${c.phone_tail?(' / 尾'+_esc(c.phone_tail)):''} · ${c.session_count}次</option>`).join('');
@@ -1214,7 +1363,18 @@ function loadDuplicates(){
         </div>
       </div>`;
     }).join('');
+    renderDupPager(totalGroups, ps);
   });
+}
+function renderDupPager(totalGroups, pageSize){
+  const box = document.getElementById('dupPager');
+  const totalPages = Math.max(1, Math.ceil(totalGroups / pageSize));
+  if (totalPages <= 1){ box.innerHTML = ''; return; }
+  const cur = Math.min(Math.max(1, _dupPage), totalPages);
+  box.innerHTML = `
+    <button onclick="loadDuplicates(${cur - 1})" ${cur <= 1 ? 'disabled' : ''}>上一页</button>
+    <span>第 ${cur} / ${totalPages} 页 · 共 ${totalGroups} 组</span>
+    <button onclick="loadDuplicates(${cur + 1})" ${cur >= totalPages ? 'disabled' : ''}>下一页</button>`;
 }
 function dupMergeGroup(ids, gi){
   const intoId = parseInt(document.getElementById('dupInto_'+gi).value, 10);
@@ -1546,17 +1706,15 @@ function loadViewStats() {
   fetch(BASE + '/api/admin/report_view_stats?days=' + days).then(r => r.json()).then(d => {
     const rows = d.rows || [];
     if (!rows.length) { box.innerHTML = '<p class="muted">该时段无查看记录</p>'; return; }
-    const roleLabel = { consultant: '顾问', admin: '管理员', super: '超管' };
     box.innerHTML = `<table class="tbl" style="font-size:12px">
-      <thead><tr><th>用户</th><th>角色</th><th>看过的报告数</th><th>进入次数</th><th>章节展开次数</th><th>总时长（分钟）</th><th>最常看的章节</th></tr></thead>
+      <thead><tr><th>顾客姓名</th><th>顾问姓名</th><th>服务日期</th><th>最近浏览时间</th><th>展开章节</th><th>总时长（分钟）</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
-        <td>${r.username || '-'}</td>
-        <td>${roleLabel[r.role] || r.role || '-'}</td>
-        <td>${r.sessions_viewed}</td>
-        <td>${r.enter_count}</td>
-        <td>${r.part_expand_count}</td>
+        <td>${r.customer || '-'}</td>
+        <td>${r.advisor || '-'}</td>
+        <td>${r.service_date || '-'}</td>
+        <td>${r.last_view || '-'}</td>
+        <td>${r.expanded_chapters != null ? r.expanded_chapters : 0}/${r.total_expandable != null ? r.total_expandable : (d.total_expandable != null ? d.total_expandable : 11)}</td>
         <td><strong>${r.total_minutes}</strong></td>
-        <td>${r.favorite_part ? r.favorite_part.toUpperCase().replace('PART','PART ') : '-'}</td>
       </tr>`).join('')}</tbody></table>`;
   }).catch(e => { box.innerHTML = '<p class="muted">加载失败：' + e + '</p>'; });
 }
@@ -1715,12 +1873,17 @@ function loadUnbound() {
         ? `<audio controls preload="none" style="height:30px;max-width:200px" src="${_esc(r.audio_url)}"></audio>
            <a href="${_esc(r.audio_url)}" download style="font-size:12px;margin-left:6px">下载</a>`
         : '<span class="muted">无</span>';
+      // 未绑定录音均未分析；ASR 完成(转写就绪)时标注「待分析」(纯前端展示，分析需手动开始)
+      const _as = r.asr_status || '';
+      const pending = (_as === 'done')
+        ? ` <span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#fff3cd;color:#8a6d00;font-size:11px;font-weight:600">待分析</span>`
+        : '';
       return `<tr>
         <td>${_esc(r.uploader)}</td>
         <td>${_esc(r.recorded_at || '')}</td>
         <td>${_esc(r.duration_label || '')}</td>
         <td>${_esc(r.store_name || '')}</td>
-        <td>${_esc(r.asr_status || '')}</td>
+        <td>${_esc(_as)}${pending}</td>
         <td>${audio}</td>
         <td><button class="btn" style="padding:3px 10px;font-size:12px" onclick='abOpen(${r.id}, ${JSON.stringify(r.rec_date)})'>代绑</button></td>
       </tr>`;
@@ -1775,7 +1938,7 @@ function abSubmit() {
   }).then(r => r.json()).then(d => {
     if (d.error) { showMsg('abMsg', d.error, true); return; }
     abClose();
-    showMsg('unboundMsg', '代绑成功，已触发分析');
+    showMsg('unboundMsg', '代绑成功，已绑定，待分析（请到接诊列表点「开始分析」）');
     loadUnbound();
   });
 }
@@ -1830,6 +1993,48 @@ function loadReminderLog() {
         <td>${it.processed ? '✓' : ''}</td></tr>`;
     }).join('');
   });
+}
+function loadEscalations() {
+  const pending = document.getElementById('escPendingFilter').value === '1' ? '1' : '';
+  const qs = pending ? '?pending=1' : '';
+  const tb = document.getElementById('escBody');
+  tb.innerHTML = '<tr><td colspan="7" class="muted">加载中…</td></tr>';
+  fetch(BASE + '/api/admin/escalations' + qs).then(r => r.json()).then(d => {
+    if (d.error) { tb.innerHTML = `<tr><td colspan="7" class="err">${_esc(d.error)}</td></tr>`; return; }
+    const items = d.items || [];
+    if (!items.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">暂无升级项 🎉</td></tr>'; return; }
+    tb.innerHTML = items.map(it => {
+      const advisor = _esc(it.advisor_name || '') + (it.manager_own ? ' <span class="muted" style="font-size:11px">(店长本人)</span>' : '');
+      const read = it.is_read
+        ? `<span class="muted" style="font-size:12px">已读 ${_esc((it.read_at || '').slice(5, 16))}</span>`
+        : '<span style="color:#e74c3c;font-weight:600">● 未读</span>';
+      const handled = it.is_handled
+        ? `<span style="color:#22c55e">已处理 ${_esc((it.handled_at || '').slice(5, 16))}</span>${it.handled_by_name ? ' <span class="muted" style="font-size:12px">' + _esc(it.handled_by_name) + '</span>' : ''}`
+        : '<span style="color:#d97706;font-weight:600">未处理</span>';
+      const closed = it.is_closed
+        ? '<span style="color:#22c55e">已查看关闭</span>'
+        : '<span class="muted">未查看</span>';
+      const op = (!it.is_closed && !it.is_handled)
+        ? `<button class="btn sec" style="padding:2px 8px;font-size:12px" onclick="handleEscalation(${it.id})">标记已跟进</button>`
+        : '';
+      const rowStyle = (!it.is_closed && !it.is_handled) ? 'background:#fdecea' : '';
+      return `<tr style="${rowStyle}">
+        <td>${advisor}</td>
+        <td>${_esc(it.store_name || '')}</td>
+        <td class="muted" style="font-size:12px">${_esc(it.report_finished_at || '')}</td>
+        <td>${read}</td>
+        <td>${handled}</td>
+        <td>${closed}</td>
+        <td>${op}</td></tr>`;
+    }).join('');
+  }).catch(() => { tb.innerHTML = '<tr><td colspan="7" class="muted">加载失败</td></tr>'; });
+}
+function handleEscalation(rid) {
+  fetch(BASE + '/api/manager/reminder/' + rid + '/handle', {method: 'POST'})
+    .then(r => r.json()).then(d => {
+      showMsg('escMsg', d.error ? d.error : '已标记跟进', !!d.error);
+      if (!d.error) loadEscalations();
+    });
 }
 function loadReminderConfig() {
   fetch(BASE + '/api/admin/reminder_config').then(r => r.json()).then(d => {

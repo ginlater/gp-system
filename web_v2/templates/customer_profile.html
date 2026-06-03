@@ -90,7 +90,11 @@
   <div class="card">
     <h3>🔮 客户价值预测 <span style="font-size:12px;font-weight:normal;color:var(--text-mute)" id="valMeta"></span></h3>
     <div class="muted" style="margin-bottom:10px">AI 基于该客人历次接待综合产出（结果会缓存，有新接诊分析后可点刷新重算）。</div>
-    <div id="valActions"><button class="btn" onclick="genValue()" id="genBtn">✨ 生成 / 刷新预测</button></div>
+    <div id="valActions" style="display:flex;align-items:center;flex-wrap:wrap;gap:8px">
+      <button class="btn" onclick="genValue()" id="genBtn">✨ 生成 / 刷新预测</button>
+      <select id="valModel" title="选择生成所用模型"><option>加载模型…</option></select>
+      <span class="muted" id="valGateHint" style="display:none">仅管理员/店长可生成</span>
+    </div>
     <div id="valContent" style="margin-top:14px"></div>
   </div>
 
@@ -103,7 +107,42 @@
 <script>
 const BASE = {{ request.script_root|tojson }};
 const CUSTOMER_ID = {{ customer_id }};
+const ROLE = {{ (role or '')|tojson }};
+// POST /api/admin/customer_value 后端仍限管理员/店长（顾问只读档案，不能触发烧钱的 LLM 生成）
+const CAN_GENERATE = ['admin','super','store_manager'].includes(ROLE);
 function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// 价值预测模型选择器：拉 /api/models，按 tier_label 显示三档；未配置的置灰标注；默认选专家版
+function loadModels() {
+  const sel = document.getElementById('valModel');
+  if (!sel) return;
+  // 顾问无生成权限：隐藏选择器，显示提示，禁用按钮
+  if (!CAN_GENERATE) {
+    sel.style.display = 'none';
+    const gate = document.getElementById('valGateHint'); if (gate) gate.style.display = '';
+    const btn = document.getElementById('genBtn');
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'not-allowed'; btn.title = '仅管理员/店长可生成'; }
+    return;
+  }
+  fetch(`${BASE}/api/models`)
+    .then(r => r.json()).then(d => {
+      const models = d.models || [];
+      const def = d.default || 'deepseek-v4-pro';
+      if (!models.length) { sel.innerHTML = '<option value="">默认模型</option>'; return; }
+      sel.innerHTML = models.map(m => {
+        // 三档优先显示 tier_label（极速版/进阶版/专家版），无则回退 name/label/id
+        const lbl = m.tier_label || m.name || m.label || m.id;
+        const txt = m.disabled ? `${lbl}（未配置）` : lbl;
+        return `<option value="${esc(m.id)}"${m.disabled?' disabled':''}>${esc(txt)}</option>`;
+      }).join('');
+      // 默认选中：优先后端 default（现成可用的专家版 deepseek-v4-pro），且必须未禁用
+      const defM = models.find(m => m.id === def && !m.disabled);
+      const firstOk = models.find(m => !m.disabled);
+      const pick = defM || firstOk;
+      if (pick) sel.value = pick.id;
+    })
+    .catch(() => { sel.innerHTML = '<option value="">默认模型</option>'; });
+}
 
 function loadProfile() {
   const rng = document.getElementById('cpRange').value;
@@ -225,21 +264,37 @@ function loadValue() {
 }
 
 function genValue() {
+  if (!CAN_GENERATE) {
+    document.getElementById('valContent').innerHTML = '<span class="muted">仅管理员/店长可生成价值预测。</span>';
+    return;
+  }
   const btn = document.getElementById('genBtn');
   btn.disabled = true; btn.textContent = '⏳ AI 生成中…';
   document.getElementById('valContent').innerHTML =
     '<div class="vp-loading"><div class="vp-spin"></div>AI 正在综合该客人全部历史接待生成深度分析，首次约需 1–2 分钟，请耐心等待…</div>';
+  const sel = document.getElementById('valModel');
+  const model = (sel && sel.value) ? sel.value : '';
+  const payload = {customer_id: CUSTOMER_ID};
+  if (model) payload.model = model;
   fetch(`${BASE}/api/admin/customer_value`, {
     method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({customer_id: CUSTOMER_ID}),
-  }).then(r => r.json()).then(d => {
-    btn.disabled = false; btn.textContent = '✨ 生成 / 刷新预测';
-    if (d.error) { document.getElementById('valContent').innerHTML = `<span class="muted">生成失败：${esc(d.error)}</span>`; return; }
-    renderValue(d.content, `生成于 ${d.generated_at||''}${d.model?(' · '+d.model):''}`);
-  }).catch(e => { btn.disabled = false; btn.textContent = '✨ 生成 / 刷新预测'; document.getElementById('valContent').innerHTML = '<span class="muted">生成失败，请重试</span>'; });
+    body: JSON.stringify(payload),
+  }).then(r => r.json().catch(() => ({})).then(d => ({status: r.status, d})))
+    .then(({status, d}) => {
+      btn.disabled = false; btn.textContent = '✨ 生成 / 刷新预测';
+      // 后端 POST 仍限管理员/店长：顾问越权点击时优雅提示而非崩溃
+      if (status === 403) {
+        document.getElementById('valContent').innerHTML =
+          `<span class="muted">${esc((d && d.error) || '仅管理员/店长可生成价值预测。')}</span>`;
+        return;
+      }
+      if (!d || d.error) { document.getElementById('valContent').innerHTML = `<span class="muted">生成失败：${esc((d && d.error) || ('HTTP '+status))}</span>`; return; }
+      renderValue(d.content, `生成于 ${d.generated_at||''}${d.model?(' · '+d.model):''}`);
+    }).catch(e => { btn.disabled = false; btn.textContent = '✨ 生成 / 刷新预测'; document.getElementById('valContent').innerHTML = '<span class="muted">生成失败，请重试</span>'; });
 }
 
 loadProfile();
+loadModels();
 loadValue();
 </script>
 </body>
