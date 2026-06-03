@@ -200,7 +200,7 @@ html,body{overflow-x:hidden;max-width:100%}
 
     <div class="card">
       <h3>AI 建议归并 <span id="tagMergeCount" style="font-size:12px;color:#666;font-weight:normal"></span></h3>
-      <div class="tip">让 AI 把<b>待归类</b>里意思相近的碎片词聚成组、推荐一个标准词。下面是待你审核的建议组：可改标准词、改分类、勾掉个别不该并的碎片词，再【通过应用】（自动写入词典并回填历史标签）或【拒绝】。<b>应用前不会动任何数据。</b></div>
+      <div class="tip">让 AI 把<b>待归类</b>里意思相近的碎片词聚成组、推荐一个标准词。下面是待你审核的建议组：可改标准词、改分类、勾掉个别不该并的碎片词，再【通过应用】（自动写入词典并回填历史标签）或【拒绝】。<b>应用前不会动任何数据。</b><br>建议<b>先选一个分类、小批量生成</b>（每次约 3 批 / 360 个词），看完再点【继续生成下一批】，避免一次全量分析烧钱、超时。</div>
       <div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">
         <select id="tmCat" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
           <option value="">全部分类（不限定）</option>
@@ -209,6 +209,7 @@ html,body{overflow-x:hidden;max-width:100%}
         <button class="btn sec" style="padding:6px 12px;font-size:13px" onclick="loadTagMerge()">刷新待审核</button>
       </div>
       <div class="msg" id="tmMsg"></div>
+      <div id="tmMore" style="margin-top:6px"></div>
       <div id="tmGroups" style="margin-top:10px"></div>
     </div>
 
@@ -1120,17 +1121,36 @@ function assignUnclass(btn, action) {
 
 // ---- AI 建议归并 ----
 let _tmGroups = [];   // 当前待审核建议组
+// 单次成本约束（与后端默认对齐：最多 3 批 / 360 候选词），引导分批做、别一次全量。
+const TM_MAX_BATCHES = 3, TM_LIMIT = 360;
+// 渲染"还剩 N 个未处理碎片词 + 继续生成下一批"。remaining<=0 时清空。
+function _tmRenderMore(remaining) {
+  const more = document.getElementById('tmMore');
+  if (!more) return;
+  const rem = parseInt(remaining, 10) || 0;
+  if (rem <= 0) { more.innerHTML = ''; return; }
+  more.innerHTML = `<span style="font-size:13px;color:#e67e22">还剩 <b>${rem}</b> 个未处理碎片词。</span>
+    <button class="btn sec" style="padding:5px 12px;font-size:13px;margin-left:6px" onclick="genTagMerge()">继续生成下一批</button>`;
+}
 function genTagMerge() {
   const btn = document.getElementById('tmGenBtn');
-  const cat = document.getElementById('tmCat').value;
-  const qs = cat ? ('?category=' + encodeURIComponent(cat)) : '';
+  const tmc = document.getElementById('tmCat');   // 静态恒存在，仍加 null 守卫更稳
+  const cat = tmc ? tmc.value : '';
+  const params = ['max_batches=' + TM_MAX_BATCHES, 'limit=' + TM_LIMIT];
+  if (cat) params.push('category=' + encodeURIComponent(cat));
+  const qs = '?' + params.join('&');
+  const more = document.getElementById('tmMore');
+  if (more) more.innerHTML = '';
   if (btn) { btn.disabled = true; btn.textContent = '生成中…（AI 分批分析，请稍候）'; }
-  showMsg('tmMsg', '正在生成，可能需要数十秒…');
+  showMsg('tmMsg', '正在生成本批，可能需要数十秒…');
   fetch(BASE + '/api/admin/tags/suggest_merge' + qs, {method:'POST'})
     .then(r => r.json()).then(d => {
       if (d.error) { showMsg('tmMsg', d.error, true); return; }
       const extra = (d.errors && d.errors.length) ? `（${d.errors.length} 批失败已跳过）` : '';
-      showMsg('tmMsg', `已分析 ${d.fragments||0} 个碎片词、${d.batches||0} 批，生成 ${d.groups_created||0} 组建议${extra}`);
+      const rem = d.remaining || 0;
+      const remTxt = rem > 0 ? `，还剩 ${rem} 个未处理（可点【继续生成下一批】）` : '，已全部处理完';
+      showMsg('tmMsg', `本批分析 ${d.processed||0} 个碎片词（共 ${d.fragments||0} 个）、${d.batches||0} 批，生成 ${d.groups_created||0} 组建议${extra}${remTxt}`);
+      _tmRenderMore(rem);
       loadTagMerge();
     })
     .catch(() => showMsg('tmMsg', '请求失败，请重试', true))

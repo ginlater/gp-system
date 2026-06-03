@@ -8024,11 +8024,30 @@ def _suggest_merge_company_id():
 def api_tags_suggest_merge():
     """对该公司 customer_tags 里 canonical_tag IS NULL 的碎片词，分批调 LLM 聚成归并组，
     写入 tag_merge_suggestions(status='pending')。不直接改 tag_dictionary/customer_tags。
-    可带 ?category= 限定 LLM 归类倾向（仅作提示，不过滤候选词）。
-    返回本次生成的建议组数。"""
+    可带 ?category= 限定 LLM 归类倾向，并优先取与该分类词典相关的碎片词。
+
+    成本约束（避免一次全量烧 ~16 批 LLM）：
+      - max_batches: 单次最多处理多少批（默认 3），按出现次数高优先。
+      - limit:       候选碎片词上限（默认 360）；与 max_batches 取更严的那个。
+    返回里含 remaining（本次未处理的碎片词数），供前端提示"继续生成"。"""
     cid = _suggest_merge_company_id()
+    body = request.get_json(silent=True) or {}
     only_category = (request.args.get("category")
-                     or (request.get_json(silent=True) or {}).get("category") or "").strip()
+                     or body.get("category") or "").strip()
+
+    def _as_int(name, default, lo, hi):
+        raw = request.args.get(name)
+        if raw is None:
+            raw = body.get(name)
+        try:
+            v = int(raw)
+        except (TypeError, ValueError):
+            return default
+        return max(lo, min(hi, v))
+
+    # 运营成本约束默认值：单次最多 3 批 / 360 个候选词
+    MAX_BATCHES = _as_int("max_batches", 3, 1, 16)
+    LIMIT = _as_int("limit", 360, 1, 5000)
 
     # 取碎片词：未归一(canonical 为空)的 distinct 原始 tag + 出现次数
     rows = db_fetchall(
@@ -8042,14 +8061,55 @@ def api_tags_suggest_merge():
            ORDER BY cnt DESC""",
         (cid, cid),
     )
-    frag = [(r["tag"], r["cnt"]) for r in rows]
-    if not frag:
+    frag_all = [(r["tag"], r["cnt"]) for r in rows]
+    if not frag_all:
         return jsonify({"ok": True, "groups_created": 0, "fragments": 0,
-                        "message": "没有待归一的碎片标签"})
+                        "remaining": 0, "message": "没有待归一的碎片标签"})
 
-    cnt_map = {t: c for t, c in frag}
-    model = DEFAULT_MODEL
+    # 传了 category 时：优先把与该分类词典相关的碎片词排到前面，让"按分类分批"真正可行。
+    # 相关性判定：碎片词与该分类下 tag_dictionary 的 canonical/synonyms 互相包含（子串）。
+    if only_category:
+        cat_rows = db_fetchall(
+            "SELECT canonical_tag, synonyms FROM tag_dictionary "
+            "WHERE company_id=? AND category=? AND status='active'",
+            (cid, only_category),
+        )
+        cat_terms = set()
+        for r in cat_rows:
+            ct = (r["canonical_tag"] or "").strip()
+            if ct:
+                cat_terms.add(ct)
+            try:
+                for s in (json.loads(r["synonyms"] or "[]") or []):
+                    s = (s or "").strip() if isinstance(s, str) else ""
+                    if s:
+                        cat_terms.add(s)
+            except (ValueError, TypeError):
+                pass
+
+        def _cat_related(tag):
+            if not cat_terms:
+                return False
+            for term in cat_terms:
+                if term and (term in tag or tag in term):
+                    return True
+            return False
+
+        if cat_terms:
+            # 稳定排序：相关词在前（仍按出现次数降序），其余保持原顺序在后
+            frag_all.sort(key=lambda tc: (0 if _cat_related(tc[0]) else 1, -tc[1]))
+
+    total_frag = len(frag_all)
+    cnt_map = {t: c for t, c in frag_all}
+
+    # 应用成本上限：先按候选词上限截断，再限制批数。
     BATCH = 120
+    frag = frag_all[:LIMIT]
+    frag = frag[:MAX_BATCHES * BATCH]
+    processed = len(frag)
+    remaining = total_frag - processed
+
+    model = DEFAULT_MODEL
     created = 0
     batches = 0
     errors = []
@@ -8114,8 +8174,14 @@ def api_tags_suggest_merge():
             db_batch(_ins)
             created += len(to_insert)
 
-    resp = {"ok": True, "company_id": cid, "fragments": len(frag),
-            "batches": batches, "groups_created": created}
+    resp = {"ok": True, "company_id": cid,
+            "fragments": total_frag,        # 待归一碎片词总数
+            "processed": processed,         # 本次实际送入 LLM 的候选词数
+            "remaining": remaining,         # 尚未处理的碎片词数，供前端"继续生成"
+            "batches": batches,
+            "max_batches": MAX_BATCHES, "limit": LIMIT,
+            "category": only_category or None,
+            "groups_created": created}
     if errors:
         resp["errors"] = errors[:5]
     return jsonify(resp)
@@ -9903,172 +9969,6 @@ def api_admin_recording_admin_bind(rid):
     return jsonify({"ok": True, "session_id": sid})
 
 
-@app.route("/api/admin/session/<int:sid>/rebind", methods=["POST"])
-@manager_required
-def api_admin_session_rebind(sid):
-    """管理员/店长在详情页换绑：把该 session（及其录音）换绑到另一个客人。
-    目标客人必须在该 session 顾问(s.advisor 对应 user)当日(s.service_date)的 daily_reception 内。
-    店长仅限本店 session。沿用顾问端换绑：作废旧分析(outdated)、写审计 action='rebind'。"""
-    u = current_user()
-    cid = u["company_id"] or 1
-    data = request.get_json(silent=True) or {}
-    to_customer_id = data.get("to_customer_id")
-    reason = (data.get("reason") or "").strip()
-    if not to_customer_id:
-        return jsonify({"error": "请选择换绑目标顾客"}), 400
-    if not reason:
-        return jsonify({"error": "请填写换绑理由"}), 400
-    sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (sid,))
-    if not sess:
-        return jsonify({"error": "接诊包不存在"}), 404
-    if sess["company_id"] and sess["company_id"] != cid and session.get("role") != "super":
-        return jsonify({"error": "无权操作其他公司接诊包"}), 403
-    if session.get("role") == "store_manager":
-        if sess["store_id"] and sess["store_id"] != session.get("store_id"):
-            return jsonify({"error": "店长只能操作本店接诊包"}), 403
-
-    advisor = sess["advisor"]
-    service_date = sess["service_date"]
-    # 解析该 session 顾问对应 user（用于查 daily_reception）
-    au = db_fetchone(
-        "SELECT id, advisor_name FROM users WHERE advisor_name=? AND company_id=? "
-        "AND role IN ('consultant','store_manager') ORDER BY id LIMIT 1",
-        (advisor, sess["company_id"] or cid),
-    )
-    if not au:
-        return jsonify({"error": "无法定位该接诊顾问账号，无法校验当日接诊"}), 400
-
-    to_cust = db_fetchone(
-        "SELECT id, name FROM company_customers WHERE id=? AND company_id=?",
-        (to_customer_id, sess["company_id"] or cid),
-    )
-    if not to_cust:
-        return jsonify({"error": "目标顾客不存在"}), 404
-    dr = db_fetchone(
-        """SELECT id FROM daily_reception
-           WHERE advisor_user_id=? AND customer_id=? AND service_date=?""",
-        (au["id"], to_customer_id, service_date),
-    )
-    if not dr:
-        return jsonify({"error": "目标顾客不在该顾问当日接诊列表"}), 400
-
-    new_sid = get_or_create_session(advisor, to_cust["name"], service_date,
-                                    company_id=sess["company_id"] or cid, customer_id=to_customer_id)
-    if not new_sid:
-        return jsonify({"error": "创建目标接诊包失败"}), 500
-    if new_sid == sid:
-        return jsonify({"error": "目标顾客与当前一致，无需换绑"}), 400
-    new_locked = db_fetchone("SELECT locked FROM sessions WHERE id=?", (new_sid,))
-    if new_locked and new_locked["locked"]:
-        return jsonify({"error": "目标接诊包已锁定，无法换绑"}), 409
-
-    recs = db_fetchall("SELECT * FROM recordings WHERE session_id=?", (sid,))
-    # 逐条搬录音（含 OSS 重命名）
-    for rec in recs:
-        try:
-            new_key, old_key_to_del = _maybe_rename_consultant_oss(rec, to_cust["name"], advisor)
-        except Exception as e:
-            return jsonify({"error": f"OSS 重命名失败：{e}"}), 500
-        try:
-            db_write(
-                """UPDATE recordings SET session_id=?, customer=?, oss_key=?, speaker_confirmed=0,
-                   asr_status=CASE WHEN asr_status='awaiting_intake' THEN 'pending' ELSE asr_status END
-                   WHERE id=?""",
-                (new_sid, to_cust["name"], new_key, rec["id"]),
-            )
-        except Exception as e:
-            if old_key_to_del and new_key != old_key_to_del:
-                _oss_delete_quiet(new_key)
-            return jsonify({"error": f"换绑失败：{e}"}), 500
-        if old_key_to_del and new_key != old_key_to_del:
-            _oss_delete_quiet(old_key_to_del)
-
-    # 新 session：作废旧分析（仅 done/failed 标 outdated）
-    db_write(
-        """UPDATE sessions SET locked=0,
-               analysis_status=CASE WHEN analysis_status IN ('done','failed') THEN 'outdated' ELSE analysis_status END
-           WHERE id=?""",
-        (new_sid,),
-    )
-    # 旧 session：变空则清分析，非空则作废
-    from_cust_name = sess["customer"] or ""
-    from_cust = db_fetchone(
-        "SELECT id FROM company_customers WHERE company_id=? AND name=?",
-        (sess["company_id"] or cid, from_cust_name),
-    )
-    from_cust_id = from_cust["id"] if from_cust else None
-    cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (sid,))
-    if not cnt or not cnt["n"]:
-        db_write(
-            """UPDATE sessions SET locked=0,
-                   analysis_status=NULL, analysis_result=NULL, analysis_error=NULL,
-                   analysis_started_at=NULL, analysis_finished_at=NULL,
-                   analysis_signature=NULL, analysis_scores=NULL,
-                   analysis_progress=NULL, task_status=NULL
-               WHERE id=?""",
-            (sid,),
-        )
-    else:
-        db_write(
-            """UPDATE sessions SET locked=0,
-                   analysis_status=CASE WHEN analysis_status IN ('done','failed') THEN 'outdated' ELSE analysis_status END
-               WHERE id=?""",
-            (sid,),
-        )
-
-    rec_date = service_date
-    db_write(
-        """INSERT INTO rebind_requests
-           (company_id, recording_id, rec_date, requester_user_id, requester_name,
-            from_session_id, from_customer_id, from_customer_name,
-            to_customer_id, to_customer_name, reason, status, action,
-            reviewer_user_id, reviewer_name, reviewed_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,'done','rebind',?,?,datetime('now','localtime'))""",
-        (sess["company_id"] or cid, recs[0]["id"] if recs else None, rec_date,
-         u["id"], u["advisor_name"] or u["username"],
-         sid, from_cust_id, from_cust_name,
-         to_cust["id"], to_cust["name"], reason,
-         u["id"], u["advisor_name"] or u["username"]),
-    )
-    # 触发新 session 分析（如有录音）
-    if recs:
-        maybe_trigger_session_analysis(new_sid)
-    return jsonify({"ok": True, "new_session_id": new_sid})
-
-
-@app.route("/api/admin/session/<int:sid>/rebind_candidates")
-@manager_required
-def api_admin_session_rebind_candidates(sid):
-    """详情页换绑：列出该 session 顾问当日接诊白名单中的客人（候选目标）。"""
-    cid = session.get("company_id") or 1
-    sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (sid,))
-    if not sess:
-        return jsonify({"error": "接诊包不存在"}), 404
-    if sess["company_id"] and sess["company_id"] != cid and session.get("role") != "super":
-        return jsonify({"error": "无权查看"}), 403
-    if session.get("role") == "store_manager":
-        if sess["store_id"] and sess["store_id"] != session.get("store_id"):
-            return jsonify({"error": "无权查看"}), 403
-    au = db_fetchone(
-        "SELECT id FROM users WHERE advisor_name=? AND company_id=? "
-        "AND role IN ('consultant','store_manager') ORDER BY id LIMIT 1",
-        (sess["advisor"], sess["company_id"] or cid),
-    )
-    if not au:
-        return jsonify({"items": [], "service_date": sess["service_date"], "advisor": sess["advisor"]})
-    rows = db_fetchall(
-        """SELECT dr.customer_id, c.name, c.phone_tail, c.member_card
-           FROM daily_reception dr JOIN company_customers c ON c.id=dr.customer_id
-           WHERE dr.advisor_user_id=? AND dr.service_date=?
-           ORDER BY dr.id DESC""",
-        (au["id"], sess["service_date"]),
-    )
-    items = [{"customer_id": r["customer_id"], "name": r["name"],
-              "phone_tail": r["phone_tail"], "member_card": r["member_card"]} for r in rows]
-    return jsonify({"items": items, "service_date": sess["service_date"], "advisor": sess["advisor"],
-                    "current_customer": sess["customer"], "current_customer_id": sess["customer_id"]})
-
-
 def _admin_rec_scope_check(rid):
     """按录音操作的公共前置：取录音 + 原 session，校验公司/店长权限。
     返回 (rec, old_sess, scid, error_tuple)；成功时 error 为 None。"""
@@ -10353,6 +10253,11 @@ def _ffprobe_duration(path):
         return None
 
 
+class _SplitGoneError(Exception):
+    """分割提交时原录音已不存在/已被分割（重复触发或并发），用于幂等中止。"""
+    pass
+
+
 def _run_ffmpeg(args):
     import subprocess
     r = subprocess.run(["ffmpeg", "-y", "-loglevel", "error"] + args,
@@ -10451,14 +10356,17 @@ def api_admin_recording_split(rid):
         stem = rec["oss_key"][:-(len(src_ext) + 1)] if "." in base else rec["oss_key"]
         k1 = f"{stem}_p1_{_uuid.uuid4().hex[:8]}.mp3"
         k2 = f"{stem}_p2_{_uuid.uuid4().hex[:8]}.mp3"
+        # 仅 OSS 双写在 DB 提交前发生；失败会在 except 里清掉 k1/k2
         oss_bucket.put_object_from_file(k1, p1)
         oss_bucket.put_object_from_file(k2, p2)
 
-        def _insert_part(oss_key, size, dur, idx):
+        size1, size2 = os.path.getsize(p1), os.path.getsize(p2)
+
+        def _insert_sql(cur, oss_key, size, dur, idx):
             label = _format_duration_label(dur)
             if split_asr:
                 j, tx, spk = split_asr[idx]
-                return db_write(
+                return cur.execute(
                     """INSERT INTO recordings
                        (session_id, oss_key, advisor, customer, recorded_at, duration_label,
                         size_bytes, source, company_id, uploader_user_id, store_id,
@@ -10469,8 +10377,8 @@ def api_admin_recording_split(rid):
                      rec["recorded_at"], label, size, "split", scid, rec["uploader_user_id"],
                      rec["store_id"], json.dumps(j, ensure_ascii=False), tx, spk,
                      rec["speaker_confirmed"] or 0),
-                )
-            new_id = db_write(
+                ).lastrowid
+            return cur.execute(
                 """INSERT INTO recordings
                    (session_id, oss_key, advisor, customer, recorded_at, duration_label,
                     size_bytes, source, company_id, uploader_user_id, store_id, asr_status)
@@ -10478,25 +10386,52 @@ def api_admin_recording_split(rid):
                 (rec["session_id"], oss_key, old_sess["advisor"], old_sess["customer"],
                  rec["recorded_at"], label, size, "split", scid, rec["uploader_user_id"],
                  rec["store_id"]),
-            )
-            trigger_pipeline_for_recording(new_id)
-            return new_id
+            ).lastrowid
 
-        id1 = _insert_part(k1, os.path.getsize(p1), d1, 0)
-        id2 = _insert_part(k2, os.path.getsize(p2), d2, 1)
-        parts_created = True
-        # 删原录音；录音集变了，原 session 已完成的分析标记过期（不自动重跑）
+        # ===== 单一提交点：两条新录音 INSERT + 删原行 + session 标过期，全在同一事务 =====
+        # 要么都成功提交、要么整体回滚；杜绝"原行已删但新行未提交"或"原行残留+两段并存"。
+        def _commit_split(conn):
+            cur = conn.cursor()
+            # 事务内复核原录音仍在：防并发/重复触发（第二个请求删不到行→幂等中止）。
+            still = cur.execute(
+                "SELECT 1 FROM recordings WHERE id=?", (rid,)
+            ).fetchone()
+            if still is None:
+                raise _SplitGoneError()
+            nid1 = _insert_sql(cur, k1, size1, d1, 0)
+            nid2 = _insert_sql(cur, k2, size2, d2, 1)
+            cur.execute("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
+            # 用 rowcount 兜底：原行此刻被并发删掉则视为已被分割，回滚整事务。
+            dr = cur.execute("DELETE FROM recordings WHERE id=?", (rid,)).rowcount
+            if not dr:
+                raise _SplitGoneError()
+            cur.execute(
+                """UPDATE sessions SET analysis_status=CASE WHEN analysis_status IN ('done','failed')
+                       THEN 'outdated' ELSE analysis_status END WHERE id=?""",
+                (rec["session_id"],),
+            )
+            conn.commit()
+            return nid1, nid2
+
+        id1, id2 = db_batch(_commit_split)
+        parts_created = True  # 已提交：k1/k2 现由新行引用，不可再清理
+        # 提交成功后才排 ASR（避免为回滚掉的行起转写）
+        trigger_pipeline_for_recording(id1)
+        trigger_pipeline_for_recording(id2)
+        # 删原 OSS 对象：失败仅记日志、不影响主流程（孤儿对象可接受，远好于 DB 不一致）
         _oss_delete_quiet(rec["oss_key"])
-        db_write("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
-        db_write("DELETE FROM recordings WHERE id=?", (rid,))
-        db_write(
-            """UPDATE sessions SET analysis_status=CASE WHEN analysis_status IN ('done','failed')
-                   THEN 'outdated' ELSE analysis_status END WHERE id=?""",
-            (rec["session_id"],),
-        )
         return jsonify({"ok": True, "parts": [id1, id2],
                         "session_id": rec["session_id"], "reasr": reasr})
+    except _SplitGoneError:
+        # 幂等：原录音已不存在/已被分割（重复触发或并发）。清掉本次刚传的 k1/k2。
+        if not parts_created:
+            if k1:
+                _oss_delete_quiet(k1)
+            if k2:
+                _oss_delete_quiet(k2)
+        return jsonify({"error": "该录音已被分割或已不存在，无需重复操作"}), 409
     except Exception as e:
+        # DB 提交前的任何失败（下载/ffmpeg/OSS 上传/事务）都走这里清理 k1/k2。
         if not parts_created:
             if k1:
                 _oss_delete_quiet(k1)
