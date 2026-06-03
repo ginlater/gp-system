@@ -199,6 +199,20 @@ html,body{overflow-x:hidden;max-width:100%}
     </div>
 
     <div class="card">
+      <h3>AI 建议归并 <span id="tagMergeCount" style="font-size:12px;color:#666;font-weight:normal"></span></h3>
+      <div class="tip">让 AI 把<b>待归类</b>里意思相近的碎片词聚成组、推荐一个标准词。下面是待你审核的建议组：可改标准词、改分类、勾掉个别不该并的碎片词，再【通过应用】（自动写入词典并回填历史标签）或【拒绝】。<b>应用前不会动任何数据。</b></div>
+      <div class="row" style="align-items:center;flex-wrap:wrap;gap:8px">
+        <select id="tmCat" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
+          <option value="">全部分类（不限定）</option>
+        </select>
+        <button class="btn" id="tmGenBtn" onclick="genTagMerge()">生成 AI 归并建议</button>
+        <button class="btn sec" style="padding:6px 12px;font-size:13px" onclick="loadTagMerge()">刷新待审核</button>
+      </div>
+      <div class="msg" id="tmMsg"></div>
+      <div id="tmGroups" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card">
       <h3>新建标准词</h3>
       <div class="row">
         <input id="tdCanon" placeholder="标准词 *">
@@ -235,7 +249,7 @@ html,body{overflow-x:hidden;max-width:100%}
         <button class="btn sec" style="padding:5px 10px;font-size:12px" onclick="tsQuick(365)">1年</button>
         <button class="btn sec" style="padding:5px 10px;font-size:12px" onclick="tsQuick(0)">至今</button>
       </div>
-      <div class="tip">服务次数 = 有多少次接诊提到该标签（去重接诊）。用来判断店里近期在流行什么、该进什么货。竞品行可一键拉黑，拉黑后不再统计、不再出现在竞品分析里。</div>
+      <div class="tip"><b>接诊次数</b> = 有多少次接诊提到该标签（去重接诊）；<b>客人数</b> = 涉及多少位不同客人（优先按客户号去重）。两个口径都看：接诊次数反映被提及的频次，客人数反映覆盖的人群。竞品行可一键拉黑，拉黑后不再统计、不再出现在竞品分析里。</div>
     </div>
     {% if role != 'store_manager' %}
     <div class="card">
@@ -256,14 +270,14 @@ html,body{overflow-x:hidden;max-width:100%}
     <div class="card">
       <h3>顾客标签统计 · 店里在流行什么 <span id="tsCustCount" style="font-size:12px;color:#666;font-weight:normal"></span></h3>
       <table class="tbl">
-        <thead><tr><th style="width:40px">#</th><th>标签</th><th>分类</th><th>服务次数</th><th>涉及客人</th></tr></thead>
+        <thead><tr><th style="width:40px">#</th><th>标签</th><th>分类</th><th>接诊次数</th><th>客人数</th></tr></thead>
         <tbody id="tsCustBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
       </table>
     </div>
     <div class="card">
       <h3>竞品标签纵览 <span id="tsCompCount" style="font-size:12px;color:#666;font-weight:normal"></span></h3>
       <table class="tbl">
-        <thead><tr><th style="width:40px">#</th><th>竞品标签</th><th>服务次数</th><th>涉及客人</th><th>操作</th></tr></thead>
+        <thead><tr><th style="width:40px">#</th><th>竞品标签</th><th>接诊次数</th><th>客人数</th><th>操作</th></tr></thead>
         <tbody id="tsCompBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
       </table>
     </div>
@@ -968,6 +982,7 @@ function delAdmin(id, name) {
 
 // ---- 标签词典 ----
 let _dictEntries = [];   // 当前词典，供"并入"下拉用
+let _dictCats = [];      // 可选分类，供 AI 归并改分类用
 function _esc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function loadTagDict() {
   return fetch(BASE + '/api/admin/tag_dictionary').then(r => r.json()).then(d => {
@@ -978,8 +993,16 @@ function loadTagDict() {
     if (tot) tot.textContent = `（共 ${_dictEntries.length} 条）`;
     // 分类下拉（含竞品/其他）
     const cats = Array.from(new Set([...(d.categories||[]), '竞品', '其他']));
+    _dictCats = cats;
     const sel = document.getElementById('tdCat');
     if (sel) sel.innerHTML = cats.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('');
+    // AI 归并：分类筛选下拉
+    const tmc = document.getElementById('tmCat');
+    if (tmc) {
+      const cur = tmc.value;
+      tmc.innerHTML = '<option value="">全部分类（不限定）</option>' + cats.map(c => `<option value="${_esc(c)}">${_esc(c)}</option>`).join('');
+      tmc.value = cur;
+    }
     // 词典表
     const tb = document.getElementById('tagDictBody');
     if (!_dictEntries.length) tb.innerHTML = '<tr><td colspan="5" class="muted">暂无</td></tr>';
@@ -1000,6 +1023,7 @@ function loadTagDict() {
       </tr>`;
     }).join('');
     loadUnclassified();
+    loadTagMerge();
   });
 }
 function _dictOptions(selectedNone) {
@@ -1094,6 +1118,91 @@ function assignUnclass(btn, action) {
   }).then(r => r.json()).then(d => { if (d.error) alert(d.error); else loadTagDict(); });
 }
 
+// ---- AI 建议归并 ----
+let _tmGroups = [];   // 当前待审核建议组
+function genTagMerge() {
+  const btn = document.getElementById('tmGenBtn');
+  const cat = document.getElementById('tmCat').value;
+  const qs = cat ? ('?category=' + encodeURIComponent(cat)) : '';
+  if (btn) { btn.disabled = true; btn.textContent = '生成中…（AI 分批分析，请稍候）'; }
+  showMsg('tmMsg', '正在生成，可能需要数十秒…');
+  fetch(BASE + '/api/admin/tags/suggest_merge' + qs, {method:'POST'})
+    .then(r => r.json()).then(d => {
+      if (d.error) { showMsg('tmMsg', d.error, true); return; }
+      const extra = (d.errors && d.errors.length) ? `（${d.errors.length} 批失败已跳过）` : '';
+      showMsg('tmMsg', `已分析 ${d.fragments||0} 个碎片词、${d.batches||0} 批，生成 ${d.groups_created||0} 组建议${extra}`);
+      loadTagMerge();
+    })
+    .catch(() => showMsg('tmMsg', '请求失败，请重试', true))
+    .finally(() => { if (btn) { btn.disabled = false; btn.textContent = '生成 AI 归并建议'; } });
+}
+function loadTagMerge() {
+  return fetch(BASE + '/api/admin/tags/suggestions?status=pending').then(r => r.json()).then(d => {
+    _tmGroups = d.suggestions || [];
+    const cnt = document.getElementById('tagMergeCount');
+    if (cnt) cnt.textContent = `（${_tmGroups.length} 组待审核）`;
+    const wrap = document.getElementById('tmGroups');
+    if (!wrap) return;
+    if (!_tmGroups.length) { wrap.innerHTML = '<div class="muted" style="padding:8px">暂无待审核建议。点上面【生成 AI 归并建议】让 AI 分析待归类标签。</div>'; return; }
+    const catOpts = (sel) => ['客人新老','顾客类型','顾客画像','顾客痛点','顾客状态','需求类型','竞品','其他']
+      .concat(_dictCats.filter(c => !['客人新老','顾客类型','顾客画像','顾客痛点','顾客状态','需求类型','竞品','其他'].includes(c)))
+      .map(c => `<option value="${_esc(c)}" ${c===sel?'selected':''}>${_esc(c)}</option>`).join('');
+    wrap.innerHTML = _tmGroups.map(g => {
+      const members = (g.members || []).map(m => `
+        <label style="display:inline-flex;align-items:center;gap:3px;margin:2px 8px 2px 0;font-size:13px;background:#f4f6f9;border-radius:4px;padding:2px 8px">
+          <input type="checkbox" class="tm-mem" value="${_esc(m)}" checked> ${_esc(m)}</label>`).join('');
+      return `<div class="card" data-id="${g.id}" style="margin:8px 0;border:1px solid var(--border);box-shadow:none">
+        <div class="row" style="align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px">
+          <span style="font-size:12px;color:#888">标准词</span>
+          <input class="tm-canon" value="${_esc(g.canonical)}" style="min-width:160px;font-weight:bold">
+          <span style="font-size:12px;color:#888">分类</span>
+          <select class="tm-cat" style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:13px">${catOpts(g.category||'其他')}</select>
+          <span style="font-size:12px;color:#888">样本数 <b>${g.sample_count||0}</b></span>
+          <span style="flex:1"></span>
+          <button class="btn" style="padding:5px 14px" onclick="applyTagMerge(this,${g.id})">通过应用</button>
+          <button class="btn danger" style="padding:5px 12px" onclick="rejectTagMerge(this,${g.id})">拒绝</button>
+        </div>
+        <div style="font-size:12px;color:#888;margin-bottom:3px">将以下碎片词并入标准词（取消勾选可剔除个别词）：</div>
+        <div class="tm-mems">${members || '<span class="muted">（无碎片词）</span>'}</div>
+        <div class="msg tm-row-msg"></div>
+      </div>`;
+    }).join('');
+  });
+}
+function applyTagMerge(btn, id) {
+  const card = btn.closest('.card');
+  const canon = card.querySelector('.tm-canon').value.trim();
+  const category = card.querySelector('.tm-cat').value;
+  const members = Array.from(card.querySelectorAll('.tm-mem:checked')).map(c => c.value);
+  const rowMsg = card.querySelector('.tm-row-msg');
+  if (!canon) { rowMsg.textContent = '标准词不能为空'; rowMsg.style.color = '#e74c3c'; return; }
+  if (members.length < 2) { rowMsg.textContent = '至少保留 2 个碎片词才能归并'; rowMsg.style.color = '#e74c3c'; return; }
+  if (!confirm(`将 ${members.length} 个碎片词归并到标准词「${canon}」（分类：${category}）？\n会写入词典并回填历史标签。`)) return;
+  btn.disabled = true;
+  fetch(BASE + '/api/admin/tags/suggestions/' + id + '/apply', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({canonical: canon, members, category}),
+  }).then(r => r.json()).then(d => {
+    if (d.error) { rowMsg.textContent = d.error; rowMsg.style.color = '#e74c3c'; btn.disabled = false; return; }
+    const rn = d.renormalized || {};
+    showMsg('tmMsg', `已应用「${(d.applied&&d.applied.canonical)||canon}」：回填 ${rn.updated||0} 条、删除 ${rn.deleted||0} 条`);
+    card.remove();
+    loadTagDict();         // 刷新词典 + 待归类 + 计数下拉
+    loadTagMerge();        // 刷新待审核数量
+  }).catch(() => { rowMsg.textContent = '请求失败'; rowMsg.style.color = '#e74c3c'; btn.disabled = false; });
+}
+function rejectTagMerge(btn, id) {
+  if (!confirm('拒绝这组建议？不会改动词典或标签。')) return;
+  const card = btn.closest('.card');
+  btn.disabled = true;
+  fetch(BASE + '/api/admin/tags/suggestions/' + id + '/reject', {method:'POST'})
+    .then(r => r.json()).then(d => {
+      if (d.error) { const rm = card.querySelector('.tm-row-msg'); rm.textContent = d.error; rm.style.color='#e74c3c'; btn.disabled=false; return; }
+      card.remove();
+      loadTagMerge();
+    }).catch(() => { btn.disabled = false; });
+}
+
 // ---- 标签统计 ----
 let _tsStoreFilled = false;
 function _tsParams() {
@@ -1131,7 +1240,7 @@ function loadTagStats() {
     const tb = document.getElementById('tsCustBody');
     tb.innerHTML = rows.length ? rows.map((x,i)=>`
       <tr><td>${i+1}</td><td><b>${_esc(x.tag)}</b></td><td style="color:#888;font-size:12px">${_esc(x.category||'待归类')}</td>
-      <td><b style="color:var(--navy)">${x.service_count}</b></td><td>${x.customer_count}</td></tr>`).join('')
+      <td><b style="color:var(--navy)">${x.service_count}</b></td><td><b style="color:#16a085">${x.customer_count}</b></td></tr>`).join('')
       : '<tr><td colspan="5" class="muted">该条件下暂无数据</td></tr>';
   });
   // 竞品纵览
@@ -1141,7 +1250,7 @@ function loadTagStats() {
     const tb = document.getElementById('tsCompBody');
     tb.innerHTML = rows.length ? rows.map((x,i)=>`
       <tr data-tag="${_esc(x.tag)}"><td>${i+1}</td><td><b>${_esc(x.tag)}</b></td>
-      <td><b style="color:#e67e22">${x.service_count}</b></td><td>${x.customer_count}</td>
+      <td><b style="color:#e67e22">${x.service_count}</b></td><td><b style="color:#16a085">${x.customer_count}</b></td>
       <td><button class="btn sec" style="padding:3px 8px;font-size:12px;color:#e74c3c;border-color:#e74c3c" onclick="blacklistComp(this)">拉黑</button></td></tr>`).join('')
       : '<tr><td colspan="5" class="muted">暂无竞品标签（随接诊分析积累）</td></tr>';
   });

@@ -695,6 +695,21 @@ def init_db():
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tagdict_company ON tag_dictionary(company_id)")
+    # 2026-06-04 Wave5 标签归一：AI 归并建议（人工审核后才落库；不自动改 tag_dictionary/customer_tags）
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tag_merge_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            category TEXT,
+            canonical TEXT NOT NULL,         -- 该组选定的标准词
+            members_json TEXT DEFAULT '[]',  -- JSON 数组：被归并的碎片词
+            sample_count INTEGER DEFAULT 0,  -- 该组碎片词在 customer_tags 里的总出现次数
+            status TEXT NOT NULL DEFAULT 'pending',  -- pending | applied | rejected
+            created_at TEXT DEFAULT (datetime('now', 'localtime')),
+            applied_at TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tagmerge_company ON tag_merge_suggestions(company_id, status)")
     # customer_tags 加 canonical_tag(归一标准词) + service_date(接诊日期，为时间筛选铺路)
     ct_cols2 = {r[1] for r in conn.execute("PRAGMA table_info(customer_tags)").fetchall()}
     if "canonical_tag" not in ct_cols2:
@@ -3673,6 +3688,51 @@ def normalize_tag(raw, company_id):
     return hit if hit else (None, None)
 
 
+# 7 大顾客标签分类（受控词表注入 / AI 归并都沿用这套）
+TAG_CATEGORIES = ("客人新老", "顾客类型", "顾客画像", "顾客痛点",
+                  "顾客状态", "需求类型", "竞品")
+
+
+def build_tag_vocab_brief(company_id, per_cat=25, max_total=140):
+    """构造【该公司现有标准词清单】，按 7 类分组，注入 Call1 的 customer_tags 任务，
+    引导 AI 优先复用既有标准词、压住新词面爆炸。
+    - 只取 active（黑名单/竞品自动登记的也算 active，但竞品类对画像意义不大，靠 per_cat 截断）；
+    - 控制长度：每类最多 per_cat 个、总数最多 max_total，超出截断。
+    返回拼好的多行文本；无标准词时返回空串（不注入，避免误导）。
+    """
+    rows = db_fetchall(
+        "SELECT category, canonical_tag FROM tag_dictionary "
+        "WHERE company_id=? AND status='active' ORDER BY category, canonical_tag",
+        (company_id or 1,),
+    )
+    by_cat: dict = {}
+    for r in rows:
+        cat = (r["category"] or "其他")
+        by_cat.setdefault(cat, []).append(r["canonical_tag"])
+    if not by_cat:
+        return ""
+    lines, total = [], 0
+    # 先按 7 类固定顺序输出，其余分类垫底
+    ordered = [c for c in TAG_CATEGORIES if c in by_cat] + \
+              [c for c in by_cat if c not in TAG_CATEGORIES]
+    for cat in ordered:
+        if total >= max_total:
+            break
+        words = by_cat[cat][:per_cat]
+        if total + len(words) > max_total:
+            words = words[:max_total - total]
+        if not words:
+            continue
+        total += len(words)
+        lines.append(f"  · {cat}：{ '、'.join(words) }")
+    if not lines:
+        return ""
+    return (
+        "\n【本公司现有标准标签词清单（请优先复用，能套上就用清单里的原词，"
+        "实在没有合适的才造新词）】\n" + "\n".join(lines) + "\n"
+    )
+
+
 def save_customer_tags(session_id, customer_name, advisor_name, call1_result):
     """把本次分析生成的顾客标签写入 customer_tags 表（去重，先删本 session 来源的旧记录）"""
     if not customer_name:
@@ -3835,10 +3895,11 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         return
 
     sess = db_fetchone(
-        "SELECT advisor, customer, service_date FROM sessions WHERE id=?", (session_id,)
+        "SELECT advisor, customer, service_date, company_id FROM sessions WHERE id=?", (session_id,)
     )
     if not sess:
         return
+    company_id = (sess["company_id"] if sess else None) or 1
     recs = db_fetchall(
         """SELECT id, recorded_at, duration_label, asr_transcript
            FROM recordings WHERE session_id=? AND asr_status='done'
@@ -4080,6 +4141,16 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
             task_prompts.append(t["prompt_snippet"].format(customer_name=customer_name))
             all_schema_keys.extend(t["schema_keys"])
 
+        # 受控词表：T3（顾客标签）出现时，把本公司现有标准词清单注入，
+        # 引导 AI 优先复用既有标准词，从源头压住新词面爆炸。
+        vocab_brief = ""
+        if call_no == 1 and "T3" in tids:
+            try:
+                vocab_brief = build_tag_vocab_brief(company_id)
+            except Exception as _vb_err:
+                print(f"[vocab_brief] session={session_id} 构造失败：{_vb_err}")
+                vocab_brief = ""
+
         tool_name = {1: "submit_call1", 2: "submit_call2", 3: "submit_call3"}[call_no]
         user_prompt = (
             f"顾客姓名：{customer_name}\n"
@@ -4088,6 +4159,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
             f"{input_section}\n\n"
             f"---\n请完成以下 {len(tids)} 个任务，调用 {tool_name} 提交：\n\n"
             + "\n\n".join(task_prompts)
+            + vocab_brief
         )
 
         sub_tool = build_subset_tool(call_no, all_schema_keys)
@@ -4863,7 +4935,7 @@ def api_session_customer_tags(sid):
     """接诊详情页「顾客标签」：本次标签(标记是否新增) + 历史累积(按服务次数, 支持时间区间)。
     口径：分组用 COALESCE(canonical_tag, tag) 归一；计数 = COUNT(DISTINCT source_session_id) 服务次数。"""
     sess = db_fetchone(
-        "SELECT id, customer, company_id, advisor FROM sessions WHERE id=?", (sid,))
+        "SELECT id, customer, customer_id, company_id, advisor FROM sessions WHERE id=?", (sid,))
     if not sess:
         return jsonify({"error": "not found"}), 404
     # 可见性：顾问仅本人；admin/店长 本公司；super 全部
@@ -4875,6 +4947,14 @@ def api_session_customer_tags(sid):
         return jsonify({"error": "无权查看"}), 403
 
     customer = sess["customer"]
+    cust_id = sess["customer_id"]
+    # 同名串扰防护：本次有 customer_id 就按 id 聚合历史，否则回退按姓名。
+    if cust_id:
+        cust_pred = "customer_id=?"
+        cust_val = cust_id
+    else:
+        cust_pred = "customer_name=?"
+        cust_val = customer
     rng = (request.args.get("range") or "all").strip()
     days_map = {"30": 30, "90": 90, "180": 180, "365": 365}
     cutoff = None
@@ -4892,13 +4972,13 @@ def api_session_customer_tags(sid):
     # 历史出现过的标签集合（判断"本次新增"，不受时间区间限制）
     seen_rows = db_fetchall(
         f"SELECT DISTINCT {EFF} AS t FROM customer_tags "
-        f"WHERE customer_name=? AND source_session_id<>?", (customer, sid))
+        f"WHERE {cust_pred} AND source_session_id<>?", (cust_val, sid))
     seen = {r["t"] for r in seen_rows if r["t"]}
     current_tags = [{"tag": t, "is_new": t not in seen} for t in current]
 
     # 历史累积：按服务次数(去重 session)，可按 service_date 过滤区间
-    where = "customer_name=? AND source_session_id<>?"
-    params = [customer, sid]
+    where = f"{cust_pred} AND source_session_id<>?"
+    params = [cust_val, sid]
     if cutoff:
         where += " AND service_date IS NOT NULL AND service_date >= ?"
         params.append(cutoff)
@@ -7882,6 +7962,316 @@ def api_tag_unclassified_assign():
     return jsonify({"ok": True, "renormalized": stats})
 
 
+# ============ Wave5 AI 归并建议（审核后应用，不自动改库） ============
+
+TOOL_TAG_MERGE_SUGGEST = {
+    "name": "submit_tag_merge_groups",
+    "description": "把同义/近义的碎片顾客标签聚成若干归并组，每组给出标准词、成员、分类。",
+    "input_schema": {
+        "type": "object",
+        "required": ["groups"],
+        "properties": {
+            "groups": {
+                "type": "array",
+                "description": "归并组数组；只把语义相同/高度近义的碎片词放进同一组，"
+                               "语义不同的词不要硬凑。单独成义、找不到同义伙伴的词可以不输出。",
+                "items": {
+                    "type": "object",
+                    "required": ["canonical", "members", "category"],
+                    "properties": {
+                        "canonical": {
+                            "type": "string",
+                            "description": "该组最规范、最通用的标准词（<=10 字，从成员里选最好的，"
+                                           "或归纳一个更标准的词）",
+                        },
+                        "members": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "本组所有碎片词（必须原样来自给定候选词清单，不要改写、不要新增清单外的词）",
+                        },
+                        "category": {
+                            "type": "string",
+                            "enum": list(TAG_CATEGORIES),
+                            "description": "归到 7 类之一：客人新老/顾客类型/顾客画像/顾客痛点/顾客状态/需求类型/竞品",
+                        },
+                    },
+                },
+            }
+        },
+    },
+}
+
+_TAG_MERGE_SYSTEM = (
+    "你是医美/美容机构的顾客标签治理助手。给你一批同一公司里『尚未归一』的顾客标签碎片词"
+    "（每个带出现次数），你的任务是把语义相同或高度近义的词聚成组，便于人工审核后合并为统一标准词。\n"
+    "要求：\n"
+    "1) 只把语义确实相同/高度近义的词放进同一组（如『怕痛体质/怕疼/忍痛弱/拒绝痛感』→ 同组）；"
+    "语义不同的词不要硬凑一组。\n"
+    "2) 每组的 canonical 选最规范、最通用的一个标准词（<=10 字）；members 必须原样来自候选清单。\n"
+    "3) category 必须归到 7 类之一：客人新老/顾客类型/顾客画像/顾客痛点/顾客状态/需求类型/竞品。\n"
+    "4) 只输出值得合并的组（成员>=2 个才有合并价值）；孤词、无同义伙伴的词不要输出。\n"
+    "5) 必须调用 submit_tag_merge_groups 提交结构化结果。"
+)
+
+
+def _suggest_merge_company_id():
+    """归并建议针对哪个公司（与 _dict_company_id 同口径）。"""
+    return _dict_company_id()
+
+
+@app.route("/api/admin/tags/suggest_merge", methods=["POST"])
+@manager_required
+def api_tags_suggest_merge():
+    """对该公司 customer_tags 里 canonical_tag IS NULL 的碎片词，分批调 LLM 聚成归并组，
+    写入 tag_merge_suggestions(status='pending')。不直接改 tag_dictionary/customer_tags。
+    可带 ?category= 限定 LLM 归类倾向（仅作提示，不过滤候选词）。
+    返回本次生成的建议组数。"""
+    cid = _suggest_merge_company_id()
+    only_category = (request.args.get("category")
+                     or (request.get_json(silent=True) or {}).get("category") or "").strip()
+
+    # 取碎片词：未归一(canonical 为空)的 distinct 原始 tag + 出现次数
+    rows = db_fetchall(
+        """SELECT ct.tag AS tag, COUNT(*) AS cnt
+           FROM customer_tags ct
+           JOIN sessions s ON s.id = ct.source_session_id
+           WHERE (ct.canonical_tag IS NULL OR ct.canonical_tag='')
+             AND ((s.company_id IS NULL AND ?=1) OR s.company_id = ?)
+             AND ct.tag IS NOT NULL AND ct.tag <> ''
+           GROUP BY ct.tag
+           ORDER BY cnt DESC""",
+        (cid, cid),
+    )
+    frag = [(r["tag"], r["cnt"]) for r in rows]
+    if not frag:
+        return jsonify({"ok": True, "groups_created": 0, "fragments": 0,
+                        "message": "没有待归一的碎片标签"})
+
+    cnt_map = {t: c for t, c in frag}
+    model = DEFAULT_MODEL
+    BATCH = 120
+    created = 0
+    batches = 0
+    errors = []
+
+    for i in range(0, len(frag), BATCH):
+        batch = frag[i:i + BATCH]
+        batches += 1
+        word_lines = "\n".join(f"- {t}（出现 {c} 次）" for t, c in batch)
+        hint = (f"\n本批请尽量往『{only_category}』这一类归。\n" if only_category else "")
+        user_prompt = (
+            f"候选碎片标签清单（共 {len(batch)} 个，只能用清单里的原词作为 members）：\n"
+            f"{word_lines}\n{hint}\n"
+            "请把同义/近义的词聚成组并调用工具提交。"
+        )
+        try:
+            result = _call_llm_with_retry(
+                model, _TAG_MERGE_SYSTEM, user_prompt,
+                tool=TOOL_TAG_MERGE_SUGGEST, max_tokens=8000,
+                stage_label=f"tag_merge_suggest_b{batches}", max_attempts=3,
+            )
+        except Exception as e:
+            errors.append(str(e))
+            print(f"[suggest_merge] cid={cid} batch{batches} 失败: {e}")
+            continue
+
+        groups = (result or {}).get("groups") or []
+        batch_word_set = {t for t, _ in batch}
+        to_insert = []
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            canon = (g.get("canonical") or "").strip()
+            cat = (g.get("category") or "其他").strip() or "其他"
+            if cat not in TAG_CATEGORIES:
+                cat = "其他"
+            members_raw = g.get("members") or []
+            # 只保留确实来自本批候选词的成员，去重
+            seen, members = set(), []
+            for m in members_raw:
+                m = (m or "").strip() if isinstance(m, str) else ""
+                if m and m in batch_word_set and m.lower() not in seen:
+                    seen.add(m.lower()); members.append(m)
+            # 没选 canonical 时退化为出现最多的成员
+            if not canon and members:
+                canon = max(members, key=lambda x: cnt_map.get(x, 0))
+            # 至少 2 个成员才有合并价值
+            if not canon or len(members) < 2:
+                continue
+            sample = sum(cnt_map.get(m, 0) for m in members)
+            to_insert.append((cid, cat, canon,
+                              json.dumps(members, ensure_ascii=False), sample))
+
+        if to_insert:
+            def _ins(conn, rows=to_insert):
+                conn.executemany(
+                    "INSERT INTO tag_merge_suggestions "
+                    "(company_id, category, canonical, members_json, sample_count, status) "
+                    "VALUES (?, ?, ?, ?, ?, 'pending')",
+                    rows,
+                )
+                conn.commit()
+            db_batch(_ins)
+            created += len(to_insert)
+
+    resp = {"ok": True, "company_id": cid, "fragments": len(frag),
+            "batches": batches, "groups_created": created}
+    if errors:
+        resp["errors"] = errors[:5]
+    return jsonify(resp)
+
+
+@app.route("/api/admin/tags/suggestions", methods=["GET"])
+@manager_required
+def api_tags_suggestions_list():
+    """列出归并建议组。默认 status=pending；可传 ?status=applied|rejected|all。"""
+    cid = _suggest_merge_company_id()
+    status = (request.args.get("status") or "pending").strip()
+    where = ["company_id=?"]
+    params = [cid]
+    if status != "all":
+        where.append("status=?"); params.append(status)
+    rows = db_fetchall(
+        "SELECT id, category, canonical, members_json, sample_count, status, "
+        "created_at, applied_at FROM tag_merge_suggestions "
+        f"WHERE {' AND '.join(where)} "
+        "ORDER BY (status='pending') DESC, sample_count DESC, id DESC",
+        tuple(params),
+    )
+    out = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["members"] = json.loads(r["members_json"] or "[]") or []
+        except (json.JSONDecodeError, TypeError):
+            d["members"] = []
+        d.pop("members_json", None)
+        out.append(d)
+    return jsonify({"company_id": cid, "status": status, "suggestions": out})
+
+
+def _upsert_tag_dict_with_members(cid, category, canonical, members):
+    """把一组归并应用进 tag_dictionary：canonical 为标准词，members 并入其 synonyms。
+    - canonical 已存在 → 合并 members 进 synonyms（去重、剔除与标准词同名）；如原为黑名单则转 active。
+    - 不存在 → 新建 active 词条。
+    members 中若已有别的 active 标准词条，会被吸收为同义词（删除该独立词条）。"""
+    def _parse(s):
+        try:
+            return json.loads(s or "[]") or []
+        except (json.JSONDecodeError, TypeError):
+            return []
+
+    # members 里若本身是其它标准词条 → 收编（把它们的同义词也搬过来，再删掉）
+    extra_syn = []
+    for m in members:
+        if m == canonical:
+            continue
+        row = db_fetchone(
+            "SELECT id, synonyms FROM tag_dictionary WHERE company_id=? AND canonical_tag=?",
+            (cid, m),
+        )
+        if row:
+            extra_syn.extend(_parse(row["synonyms"]))
+            db_write("DELETE FROM tag_dictionary WHERE id=?", (row["id"],))
+
+    tgt = db_fetchone(
+        "SELECT id, synonyms FROM tag_dictionary WHERE company_id=? AND canonical_tag=?",
+        (cid, canonical),
+    )
+    all_syn = (_parse(tgt["synonyms"]) if tgt else []) + list(members) + extra_syn
+    seen, syns = set(), []
+    for s in all_syn:
+        s = (s or "").strip()
+        if s and s != canonical and s.lower() not in seen:
+            seen.add(s.lower()); syns.append(s)
+    syn_json = json.dumps(syns, ensure_ascii=False)
+
+    if tgt:
+        db_write(
+            "UPDATE tag_dictionary SET synonyms=?, category=?, status='active' WHERE id=?",
+            (syn_json, category, tgt["id"]),
+        )
+    else:
+        try:
+            db_write(
+                "INSERT INTO tag_dictionary (company_id, category, canonical_tag, synonyms, status) "
+                "VALUES (?, ?, ?, ?, 'active')",
+                (cid, category, canonical, syn_json),
+            )
+        except sqlite3.IntegrityError:
+            # 并发或大小写差异：退回 UPDATE
+            db_write(
+                "UPDATE tag_dictionary SET synonyms=?, category=?, status='active' "
+                "WHERE company_id=? AND canonical_tag=?",
+                (syn_json, category, cid, canonical),
+            )
+
+
+@app.route("/api/admin/tags/suggestions/<int:sid>/apply", methods=["POST"])
+@manager_required
+def api_tags_suggestion_apply(sid):
+    """审核通过一条归并建议：upsert 进 tag_dictionary，再 renormalize 回填 customer_tags。
+    可在 body 传 canonical/members/category 覆盖建议内容（管理员编辑后应用）。"""
+    row = db_fetchone(
+        "SELECT id, company_id, category, canonical, members_json, status "
+        "FROM tag_merge_suggestions WHERE id=?", (sid,))
+    if not row:
+        return jsonify({"error": "建议不存在"}), 404
+    cid = row["company_id"]
+    if session.get("role") != "super" and cid != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    if row["status"] == "applied":
+        return jsonify({"error": "该建议已应用"}), 409
+
+    data = request.get_json(silent=True) or {}
+    canonical = (data.get("canonical") or row["canonical"] or "").strip()
+    category = (data.get("category") or row["category"] or "其他").strip() or "其他"
+    if category not in TAG_CATEGORIES:
+        category = "其他"
+    if "members" in data and isinstance(data["members"], list):
+        members_src = data["members"]
+    else:
+        try:
+            members_src = json.loads(row["members_json"] or "[]") or []
+        except (json.JSONDecodeError, TypeError):
+            members_src = []
+    seen, members = set(), []
+    for m in members_src:
+        m = (m or "").strip() if isinstance(m, str) else ""
+        if m and m.lower() not in seen:
+            seen.add(m.lower()); members.append(m)
+    if not canonical:
+        return jsonify({"error": "缺少 canonical 标准词"}), 400
+
+    _upsert_tag_dict_with_members(cid, category, canonical, members)
+    stats = renormalize_company_tags(cid)  # 内部已 invalidate_tag_dict
+    db_write(
+        "UPDATE tag_merge_suggestions SET status='applied', "
+        "category=?, canonical=?, members_json=?, applied_at=datetime('now','localtime') "
+        "WHERE id=?",
+        (category, canonical, json.dumps(members, ensure_ascii=False), sid),
+    )
+    return jsonify({"ok": True, "applied": {"canonical": canonical,
+                    "category": category, "members": members},
+                    "renormalized": stats})
+
+
+@app.route("/api/admin/tags/suggestions/<int:sid>/reject", methods=["POST"])
+@manager_required
+def api_tags_suggestion_reject(sid):
+    """拒绝一条归并建议（不改词典/标签）。"""
+    row = db_fetchone(
+        "SELECT id, company_id, status FROM tag_merge_suggestions WHERE id=?", (sid,))
+    if not row:
+        return jsonify({"error": "建议不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != session.get("company_id"):
+        return jsonify({"error": "无权操作"}), 403
+    if row["status"] == "applied":
+        return jsonify({"error": "已应用的建议不能拒绝"}), 409
+    db_write("UPDATE tag_merge_suggestions SET status='rejected' WHERE id=?", (sid,))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/admin/tag_stats")
 @manager_required
 def api_admin_tag_stats():
@@ -7913,10 +8303,13 @@ def api_admin_tag_stats():
         where.append("s.service_date <= ?"); params.append(to)
     where.append(COMP if scope == "competitor" else f"NOT {COMP}")
 
+    # 客人数口径：优先按 customer_id 去重；customer_id 为空的行回退按 customer_name。
+    # 用前缀拼键避免 id 与 name 命名空间冲突（Wave2 customer_id 仅部分回填，故需回退）。
+    CUST = "COALESCE('I'||ct.customer_id, 'N'||ct.customer_name)"
     rows = db_fetchall(
         f"""SELECT {EFF} AS tag, MAX(d.category) AS category,
                    COUNT(DISTINCT ct.source_session_id) AS service_count,
-                   COUNT(DISTINCT ct.customer_name) AS customer_count
+                   COUNT(DISTINCT {CUST}) AS customer_count
             FROM customer_tags ct
             JOIN sessions s ON s.id = ct.source_session_id
             LEFT JOIN tag_dictionary d
