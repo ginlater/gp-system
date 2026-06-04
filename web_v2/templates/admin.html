@@ -464,7 +464,10 @@ html,body{overflow-x:hidden;max-width:100%}
     </style>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <span style="font-size:13px;color:#666" id="opsGenTime"></span>
-      <button class="btn sec" style="padding:4px 12px;font-size:12px" onclick="loadOpsDashboard(true)">↻ 刷新</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        {% if role in ('admin','super') %}<select id="opsStore" onchange="loadOpsDashboard(true)" title="按门店筛选看板" style="border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:12px"><option value="">全部门店</option></select>{% endif %}
+        <button class="btn sec" style="padding:4px 12px;font-size:12px" onclick="loadOpsDashboard(true)">↻ 刷新</button>
+      </div>
     </div>
     <div id="opsDashboardContent"><div class="muted">加载中…</div></div>
   </div>
@@ -1802,7 +1805,18 @@ function loadOpsDashboard(force) {
   if (_opsLoaded && !force) return;
   const box = document.getElementById('opsDashboardContent');
   box.innerHTML = '<div class="muted">加载中…</div>';
-  fetch(BASE + '/api/admin/ops_dashboard').then(r => {
+  const stSel = document.getElementById('opsStore');
+  // 门店下拉首次填充（仅 admin/super 有此元素；店长由后端收口本店、无需下拉）
+  if (stSel && stSel.options.length <= 1) {
+    (_storesCache.length ? Promise.resolve() : loadStores()).then(() => {
+      const cur = stSel.value;
+      stSel.innerHTML = '<option value="">全部门店</option>' + _storesCache.map(s =>
+        `<option value="${s.id}">${s.name}</option>`).join('');
+      stSel.value = cur;
+    });
+  }
+  const opsSid = stSel && stSel.value ? ('?store_id=' + stSel.value) : '';
+  fetch(BASE + '/api/admin/ops_dashboard' + opsSid).then(r => {
     if (!r.ok) return r.text().then(t => { throw new Error('HTTP ' + r.status + ': ' + t.slice(0,100)); });
     return r.json();
   }).then(d => {
@@ -1832,7 +1846,9 @@ function loadViewStats() {
   const box = document.getElementById('viewStatsBox');
   if (!box) return;
   box.innerHTML = '<div class="muted">加载中…</div>';
-  fetch(BASE + '/api/admin/report_view_stats?days=' + days).then(r => r.json()).then(d => {
+  const _opsSt = document.getElementById('opsStore');
+  const vsSid = _opsSt && _opsSt.value ? ('&store_id=' + _opsSt.value) : '';
+  fetch(BASE + '/api/admin/report_view_stats?days=' + days + vsSid).then(r => r.json()).then(d => {
     const rows = d.rows || [];
     if (!rows.length) { box.innerHTML = '<p class="muted">该时段无查看记录</p>'; return; }
     box.innerHTML = `<table class="tbl" style="font-size:12px">
