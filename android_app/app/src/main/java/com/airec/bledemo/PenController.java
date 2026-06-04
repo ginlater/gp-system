@@ -67,6 +67,10 @@ public class PenController {
     private volatile boolean appInitiatedPauseResume = false;  // 区分 App 主动 vs 笔上按键触发的暂停
     private volatile int downloadRetries = 0;          // 下载失败重试计数（笔回 0xFD=文件未就绪时重试）
     private static final int MAX_DOWNLOAD_RETRIES = 3;
+    // ★状态机门控：只认"用户在 App 里发起的录音会话"，无视笔自发的录音状态帧（如声控/VOX 自动分段）
+    private volatile boolean userRecording = false;    // 用户点了开始、本次会话进行中
+    private volatile boolean stopping = false;         // 用户点了结束、正在收尾这一段
+    private volatile boolean stopHandled = false;      // 结束后的那次"录音停止"是否已处理（防兜底重复）
 
     public PenController(Context ctx, Listener l) {
         this.appCtx = ctx.getApplicationContext();
@@ -124,6 +128,10 @@ public class PenController {
         try {
             AIRECBleManager mgr = AIRECBleManager.getInstance();
             if (!mgr.isConnected()) return;
+            // ★关声控/VOX（最关键）：出厂默认开着，会"有声就录、静音就停"每3-4秒自动分段，
+            //   导致笔不停自发录音、App 状态栏疯狂闪、结束按钮压不住。必须关掉。
+            // 幂等：只在读到≠目标值时下发（避免 set→SDK刷新→onInitParamUpdated→再set 的死循环）。
+            if (mgr.getNoiseSwitch())          { mgr.setNoiseSwitch(false);   Log.d(TAG, "笔初始化：关闭声控(VOX)"); }
             if (mgr.getIdleShutdown() != 0)    { mgr.setIdleShutdown(0);      Log.d(TAG, "笔初始化：关闭自动关机"); }
             if (mgr.getSegmentDuration() != 0) { mgr.setSegmentDuration(0);   Log.d(TAG, "笔初始化：关闭分段(整段录)"); }
             if (mgr.getPowerOnRecord())        { mgr.setPowerOnRecord(false); Log.d(TAG, "笔初始化：关闭开机自动录音"); }
@@ -144,6 +152,9 @@ public class PenController {
         this.pendingFileName = null;
         this.penPaused = false;
         this.downloadRetries = 0;
+        this.stopping = false;
+        this.stopHandled = false;
+        this.userRecording = true;   // ★开门：本次是用户发起的录音会话
         this.startElapsedMs = SystemClock.elapsedRealtime();
         activate();
         try {
@@ -151,6 +162,7 @@ public class PenController {
             post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
         } catch (Exception e) {
             Log.e(TAG, "startRecord failed", e);
+            userRecording = false;
             post(PhoneMicService.STATE_ERROR, "录音笔启动失败：" + e.getMessage(), 0, -1);
         }
     }
@@ -164,6 +176,9 @@ public class PenController {
         this.uploadUrl = uploadUrl;
         this.waitingForFile = false;
         this.pendingFileName = null;
+        this.stopping = false;
+        this.stopHandled = false;
+        this.userRecording = true;   // 采纳=视为用户会话，后续结束才走上传
         if (this.startElapsedMs == 0) this.startElapsedMs = SystemClock.elapsedRealtime();
     }
 
@@ -189,15 +204,35 @@ public class PenController {
 
     /** 结束录音（笔停止后会触发取文件→下载→上传链路）。 */
     public void stopRecording() {
+        if (!userRecording && !stopping) {
+            // 用户其实没在录（不该发生，防御）→ 直接回 idle，不下载不上传
+            post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
+            return;
+        }
         penPaused = false;
         downloadRetries = 0;
+        stopping = true;          // ★放行随后那次"录音停止"帧去走上传
+        stopHandled = false;
         try {
             post(PhoneMicService.STATE_UPLOADING, "正在保存录音笔文件…", elapsedSec(), -1);
             AIRECBleManager.getInstance().endRecord();
         } catch (Exception e) {
             Log.e(TAG, "endRecord failed", e);
+            userRecording = false; stopping = false;
             post(PhoneMicService.STATE_ERROR, "录音笔停止失败：" + e.getMessage(), elapsedSec(), -1);
+            return;
         }
+        // 兜底：4s 内若笔没回"录音停止"帧，主动取文件列表走上传，避免卡在"保存中"
+        main.postDelayed(() -> {
+            if (stopping && !stopHandled) {
+                Log.w(TAG, "endRecord 后笔未回停止帧，兜底取文件");
+                stopHandled = true;
+                userRecording = false;
+                waitingForFile = true;
+                try { AIRECBleManager.getInstance().fetchFileList(); }
+                catch (Exception ignored) {}
+            }
+        }, 4000);
     }
 
     // ============ SDK 回调 ============
@@ -205,12 +240,28 @@ public class PenController {
     private final AIRECBleCallback callback = new AIRECBleCallback() {
         @Override
         public void onRecordStateChanged(boolean recording, String fileName) {
+            // ★门控：只认用户发起的会话。idle 时笔自发的录音帧（声控/VOX 自动分段）一律忽略，
+            //   不 post、不 fetchFileList、不上传——杜绝"陪伴进行中↔保存中"闪烁与 fetchFileList 刷屏。
+            if (!userRecording && !stopping) {
+                Log.d(TAG, "忽略笔自发录音帧 recording=" + recording);
+                return;
+            }
             if (recording) {
-                if (startElapsedMs == 0) startElapsedMs = SystemClock.elapsedRealtime();
-                post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", elapsedSec(), -1);
+                // 用户会话中：保持"录音中"显示（stopping 期间忽略，避免结束后被自发 true 拉回）
+                if (!stopping) {
+                    if (startElapsedMs == 0) startElapsedMs = SystemClock.elapsedRealtime();
+                    post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", elapsedSec(), -1);
+                }
             } else {
-                // 录音已停。设备把这段写入文件，文件名可能由 fileName 给出（也可能为空）。
-                // TODO(真机核对)：fileName 是否就是设备文件列表里的文件名；保存到文件是否需要等待。
+                // 录音停止帧：
+                if (!stopping) {
+                    // 用户还没点结束，却收到停止（理论上关了声控不会有；防御性忽略，不半截上传）
+                    Log.d(TAG, "会话中笔自发停止帧，忽略");
+                    return;
+                }
+                if (stopHandled) return;   // 已被兜底处理过
+                stopHandled = true;
+                userRecording = false;     // ★关门：会话结束，后续自发帧再次被忽略
                 pendingFileName = fileName;
                 waitingForFile = true;
                 post(PhoneMicService.STATE_UPLOADING, "正在获取录音笔文件…", elapsedSec(), -1);
@@ -328,6 +379,8 @@ public class PenController {
 
         @Override
         public void onRecordDurationUpdated(long durationSec) {
+            // 只在用户会话内同步时长；笔自发录音的时长 tick 一律忽略
+            if (!userRecording) return;
             if (listener != null) main.post(() -> listener.onPenRecordDuration((int) durationSec));
         }
     };
@@ -376,7 +429,12 @@ public class PenController {
                 Log.e(TAG, "processAndUpload failed", e);
                 post(PhoneMicService.STATE_ERROR, "处理录音失败：" + e.getMessage(), durSec, -1);
             } finally {
+                // 一次会话收尾：复位所有门控，回到"忽略笔自发帧"的 idle
                 startElapsedMs = 0;
+                stopping = false;
+                stopHandled = false;
+                userRecording = false;
+                waitingForFile = false;
             }
         });
     }

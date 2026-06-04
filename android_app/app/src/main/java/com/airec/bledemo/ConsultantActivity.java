@@ -266,8 +266,12 @@ public class ConsultantActivity extends Activity
     public void onPenRecordStatus(boolean recording) {
         ui.post(() -> {
             ui.removeCallbacks(penRecordFallback);
+            // ★只在"用户刚点了开始"时才据此动作；否则笔自发的录音状态（声控等）一律不改 UI
+            //   （连上会自动关声控，几秒后笔就不再自发录音）。
+            if (!pendingRecordAfterConnect) return;
+            pendingRecordAfterConnect = false;
             if (recording) {
-                pendingRecordAfterConnect = false;
+                // 用户点了开始、连上发现笔已在录 → 采纳为本次会话
                 activeSource = "pen";
                 if (recordingStartMs == 0) recordingStartMs = SystemClock.elapsedRealtime();
                 if (penController != null) {
@@ -275,8 +279,8 @@ public class ConsultantActivity extends Activity
                             CookieManager.getInstance().getCookie(START_URL), uploadUrlFor(START_URL));
                 }
                 applyState("recording", "录音中…（录音笔）");
-            } else if (pendingRecordAfterConnect) {
-                pendingRecordAfterConnect = false;
+            } else {
+                // 笔空闲 → 正常开始新录音
                 startRecordingInternal("pen");
             }
         });

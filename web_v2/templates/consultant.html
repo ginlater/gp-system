@@ -471,23 +471,6 @@ function appToggleRecord(){
   try { window.AndroidBridge.startRecording(appRecSource); } catch(e){}
 }
 
-// 暂停/继续（仅录音笔，仅 App 内）
-function appPauseResume(){
-  if (window.uploading) return;
-  try {
-    if (window.__appPaused) window.AndroidBridge.resumeRecording();
-    else window.AndroidBridge.pauseRecording();
-  } catch(e){}
-}
-// 暂停按钮文案 + 显隐：只有录音中/暂停时显示
-function appUpdatePauseBtn(){
-  var b = document.getElementById('recPauseBtn'); if (!b) return;
-  if (!window.__appRecording) { b.style.display = 'none'; return; }
-  b.style.display = '';
-  b.textContent = window.__appPaused ? (isCute()?'▶️ 继续陪伴':'▶ 继续')
-                                     : (isCute()?'⏸️ 歇一下':'⏸ 暂停');
-}
-
 // 录音笔连接指示：录音卡片里、按钮上方一行。点一下触发连接。
 // 两套皮肤分开渲染：
 //   - pro（专业版）：明确文案「🖊 录音笔 已连接 / 未连接」，专业版不忌讳「录音」字。
@@ -538,13 +521,8 @@ window.__onNativeRecState = function(state, msg, durSec){
     if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'🌸 结束陪伴':'■ 结束录音'; btn.style.background = isCute()?'':'#e74c3c'; }
     if (st){ st.innerHTML = '<span class="rec-dot"></span>' + (isCute()?'陪伴进行中… 💕':'录音中…'); }
     appStartTimer(durSec);  // 用原生已录秒数同步计时（重连到仍在录的笔也能显示正确进度）
-  } else if (state === 'paused') {
-    window.__appRecording = true; window.__appPaused = true; window.uploading = false;
-    appStopTimer();  // 冻结计时显示
-    if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'🌸 结束陪伴':'■ 结束录音'; }
-    if (st){ st.textContent = isCute()?'已暂停 ⏸️ 轻点继续':'已暂停（点继续恢复）'; }
   } else if (state === 'uploading') {
-    window.__appRecording = false; window.__appPaused = false; window.uploading = true;
+    window.__appRecording = false; window.uploading = true;
     appStopTimer();
     if (btn){ btn.disabled = true; }
     // 可爱皮肤绝不显示原生消息（可能含「录音」字），固定含蓄文案
@@ -561,7 +539,6 @@ window.__onNativeRecState = function(state, msg, durSec){
     }
     if (t) t.textContent = '00:00';
   }
-  appUpdatePauseBtn();  // 同步暂停/继续按钮的显隐与文案
 };
 // 录音笔连接状态变化 → 刷新连接指示行（已连/未连）
 window.__onPenConnChanged = function(connected){ appUpdateSourceRow(); };
@@ -597,20 +574,10 @@ if (IN_APP) {
     _area.insertBefore(_row, _recBtn);
     appUpdateSourceRow();
   }
-  // 录音按钮上方注入「暂停/继续」按钮（仅录音中/暂停时显示）
-  if (_area && _recBtn && !document.getElementById('recPauseBtn')) {
-    var _pb = document.createElement('button');
-    _pb.id = 'recPauseBtn'; _pb.type = 'button';
-    _pb.style.cssText = 'display:none;margin:0 auto 10px;padding:8px 22px;border-radius:99px;'
-      + 'border:1px solid var(--blue,#3b6ef6);background:#fff;color:var(--blue,#3b6ef6);'
-      + 'font-size:14px;font-family:inherit;cursor:pointer';
-    _pb.onclick = appPauseResume;
-    _area.insertBefore(_pb, _recBtn);
-  }
-  // 若返回本页时原生仍在录音/暂停/上传（例如切到接诊列表又切回），同步一下按钮状态
+  // 若返回本页时原生仍在录音/上传（例如切到接诊列表又切回），同步一下按钮状态
   try {
     var _gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
-    if (_gs === 'recording' || _gs === 'paused' || _gs === 'uploading') window.__onNativeRecState(_gs, '', 0);
+    if (_gs === 'recording' || _gs === 'uploading') window.__onNativeRecState(_gs, '', 0);
   } catch(e){}
   // 录音笔没连：给个非弹窗提示（真正强制连接发生在点开始时）。cute 下不出现「录音」字。
   setTimeout(function(){
@@ -619,6 +586,22 @@ if (IN_APP) {
       if (st) st.textContent = isCute()?'请先连接小伙伴 🖊':'请先连接录音笔';
     }
   }, 600);
+  // 连接指示实时化：定时轮询真实 BLE 连接状态刷新指示，兜底"断开了还显示已就绪"（事件漏报时也能纠正）。
+  window.__appPenLastConn = appPenConnected();
+  setInterval(function(){
+    var now = appPenConnected();
+    if (now !== window.__appPenLastConn) {
+      window.__appPenLastConn = now;
+      appUpdateSourceRow();
+      if (!now) {
+        // 刚断开：若没在录音/上传，给个未连提示
+        if (!window.__appRecording && !window.uploading) {
+          var st = document.getElementById('recStatus');
+          if (st) st.textContent = isCute()?'小伙伴断开了，请重新连接 🖊':'录音笔已断开，请重新连接';
+        }
+      }
+    }
+  }, 2500);
 }
 
 // ============ 皮肤切换（专业版 / 萌系卡通） ============
@@ -643,7 +626,6 @@ function applySkin(skin){
   }
   // App 内：连接指示按钮是 JS 渲染的，皮肤切换时重渲染（cute=纯图标无「录音」字 / pro=明确文案）
   if (document.getElementById('appSrcPen')) appUpdateSourceRow();
-  if (document.getElementById('recPauseBtn')) appUpdatePauseBtn();
 }
 function toggleSkin(){
   const next = isCute() ? 'pro' : 'cute';
