@@ -1412,17 +1412,59 @@ def _asr_submit_with_retry(audio_url, attempts=5):
     raise RuntimeError(f"DashScope async_call 重试 {attempts} 次仍失败: {last_err}")
 
 
+def _ensure_clean_audio(recording_id, oss_key):
+    """ASR/播放/分割前确保音频是带正确时长头与时间戳的干净格式。
+    浏览器 webm/opus 录音常无时长头 → 三连坑：(1)DashScope 解码会提前停、转录覆盖不全；
+    (2)ffmpeg 按时间 seek 的切点与 ASR 时间轴对不上、分割后音频/文字错位；(3)播放器 duration=Infinity。
+    这里在 ASR 前把这类文件用 ffmpeg 转成 mp3(带时长+时间戳)，替换 OSS 对象与 oss_key/duration_label，
+    后续 ASR/播放/分割全部基于干净文件。转码失败则回退用原文件，不阻断 ASR。返回最终使用的 oss_key。"""
+    if not oss_key or "." not in oss_key:
+        return oss_key
+    ext = oss_key.rsplit(".", 1)[-1].lower()
+    if ext in ("mp3", "wav", "m4a"):
+        return oss_key  # 已是带正确头的格式，无需转码
+    import tempfile, shutil
+    tmpdir = tempfile.mkdtemp(prefix="reclean_")
+    src = os.path.join(tmpdir, f"src.{ext}")
+    out = os.path.join(tmpdir, "clean.mp3")
+    new_key = None
+    try:
+        oss_bucket.get_object_to_file(oss_key, src)
+        _run_ffmpeg(["-i", src, "-vn", "-acodec", "libmp3lame", "-q:a", "4", out])
+        dur = _ffprobe_duration(out)
+        if not dur or dur < 0.2:
+            return oss_key  # 转码异常，回退原文件
+        new_key = (oss_key.rsplit(".", 1)[0]) + "_clean.mp3"
+        oss_bucket.put_object_from_file(new_key, out)
+        db_write(
+            "UPDATE recordings SET oss_key=?, duration_label=?, size_bytes=? WHERE id=?",
+            (new_key, _format_duration_label(dur), os.path.getsize(out), recording_id),
+        )
+        _oss_delete_quiet(oss_key)  # 删原 webm，失败仅记日志（孤儿可接受）
+        app.logger.info("[clean audio] rec %s 转码 %s → %s (%.1fs)", recording_id, oss_key, new_key, dur)
+        return new_key
+    except Exception as e:
+        # 转码失败：若已上传 new_key 但 DB 未更新则清掉，回退原文件继续 ASR
+        if new_key:
+            _oss_delete_quiet(new_key)
+        app.logger.warning("[clean audio] rec %s 转码失败，回退原文件: %s", recording_id, e)
+        return oss_key
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def run_asr(recording_id):
     rec = db_fetchone("SELECT oss_key FROM recordings WHERE id = ?", (recording_id,))
     if not rec:
         return
-    oss_key = rec["oss_key"]
     db_write(
         """UPDATE recordings SET asr_status='running',
            asr_started_at=datetime('now','localtime'), asr_error=NULL WHERE id=?""",
         (recording_id,),
     )
     try:
+        # webm/opus 无时长头 → 先转码成干净 mp3，再做 ASR（同时修复转录覆盖/分割错位/播放时长）
+        oss_key = _ensure_clean_audio(recording_id, rec["oss_key"])
         audio_url = oss_signed_url(oss_key, expires=7200)
         task_id = _asr_submit_with_retry(audio_url)
         resp = Transcription.wait(task=task_id)
