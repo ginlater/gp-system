@@ -978,6 +978,8 @@ function toggleRec() {
 
 // 防止 race condition：只让最后一次切段的结果生效
 let _segReqSeq = 0;
+let _durReady = Promise.resolve();     // 当前段"真实时长已确定"的就绪信号（跳转会等它）
+let _durReadyResolve = null;
 
 // 按需向后端请求签名 URL（不再依赖页面加载时的预签名）
 async function switchSeg(idx) {
@@ -1013,12 +1015,35 @@ async function switchSeg(idx) {
     if (!data.url) throw new Error(data.error || '获取播放链接失败');
     src.src = data.url;
     audio.src = data.url;  // 双保险：部分浏览器 source.src 不触发 reload
+    const wantAutoplay = (prevSeg >= 0 && prevSeg !== idx);
+    // 新一段：建立"时长就绪"信号；跳转(seekAudio)会等它，避免被下面的"读时长"seek 覆盖到 0。
+    _durReady = new Promise(function (res) { _durReadyResolve = res; });
+    const _settleDur = function () { if (_durReadyResolve) { const r = _durReadyResolve; _durReadyResolve = null; r(); } };
+    setTimeout(_settleDur, 8000);  // 兜底：8s 内还没确定也放行，避免跳转卡死
+    // webm/opus 录音常无时长头 → 浏览器把 duration 报成 Infinity，进度条/拖动失准、
+    // 切分点(currentTime)会算错(例如把 12 分钟的音频切在 43 秒处)。loadedmetadata 后
+    // 若时长非有限，强制 seek 到真实结尾让浏览器算出时长，再回到开头；之后拖动与
+    // currentTime 才与真实时间轴一致。完成后再决定是否自动播放。
+    audio.onloadedmetadata = function () {
+      if (!isFinite(audio.duration) || audio.duration <= 0) {
+        const onUpd = function () {
+          if (isFinite(audio.duration)) {
+            audio.removeEventListener('timeupdate', onUpd);
+            try { audio.currentTime = 0; } catch (_) {}
+            _settleDur();
+            if (wantAutoplay) audio.play().catch(function () {});
+          }
+        };
+        audio.addEventListener('timeupdate', onUpd);
+        try { audio.currentTime = 1e101; } catch (_) {}
+      } else {
+        _settleDur();
+        if (wantAutoplay) audio.play().catch(function () {});
+      }
+    };
     audio.load();
-    // 用户主动切段（不是初次自动打开）则继续自动播放，避免还要再点一次
-    if (prevSeg >= 0 && prevSeg !== idx) {
-      audio.play().catch(function(){});
-    }
   } catch (e) {
+    if (_durReadyResolve) { const r = _durReadyResolve; _durReadyResolve = null; r(); }
     if (myReq !== _segReqSeq) return;
     src.src = '';
     audio.removeAttribute('src');
@@ -1097,6 +1122,7 @@ async function seekAudio(seconds, segIdx) {
   await switchSeg(segIdx);
   const audio = document.getElementById('recAudio');
   if (!audio) return;
+  await _durReady;   // 等真实时长确定后再定位，避免被"读时长"的 seek 覆盖到 0
   function doSeek() {
     audio.currentTime = seconds;
     audio.play().catch(function(){});
@@ -1576,8 +1602,15 @@ async function splitCurrentRec() {
   const rec = _curRec();
   if (!rec) { alert('请先选择一段录音'); return; }
   const audio = document.getElementById('recAudio');
-  const t = audio ? (audio.currentTime || 0) : 0;
+  // webm 录音无时长头时浏览器 duration=Infinity，此刻 currentTime 不可信（会把切点算错）。
+  // 等 switchSeg 里的"读真实时长"修正完成、duration 变为有限值后才允许分割。
+  if (!audio || !isFinite(audio.duration) || audio.duration <= 0) {
+    alert('录音时长还在读取中（webm 录音要先读到结尾才能定位）。请稍等一两秒，等播放器显示出总时长后再点分割。');
+    return;
+  }
+  const t = audio.currentTime || 0;
   if (t < 0.5) { alert('请先在播放器里把进度条拖到要切分的位置（不要太靠近开头），再点分割'); return; }
+  if (t >= audio.duration - 0.3) { alert('切分位置太靠近结尾，请往前拖一点'); return; }
   const mm = Math.floor(t / 60), ss = Math.floor(t % 60);
   const pos = `${mm}分${ss < 10 ? '0' : ''}${ss}秒`;
   if (!confirm(`将在 ${pos} 处把这段录音切成两段。\n\n两段都留在当前接诊里，转录会按切点自动切开（不重新转写），可分别用「换绑当前录音段」绑到对应客人。\n原录音会被替换。确认分割？`)) return;
