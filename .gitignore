@@ -24,3 +24,9 @@ venv/
 
 # SSL 证书私钥，勿提交
 gpssl.zip
+
+# 客户录音本地备份 & 数据库备份（含真实客户数据，勿提交）
+audio_backups/
+*.bak
+recordings.db-shm
+recordings.db-wal
