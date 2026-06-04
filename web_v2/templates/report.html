@@ -1611,9 +1611,18 @@ async function splitCurrentRec() {
   const t = audio.currentTime || 0;
   if (t < 0.5) { alert('请先在播放器里把进度条拖到要切分的位置（不要太靠近开头），再点分割'); return; }
   if (t >= audio.duration - 0.3) { alert('切分位置太靠近结尾，请往前拖一点'); return; }
-  const mm = Math.floor(t / 60), ss = Math.floor(t % 60);
-  const pos = `${mm}分${ss < 10 ? '0' : ''}${ss}秒`;
-  if (!confirm(`将在 ${pos} 处把这段录音切成两段。\n\n两段都留在当前接诊里，转录会按切点自动切开（不重新转写），可分别用「换绑当前录音段」绑到对应客人。\n原录音会被替换。确认分割？`)) return;
+  const fmt = (x) => `${Math.floor(x / 60)}分${(Math.floor(x % 60) < 10 ? '0' : '')}${Math.floor(x % 60)}秒`;
+  const pos = fmt(t), total = fmt(audio.duration), pct = Math.round(t / audio.duration * 100);
+  // 解析本段转录覆盖到的最后时间点（格式 "[A.AAs - B.BBs] ..."）；切点在其之后则后段会没有文字 → 警告
+  const tx = rec.asr_transcript || '';
+  const tsList = Array.from(tx.matchAll(/-\s*([\d.]+)\s*s\s*\]/g)).map(m => parseFloat(m[1]));
+  const lastTx = tsList.length ? Math.max.apply(null, tsList) : null;
+  let warn = '';
+  if (lastTx !== null && t > lastTx + 1) {
+    warn = `\n\n⚠ 注意：本段转录文字只到 ${fmt(lastTx)}，切点(${pos})在它之后，后段将没有文字`
+         + `（这段录音后半段可能没有有效转录）。建议把切点往前拖到还有对话的位置。\n`;
+  }
+  if (!confirm(`将在 ${pos} / 共 ${total}（约 ${pct}%）处把这段录音切成两段。\n前段 0~${pos}、后段 ${pos}~结尾。${warn}\n两段都留在当前接诊里，转录按切点自动切开（不重新转写），可分别用「换绑当前录音段」绑到对应客人。原录音会被替换。确认分割？`)) return;
   try {
     const r = await fetch(`${BASE}/api/admin/recordings/${rec.id}/split`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
