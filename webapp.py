@@ -8815,8 +8815,21 @@ def api_consultant_upload():
         ext = "webm"
     dur_label = _format_duration_label(request.form.get("duration_sec"))
     now = datetime.now()
-    recorded_at = now.strftime("%Y-%m-%d %H:%M:%S")
-    ts14 = now.strftime("%Y%m%d%H%M%S")
+    # ★录音真实开始时间：安卓传 'YYYY-MM-DD HH:MM:SS'(可选)。连录/补传必须用真实时间，
+    # 否则多段会挤在"上传时刻"，跨零点还会错日期。未传则回退服务器当前时间。
+    recorded_at_raw = (request.form.get("recorded_at") or "").strip()
+    recorded_at_form = None  # 表单解析出的真实时间；未传保持 None（用于判断是否覆盖占位行时间）
+    if recorded_at_raw:
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+            try:
+                recorded_at_form = datetime.strptime(recorded_at_raw, fmt).strftime("%Y-%m-%d %H:%M:%S")
+                break
+            except ValueError:
+                continue
+        if recorded_at_form is None:
+            recorded_at_form = recorded_at_raw  # 兜底：原样存，别丢
+    recorded_at = recorded_at_form or now.strftime("%Y-%m-%d %H:%M:%S")
+    ts14 = now.strftime("%Y%m%d%H%M%S")  # 仅用于 oss_key 文件名，继续用 now，避免连录补传撞名
     # 新格式：顾客未知 → 用 "未命名" 占位，绑定时再重命名
     oss_key = _build_consultant_oss_key(company_id, u['id'], None, advisor, ts14, dur_label, ext)
     if _oss_key_exists(oss_key):
@@ -8836,11 +8849,20 @@ def api_consultant_upload():
             except Exception as e:
                 app.logger.exception("顾问端上传 OSS 失败")
                 return jsonify({"error": _friendly_oss_error(e)}), 500
-            db_write(
-                """UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
-                   source='consultant-pen', upload_status='done' WHERE id=?""",
-                (oss_key, len(data), dur_label, prow["id"]),
-            )
+            # 占位行建占位时已带真实 recorded_at；仅当本次上传也带了 recorded_at 才覆盖，
+            # 否则别用上传时刻 now 覆盖掉占位的真实开始时间。
+            if recorded_at_form:
+                db_write(
+                    """UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
+                       recorded_at=?, source='consultant-pen', upload_status='done' WHERE id=?""",
+                    (oss_key, len(data), dur_label, recorded_at_form, prow["id"]),
+                )
+            else:
+                db_write(
+                    """UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
+                       source='consultant-pen', upload_status='done' WHERE id=?""",
+                    (oss_key, len(data), dur_label, prow["id"]),
+                )
             return jsonify({"id": prow["id"], "oss_key": oss_key})
     try:
         oss_bucket.put_object(oss_key, data)
