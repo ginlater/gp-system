@@ -435,6 +435,55 @@ const BASE = {{ request.script_root|tojson }};
 const ADVISOR = {{ advisor_name|tojson }};
 const ROLE = {{ role|tojson }};
 
+// ===== 网络断开统一提示（toast）=====
+// 联网请求(fetch)在断网/连接失败时会 reject(通常 TypeError)；HTTP 4xx/5xx 不会 reject，仍由各自逻辑处理。
+// 这里包一层 fetch：网络层失败时弹"网络断开"提示，再原样把错误抛出，不影响任何既有 try/catch/await 逻辑。
+// 覆盖全部联网操作：刷新未归档、绑定/换绑/退回、触发与重跑分析、确认说话人、查询/搜索、提醒处理、网页端上传等。
+(function(){
+  let _toastEl = null, _toastTimer = null;
+  function _ensureToastEl(){
+    if (_toastEl) return _toastEl;
+    const el = document.createElement('div');
+    el.id = 'netToast';
+    el.setAttribute('role', 'alert');
+    el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);'
+      + 'background:#c0392b;color:#fff;padding:10px 16px;border-radius:6px;font-size:14px;'
+      + 'font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,.25);z-index:99999;max-width:90vw;'
+      + 'text-align:center;display:none;';
+    (document.body || document.documentElement).appendChild(el);
+    _toastEl = el;
+    return el;
+  }
+  // 单一 toast 元素 + 重置计时：断网期间多次失败只会让同一条提示常驻，不堆叠、不刷屏；
+  // 恢复联网后最后一次失败 3.5s 后自动消失。
+  window.showNetToast = function(msg){
+    const el = _ensureToastEl();
+    el.textContent = msg || '⚠ 网络断开，请检查网络后重试';
+    el.style.display = 'block';
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function(){ el.style.display = 'none'; }, 3500);
+  };
+  if (window.fetch && !window.__netFetchWrapped){
+    const _origFetch = window.fetch.bind(window);
+    window.fetch = function(){
+      return _origFetch.apply(this, arguments).catch(function(err){
+        // fetch 仅在网络层失败(断网/DNS/连接被拒)时 reject —— 这正是要提示的场景。
+        window.showNetToast('⚠ 网络断开，请检查网络后重试');
+        throw err;  // 原样抛出，既有 catch/await 逻辑完全不变
+      });
+    };
+    window.__netFetchWrapped = true;
+  }
+  // 试听：<audio> 直接加载 OSS 签名URL(非 fetch)，断网播放会触发 error 事件(不冒泡，用捕获阶段委托)。
+  // 仅在确实离线时提示，避免签名URL过期(403)等被误判成"网络断开"。
+  document.addEventListener('error', function(e){
+    const t = e.target;
+    if (t && t.tagName === 'AUDIO' && navigator.onLine === false){
+      window.showNetToast('⚠ 网络断开，无法试听，请检查网络后重试');
+    }
+  }, true);
+})();
+
 // ============ App（WebView）环境检测 ============
 // 仅当被 Android App 的 WebView 加载、且 AndroidBridge.isApp() 为 true 时为 true。
 // 普通浏览器里恒为 false，下面所有 IN_APP 分支都不会执行，行为 100% 不变。
