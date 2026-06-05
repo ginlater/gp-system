@@ -47,6 +47,35 @@ public final class Uploader {
      */
     public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
                                 String fileName, String mime) {
+        return upload(file, durationSec, cookie, uploadUrl, fileName, mime, null);
+    }
+
+    /** 带录音笔 SN 的上传：SN 作为表单字段 sn 一并提交，供后端做 SN→员工 绑定（sn 可空）。 */
+    public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
+                                String fileName, String mime, String sn) {
+        return upload(file, durationSec, cookie, uploadUrl, fileName, mime, sn, -1L);
+    }
+
+    /** 带 SN + 占位记录 id 的上传：placeholderId>0 时后端回填该占位行(不新建)，否则照旧新建。 */
+    public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
+                                String fileName, String mime, String sn, long placeholderId) {
+        return upload(file, durationSec, cookie, uploadUrl, fileName, mime, sn, placeholderId, null);
+    }
+
+    /** 直传录音笔实时流拼好的 opus(.ops)：opus 端到端、后端解码；recordedAtWallMs>0 时保留真实录音时间。 */
+    public static Result uploadOps(File file, int durationSec, String cookie, String uploadUrl,
+                                   String fileName, String sn, long placeholderId, long recordedAtWallMs) {
+        String ra = null;
+        if (recordedAtWallMs > 0) {
+            ra = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date(recordedAtWallMs));
+        }
+        return upload(file, durationSec, cookie, uploadUrl, fileName, "audio/opus", sn, placeholderId, ra);
+    }
+
+    /** 完整签名：多一个 recordedAt(yyyy-MM-dd HH:mm:ss，可空)，作表单字段 recorded_at 提交，后端保留真实录音时间。 */
+    public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
+                                String fileName, String mime, String sn, long placeholderId, String recordedAt) {
         if (file == null || !file.exists() || file.length() == 0) {
             return new Result(false, -1, "录音文件为空");
         }
@@ -81,6 +110,28 @@ public final class Uploader {
                 out.writeBytes("Content-Disposition: form-data; name=\"duration_sec\"" + CRLF + CRLF);
                 out.write(String.valueOf(durationSec).getBytes(StandardCharsets.UTF_8));
                 out.writeBytes(CRLF);
+
+                // sn 字段（录音笔 SN，供后端绑定员工；可空则不带）
+                if (sn != null && !sn.isEmpty()) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"sn\"" + CRLF + CRLF);
+                    out.write(sn.getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
+                // placeholder_id 字段（>0 时后端回填该占位片段，不新建行）
+                if (placeholderId > 0) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"placeholder_id\"" + CRLF + CRLF);
+                    out.write(String.valueOf(placeholderId).getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
+                // recorded_at 字段（真实录音开始时间，连录/补传时保留原时间；可空则不带）
+                if (recordedAt != null && !recordedAt.isEmpty()) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"recorded_at\"" + CRLF + CRLF);
+                    out.write(recordedAt.getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
 
                 // file 字段
                 out.writeBytes("--" + boundary + CRLF);
@@ -133,5 +184,82 @@ public final class Uploader {
             while ((line = r.readLine()) != null) sb.append(line);
         } catch (Exception ignored) {}
         return sb.toString();
+    }
+
+    /**
+     * 建"占位片段"：POST 到 placeholderUrl，表单 recorded_at(录音真实开始时间)。
+     * 成功返回后端记录 id；失败/接口不存在返回 -1（调用方据此降级，跳过占位、照旧上传）。
+     */
+    public static long createPlaceholder(String cookie, String placeholderUrl, long recordedAtWallMs) {
+        if (placeholderUrl == null || placeholderUrl.isEmpty()) return -1;
+        HttpURLConnection conn = null;
+        String boundary = "----gongpaiPH" + System.currentTimeMillis();
+        try {
+            conn = (HttpURLConnection) new URL(placeholderUrl).openConnection();
+            conn.setUseCaches(false);
+            conn.setDoOutput(true);
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+            if (cookie != null && !cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
+            String recordedAt = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date(recordedAtWallMs > 0 ? recordedAtWallMs : System.currentTimeMillis()));
+            try (DataOutputStream out = new DataOutputStream(conn.getOutputStream())) {
+                out.writeBytes("--" + boundary + CRLF);
+                out.writeBytes("Content-Disposition: form-data; name=\"recorded_at\"" + CRLF + CRLF);
+                out.write(recordedAt.getBytes(StandardCharsets.UTF_8));
+                out.writeBytes(CRLF);
+                out.writeBytes("--" + boundary + "--" + CRLF);
+                out.flush();
+            }
+            int code = conn.getResponseCode();
+            String body = readBody(code < 400 ? conn.getInputStream() : conn.getErrorStream());
+            if (code >= 200 && code < 300) {
+                try { return new JSONObject(body).optLong("id", -1); }
+                catch (Exception e) { return -1; }
+            }
+            Log.w(TAG, "createPlaceholder http " + code + " " + body);
+            return -1;
+        } catch (Exception e) {
+            Log.w(TAG, "createPlaceholder failed: " + e.getMessage());
+            return -1;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /**
+     * 取消/删除一条占位片段（上传最终失败时清掉，别让"处理中"占位永远残留）。
+     * POST cancelUrl，表单 placeholder_id。失败/接口不存在都安静忽略。
+     */
+    public static void cancelPlaceholder(String cookie, String cancelUrl, long placeholderId) {
+        if (cancelUrl == null || cancelUrl.isEmpty() || placeholderId <= 0) return;
+        HttpURLConnection conn = null;
+        String boundary = "----gongpaiPC" + System.currentTimeMillis();
+        try {
+            conn = (HttpURLConnection) new URL(cancelUrl).openConnection();
+            conn.setUseCaches(false);
+            conn.setDoOutput(true);
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(15000);
+            conn.setReadTimeout(15000);
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+            if (cookie != null && !cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
+            try (DataOutputStream out = new DataOutputStream(conn.getOutputStream())) {
+                out.writeBytes("--" + boundary + CRLF);
+                out.writeBytes("Content-Disposition: form-data; name=\"placeholder_id\"" + CRLF + CRLF);
+                out.write(String.valueOf(placeholderId).getBytes(StandardCharsets.UTF_8));
+                out.writeBytes(CRLF);
+                out.writeBytes("--" + boundary + "--" + CRLF);
+                out.flush();
+            }
+            int code = conn.getResponseCode();
+            if (code < 200 || code >= 300) Log.w(TAG, "cancelPlaceholder http " + code);
+        } catch (Exception e) {
+            Log.w(TAG, "cancelPlaceholder failed: " + e.getMessage());
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 }

@@ -68,6 +68,10 @@ public class ConsultantActivity extends Activity
             if (pendingRecordAfterConnect && penController != null && penController.isConnected()) {
                 pendingRecordAfterConnect = false;
                 startRecordingInternal("pen");
+            } else if (pendingRecordAfterConnect) {
+                // 连上后又断开/查询不回：清掉残留"要录音"意图(防泄漏到下次连接幽灵开录)，并把网页解锁到可重试。
+                pendingRecordAfterConnect = false;
+                applyState("error", "录音笔连接不稳定，请确认它已开机靠近后重试");
             }
         }
     };
@@ -180,7 +184,16 @@ public class ConsultantActivity extends Activity
                     ui.postDelayed(penRecordFallback, 4000);
                 }
             } else {
+                // 没连上/取消：复位意图标志，并把"正在连接"锁住的网页解锁回可重试态（A配B，缺一会变永久卡disabled）。
+                boolean wantedRecord = pendingRecordAfterConnect;
                 pendingRecordAfterConnect = false;
+                ui.removeCallbacks(penRecordFallback);
+                activeSource = null;
+                if (wantedRecord && "starting".equals(state)) {
+                    applyState("error", "没连上录音笔，请确认它已开机后重试");
+                } else if ("starting".equals(state)) {
+                    applyState("idle", null);
+                }
             }
         }
     }
@@ -193,14 +206,17 @@ public class ConsultantActivity extends Activity
             if (penController == null || !penController.isConnected()) {
                 pendingSelectPenAfterConnect = true;
                 pendingRecordAfterConnect = true;   // 用户意图是录音：连上后自动开录
+                activeSource = "pen";               // 让后续 stop 走笔分支
+                applyState("starting", "正在连接录音笔…");  // 锁住按钮(uploading=true)，避免连接窗口里反复点
                 openScan();
                 return;
             }
             CookieManager.getInstance().flush();
             activeSource = "pen";
-            recordingStartMs = SystemClock.elapsedRealtime();
+            recordingStartMs = 0;   // 计时起点等"笔确认开录"时再设（见 onStatus STATE_RECORDING）
             penPausedAtMs = 0;
-            applyState("recording", "录音中…（录音笔）");
+            // ★先显示"启动中"，不乐观显示"录音中"：等笔回确认才转录音（防笔休眠空录、防传旧录音）。
+            applyState("starting", "正在唤醒录音笔…");
             penController.startRecording(
                     CookieManager.getInstance().getCookie(START_URL), uploadUrlFor(START_URL));
             return;
@@ -225,9 +241,11 @@ public class ConsultantActivity extends Activity
     }
 
     private void stopRecordingInternal() {
-        if ("pen".equals(activeSource)) {
+        // 默认归录音笔结束：笔自发录音时 activeSource 可能因 BLE 抖动还没设成"pen"，也必须走笔的 endRecord，
+        // 否则误走手机麦支会导致笔从未收到 endRecord、该段丢失。只有显式手机麦(activeSource=="phone")才走下面。
+        if (!"phone".equals(activeSource)) {
             if (penController != null) penController.stopRecording();
-            applyState("uploading", "正在保存录音笔文件…");
+            else applyState("idle", "已结束");
             return;
         }
         CookieManager.getInstance().flush();
@@ -266,21 +284,18 @@ public class ConsultantActivity extends Activity
     public void onPenRecordStatus(boolean recording) {
         ui.post(() -> {
             ui.removeCallbacks(penRecordFallback);
-            // ★只在"用户刚点了开始"时才据此动作；否则笔自发的录音状态（声控等）一律不改 UI
-            //   （连上会自动关声控，几秒后笔就不再自发录音）。
+            // 确保上传上下文可用（笔自发录音也要用同样的 cookie/上传地址）
+            if (penController != null) penController.setUploadContext(
+                    CookieManager.getInstance().getCookie(START_URL), uploadUrlFor(START_URL));
             if (!pendingRecordAfterConnect) return;
             pendingRecordAfterConnect = false;
             if (recording) {
-                // 用户点了开始、连上发现笔已在录 → 采纳为本次会话
+                // 笔已经在录（镜像已由 PenController 据状态查询显示）→ 只标记来源，不再发开始命令
                 activeSource = "pen";
-                if (recordingStartMs == 0) recordingStartMs = SystemClock.elapsedRealtime();
-                if (penController != null) {
-                    penController.adoptRecording(
-                            CookieManager.getInstance().getCookie(START_URL), uploadUrlFor(START_URL));
-                }
-                applyState("recording", "录音中…（录音笔）");
+                // 用户确实点了开始 → 把这段升级为 app-initiated，失败时大声提示而非当空录静默丢
+                if (penController != null) penController.markCurrentSessionAppInitiated();
             } else {
-                // 笔空闲 → 正常开始新录音
+                // 笔空闲、用户刚点了开始 → 发开始命令
                 startRecordingInternal("pen");
             }
         });
@@ -291,8 +306,15 @@ public class ConsultantActivity extends Activity
     public void onPenRecordDuration(int durationSec) {
         ui.post(() -> {
             if (durationSec > 0 && "recording".equals(state) && "pen".equals(activeSource)) {
-                recordingStartMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
-                pushStateToWeb("recording", null);
+                // ⚠️ 只向前对齐，绝不回退。声控模式下笔每段时长会归零(1,2→新段1,2…)，
+                //    若每次都按笔报的段时长回退同步，会把计时卡在 0~2 秒走不动。
+                //    计时主要靠网页墙上钟自走；这里仅当笔报的时长明显比当前显示更长时才前跳
+                //    （用于重连到一支已经在录的笔时补上已录进度）。
+                int cur = elapsedSec();
+                if (durationSec > cur + 2) {
+                    recordingStartMs = SystemClock.elapsedRealtime() - durationSec * 1000L;
+                    pushStateToWeb("recording", null);
+                }
             }
         });
     }
@@ -302,8 +324,50 @@ public class ConsultantActivity extends Activity
     public void onPenConnected(boolean connected) {
         ui.post(() -> {
             evalJs("if(window.__onPenConnChanged){window.__onPenConnChanged(" + connected + ");}");
-            if (connected) Toast.makeText(this, "录音笔已连接", Toast.LENGTH_SHORT).show();
+            if (connected) {
+                // 连上就把上传上下文给 PenController（笔自发录音/后台上传都要用）
+                if (penController != null) penController.setUploadContext(
+                        CookieManager.getInstance().getCookie(START_URL), uploadUrlFor(START_URL));
+                Toast.makeText(this, "录音笔已连接", Toast.LENGTH_SHORT).show();
+            } else if (pendingRecordAfterConnect) {
+                // 还没把"要录音"落地就断了 → 清标志(防泄漏)、撤兜底、网页回可用态
+                pendingRecordAfterConnect = false;
+                ui.removeCallbacks(penRecordFallback);
+                if ("starting".equals(state)) applyState("idle", null);
+            }
         });
+    }
+
+    private int lastFailedCount = 0;
+    /** 后台待传/在传段数 + 失败段数变化 → 推给网页指示；新增失败时弹一次提示，确保用户知道没保存成功。 */
+    @Override
+    public void onPenPendingChanged(int pending, int failed) {
+        ui.post(() -> {
+            evalJs("if(window.__onPenPending){window.__onPenPending(" + pending + "," + failed + ");}");
+            if (failed > lastFailedCount) {
+                Toast.makeText(this, "有 " + failed + " 段录音没能保存（录音笔可能没存上），请检查录音笔后重录",
+                        Toast.LENGTH_LONG).show();
+            }
+            lastFailedCount = failed;
+        });
+    }
+
+    /** 一段后台上传成功 → 只刷新未归档列表（不自动弹绑定，避免打断正在录的下一段）。 */
+    @Override
+    public void onPenUploaded(long recordingId) {
+        ui.post(() -> evalJs("if(window.__onPenUploaded){window.__onPenUploaded(" + recordingId + ");}"));
+    }
+
+    /** 已建占位片段 → 刷新未归档列表，让它带服务日期立刻显示("处理中")。 */
+    @Override
+    public void onPenPlaceholderCreated() {
+        ui.post(() -> evalJs("if(window.__onPenUploaded){window.__onPenUploaded(0);}"));
+    }
+
+    /** 后台下载进度 → 推给网页 badge 显示"保存中 N%"。 */
+    @Override
+    public void onPenProgress(int percent) {
+        ui.post(() -> evalJs("if(window.__onPenProgress){window.__onPenProgress(" + percent + ");}"));
     }
 
     /** 暂停/继续状态变化 → 推给网页（paused / recording）。 */
@@ -352,7 +416,13 @@ public class ConsultantActivity extends Activity
     @Override
     public void onStatus(String st, String message, int durSec, long recId) {
         switch (st) {
+            case PhoneMicService.STATE_STARTING:
+                // 已发开始命令、等笔确认（不起计时）。
+                applyState("starting", message);
+                break;
             case PhoneMicService.STATE_RECORDING:
+                // 笔自发录音(镜像)时 activeSource 可能还没设 → 这里补上"pen"，让结束/计时走录音笔路径。
+                if (activeSource == null && penController != null && penController.isConnected()) activeSource = "pen";
                 if (recordingStartMs == 0) recordingStartMs = SystemClock.elapsedRealtime() - durSec * 1000L;
                 applyState("recording", message);
                 break;
@@ -372,7 +442,7 @@ public class ConsultantActivity extends Activity
                 recordingStartMs = 0;
                 activeSource = null;
                 penPausedAtMs = 0;
-                applyState("idle", message);
+                applyState("error", message);
                 Toast.makeText(this, message, Toast.LENGTH_LONG).show();
                 break;
             default:
@@ -400,10 +470,15 @@ public class ConsultantActivity extends Activity
     }
     @Override public String bridgeGetState() { return state; }
     @Override public String bridgeGetSources() {
-        return (penController != null && penController.isConnected()) ? "phone,pen" : "phone";
+        return (penController != null && penController.isPenAlive()) ? "phone,pen" : "phone";
+    }
+    @Override public String bridgePendingInfo() {
+        if (penController == null) return "0,0";
+        return penController.pendingCount() + "," + penController.pendingFailedCount();
     }
     @Override public boolean bridgeIsPenConnected() {
-        return penController != null && penController.isConnected();
+        // ★用"真在线"(近期有回包)，不用裸 isConnected()(只看GATT指针，会把假连接也当已连)
+        return penController != null && penController.isPenAlive();
     }
     @Override public void bridgeConnectPen() {
         ui.post(() -> { pendingSelectPenAfterConnect = true; openScan(); });
@@ -496,7 +571,7 @@ public class ConsultantActivity extends Activity
                 + RecordingBus.lastState + "','',"
                 + (recordingStartMs == 0 ? 0 : elapsedSec()) + ");}"
                 + "if(window.__onPenConnChanged){window.__onPenConnChanged("
-                + (penController != null && penController.isConnected()) + ");}");
+                + (penController != null && penController.isPenAlive()) + ");}");
     }
 
     @Override

@@ -467,6 +467,8 @@ def init_db():
         conn.execute("ALTER TABLE recordings ADD COLUMN asr_speaker_warning INTEGER DEFAULT 0")
     if "speaker_confirmed" not in rec_cols:
         conn.execute("ALTER TABLE recordings ADD COLUMN speaker_confirmed INTEGER DEFAULT 0")
+    if "upload_status" not in rec_cols:
+        conn.execute("ALTER TABLE recordings ADD COLUMN upload_status TEXT DEFAULT 'done'")
 
     # 2026-05-28 customer_tags 加 mention_count（本次录音里顾客提及该标签话题的次数）
     ct_cols = {r[1] for r in conn.execute("PRAGMA table_info(customer_tags)").fetchall()}
@@ -8821,6 +8823,25 @@ def api_consultant_upload():
         stem, _, ex = oss_key.rpartition(".")
         oss_key = f"{stem}_{_uuid.uuid4().hex[:4]}.{ex}"
     data = f.read()
+    # 回填占位：结束录音时已先建了 processing 占位记录，这里把真音频补上，不新建行
+    placeholder_id = request.form.get("placeholder_id")
+    if placeholder_id:
+        prow = db_fetchone(
+            "SELECT id, uploader_user_id, upload_status FROM recordings WHERE id=?",
+            (placeholder_id,),
+        )
+        if prow and prow["uploader_user_id"] == u["id"] and prow["upload_status"] == "processing":
+            try:
+                oss_bucket.put_object(oss_key, data)
+            except Exception as e:
+                app.logger.exception("顾问端上传 OSS 失败")
+                return jsonify({"error": _friendly_oss_error(e)}), 500
+            db_write(
+                """UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
+                   source='consultant-pen', upload_status='done' WHERE id=?""",
+                (oss_key, len(data), dur_label, prow["id"]),
+            )
+            return jsonify({"id": prow["id"], "oss_key": oss_key})
     try:
         oss_bucket.put_object(oss_key, data)
     except Exception as e:
@@ -8836,6 +8857,57 @@ def api_consultant_upload():
     return jsonify({"id": rid, "oss_key": oss_key})
 
 
+@app.route("/api/consultant/placeholder", methods=["POST"])
+@login_required
+def api_consultant_placeholder():
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    advisor = u["advisor_name"] or u["username"]
+    company_id = u["company_id"] or 1
+    now = datetime.now()
+    # ★录音真实开始时间(原生传)，用于未归档列表的服务日期/时段；没传则用现在
+    recorded_at = request.form.get("recorded_at") or now.strftime("%Y-%m-%d %H:%M:%S")
+    ts14 = now.strftime("%Y%m%d%H%M%S")
+    # 占位 oss_key：唯一、不真传 OSS，上传完成时会被换成真 key
+    placeholder_key = f"pending-uploads/{company_id}/{u['id']}/{ts14}_{_uuid.uuid4().hex[:8]}.pending"
+    # 直接底层 INSERT，不走 ingest_recording（避免建 session / 起分析流水线）
+    rid = db_write(
+        """INSERT INTO recordings
+           (session_id, oss_key, advisor, customer, recorded_at,
+            duration_label, size_bytes, source, company_id, uploader_user_id,
+            upload_status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (None, placeholder_key, advisor, None, recorded_at,
+         None, 0, "consultant-pen-placeholder", company_id, u["id"],
+         "processing", recorded_at),
+    )
+    return jsonify({"id": rid})
+
+
+@app.route("/api/consultant/placeholder/cancel", methods=["POST"])
+@login_required
+def api_consultant_placeholder_cancel():
+    # 上传最终失败时清掉占位，别让"处理中"占位永远残留在未归档。只删本人、仍处于 processing 的占位。
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    pid = request.form.get("placeholder_id")
+    if not pid:
+        return jsonify({"error": "缺少 placeholder_id"}), 400
+    row = db_fetchone(
+        "SELECT id, uploader_user_id, upload_status, session_id FROM recordings WHERE id=?",
+        (pid,),
+    )
+    if row and row["uploader_user_id"] == u["id"] and row["upload_status"] == "processing" \
+            and row["session_id"] is None:
+        db_write("DELETE FROM recordings WHERE id=?", (row["id"],))
+        return jsonify({"ok": True})
+    return jsonify({"ok": False})
+
+
 @app.route("/api/consultant/recordings/pending")
 @login_required
 def api_consultant_recordings_pending():
@@ -8847,7 +8919,7 @@ def api_consultant_recordings_pending():
     rows = db_fetchall(
         """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
                   asr_status, asr_error, customer, created_at,
-                  asr_speaker_count, asr_speaker_warning
+                  asr_speaker_count, asr_speaker_warning, upload_status
            FROM recordings
            WHERE uploader_user_id=? AND session_id IS NULL
            ORDER BY id DESC LIMIT 200""",
@@ -8857,7 +8929,7 @@ def api_consultant_recordings_pending():
     rows2 = db_fetchall(
         """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
                   asr_status, asr_error, customer, created_at,
-                  asr_speaker_count, asr_speaker_warning
+                  asr_speaker_count, asr_speaker_warning, upload_status
            FROM recordings
            WHERE advisor=? AND uploader_user_id IS NULL AND session_id IS NULL
            ORDER BY id DESC LIMIT 200""",
@@ -8870,10 +8942,15 @@ def api_consultant_recordings_pending():
             continue
         seen.add(r["id"])
         d = dict(r)
-        try:
-            d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600)
-        except Exception:
+        d["upload_status"] = r["upload_status"] if "upload_status" in r.keys() else "done"
+        if d["upload_status"] == "processing":
+            # 占位 key 不是真 OSS 对象，签名会坏，不给试听
             d["audio_url"] = None
+        else:
+            try:
+                d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600)
+            except Exception:
+                d["audio_url"] = None
         sd, sh, eh, dm = _rec_time_fields(r)
         d["service_date"] = sd
         d["start_hm"] = sh

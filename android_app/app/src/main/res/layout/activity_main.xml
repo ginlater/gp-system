@@ -325,6 +325,17 @@
                         android:backgroundTint="#F44336" />
                 </LinearLayout>
 
+                <!-- 恢复出厂设置（救笔：把声控/分段/开机录音等写回出厂值） -->
+                <Button
+                    android:id="@+id/btn_restore_factory"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:text="🛠 恢复出厂设置（救笔）"
+                    android:textSize="13sp"
+                    android:textColor="#FFFFFF"
+                    android:backgroundTint="#FF6D00" />
+
             </LinearLayout>
 
             <!-- 录音控制卡片 -->

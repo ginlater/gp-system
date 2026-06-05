@@ -465,6 +465,8 @@ function appStopTimer(){ if (appTimerInt){ clearInterval(appTimerInt); appTimerI
 
 // 录音按钮在 App 内的行为：开始/停止 → 调原生桥
 function appToggleRecord(){
+  // 启动中(正在唤醒/连接)：点一下=取消，调原生 stop 撤销，不死等 5 秒超时。
+  if (window.__nativeState === 'starting') { try { window.AndroidBridge.stopRecording(); } catch(e){} return; }
   if (window.uploading) return;
   if (window.__appRecording) { try { window.AndroidBridge.stopRecording(); } catch(e){} return; }
   // 录音笔未连接也直接调原生：原生会自动连接上次那支笔，连上后自动开始录音（无需手动去扫描页）。
@@ -516,7 +518,15 @@ window.__onNativeRecState = function(state, msg, durSec){
   var btn = document.getElementById('recBtn');
   var st  = document.getElementById('recStatus');
   var t   = document.getElementById('timer');
-  if (state === 'recording') {
+  window.__nativeState = state;   // 记录原生态，供 appToggleRecord 判断"启动中可取消"
+  if (state === 'starting') {
+    // 已发开始命令、等录音笔确认真的开录。不起计时；按钮改"取消"可撤销，别死锁 5 秒。
+    window.__appRecording = false; window.__appPaused = false; window.uploading = false;
+    appStopTimer();
+    if (t) t.textContent = '00:00';
+    if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'取消唤醒':'取消'; btn.style.background = ''; }
+    if (st){ st.innerHTML = isCute() ? '正在唤醒小伙伴… ⏳' : '正在连接录音笔…'; }
+  } else if (state === 'recording') {
     window.__appRecording = true; window.__appPaused = false; window.uploading = false;
     if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'🌸 结束陪伴':'■ 结束录音'; btn.style.background = isCute()?'':'#e74c3c'; }
     if (st){ st.innerHTML = '<span class="rec-dot"></span>' + (isCute()?'陪伴进行中… 💕':'录音中…'); }
@@ -527,14 +537,21 @@ window.__onNativeRecState = function(state, msg, durSec){
     if (btn){ btn.disabled = true; }
     // 可爱皮肤绝不显示原生消息（可能含「录音」字），固定含蓄文案
     if (st){ st.textContent = isCute() ? '保存中… ✨' : (msg || '上传中…'); }
-  } else { // idle（含错误后复位，错误消息走 msg）
+  } else if (state === 'error') {
+    // 出错（如录音笔休眠没响应）：复位到可重新开始，并明确提示——绝不显示成"已保存"。
+    window.__appRecording = false; window.__appPaused = false; window.uploading = false;
+    appStopTimer();
+    if (t) t.textContent = '00:00';
+    if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'💕 开启陪伴':'● 开始录音'; btn.style.background = ''; }
+    if (st){ st.textContent = isCute() ? '出了点小问题，请确认小伙伴已开机后再试 😢' : (msg || '出错了，请重试'); }
+  } else if (state === 'idle') { // idle（成功保存或正常复位）；未知态(如笔自发paused)不在此误当idle
     window.__appRecording = false; window.__appPaused = false; window.uploading = false;
     appStopTimer();
     if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'💕 开启陪伴':'● 开始录音'; btn.style.background = ''; }
     // 可爱皮肤不显示原生消息（防「录音」字泄漏）：按是否含「失败」给含蓄文案
     if (st && msg) {
       if (isCute()) st.textContent = (msg.indexOf('失败') >= 0 || msg.indexOf('错误') >= 0)
-              ? '出了点小问题，再试一次 😢' : '已保存 ✨ 请选择姐妹';
+              ? '出了点小问题，再试一次 😢' : '请选择姐妹 💫';
       else st.textContent = msg;
     }
     if (t) t.textContent = '00:00';
@@ -549,6 +566,49 @@ window.__onNativeUploaded = function(id){
     if (typeof loadPending === 'function') loadPending();
     if (id && id > 0 && typeof openBind === 'function') openBind(id);
   } catch(e) { console.warn(e); }
+};
+
+// 后台异步上传完成一段：只刷新未归档列表，不自动弹绑定（避免打断正在录的下一段；稍后从列表里绑）。
+window.__onPenUploaded = function(id){
+  try { if (typeof loadPending === 'function') loadPending(); } catch(e) { console.warn(e); }
+};
+
+// 后台异步上传指示：显示"💾 N 段保存中…"+"⚠️ M 段没保存成功"，不阻塞当前录音。都为 0 时隐藏。
+window.__penPendCount = 0; window.__penFailed = 0; window.__penDlPct = -1;
+function __renderPendBadge(){
+  try {
+    var badge = document.getElementById('appPendingBadge');
+    if (!badge) {
+      var area = document.querySelector('#recCard .rec-area') || document.body;
+      badge = document.createElement('div');
+      badge.id = 'appPendingBadge';
+      badge.style.cssText = 'margin:8px 0 0;font-size:12px;text-align:center';
+      area.appendChild(badge);
+    }
+    var lines = [];
+    if (window.__penPendCount > 0) {
+      var t = isCute() ? ('💾 '+window.__penPendCount+' 段保存中…') : ('💾 '+window.__penPendCount+' 段后台上传中…');
+      if (window.__penDlPct >= 0 && window.__penDlPct < 100) t += '（下载 '+window.__penDlPct+'%）';
+      lines.push(t);
+    }
+    if (window.__penFailed > 0) lines.push('⚠️ '+window.__penFailed+' 段没保存成功，请重录');
+    if (lines.length) {
+      badge.innerHTML = lines.join('<br>');
+      badge.style.color = window.__penFailed > 0 ? '#e74c3c' : 'var(--text-mute,#888)';
+      badge.style.display = '';
+    } else { badge.style.display = 'none'; }
+  } catch(e){ console.warn(e); }
+}
+window.__onPenPending = function(count, failed){
+  window.__penPendCount = count || 0;
+  window.__penFailed = failed || 0;
+  if (window.__penPendCount === 0) window.__penDlPct = -1;
+  __renderPendBadge();
+};
+// 后台下载进度(0-100)：更新"保存中（下载 N%）"
+window.__onPenProgress = function(pct){
+  window.__penDlPct = (typeof pct === 'number') ? pct : -1;
+  __renderPendBadge();
 };
 
 if (IN_APP) {
@@ -577,7 +637,14 @@ if (IN_APP) {
   // 若返回本页时原生仍在录音/上传（例如切到接诊列表又切回），同步一下按钮状态
   try {
     var _gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
-    if (_gs === 'recording' || _gs === 'uploading') window.__onNativeRecState(_gs, '', 0);
+    if (_gs === 'recording' || _gs === 'uploading' || _gs === 'starting' || _gs === 'error')
+      window.__onNativeRecState(_gs, '', 0);
+    // 页面重载后从原生恢复"💾保存中"badge(后台上传队列在原生里没丢，跳转回来也能看到)
+    try {
+      var _pi = (window.AndroidBridge.pendingInfo && window.AndroidBridge.pendingInfo()) || '0,0';
+      var _p = ('' + _pi).split(',');
+      window.__onPenPending(parseInt(_p[0], 10) || 0, parseInt(_p[1], 10) || 0);
+    } catch(e){}
   } catch(e){}
   // 录音笔没连：给个非弹窗提示（真正强制连接发生在点开始时）。cute 下不出现「录音」字。
   setTimeout(function(){
@@ -745,6 +812,18 @@ async function loadPending() {
   }
   if (!list.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">没有未绑定的录音</td></tr>'; return; }
   tb.innerHTML = list.map(x => {
+    // ★占位片段(处理中)：录音已结束、正在后台下载+上传。只显示服务日期，时段/时长/试听传完OSS再补。
+    if (x.upload_status === 'processing') {
+      const isCrossP = x.service_date && x.service_date !== activeDate0;
+      const dStyleP = isCrossP ? 'color:#c0392b;font-weight:600' : 'font-weight:600';
+      return `<tr style="opacity:0.85;background:#f7fbff">
+        <td data-lbl="服务日期" style="white-space:nowrap;${dStyleP}">${x.service_date || '—'}</td>
+        <td data-lbl="时间段" style="white-space:nowrap;color:#999">${x.start_hm || '—'}</td>
+        <td data-lbl="时长" style="white-space:nowrap;color:#f39c12;font-weight:600">⏳ 上传中…</td>
+        <td data-lbl="试听"><span class="muted">传完可试听</span></td>
+        <td class="pending-acts"><span class="muted" style="font-size:12px">处理中，请稍候</span></td>
+      </tr>`;
+    }
     const audio = x.audio_url
       ? `<audio controls preload="none" src="${x.audio_url}" style="width:160px;height:28px;vertical-align:middle"></audio>`
       : '<span class="muted">无音频</span>';

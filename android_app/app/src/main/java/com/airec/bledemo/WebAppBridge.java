@@ -23,6 +23,7 @@ public class WebAppBridge {
         boolean bridgeIsPenConnected();
         void bridgeConnectPen();
         void bridgeOpenPenManager();
+        String bridgePendingInfo();   // "count,failed"：后台待传/失败段数，供页面重载后恢复 badge
     }
 
     private final Host host;
@@ -69,4 +70,8 @@ public class WebAppBridge {
     /** 打开录音笔管理页（调试用）。 */
     @JavascriptInterface
     public void openPenManager() { host.bridgeOpenPenManager(); }
+
+    /** "count,failed"：后台待传/失败段数。页面重载后调它恢复"💾保存中"badge。 */
+    @JavascriptInterface
+    public String pendingInfo() { return host.bridgePendingInfo(); }
 }

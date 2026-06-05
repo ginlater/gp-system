@@ -447,6 +447,37 @@ public class OpusBridge {
             return null;
         }
 
+        // ── KA(杰理)专用分帧：固定 80 字节块，每块 = 1 个 Opus 帧(config9 SILK-WB 20ms, TOC=0x48)。
+        //    短帧块(头 4B 41)：byte[2]=padlen，payload=block[3 : 80-padlen]，TOC 被剥离需补回 0x48 再解。
+        //    长帧块(头非 4B41)：payload 占满 80 字节、TOC 未剥离，整块即完整 opus 包，原样送解码器。
+        //    （ATW 的等长 stride 法对 KA 不适用：KA 是变长 opus+补零，会解成噪音。）
+        if ("KA".equals(format)) {
+            final int BLK = 80;
+            final byte KA_TOC = 0x48;
+            List<byte[]> kaFrames = new ArrayList<>();
+            int pos = 0;
+            while (pos + BLK <= raw.length) {
+                int b0 = raw[pos] & 0xFF, b1 = raw[pos + 1] & 0xFF;
+                byte[] frame;
+                if (b0 == 0x4B && b1 == 0x41) {            // 短帧块：补回 TOC
+                    int padlen = raw[pos + 2] & 0xFF;
+                    int plen = 77 - padlen;
+                    if (plen < 0) plen = 0;
+                    if (plen > 77) plen = 77;
+                    frame = new byte[1 + plen];
+                    frame[0] = KA_TOC;
+                    System.arraycopy(raw, pos + 3, frame, 1, plen);
+                } else {                                   // 长帧块：整块即完整 opus 包
+                    frame = new byte[BLK];
+                    System.arraycopy(raw, pos, frame, 0, BLK);
+                }
+                kaFrames.add(frame);
+                pos += BLK;
+            }
+            Log.d(TAG, "KA extracted " + kaFrames.size() + " frames (80B blocks)");
+            return kaFrames;
+        }
+
         int sep0 = format.equals("ATW") ? 0x5B : 0x4B;
         int sep1 = format.equals("ATW") ? 0x50 : 0x41;
 

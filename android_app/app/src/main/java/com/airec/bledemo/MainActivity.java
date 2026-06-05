@@ -101,6 +101,12 @@ public class MainActivity extends AppCompatActivity {
     private final Object pcmLock = new Object();
     // ATW 帧解码
     private OpusBridge opusBridge = null;
+
+    // ── 🔬 实时流探针：验证“边录边蓝牙流”的帧拼起来 == 完整可解码录音 ──
+    private volatile boolean probeActive = false;
+    private final java.util.List<byte[]> probeFrames = new java.util.ArrayList<>();
+    private long probeBytes = 0, probeStartMs = 0, probeLastUiMs = 0;
+    private String probeFmt = "?";
     // PCM 发送计数器（用于调试）
     private java.util.concurrent.atomic.AtomicInteger pcmSentCount = new java.util.concurrent.atomic.AtomicInteger(0);
     private long pcmLastLogTime = 0;
@@ -834,6 +840,7 @@ public class MainActivity extends AppCompatActivity {
         binding.btnSafeCode.setOnClickListener(v -> showInputDialog("安全码", "请输入安全码"));
         binding.btnActivateCode.setOnClickListener(v -> showInputDialog("激活码", "请输入激活码"));
         binding.btnFormat.setOnClickListener(v -> showFormatConfirm());
+        binding.btnRestoreFactory.setOnClickListener(v -> showRestoreFactoryConfirm());
 
         // 自动下载开关
         binding.swAutoTransfer.setOnCheckedChangeListener((b, on) -> {
@@ -850,6 +857,9 @@ public class MainActivity extends AppCompatActivity {
                 AIRECBleManager.getInstance().setAudioStreamListener(data -> {
                     try {
                         if (data == null || data.length == 0) return;
+
+                        // 🔬 探针：录音时只收集原始帧，停止时统一两路解码比对
+                        probeCollect(data);
 
                         // 1. Log 分析
                         if (data.length >= 2) {
@@ -882,6 +892,11 @@ public class MainActivity extends AppCompatActivity {
                 updateRecordButtons();
                 startWaveAnimation();
                 android.util.Log.i(TAG_TRANSCRIBE, "录音已启动，isRecording=true");
+
+                // 🔬 探针：复位 + 显示实时面板（不依赖转写开关）
+                probeReset();
+                showTranscribeUI(true);
+                binding.tvTranscribeResult.setText("🔬 实时流探针\n等待音频帧…（请对着录音笔说话）");
 
                 // 启动实时转写
                 if (transcribeEnabled) {
@@ -937,6 +952,7 @@ public class MainActivity extends AppCompatActivity {
             // 停止实时音频流监听
             AIRECBleManager.getInstance().setAudioStreamListener(null);
             AIRECBleManager.getInstance().endRecord();
+            probeFinish();   // 🔬 探针：两路解码比对 + 弹结论
             isRecording = false; isPaused = false;
             stopLocalTimer();
             stopWaveAnimation();
@@ -1078,6 +1094,54 @@ public class MainActivity extends AppCompatActivity {
                 Toast.makeText(this, "正在格式化...", Toast.LENGTH_SHORT).show();
             })
             .setNegativeButton("取消", null).show();
+    }
+
+    // ─── 恢复出厂设置（救笔） ───────────────────────────────────────────────────
+    // 背景：SDK 没有原子"恢复出厂"命令，只能逐项把可写设置写回疑似出厂值。
+    // 出厂方向：声控=开、LED=开、USB=关、麦增益=3、开机录音=开、空闲关机=30分钟、不分段(段=0)。
+    // 注意：① 每条 set 后 SDK 会自动 500ms 拉一次参数，连发会互相打断，所以这里间隔 700ms 串行下发；
+    //       ② 开机录音(powerOnRecord) 改值需把笔【关机重开】才生效；
+    //       ③ 声控(noiseSwitch) 这支固件可能不接受写入（见交接文档 10.3），写回出厂方向至少不会更糟。
+
+    private void showRestoreFactoryConfirm() {
+        if (!AIRECBleManager.getInstance().isConnected()) {
+            Toast.makeText(this, "请先连接录音笔", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        new AlertDialog.Builder(this)
+            .setTitle("🛠 恢复出厂设置")
+            .setMessage("把录音笔设置写回正常值（声控开、分段=最长(避免0导致录一下就停)、开机录音、空闲30分关机、麦增益3、LED开、USB关）。\n\n"
+                    + "下发约需 6 秒，请保持连接。完成后请【关机再开机】，再断开蓝牙用物理键试录，看能否正常录音。")
+            .setPositiveButton("开始恢复", (d, w) -> doRestoreFactory())
+            .setNegativeButton("取消", null).show();
+    }
+
+    private void doRestoreFactory() {
+        final AIRECBleManager mgr = AIRECBleManager.getInstance();
+        if (!mgr.isConnected()) {
+            Toast.makeText(this, "请先连接录音笔", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        android.util.Log.i("PEN_RESTORE", "恢复出厂(改前): noise=" + mgr.getNoiseSwitch()
+                + " led=" + mgr.getLedSwitch() + " usb=" + mgr.getUsbSwitch()
+                + " mic=" + mgr.getMicGain() + " segDur=" + mgr.getSegmentDuration()
+                + " idle=" + mgr.getIdleShutdown() + " powerOnRec=" + mgr.getPowerOnRecord());
+        Toast.makeText(this, "正在恢复出厂设置…约6秒", Toast.LENGTH_LONG).show();
+
+        final int GAP = 700;
+        mainHandler.postDelayed(() -> { mgr.setLedSwitch(true);        android.util.Log.i("PEN_RESTORE", "ledSwitch=true"); },       GAP * 0);
+        mainHandler.postDelayed(() -> { mgr.setUsbSwitch(false);       android.util.Log.i("PEN_RESTORE", "usbSwitch=false"); },      GAP * 1);
+        mainHandler.postDelayed(() -> { mgr.setMicGain(3);             android.util.Log.i("PEN_RESTORE", "micGain=3"); },            GAP * 2);
+        mainHandler.postDelayed(() -> { mgr.setSegmentDuration(480);   android.util.Log.i("PEN_RESTORE", "segmentDuration=480(避免0可能导致的录一下就停)"); }, GAP * 3);
+        mainHandler.postDelayed(() -> { mgr.setIdleShutdown(30);       android.util.Log.i("PEN_RESTORE", "idleShutdown=30"); },      GAP * 4);
+        mainHandler.postDelayed(() -> { mgr.setPowerOnRecord(true);    android.util.Log.i("PEN_RESTORE", "powerOnRecord=true(需关机重开生效)"); }, GAP * 5);
+        mainHandler.postDelayed(() -> { mgr.setNoiseSwitch(true);      android.util.Log.i("PEN_RESTORE", "noiseSwitch=true(固件可能不接受)"); }, GAP * 6);
+        mainHandler.postDelayed(() -> {
+            if (mgr.isConnected()) mgr.fetchAllDeviceInfo();
+            android.util.Log.i("PEN_RESTORE", "已全部下发，请看 InitParam 日志，并关机重开后用官方App验证");
+            Toast.makeText(MainActivity.this,
+                    "✅ 已下发完成。请【关机再开机】录音笔，再用官方App试试", Toast.LENGTH_LONG).show();
+        }, GAP * 7);
     }
 
     private void updateRecordButtons() {
@@ -1489,6 +1553,181 @@ public class MainActivity extends AppCompatActivity {
      * KA 格式:  [4B 41 ...] (KA 格式设备)
      * 返回 PCM 数据，失败返回 null
      */
+    // ══════════════════ 🔬 实时流探针 ══════════════════
+    private void probeReset() {
+        synchronized (probeFrames) { probeFrames.clear(); }
+        probeBytes = 0; probeFmt = "?"; probeLastUiMs = 0;
+        probeStartMs = android.os.SystemClock.elapsedRealtime();
+        probeActive = true;
+    }
+
+    /** 录音中每帧调用：只收集，不解码（避免解码器状态被两路解法污染）。 */
+    private void probeCollect(byte[] data) {
+        if (!probeActive || data == null || data.length == 0) return;
+        synchronized (probeFrames) { probeFrames.add(data.clone()); }
+        probeBytes += data.length;
+        if ("?".equals(probeFmt) && data.length >= 2) {
+            int b0 = data[0] & 0xFF, b1 = data[1] & 0xFF;
+            probeFmt = (b0 == 0x5B && b1 == 0x50) ? "ATW"
+                     : (b0 == 0x4B && b1 == 0x41) ? "KA"
+                     : String.format("未知(%02X %02X)", b0, b1);
+        }
+        long now = android.os.SystemClock.elapsedRealtime();
+        if (now - probeLastUiMs > 400) {
+            probeLastUiMs = now;
+            double sec = Math.max(0.001, (now - probeStartMs) / 1000.0);
+            int frames; synchronized (probeFrames) { frames = probeFrames.size(); }
+            final String s = String.format(
+                "🔬 实时流探针（录音中）\n格式: %s\n收到帧: %d\n累计: %.1f KB\n实时流速: %.1f KB/s\n时长: %.1f s",
+                probeFmt, frames, probeBytes / 1024.0, probeBytes / 1024.0 / sec, sec);
+            transcribeHandler.post(() -> binding.tvTranscribeResult.setText(s));
+        }
+    }
+
+    /** 停止时：解法A(剥2字节) 与 解法B(.ops式剥3补0x48) 各跑一遍 → 比对 → 结论。 */
+    private void probeFinish() {
+        if (!probeActive) return;
+        probeActive = false;
+        final long wallMs = android.os.SystemClock.elapsedRealtime() - probeStartMs;
+        final java.util.List<byte[]> frames;
+        synchronized (probeFrames) { frames = new java.util.ArrayList<>(probeFrames); }
+        final long bytes = probeBytes;
+        final String fmt = probeFmt;
+        new Thread(() -> {
+          try {
+            if (frames.isEmpty()) { probeShow("⚠️ 流探针：没收到帧", "整段录音一帧实时流都没收到。\n可能：笔没真正进入录音/流没开/蓝牙断。"); return; }
+            int[] okA = {0}; byte[] pcmA = probeDecode(frames, 2, false, okA);   // A: 剥2字节头
+            int[] okB = {0}; byte[] pcmB = probeDecode(frames, 3, true,  okB);   // B: .ops式剥3+补0x48
+            double wallSec = wallMs / 1000.0;
+            double durA = pcmA.length / 2.0 / 16000.0;
+            double durB = pcmB.length / 2.0 / 16000.0;
+            int rmsA = pcmRms(pcmA), rmsB = pcmRms(pcmB);
+            boolean bWins = (okB[0] > okA[0])
+                || (Math.abs(durB - wallSec) < Math.abs(durA - wallSec) && okB[0] >= okA[0] * 0.9);
+            String best = bWins ? "B(.ops式)" : "A(剥2字节)";
+            double bestDur = bWins ? durB : durA;
+            int bestOk = bWins ? okB[0] : okA[0];
+            int bestRms = bWins ? rmsB : rmsA;
+            byte[] bestPcm = bWins ? pcmB : pcmA;
+            int total = frames.size();
+            double okPct = total > 0 ? bestOk * 100.0 / total : 0;
+            double durRatio = wallSec > 0 ? bestDur / wallSec : 0;
+            boolean complete = total > 0 && okPct >= 90 && durRatio >= 0.85 && durRatio <= 1.15;
+            boolean hasSound = bestRms > 150;
+            String savePath = probeSaveFiles(frames, bestPcm);
+            final boolean pass = complete && hasSound;
+            final String verdict =
+                "🔬 实时流探针结果\n──────────────\n" +
+                String.format("墙钟录音: %.1f s\n", wallSec) +
+                String.format("帧格式: %s\n", fmt) +
+                String.format("收到帧数: %d\n", total) +
+                String.format("流总量: %.1f KB (%.1f KB/s)\n", bytes / 1024.0, wallSec > 0 ? bytes / 1024.0 / wallSec : 0) +
+                "──────────────\n" +
+                String.format("解法A(剥2字节): %d/%d帧, %.1fs, 响度%d\n", okA[0], total, durA, rmsA) +
+                String.format("解法B(.ops式):  %d/%d帧, %.1fs, 响度%d\n", okB[0], total, durB, rmsB) +
+                "──────────────\n" +
+                String.format("采用: 解法%s\n", best) +
+                String.format("解码成功率: %.0f%%\n", okPct) +
+                String.format("解码时长/墙钟: %.0f%% %s\n", durRatio * 100, (durRatio >= 0.85 && durRatio <= 1.15) ? "(吻合)" : "(⚠️偏差大)") +
+                String.format("响度: %d %s\n", bestRms, hasSound ? "(有声)" : "(⚠️太静)") +
+                "──────────────\n" +
+                (pass ? "✅ 实时流完整可用！\n流拼起来=完整可解码录音，方案成立。"
+                      : "⚠️ 需排查：" + (durRatio < 0.85 ? "流疑似缺帧/丢包；" : "") + (!hasSound ? "几乎无声；" : "") + (okPct < 90 ? "解码失败多；" : "")) +
+                "\n\n📁 已存到:\n" + savePath;
+            android.util.Log.i("PROBE", verdict);
+            probeShow(pass ? "✅ 流探针：通过" : "⚠️ 流探针：看数据", verdict);
+          } catch (Throwable t) {
+            probeShow("⚠️ 流探针：异常", "探针处理出错：\n" + t + "\n\n" + android.util.Log.getStackTraceString(t));
+          }
+        }).start();
+    }
+
+    /** 三重保底显示探针结果：重显面板 + 对话框 + Toast 兜底（盖不住、吞不掉）。 */
+    private void probeShow(String title, String body) {
+        transcribeHandler.post(() -> {
+            try { showTranscribeUI(true); binding.tvTranscribeResult.setText(title + "\n\n" + body); } catch (Throwable ignore) {}
+            try {
+                new androidx.appcompat.app.AlertDialog.Builder(MainActivity.this)
+                    .setTitle(title).setMessage(body).setPositiveButton("好", null).setCancelable(true).show();
+            } catch (Throwable e) {
+                try { Toast.makeText(MainActivity.this, title + "\n" + body, Toast.LENGTH_LONG).show(); } catch (Throwable ignore) {}
+            }
+        });
+    }
+
+    /** 用全新解码器把收集到的帧解一遍。stripN=去前导字节；opsToc=按pad裁剪并补0x48 TOC。 */
+    private byte[] probeDecode(java.util.List<byte[]> frames, int stripN, boolean opsToc, int[] okOut) {
+        OpusBridge br = new OpusBridge();
+        java.io.ByteArrayOutputStream pcm = new java.io.ByteArrayOutputStream();
+        int ok = 0;
+        try {
+            br.init();
+            for (byte[] f : frames) {
+                if (f == null || f.length <= stripN) continue;
+                byte[] fr;
+                if (opsToc) {                                   // KA块: [4B 41][pad][payload] → [0x48][payload裁到77-pad]
+                    int pad = (f.length > 2) ? (f[2] & 0xFF) : 0;
+                    int plen = Math.max(0, Math.min(f.length - 3, 77 - pad));
+                    fr = new byte[1 + plen];
+                    fr[0] = 0x48;
+                    System.arraycopy(f, 3, fr, 1, plen);
+                } else {                                        // 剥前导N字节
+                    fr = new byte[f.length - stripN];
+                    System.arraycopy(f, stripN, fr, 0, fr.length);
+                }
+                try {
+                    byte[] p = br.decode(fr);
+                    if (p != null && p.length > 0) { ok++; pcm.write(p); }
+                } catch (Exception ignore) {}
+            }
+        } catch (Exception e) {
+            android.util.Log.e("PROBE", "decode pass failed: " + e.getMessage());
+        } finally {
+            try { br.destroy(); } catch (Exception ignore) {}
+        }
+        okOut[0] = ok;
+        return pcm.toByteArray();
+    }
+
+    private int pcmRms(byte[] pcm) {
+        if (pcm == null || pcm.length < 2) return 0;
+        long sum = 0; int n = pcm.length / 2;
+        for (int i = 0; i + 1 < pcm.length; i += 2) {
+            int s = (short) ((pcm[i] & 0xFF) | (pcm[i + 1] << 8));
+            sum += (long) s * s;
+        }
+        return (int) Math.sqrt(sum / (double) Math.max(1, n));
+    }
+
+    private String probeSaveFiles(java.util.List<byte[]> frames, byte[] pcm) {
+        try {
+            java.io.File dir = getExternalFilesDir(null);
+            java.io.FileOutputStream fo = new java.io.FileOutputStream(new java.io.File(dir, "probe_stream.ops"));
+            for (byte[] f : frames) if (f != null) fo.write(f);
+            fo.close();
+            writeWav(new java.io.File(dir, "probe_stream.wav"), pcm, 16000, 1);
+            return dir.getAbsolutePath();
+        } catch (Exception e) {
+            return "(存盘失败:" + e.getMessage() + ")";
+        }
+    }
+
+    private void writeWav(java.io.File f, byte[] pcm, int sr, int ch) throws java.io.IOException {
+        int dataLen = pcm.length, byteRate = sr * ch * 2;
+        java.io.ByteArrayOutputStream h = new java.io.ByteArrayOutputStream();
+        h.write(new byte[]{'R','I','F','F'}); writeLE(h, 36 + dataLen, 4);
+        h.write(new byte[]{'W','A','V','E','f','m','t',' '});
+        writeLE(h, 16, 4); writeLE(h, 1, 2); writeLE(h, ch, 2);
+        writeLE(h, sr, 4); writeLE(h, byteRate, 4); writeLE(h, ch * 2, 2); writeLE(h, 16, 2);
+        h.write(new byte[]{'d','a','t','a'}); writeLE(h, dataLen, 4);
+        java.io.FileOutputStream o = new java.io.FileOutputStream(f);
+        o.write(h.toByteArray()); o.write(pcm); o.close();
+    }
+    private void writeLE(java.io.ByteArrayOutputStream o, int v, int n) {
+        for (int i = 0; i < n; i++) o.write((v >> (8 * i)) & 0xFF);
+    }
+    // ══════════════════ 探针结束 ══════════════════
+
     private byte[] decodeAudioFrame(byte[] data) {
         if (data == null || data.length < 4) return null;
 

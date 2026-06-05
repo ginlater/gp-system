@@ -40,6 +40,7 @@ public class PhoneMicService extends Service {
     public static final String EXTRA_UPLOAD_URL  = "upload_url";
 
     // 状态通过 RecordingBus 回传给接诊页
+    public static final String STATE_STARTING  = "starting";   // 已发开始命令、等录音笔确认真的开录（防休眠空录）
     public static final String STATE_RECORDING = "recording";
     public static final String STATE_UPLOADING = "uploading";
     public static final String STATE_IDLE      = "idle";

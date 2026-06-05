@@ -66,10 +66,17 @@
             android:foregroundServiceType="microphone" />
 
         <!-- 录音笔管理页（沿用 Demo，阶段二从接诊页进入） -->
+        <!-- exported=true：便于用 adb 直接打开录音笔设置页/恢复出厂（内部调试用） -->
         <activity
             android:name=".MainActivity"
-            android:exported="false"
-            android:windowSoftInputMode="adjustResize" />
+            android:exported="true"
+            android:label="流探针"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <activity android:name=".ScanActivity" android:exported="false" />
         <activity android:name=".PlayerActivity" android:exported="false" />
 
