@@ -561,19 +561,28 @@ public class PenController {
         worker.submit(() -> {
             long recId = -1;
             try {
-                File f = new File(task.localOpsPath);
-                if (!f.exists() || f.length() < 320) { workerTaskFailed(task, "流文件无效", true); return; }
-                String name = baseName(task.localOpsPath);   // xxx.ops
-                Uploader.Result r = Uploader.uploadOps(f, task.durSec, task.cookie, task.uploadUrl,
-                        name, task.sn, task.placeholderId, task.startWallMs);
-                // 调试期：把上传结果写状态文件(logcat被vivo限制，靠这个看)，且【不删.ops】留作核对
-                writeProbeStatus("file=" + name + " bytes=" + f.length()
-                        + " ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
+                File ops = new File(task.localOpsPath);
+                if (!ops.exists() || ops.length() < 320) { workerTaskFailed(task, "流文件无效", true); return; }
+                // ★官方转换：KA 私有 opus → 标准 OGG Opus(浏览器直接播、ffmpeg直接转写、后端不用解码)
+                String oggPath = ATWOpusConverter.convert(task.localOpsPath);
+                if (oggPath == null || !new File(oggPath).exists() || new File(oggPath).length() < 64) {
+                    workerTaskFailed(task, "ogg转换失败", true); return;
+                }
+                File ogg = new File(oggPath);
+                String name = stripExt(baseName(task.localOpsPath)) + ".ogg";
+                long t0 = SystemClock.elapsedRealtime();
+                Uploader.Result r = Uploader.upload(ogg, task.durSec, task.cookie, task.uploadUrl,
+                        name, "audio/ogg", task.sn, task.placeholderId, fmtWall(task.startWallMs));
+                long ms = SystemClock.elapsedRealtime() - t0;
+                long kbps = ms > 0 ? ogg.length() * 1000 / 1024 / ms : 0;
+                // 调试期：记录大小/耗时/速度，且暂不删，留作核对
+                writeProbeStatus("[直传ogg] " + name + " ops=" + ops.length() + "B ogg=" + ogg.length()
+                        + "B 上传" + ms + "ms ≈" + kbps + "KB/s ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
                     recId = r.recordingId;
-                    // try { f.delete(); } catch (Exception ignore) {}  // 调试期不删
+                    // try { ops.delete(); ogg.delete(); } catch (Exception ignore) {}  // 调试期不删
                 } else {
-                    Log.w(TAG, "实时流opus上传失败：" + r.error);
+                    Log.w(TAG, "ogg上传失败：" + r.error);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "uploadLocalOps 失败", e);
@@ -582,6 +591,12 @@ public class PenController {
                 else workerTaskFailed(task, "stream upload failed", true);
             }
         });
+    }
+
+    /** 墙上时间(ms) → "yyyy-MM-dd HH:mm:ss"，<=0 返回 null。 */
+    private static String fmtWall(long ms) {
+        if (ms <= 0) return null;
+        return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(new java.util.Date(ms));
     }
 
     // ============ SDK 回调 ============
@@ -913,25 +928,26 @@ public class PenController {
                     return;
                 }
                 String uploadPath, name, mime;
-                // 私有分帧(5B50/4B41 + SILK-WB opus) → libopus 解码成 16kHz 单声道 wav 再传。
-                String wav = OpusBridge.decodeToWav(localPath, localPath + ".wav");
-                if (wav != null && new File(wav).exists() && new File(wav).length() > 44) {
-                    uploadPath = wav;
-                    name = stripExt(baseName(localPath)) + ".wav";
-                    mime = "audio/wav";
+                // ★官方转换：下载到的 KA/ATW 私有 opus → 标准 OGG Opus(不解码、不放大、后端不用解)
+                String ogg = ATWOpusConverter.convert(localPath);
+                if (ogg != null && new File(ogg).exists() && new File(ogg).length() > 64) {
+                    uploadPath = ogg;
+                    name = stripExt(baseName(localPath)) + ".ogg";
+                    mime = "audio/ogg";
                 } else {
+                    // 兜底：转换失败就按原扩展名直传(后端能认就行)
                     String ext = extOf(localPath);
                     if (isAccepted(ext)) {
                         uploadPath = localPath; name = baseName(localPath); mime = mimeFor(ext);
                     } else {
-                        Log.w(TAG, "后台：未知格式，放弃 " + localPath);
-                        workerTaskFailed(task, "未知格式", true);
+                        Log.w(TAG, "后台：转换失败且未知格式，放弃 " + localPath);
+                        workerTaskFailed(task, "转换失败/未知格式", true);
                         return;
                     }
                 }
                 Uploader.Result r = Uploader.upload(new File(uploadPath), durSec,
-                        task.cookie, task.uploadUrl, name, mime, task.sn, task.placeholderId);
-                writeProbeStatus("[补下载兜底] file=" + name + " ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
+                        task.cookie, task.uploadUrl, name, mime, task.sn, task.placeholderId, fmtWall(task.startWallMs));
+                writeProbeStatus("[补下载兜底ogg] file=" + name + " ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
                     recId = r.recordingId;
                 } else {

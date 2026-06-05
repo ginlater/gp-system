@@ -1,6 +1,52 @@
-# 实时流 opus（.ops / KA-opus）后端改动说明
+# 实时流 opus 后端改动说明
 
-给服务器端的 Claude Code：本文件按"现状 → 要改成什么 → 逐处改动清单 + 可直接粘贴的代码"来写。
+给服务器端的 Claude Code。
+
+---
+
+## ⚠️ 重大更新（2026-06-05）：手机改传【标准 .ogg】，后端几乎不用动
+
+**方案变了，比下面整篇都简单——先读这段。** 安卓侧已改用录音笔厂家官方的 `ATWOpusConverter`，把私有 KA-opus **重打包成标准 OGG Opus（.ogg）** 再上传，不再传私有 `.ops`。
+
+已电脑端 + 真机验证：
+- `.ops`(188KB) → `.ogg`(192KB)，大小几乎不变（只多 2% Ogg 头）；
+- ffmpeg 认成标准 `Audio: opus, 48000Hz, mono`，解码 47.1s、与原始完全一致；
+- **浏览器能直接播、ffmpeg / DashScope 能直接转写**。
+
+**`.ogg` 是后端【现有】就支持的标准格式**：`ogg` 本就在扩展名白名单、`_ensure_clean_audio()` 本就用 ffmpeg 处理 ogg、`<audio>` 本就能播。所以后端**只剩一件事**：
+
+### 手机现在发给 `/api/consultant/upload` 的字段（真机已跑通，recId 590）
+| 字段 | 说明 |
+|---|---|
+| `file` | 标准 OGG Opus 文件，文件名 `xxx.ogg`，Content-Type `audio/ogg` |
+| `duration_sec` | 录音时长（秒，整数） |
+| `sn` | 录音笔 SN（可空，供 SN→员工 绑定） |
+| `placeholder_id` | 录音结束时先建的"占位片段"id（>0 时**回填该行**，不新建） |
+| `recorded_at` | **新增**，`yyyy-MM-dd HH:mm:ss`，录音真实开始时间 |
+
+另外录音一结束、上传之前，手机会先调 `POST /api/consultant/placeholder`（带 `recorded_at`）建占位行，让"未归档"列表秒级可见。**所以占位接口必须先在服务器存在**——如果服务器还没有 `/api/consultant/placeholder` 和 `/placeholder/cancel`、`recordings.upload_status` 列，请先按同目录 [`后端占位接口改动说明.md`](后端占位接口改动说明.md) 一并加上（占位行已带 `recorded_at`，所以回填那条 .ogg 时即使不动 recorded_at 也是对的）。
+
+### 唯一要改：`/api/consultant/upload` 接收并回填 `recorded_at`
+新增可选表单字段 `recorded_at`（`yyyy-MM-dd HH:mm:ss`，录音真实开始时间）。有就写入 `recordings.recorded_at`，没有就维持现状。连录/补传时靠它保留真实时间，否则多段会挤在"上传时刻"。
+
+```python
+# /api/consultant/upload 内：取 recorded_at(可空)
+recorded_at = (request.form.get("recorded_at") or "").strip() or None
+# 回填占位行 / 新建记录时，用它覆盖默认的 now（占位回填 UPDATE 时也一并 set recorded_at）
+```
+
+### 验证清单
+1. 传一个手机产出的 `.ogg`：`ext` 识别为 `ogg`、存进 OSS、`audio_url` 浏览器能播；
+2. ASR(`_ensure_clean_audio`→ffmpeg→DashScope) 能正常转写该 `.ogg`；
+3. 带 `recorded_at` 的上传，库里 `recorded_at` = 录音真实时间（不是上传时间）。
+
+> 下面关于 `.ops` 扩展名白名单 / `decode_ka()` 的大段改动**现在不需要**，仅当你要兼容历史遗留的私有 `.ops/.ka` 文件时才参考。
+
+---
+
+## （以下为旧方案：仅当需兼容历史 .ops 文件时参考）
+
+本文件按"现状 → 要改成什么 → 逐处改动清单 + 可直接粘贴的代码"来写。
 **只动 `webapp.py` 一个文件**（外加一次数据库自动迁移，见下）。改完不需要我这边动安卓。
 
 ---

@@ -99,13 +99,21 @@ public class ATWOpusConverter {
             return new ArrayList<>();
         }
 
-        // 按固定步长提取帧（包含分隔符头字节）
+        // 按固定步长提取帧
         List<byte[]> frames = new ArrayList<>();
         int pos = sepPositions.get(0);
         while (pos + stride <= raw.length) {
-            byte[] frame = new byte[Math.min(stride, raw.length - pos)];
-            System.arraycopy(raw, pos, frame, 0, frame.length);
-            frames.add(frame);
+            if (format.equals("ATW")) {
+                // ATW 格式：5B 50 是纯分隔符，帧数据从分隔符后开始（不含分隔符）
+                byte[] frame = new byte[frameDataSize];
+                System.arraycopy(raw, pos + 2, frame, 0, frameDataSize);
+                frames.add(frame);
+            } else {
+                // KA 格式：4B 41 是 opus TOC 字节，属于帧数据，保留
+                byte[] frame = new byte[Math.min(stride, raw.length - pos)];
+                System.arraycopy(raw, pos, frame, 0, frame.length);
+                frames.add(frame);
+            }
             pos += stride;
         }
 
