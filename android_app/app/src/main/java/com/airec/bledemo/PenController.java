@@ -75,6 +75,10 @@ public class PenController {
     // 连接/自动连接
     private volatile String autoConnectMac = null;
     private volatile String lastConnectedMac = null;   // 最近连上的笔 MAC，用于"自动断开重连刷新文件列表"
+    // ★自动重连：连上后开启；断开 / 蓝牙恢复 → 自动扫同一支笔(按MAC)连回来，带退避
+    private volatile boolean autoReconnectOn = false;
+    private volatile int reconnectAttempts = 0;
+    private android.content.BroadcastReceiver btStateReceiver = null;
     private volatile long lastReflushMs = 0;           // 上次自动重连刷新的时刻(限频)
     private volatile boolean penSettingsWritten = false;
 
@@ -124,6 +128,8 @@ public class PenController {
         }
     }
     private final ConcurrentLinkedQueue<UploadTask> uploadQueue = new ConcurrentLinkedQueue<>();
+    // ★已成功上传的笔文件名：防同一段重复上传(如断线补传 + 停止收尾 为同一文件各入队一次)
+    private final java.util.Set<String> uploadedFileNames = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
     private volatile boolean workerBusy = false;       // 后台正在处理某条
     private volatile UploadTask currentTask = null;     // 当前后台任务
     private volatile UploadTask inflightTask = null;    // 已进入"解码+上传"阶段的任务（去重：别再被 kickWorker 重复处理）
@@ -136,10 +142,14 @@ public class PenController {
     private static final int MAX_FILELIST_ATTEMPTS = 4;
     private static final int MAX_DOWNLOAD_RETRIES = 3;
     private static final long DEFER_MAX_MS = 3 * 60 * 1000L; // 文件未出现在笔列表时的重试上限(跨过连录/笔忙/落盘延迟)，超时才放弃
+    // ★笔存储清理：删除 >30天 的旧文件(已远超每日上云，确定已上云，安全)
+    private static final long FILE_KEEP_MS = 30L * 24 * 3600 * 1000;
+    private volatile boolean pendingCleanup = false;
 
     public PenController(Context ctx, Listener l) {
         this.appCtx = ctx.getApplicationContext();
         this.listener = l;
+        registerBtReceiver();   // ★监听蓝牙开关，恢复时自动重连
     }
 
     public boolean isConnected() {
@@ -179,14 +189,19 @@ public class PenController {
             verifiedConnected = true;
             main.removeCallbacks(handshakeTimeout);
             Log.d(TAG, "收到笔真实回包 → 确认真连上");
+            penLog("★verified=true 收到真回包→确认已连接");
             if (listener != null) main.post(() -> listener.onPenConnected(true));
             startHeartbeat();
             // ★重连后：把上次录音中途断开(笔关机)那段补传(它在笔存储里)。
             if (pendingRecovery != null) {
                 UploadTask r = pendingRecovery; pendingRecovery = null;
-                uploadQueue.add(r);
-                Log.d(TAG, "重连后补传中断录音 file=" + r.fileName);
-                notifyPending();
+                if (shouldEnqueue(r.fileName)) {
+                    uploadQueue.add(r);
+                    Log.d(TAG, "重连后补传中断录音 file=" + r.fileName);
+                    notifyPending();
+                } else {
+                    Log.d(TAG, "重连后跳过重复补传 file=" + r.fileName);
+                }
             }
             // 重连后重新尝试队列里所有任务(含之前"延迟提交、暂未找到"挪到队尾的)：
             // 文件这时多半已被笔提交进列表，能找到就下载上传，不丢。笔在录时 kickWorker 会自动等空闲。
@@ -208,6 +223,7 @@ public class PenController {
         @Override public void run() {
             if (!verifiedConnected) {
                 Log.w(TAG, "连上但笔无回包 → 判定假连接，断开");
+                penLog("★握手超时(5s无真回包)→判假连接、主动断开");
                 try { AIRECBleManager.getInstance().disconnect(); } catch (Exception ignored) {}
                 if (listener != null) main.post(() -> listener.onPenConnected(false));
             }
@@ -230,6 +246,7 @@ public class PenController {
                 Log.w(TAG, "心跳未回包，连续 " + hbMissed + " 次");
                 if (hbMissed >= 2) {           // 连续 2 次静默(≈12~16s) → 判离线
                     Log.w(TAG, "笔失联 → 断开，连接指示如实改未连接");
+                    penLog("★心跳连续2次未回→判失联、主动断开");
                     verifiedConnected = false;
                     try { AIRECBleManager.getInstance().disconnect(); } catch (Exception ignored) {}
                     if (listener != null) main.post(() -> listener.onPenConnected(false));
@@ -271,6 +288,99 @@ public class PenController {
                 Log.d(TAG, "autoConnect timeout");
             }
         }, 12000);
+    }
+
+    // ============ 自动重连：断开/蓝牙恢复 → 自动连回同一支笔 ============
+
+    private final Runnable reconnectRunnable = this::tryReconnect;
+
+    /** 连上后调用：开启"维持连接"，并停掉重连循环。 */
+    private void enableAutoReconnect() {
+        autoReconnectOn = true;
+        reconnectAttempts = 0;
+        main.removeCallbacks(reconnectRunnable);
+    }
+
+    /** 用户主动断开时调用：不再自动重连。 */
+    public void stopAutoReconnect() {
+        autoReconnectOn = false;
+        main.removeCallbacks(reconnectRunnable);
+    }
+
+    private void scheduleReconnect(long delayMs) {
+        if (!autoReconnectOn) return;
+        main.removeCallbacks(reconnectRunnable);
+        main.postDelayed(reconnectRunnable, delayMs);
+    }
+
+    /** 一次重连尝试：蓝牙开着且记得上次的笔 → 扫同一 MAC 连回来；连不上则退避后再试。 */
+    private void tryReconnect() {
+        if (!autoReconnectOn || isConnected()) return;
+        boolean btOn = false;
+        try {
+            android.bluetooth.BluetoothAdapter ad = android.bluetooth.BluetoothAdapter.getDefaultAdapter();
+            btOn = ad != null && ad.isEnabled();
+        } catch (Exception ignored) {}
+        if (btOn && lastConnectedMac != null) {
+            reconnectAttempts++;
+            Log.d(TAG, "自动重连尝试#" + reconnectAttempts + " → " + lastConnectedMac);
+            penLog("自动重连尝试#" + reconnectAttempts + " 扫描连 " + lastConnectedMac);
+            autoConnect(lastConnectedMac);   // 扫到该 MAC 就连(其内含 12s 超时)
+        } else {
+            Log.d(TAG, "自动重连等待中(蓝牙关/无上次设备)，靠广播或下次轮询");
+        }
+        // 退避：前5次每15s，之后每60s。连上后 onConnected 会停掉本循环。
+        scheduleReconnect(reconnectAttempts <= 5 ? 15000 : 60000);
+    }
+
+    /** 注册"蓝牙开关变化"广播：蓝牙重新打开 → 立刻重连。 */
+    private void registerBtReceiver() {
+        if (btStateReceiver != null) return;
+        btStateReceiver = new android.content.BroadcastReceiver() {
+            @Override public void onReceive(android.content.Context c, android.content.Intent i) {
+                int st = i.getIntExtra(android.bluetooth.BluetoothAdapter.EXTRA_STATE, -1);
+                penLog("蓝牙状态广播 state=" + st + " (12=on,10=off) autoReconnectOn=" + autoReconnectOn + " connected=" + isConnected());
+                if (st == android.bluetooth.BluetoothAdapter.STATE_ON && autoReconnectOn && !isConnected()) {
+                    Log.d(TAG, "蓝牙恢复 → 立即重连");
+                    reconnectAttempts = 0;
+                    scheduleReconnect(1500);
+                }
+            }
+        };
+        try {
+            androidx.core.content.ContextCompat.registerReceiver(appCtx, btStateReceiver,
+                    new android.content.IntentFilter(android.bluetooth.BluetoothAdapter.ACTION_STATE_CHANGED),
+                    androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
+        } catch (Exception e) { Log.e(TAG, "registerBtReceiver failed", e); }
+    }
+
+    // ============ 笔存储清理：删除 >30天 的旧文件 ============
+
+    /** 连上空闲时触发一次清理：拉文件列表 → 在 onFileListUpdated 里删 >30天 的。 */
+    private void triggerCleanup() {
+        if (!isConnected() || penRecording || sessionActive || appStartPending || workerBusy) return;
+        pendingCleanup = true;
+        try { AIRECBleManager.getInstance().fetchFileList(); } catch (Exception ignored) {}
+    }
+
+    /** 删除笔上时间戳 >30天 的文件。只删能解析出时间、且确实超期的(无效时间戳不动)。 */
+    private void cleanupOldFiles(List<AIRECBleFile> files) {
+        if (files == null) return;
+        long now = System.currentTimeMillis();
+        int deleted = 0;
+        for (AIRECBleFile f : files) {
+            if (f == null) continue;
+            String fn = f.getFileName();
+            long ts = parseFileTimestamp(fn);
+            if (ts > 0 && now - ts > FILE_KEEP_MS) {
+                try {
+                    AIRECBleManager.getInstance().deleteFile(fn);
+                    deleted++;
+                    Log.d(TAG, "清理笔上 >30天 旧文件 " + fn);
+                } catch (Exception e) { Log.e(TAG, "deleteFile failed " + fn, e); }
+            }
+        }
+        if (deleted > 0) Log.d(TAG, "本次共清理 " + deleted + " 个超期文件");
     }
 
     /** 连上后只读取设备设置打日志，不再写任何设置（见交接文档：写声控关不掉、还有风险）。 */
@@ -459,12 +569,18 @@ public class PenController {
             uploadQueue.add(task);
             Log.d(TAG, "入队【直传实时流opus】 file=" + task.fileName + " bytes=" + streamBytes + " 队列=" + uploadQueue.size());
             enqueuePlaceholderAndKick(task, startWallMs, 300);   // 直传不占蓝牙，可更快启动
-        } else if (fn != null && haveCtx) {
+        } else if (fn != null && haveCtx && shouldEnqueue(fn)) {
             // 回落：流不完整(蓝牙断过)/没捕获到 → 走原"从笔存储下载补全"路径
             final UploadTask task = new UploadTask(fn, cookie, uploadUrl, penSn(), durSec, startWallMs, appInit);
             uploadQueue.add(task);
             Log.d(TAG, "入队后台下载补全 file=" + fn + "(流不完整) 队列=" + uploadQueue.size());
             enqueuePlaceholderAndKick(task, startWallMs, 1200);
+        } else if (fn != null && haveCtx) {
+            // 同一文件已传过/已在队列(如断线补传已处理) → 去重，不重复上传；
+            // ★但仍要推进队列里那条已存在的任务(否则它会卡住，直到下次录音才被带出来)。
+            Log.d(TAG, "跳过重复入队 file=" + fn + "(已传/已在队)，仅推进队列");
+            post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
+            main.postDelayed(this::kickWorker, 800);
         } else {
             // 既无完整流也无文件名 → 这段传不了
             if (appInit) {
@@ -522,6 +638,21 @@ public class PenController {
         try { AIRECBleManager.getInstance().setAudioStreamListener(null); } catch (Exception ignore) {}
     }
 
+    /** 调试期：连接/录音/重连 状态机事件写文件(vivo 封了 logcat，靠它看)。append。 */
+    private void penLog(String ev) {
+        try {
+            File root = appCtx.getExternalFilesDir(null);
+            if (root == null) return;
+            File dir = new File(root, "stream_ops");
+            if (!dir.exists()) dir.mkdirs();
+            File f = new File(dir, "penlog.txt");
+            try (java.io.FileWriter w = new java.io.FileWriter(f, f.length() < 262144)) {   // >256KB 重写，防无限增长
+                w.write((android.os.SystemClock.elapsedRealtime() / 1000 % 100000) + "s  " + ev
+                        + "  [conn=" + verifiedConnected + " rec=" + penRecording + " sess=" + sessionActive + " q=" + uploadQueue.size() + "]\n");
+            }
+        } catch (Exception ignore) {}
+    }
+
     /** 调试期：把一行状态写到外部目录 stream_ops/last_result.txt（vivo 限制 logcat，靠它看上传结果）。 */
     private void writeProbeStatus(String line) {
         try {
@@ -529,7 +660,8 @@ public class PenController {
             if (root == null) return;
             File dir = new File(root, "stream_ops");
             if (!dir.exists()) dir.mkdirs();
-            try (java.io.FileWriter w = new java.io.FileWriter(new File(dir, "last_result.txt"), true)) {
+            File f = new File(dir, "last_result.txt");
+            try (java.io.FileWriter w = new java.io.FileWriter(f, f.length() < 131072)) {   // >128KB 重写
                 w.write(android.os.SystemClock.elapsedRealtime() / 1000 % 100000 + "s  " + line + "\n");
             }
         } catch (Exception ignore) {}
@@ -541,10 +673,7 @@ public class PenController {
             byte[] bytes; synchronized (buf) { bytes = buf.toByteArray(); }
             if (bytes.length < 320) return null;
             String base = !TextUtils.isEmpty(fileName) ? stripExt(fileName) : ("stream_" + startWallMs);
-            // 调试期：写外部目录(可直接 adb pull、且不随成功删除影响排查)。正式版改回 getCacheDir()。
-            File root = appCtx.getExternalFilesDir(null);
-            if (root == null) root = appCtx.getCacheDir();
-            File dir = new File(root, "stream_ops");
+            File dir = new File(appCtx.getCacheDir(), "stream_ops");   // 内部缓存，可被系统清理
             if (!dir.exists()) dir.mkdirs();
             File f = new File(dir, base + ".ops");
             try (java.io.FileOutputStream fo = new java.io.FileOutputStream(f)) { fo.write(bytes); }
@@ -574,13 +703,10 @@ public class PenController {
                 Uploader.Result r = Uploader.upload(ogg, task.durSec, task.cookie, task.uploadUrl,
                         name, "audio/ogg", task.sn, task.placeholderId, fmtWall(task.startWallMs));
                 long ms = SystemClock.elapsedRealtime() - t0;
-                long kbps = ms > 0 ? ogg.length() * 1000 / 1024 / ms : 0;
-                // 调试期：记录大小/耗时/速度，且暂不删，留作核对
-                writeProbeStatus("[直传ogg] " + name + " ops=" + ops.length() + "B ogg=" + ogg.length()
-                        + "B 上传" + ms + "ms ≈" + kbps + "KB/s ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
+                writeProbeStatus("[直传ogg] " + name + " ogg=" + ogg.length() + "B 上传" + ms + "ms ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
                     recId = r.recordingId;
-                    // try { ops.delete(); ogg.delete(); } catch (Exception ignore) {}  // 调试期不删
+                    try { ops.delete(); ogg.delete(); } catch (Exception ignore) {}   // 成功即删，不占缓存
                 } else {
                     Log.w(TAG, "ogg上传失败：" + r.error);
                 }
@@ -605,12 +731,19 @@ public class PenController {
         @Override
         public void onRecordStateChanged(boolean recording, String fileName) {
             markPenResponded();
+            penLog("onRecordStateChanged rec=" + recording + " file=" + fileName + " appStartPending=" + appStartPending);
             if (recording) {
                 // ★镜像：笔开始录音（App 发起 或 笔上操作/声控自动）→ 都显示「陪伴进行中」。
                 boolean wasAppStart = appStartPending;   // 捕获：这段是不是你在App点开始触发的
                 penRecording = true;
                 appStartPending = false;
                 main.removeCallbacks(confirmTimeout);
+                if (!sessionActive && !wasAppStart && isStaleRecordingFile(fileName)) {
+                    // ★幽灵：非你发起、且文件很旧 = 笔的残留状态，别当新录音
+                    penLog("忽略幽灵旧录音开始 file=" + fileName);
+                    penRecording = false;
+                    return;
+                }
                 if (!sessionActive) {
                     sessionActive = true;
                     sessionAppInitiated = wasAppStart;   // 你点的→失败大声提示；笔自发→空录静默丢
@@ -642,6 +775,7 @@ public class PenController {
         @Override
         public void onFileListUpdated(List<AIRECBleFile> files) {
             markPenResponded();
+            if (pendingCleanup) { pendingCleanup = false; cleanupOldFiles(files); }
             final UploadTask task = currentTask;
             if (!waitingForFile || task == null || files == null || files.isEmpty()) return;
             AIRECBleFile target = pickForTask(files, task);
@@ -735,6 +869,8 @@ public class PenController {
         public void onConnected(AIRECBleDevice device) {
             autoConnectMac = null;
             if (device != null && device.getAddress() != null) lastConnectedMac = device.getAddress();
+            penLog("onConnected GATT就绪 " + (device != null ? device.getAddress() : "?"));
+            enableAutoReconnect();   // ★连上了：开启"维持连接"、停掉重连循环
             penSettingsWritten = false;
             // ★SDK 的 onConnected 只当"链路就绪"，不当"真连上"(它有 3 秒无响应也假触发的兜底)。
             //   清空 verifiedConnected，发命令等真回包；收到才 markPenResponded→点亮已连接。
@@ -751,6 +887,8 @@ public class PenController {
             main.postDelayed(() -> ensurePenConfigured(), 3500);
             // 连上后若有积压的后台上传，趁笔空闲推进。
             main.postDelayed(this::tryResumeWorker, 4000);
+            // 连上空闲后清理笔上 >30天 旧文件。
+            main.postDelayed(PenController.this::triggerCleanup, 9000);
         }
 
         private void tryResumeWorker() { kickWorker(); }
@@ -760,6 +898,7 @@ public class PenController {
 
         @Override
         public void onDisconnected(AIRECBleDevice device, String reason) {
+            penLog("onDisconnected reason=" + reason);
             // 复位真连接/心跳状态
             verifiedConnected = false; lastRxMs = 0;
             stopHeartbeat();
@@ -781,13 +920,27 @@ public class PenController {
                     Log.w(TAG, "录音中断开，保存待补传 file=" + sessionFileName);
                 }
                 boolean willRecover = (pendingRecovery != null);
+                boolean wasRecording = (sessionActive || penRecording);
+                int wasElapsed = elapsedSec();   // 复位前捕获，重连显示时计时不归零
                 sessionGen++;   // 作废挂起的结束兜底
                 penRecording = false; sessionActive = false;
                 appStartPending = false; sessionAppInitiated = false;
                 startElapsedMs = 0; sessionFileName = null; sessionStartWallMs = 0;
-                post(PhoneMicService.STATE_ERROR,
-                        willRecover ? "录音笔断开了，这段会在重新连上后自动补传" : "录音笔已断开，请重连后重试",
-                        0, -1);
+                if (wasRecording && autoReconnectOn) {
+                    // 录音中断开 + 会自动重连：保持"录音中·重连中"，不切成吓人的"断开"；
+                    // 录音笔其实仍在录，连上后续传，这段不丢。
+                    post(PhoneMicService.STATE_RECORDING, "🔄 信号断开，正在自动重连，录音继续中…", wasElapsed, -1);
+                } else {
+                    post(PhoneMicService.STATE_ERROR,
+                            willRecover ? "录音笔断开了，正在自动重连…" : "录音笔已断开，正在自动重连…",
+                            0, -1);
+                }
+            }
+            // ★断开后：若仍要维持连接，自动重连回同一支笔(扫到该MAC就连)
+            if (autoReconnectOn) {
+                Log.d(TAG, "断开 → 启动自动重连循环");
+                reconnectAttempts = 0;
+                scheduleReconnect(3000);
             }
         }
 
@@ -795,8 +948,12 @@ public class PenController {
         public void onRecordStatusQueried(boolean recording, boolean paused, String fileName) {
             markPenResponded();   // 0x0F 回包 = 笔活着（握手最常用这条点亮真连接）
             penPaused = recording && paused;
+            penLog("onRecordStatusQueried rec=" + recording + " paused=" + paused + " file=" + fileName);
             // 连上时查到笔已经在录 → 镜像里也显示出来（笔上更早就开始录的场景）。
-            if (recording && !sessionActive) {
+            if (recording && !sessionActive && isStaleRecordingFile(fileName)) {
+                // ★幽灵：连上时笔报了个很旧的残留"录音"状态(非真在录) → 忽略，不镜像不上传。
+                penLog("忽略幽灵旧录音(连上时笔残留状态) file=" + fileName);
+            } else if (recording && !sessionActive) {
                 penRecording = true;
                 sessionActive = true;
                 sessionGen++;    // ★新一段
@@ -815,6 +972,7 @@ public class PenController {
 
         @Override
         public void onRecordPaused() {
+            penLog("onRecordPaused(笔上报暂停切换) appInitiated=" + appInitiatedPauseResume);
             if (appInitiatedPauseResume) { appInitiatedPauseResume = false; return; }
             penPaused = !penPaused;
             final boolean p = penPaused;
@@ -831,6 +989,17 @@ public class PenController {
     };
 
     // ============ 后台上传 worker ============
+
+    /** 该笔文件是否还需入队：已传过 或 已在队列/处理中 → 不再入队(去重)。空名/合成名一律放行。 */
+    private boolean shouldEnqueue(String fn) {
+        if (fn == null || fn.isEmpty()) return true;
+        if (uploadedFileNames.contains(fn)) return false;
+        for (UploadTask t : uploadQueue) if (t != null && fn.equals(t.fileName)) return false;
+        UploadTask c = currentTask, i = inflightTask;
+        if (c != null && fn.equals(c.fileName)) return false;
+        if (i != null && fn.equals(i.fileName)) return false;
+        return true;
+    }
 
     /** 尝试推进后台队列：仅在笔没在录、且当前无任务在跑时，取队首处理。 */
     private void kickWorker() {
@@ -870,6 +1039,7 @@ public class PenController {
     private void workerTaskDone(final UploadTask task, final long recId) {
         main.post(() -> {
             uploadQueue.remove(task);
+            if (task.fileName != null) uploadedFileNames.add(task.fileName);   // ★记下已传，防重复
             workerBusy = false; currentTask = null; inflightTask = null; waitingForFile = false;
             Log.d(TAG, "后台完成 file=" + task.fileName + " recId=" + recId + " 剩余=" + uploadQueue.size());
             if (recId > 0 && listener != null) listener.onPenUploaded(recId);
@@ -950,6 +1120,7 @@ public class PenController {
                 writeProbeStatus("[补下载兜底ogg] file=" + name + " ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
                     recId = r.recordingId;
+                    try { if (!uploadPath.equals(localPath)) new File(uploadPath).delete(); new File(localPath).delete(); } catch (Exception ignore) {}
                 } else {
                     Log.w(TAG, "后台上传失败：" + r.error);
                 }
@@ -1021,6 +1192,12 @@ public class PenController {
     }
 
     /** 从文件名前 14 位数字解析 yyyyMMddHHmmss → epoch 毫秒（设备本地时区）。解析不出返回 0。 */
+    /** 笔报"正在录"的文件名时间戳是否很旧(>6h前=连上时笔的残留/幽灵状态，非真在录)。 */
+    private boolean isStaleRecordingFile(String fileName) {
+        long ts = parseFileTimestamp(fileName);
+        return ts > 0 && (System.currentTimeMillis() - ts) > 6 * 3600 * 1000L;
+    }
+
     private static long parseFileTimestamp(String name) {
         if (name == null) return 0;
         StringBuilder digits = new StringBuilder();

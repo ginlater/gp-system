@@ -70,13 +70,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:label="流探针"
-            android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:windowSoftInputMode="adjustResize" />
         <activity android:name=".ScanActivity" android:exported="false" />
         <activity android:name=".PlayerActivity" android:exported="false" />
 
