@@ -119,12 +119,28 @@ public class ConsultantActivity extends Activity
         s.setAllowContentAccess(true);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
+        s.setCacheMode(isOnline() ? WebSettings.LOAD_DEFAULT : WebSettings.LOAD_CACHE_ELSE_NETWORK);  // 离线冷启时尽量用缓存
+        registerNetworkMonitor();
 
         webView.addJavascriptInterface(new WebAppBridge(this), "AndroidBridge");
 
         webView.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, android.webkit.WebResourceRequest req) {
+                // ★离线时拦截整页跳转/刷新 → 保住当前录音界面不白屏；
+                //   数据请求(XHR/fetch)不是整页跳转，照常发、各自报网络错(这正是你要的)。
+                if (req != null && req.isForMainFrame() && !isOnline()) {
+                    android.widget.Toast.makeText(ConsultantActivity.this, "网络断开，该操作暂不可用", android.widget.Toast.LENGTH_SHORT).show();
+                    return true;
+                }
                 return handleExternalUrl(req.getUrl());
+            }
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
+                pageLoadFailed = false;
+            }
+            @Override public void onReceivedError(WebView view, android.webkit.WebResourceRequest req,
+                                                  android.webkit.WebResourceError err) {
+                // 仅记录主页面失败(如冷启动时就离线)，供网络恢复后自动重载；不替换页面、不弹遮罩。
+                if (req != null && req.isForMainFrame()) pageLoadFailed = true;
             }
         });
 
@@ -154,6 +170,44 @@ public class ConsultantActivity extends Activity
                 return true;
             }
         });
+    }
+
+    // ============ 离线优雅处理（断网保住录音界面、不白屏、恢复自动重载） ============
+    private volatile boolean pageLoadFailed = false;
+    private android.net.ConnectivityManager.NetworkCallback netCallback;
+
+    private boolean isOnline() {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            android.net.Network n = cm.getActiveNetwork();
+            if (n == null) return false;
+            android.net.NetworkCapabilities c = cm.getNetworkCapabilities(n);
+            return c != null && c.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        } catch (Exception e) { return true; }
+    }
+
+    private void reloadPage() {
+        pageLoadFailed = false;
+        try {
+            webView.getSettings().setCacheMode(isOnline() ? WebSettings.LOAD_DEFAULT : WebSettings.LOAD_CACHE_ELSE_NETWORK);
+        } catch (Exception ignored) {}
+        webView.loadUrl(START_URL);
+    }
+
+    /** 网络恢复 → 若之前加载失败，自动重载页面。 */
+    private void registerNetworkMonitor() {
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            netCallback = new android.net.ConnectivityManager.NetworkCallback() {
+                @Override public void onAvailable(android.net.Network n) {
+                    runOnUiThread(() -> {
+                        if (penController != null) penController.onNetworkAvailable();   // 待传录音立刻补传
+                        if (pageLoadFailed) reloadPage();
+                    });
+                }
+            };
+            cm.registerDefaultNetworkCallback(netCallback);
+        } catch (Exception e) { android.util.Log.e("Consultant", "registerNetworkMonitor failed", e); }
     }
 
     private boolean handleExternalUrl(Uri uri) {
@@ -590,5 +644,17 @@ public class ConsultantActivity extends Activity
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
         if (webView != null) webView.saveState(outState);
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (netCallback != null) {
+            try {
+                android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+                cm.unregisterNetworkCallback(netCallback);
+            } catch (Exception ignored) {}
+            netCallback = null;
+        }
+        super.onDestroy();
     }
 }

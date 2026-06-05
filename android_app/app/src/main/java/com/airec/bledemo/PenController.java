@@ -122,6 +122,7 @@ public class PenController {
         volatile long placeholderId = -1;  // 已建的"占位片段"后端记录 id；上传时回填它(不新建)。-1=未建/降级
         volatile long firstAttemptMs = 0;  // 首次尝试定位文件的时刻；笔提交延迟时据此判断挂多久才放弃
         volatile String localOpsPath = null;  // ★非空=直传这个本地拼好的 .ops(实时流完整，不下载不解码)
+        volatile int uploadAttempts = 0;      // 上传临时失败(网络抖)的重试次数，退避用
         UploadTask(String fileName, String cookie, String uploadUrl, String sn, int durSec, long startWallMs, boolean appInitiated) {
             this.fileName = fileName; this.cookie = cookie; this.uploadUrl = uploadUrl;
             this.sn = sn; this.durSec = durSec; this.startWallMs = startWallMs; this.appInitiated = appInitiated;
@@ -176,6 +177,15 @@ public class PenController {
 
     /** 累计保存失败段数（本批）。 */
     public int pendingFailedCount() { return failedCount; }
+
+    /** 网络恢复：清掉排队任务的重试退避 + 立刻推进(别等退避计时，让卡着的录音马上补传)。 */
+    public void onNetworkAvailable() {
+        main.post(() -> {
+            for (UploadTask t : uploadQueue) if (t != null) t.uploadAttempts = 0;
+            if (!uploadQueue.isEmpty()) Log.d(TAG, "网络恢复 → 立即重试待传 队列=" + uploadQueue.size());
+            kickWorker();
+        });
+    }
 
     /** 把当前正在显示的这段标记为"用户主动发起"（只升级不下调）：失败时大声提示重录，而非当空录静默丢。 */
     public void markCurrentSessionAppInitiated() {
@@ -688,7 +698,6 @@ public class PenController {
     /** 直传本地拼好的 .ops(不占蓝牙、不解码、opus 端到端)。 */
     private void uploadLocalOps(final UploadTask task) {
         worker.submit(() -> {
-            long recId = -1;
             try {
                 File ops = new File(task.localOpsPath);
                 if (!ops.exists() || ops.length() < 320) { workerTaskFailed(task, "流文件无效", true); return; }
@@ -705,16 +714,20 @@ public class PenController {
                 long ms = SystemClock.elapsedRealtime() - t0;
                 writeProbeStatus("[直传ogg] " + name + " ogg=" + ogg.length() + "B 上传" + ms + "ms ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
-                    recId = r.recordingId;
-                    try { ops.delete(); ogg.delete(); } catch (Exception ignore) {}   // 成功即删，不占缓存
+                    try { ops.delete(); ogg.delete(); } catch (Exception ignore) {}   // 成功即删
+                    workerTaskDone(task, r.recordingId);
+                } else if (r.transientFail) {
+                    try { ogg.delete(); } catch (Exception ignore) {}   // 删ogg临时产物，保留ops待重试
+                    Log.w(TAG, "ogg上传临时失败(重试)：" + r.error);
+                    requeueTransient(task);
                 } else {
-                    Log.w(TAG, "ogg上传失败：" + r.error);
+                    try { ops.delete(); ogg.delete(); } catch (Exception ignore) {}
+                    Log.w(TAG, "ogg上传永久失败(放弃)：" + r.error);
+                    workerTaskFailed(task, "upload rejected", true);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "uploadLocalOps 失败", e);
-            } finally {
-                if (recId > 0) workerTaskDone(task, recId);
-                else workerTaskFailed(task, "stream upload failed", true);
+                requeueTransient(task);   // 本地异常当临时，重试(别丢)
             }
         });
     }
@@ -1048,6 +1061,20 @@ public class PenController {
         });
     }
 
+    /** 上传【临时】失败(网络抖/5xx)：不丢、不清占位，挪队尾、退避后重试。录音本体在笔/缓存里，迟早传上。 */
+    private void requeueTransient(final UploadTask task) {
+        main.post(() -> {
+            task.uploadAttempts++;
+            workerBusy = false; currentTask = null; inflightTask = null; waitingForFile = false;
+            // 挪到队尾，别堵住后面的任务
+            if (uploadQueue.remove(task)) uploadQueue.add(task);
+            long delay = Math.min(120000, 5000L * task.uploadAttempts);   // 退避，封顶2分钟
+            Log.w(TAG, "上传临时失败，第" + task.uploadAttempts + "次，" + (delay / 1000) + "s后重试 file=" + task.fileName);
+            notifyPending();
+            main.postDelayed(PenController.this::kickWorker, delay);
+        });
+    }
+
     private void workerTaskFailed(final UploadTask task, final String reason, final boolean drop) {
         main.post(() -> {
             if (drop) {
@@ -1090,7 +1117,6 @@ public class PenController {
         final int durSec = task.durSec > 0 ? task.durSec
                 : ((file != null && file.getDurationSec() > 0) ? (int) file.getDurationSec() : 0);
         worker.submit(() -> {
-            long recId = -1;
             try {
                 if (TextUtils.isEmpty(localPath) || !new File(localPath).exists()) {
                     Log.w(TAG, "后台：下载文件不存在");
@@ -1119,16 +1145,21 @@ public class PenController {
                         task.cookie, task.uploadUrl, name, mime, task.sn, task.placeholderId, fmtWall(task.startWallMs));
                 writeProbeStatus("[补下载兜底ogg] file=" + name + " ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
-                    recId = r.recordingId;
                     try { if (!uploadPath.equals(localPath)) new File(uploadPath).delete(); new File(localPath).delete(); } catch (Exception ignore) {}
+                    workerTaskDone(task, r.recordingId);
+                } else if (r.transientFail) {
+                    try { if (!uploadPath.equals(localPath)) new File(uploadPath).delete(); } catch (Exception ignore) {}  // 删ogg，留下载的原文件
+                    task.localOpsPath = localPath;   // 重试走本地直传，不再重新下载
+                    Log.w(TAG, "兜底上传临时失败(重试)：" + r.error);
+                    requeueTransient(task);
                 } else {
-                    Log.w(TAG, "后台上传失败：" + r.error);
+                    try { if (!uploadPath.equals(localPath)) new File(uploadPath).delete(); new File(localPath).delete(); } catch (Exception ignore) {}
+                    Log.w(TAG, "兜底上传永久失败(放弃)：" + r.error);
+                    workerTaskFailed(task, "upload rejected", true);
                 }
             } catch (Exception e) {
                 Log.e(TAG, "processAndUpload failed", e);
-            } finally {
-                if (recId > 0) workerTaskDone(task, recId);
-                else workerTaskFailed(task, "upload failed", true);  // 上传失败就丢弃，不无限重试
+                requeueTransient(task);   // 异常当临时，重试(别丢)
             }
         });
     }
