@@ -9,6 +9,8 @@ android_app/release.keystore
 android_app/release.keystore.password
 android_app/*.apk
 android_app/*.idsig
+# 网站根目录的 App 安装包（手动放置供下载，体积大、勿入库）
+app-release.apk
 
 # macOS 垃圾
 .DS_Store

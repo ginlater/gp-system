@@ -23,7 +23,7 @@ from urllib import request as urllib_request
 
 import oss2
 from flask import (Flask, abort, g, jsonify, redirect, render_template,
-                   request, session, url_for)
+                   request, send_file, session, url_for)
 
 import dashscope
 from dashscope.audio.asr import Transcription
@@ -4872,6 +4872,46 @@ def login():
 def logout():
     session.clear()
     return redirect(url_for("login"))
+
+
+# ============ App 下载（公开页面，无需登录）============
+APK_PATH = Path(__file__).parent / "app-release.apk"
+APK_DOWNLOAD_NAME = "刁姐陪伴.apk"
+
+
+@app.route("/download")
+def download_page():
+    """安卓 App 下载落地页：用户点链接 → 看安装说明 → 下载。无需登录。"""
+    size_mb = None
+    updated = None
+    try:
+        st = APK_PATH.stat()
+        size_mb = round(st.st_size / 1024 / 1024, 1)
+        updated = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
+    except OSError:
+        pass
+    return render_template(
+        "download.html",
+        size_mb=size_mb,
+        updated=updated,
+        available=APK_PATH.exists(),
+    )
+
+
+@app.route("/download/app.apk")
+def download_apk():
+    """直接下载 APK 安装包。无需登录。max_age=0 保证替换安装包后用户拿到最新版。"""
+    if not APK_PATH.exists():
+        abort(404)
+    resp = send_file(
+        str(APK_PATH),
+        mimetype="application/vnd.android.package-archive",
+        as_attachment=True,
+        download_name=APK_DOWNLOAD_NAME,
+        max_age=0,
+    )
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 # ============ 页面 ============
