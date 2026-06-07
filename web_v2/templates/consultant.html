@@ -269,6 +269,7 @@ body.skin-cute .dlg{border-radius:18px}
       <thead><tr><th>服务日期</th><th>时间段</th><th>时长</th><th>试听</th><th>操作</th></tr></thead>
       <tbody id="pendingBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
     </table>
+    <div id="pendingPager" style="display:none;align-items:center;justify-content:center;gap:12px;margin-top:8px"></div>
   </div>
 
   <style>
@@ -884,15 +885,20 @@ function attachAudioCap(audioEl, maxSec) {
   });
 }
 
+let pendingPage = 1;
+const PENDING_PAGE_SIZE = 5;       // 未归档片段：默认每页 5 个
+let pendingListCache = [];
+
 async function loadPending() {
   const tb = document.getElementById('pendingBody');
   if (!tb.dataset.loaded) tb.innerHTML = '<tr><td colspan="5" class="muted">加载中…</td></tr>';
   const r = await fetch(BASE + '/api/consultant/recordings/pending');
   const d = await r.json();
-  const list = d.recordings || [];
+  pendingListCache = d.recordings || [];
   tb.dataset.loaded = '1';
+  // 跨日提醒按【全部】未归档算（不只当前页）
   const activeDate0 = currentReceptionDate || _todayStr();
-  const crossList = list.filter(x => x.service_date && x.service_date !== activeDate0);
+  const crossList = pendingListCache.filter(x => x.service_date && x.service_date !== activeDate0);
   const warn = document.getElementById('pendingCrossWarn');
   if (warn) {
     if (crossList.length > 0) {
@@ -902,8 +908,26 @@ async function loadPending() {
         dates.map(d => `<a href="javascript:void(0)" onclick='setReceptionDate(${JSON.stringify(d)})' style="color:#c0392b;text-decoration:underline;margin:0 4px;white-space:nowrap;display:inline-block">切到 ${d}</a>`).join('');
     } else warn.style.display = 'none';
   }
-  if (!list.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">没有未绑定的录音</td></tr>'; return; }
-  tb.innerHTML = list.map(x => {
+  renderPending();
+}
+
+function pendingGoPage(delta) { pendingPage += delta; renderPending(); }
+
+function renderPending() {
+  const tb = document.getElementById('pendingBody');
+  const pager = document.getElementById('pendingPager');
+  const list = pendingListCache || [];
+  const activeDate0 = currentReceptionDate || _todayStr();
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="muted">没有未绑定的录音</td></tr>';
+    if (pager) pager.style.display = 'none';
+    return;
+  }
+  const totalPages = Math.max(1, Math.ceil(list.length / PENDING_PAGE_SIZE));
+  if (pendingPage > totalPages) pendingPage = totalPages;
+  if (pendingPage < 1) pendingPage = 1;
+  const start = (pendingPage - 1) * PENDING_PAGE_SIZE;
+  tb.innerHTML = list.slice(start, start + PENDING_PAGE_SIZE).map(x => {
     // ★占位片段(处理中)：录音已结束、正在后台下载+上传。只显示服务日期，时段/时长/试听传完OSS再补。
     if (x.upload_status === 'processing') {
       const isCrossP = x.service_date && x.service_date !== activeDate0;
@@ -972,6 +996,18 @@ async function loadPending() {
     </tr>`;
   }).join('');
   tb.querySelectorAll('audio[data-cap]').forEach(a => attachAudioCap(a, parseFloat(a.dataset.cap)));
+  // 分页控件：只 1 页时隐藏
+  if (pager) {
+    if (totalPages <= 1) {
+      pager.style.display = 'none';
+    } else {
+      pager.style.display = 'flex';
+      pager.innerHTML =
+        `<button class="btn sec" style="padding:3px 12px;font-size:13px" ${pendingPage<=1?'disabled':''} onclick="pendingGoPage(-1)">‹ 上一页</button>` +
+        `<span style="font-size:13px;color:#666">第 ${pendingPage}/${totalPages} 页 · 共 ${list.length} 段</span>` +
+        `<button class="btn sec" style="padding:3px 12px;font-size:13px" ${pendingPage>=totalPages?'disabled':''} onclick="pendingGoPage(1)">下一页 ›</button>`;
+    }
+  }
 }
 
 // 自动刷新未归档列表：5s 一次。页面隐藏 / 有音频正在试听时跳过，避免打断。
