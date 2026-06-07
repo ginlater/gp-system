@@ -24,8 +24,18 @@ import android.webkit.WebViewClient;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
+import android.app.AlertDialog;
+
 import com.airec.bledemo.recording.PhoneMicService;
 import com.airec.bledemo.recording.RecordingBus;
+
+import org.json.JSONObject;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
 /**
  * 接诊 WebView 壳（启动页）。
@@ -55,6 +65,8 @@ public class ConsultantActivity extends Activity
     private String activeSource = null;      // 正在录音的来源：phone / pen
     private long recordingStartMs = 0;
     private boolean batteryAsked = false;
+    private long lastVersionCheckMs = 0;                  // 强制更新检查节流
+    private AlertDialog forceUpdateDialog;                // 强制更新弹窗(不可关)
     private boolean pendingSelectPenAfterConnect = false;
     private boolean pendingRecordAfterConnect = false;   // 录音笔连上后是否自动开始录音
     private long penPausedAtMs = 0;                       // 暂停起始时刻，用于继续时扣掉暂停时长
@@ -607,6 +619,89 @@ public class ConsultantActivity extends Activity
         } catch (Exception ignored) {}
     }
 
+    // ============ 强制更新 ============
+
+    /** 取本机已安装的 versionCode；取不到返回 -1（→ fail-open，不挡用户）。 */
+    private int installedVersionCode() {
+        try {
+            android.content.pm.PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) return (int) pi.getLongVersionCode();
+            return pi.versionCode;
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    /**
+     * 启动/回前台查后端 /api/app/version：装的 versionCode < 服务器 minVersionCode → 弹不可关的强制更新框。
+     * 关键设计：网络/解析任何失败一律【放过】(fail-open) —— 后端抖一下不能把所有顾问挡在门外。
+     */
+    private void checkForceUpdate() {
+        if (forceUpdateDialog != null && forceUpdateDialog.isShowing()) return;   // 已在挡，不重复查
+        long now = SystemClock.elapsedRealtime();
+        if (now - lastVersionCheckMs < 20000) return;   // 20s 内不重复查
+        lastVersionCheckMs = now;
+        final int installed = installedVersionCode();
+        if (installed <= 0) return;   // 取不到本机版本 → 不挡
+        final String base = START_URL.replaceAll("/consultant/?$", "");
+        new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                URL url = new URL(base + "/api/app/version");
+                conn = (HttpURLConnection) url.openConnection();
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                conn.setRequestProperty("Accept", "application/json");
+                if (conn.getResponseCode() != 200) return;   // fail-open
+                StringBuilder sb = new StringBuilder();
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    String ln;
+                    while ((ln = br.readLine()) != null) sb.append(ln);
+                }
+                JSONObject o = new JSONObject(sb.toString());
+                int minCode = o.optInt("minVersionCode", 0);
+                final String latestName = o.optString("latestVersionName", "");
+                final String note = o.optString("updateNote", "");
+                String apkUrl = o.optString("apkUrl", "/download/app.apk");
+                if (!apkUrl.startsWith("http")) apkUrl = base + apkUrl;
+                final String fApkUrl = apkUrl;
+                if (installed < minCode) {
+                    ui.post(() -> showForceUpdateDialog(latestName, note, fApkUrl));
+                }
+            } catch (Exception e) {
+                android.util.Log.w("ConsultantActivity", "版本检查失败(放过): " + e.getMessage());   // fail-open
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }, "ver-check").start();
+    }
+
+    /** 不可关的强制更新框：点「立即更新」打开浏览器下载新包，但【不关框】，逼用户升级后才能继续用。 */
+    private void showForceUpdateDialog(String latestName, String note, String apkUrl) {
+        if (isFinishing() || (Build.VERSION.SDK_INT >= 17 && isDestroyed())) return;
+        if (forceUpdateDialog != null && forceUpdateDialog.isShowing()) return;
+        String msg = (note != null && !note.isEmpty())
+                ? note
+                : ("发现新版本" + (latestName.isEmpty() ? "" : " " + latestName) + "，必须更新后才能继续使用。");
+        forceUpdateDialog = new AlertDialog.Builder(this)
+                .setTitle("需要更新")
+                .setMessage(msg)
+                .setCancelable(false)                  // 返回键关不掉
+                .setPositiveButton("立即更新", null)    // 监听器下面覆写，避免点完自动关框
+                .create();
+        forceUpdateDialog.setCanceledOnTouchOutside(false);
+        forceUpdateDialog.show();
+        forceUpdateDialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)));
+            } catch (Exception e) {
+                Toast.makeText(this, "打开下载失败，请用浏览器访问 " + apkUrl, Toast.LENGTH_LONG).show();
+            }
+            // 故意不 dismiss：用户装完新版重开 App 即是新版本，本框不再出现；没装则下次回前台仍挡。
+        });
+    }
+
     // ============ 生命周期 ============
 
     @Override
@@ -626,6 +721,7 @@ public class ConsultantActivity extends Activity
                 + (recordingStartMs == 0 ? 0 : elapsedSec()) + ");}"
                 + "if(window.__onPenConnChanged){window.__onPenConnChanged("
                 + (penController != null && penController.isPenAlive()) + ");}");
+        checkForceUpdate();   // ★每次回前台查一次：版本过低 → 弹不可关的强制更新框
     }
 
     @Override

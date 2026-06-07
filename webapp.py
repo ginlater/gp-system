@@ -4897,6 +4897,17 @@ APK_PATH = Path(__file__).parent / "app-release.apk"
 APK_DOWNLOAD_NAME = "刁姐陪伴.apk"       # 现代浏览器显示的中文名（filename*）
 APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回退名（纯 ASCII）
 
+# ============ App 版本 / 强制更新 ============
+# ★发版时：和 android_app/app/build.gradle 的 versionCode/versionName 一起改这里。
+#   App 启动/回前台会查 /api/app/version：装的 versionCode < APP_MIN_VERSION_CODE → 弹不可关的强制更新框。
+#   - 强制升级：把 APP_MIN_VERSION_CODE 和 LATEST 一起抬到新版本号。
+#   - 可选升级（不挡，仅提示）：只抬 LATEST，MIN 不动。
+#   注意：强制更新逻辑是 versionCode≥3 的 App 才内置的；更早版本(1/2)没有这段检查，挡不住，需手动装一次新包。
+APP_LATEST_VERSION_CODE = 3
+APP_LATEST_VERSION_NAME = "2.0.2"
+APP_MIN_VERSION_CODE = 3                 # 低于此值的客户端 → 强制更新
+APP_UPDATE_NOTE = "新版本修复了录音笔录音中途断流被截断的问题（避免“显示9分钟、实际只录几十秒”），请立即更新后再使用。"
+
 
 @app.route("/download")
 def download_page():
@@ -4935,6 +4946,20 @@ def download_apk():
         f"filename*=UTF-8''{quote(APK_DOWNLOAD_NAME)}"
     )
     return resp
+
+
+@app.route("/api/app/version")
+def app_version():
+    """App 启动/回前台查最新版本与强制更新阈值。无需登录。
+    客户端拿 installedVersionCode 和 minVersionCode 比：低于就弹不可关的强制更新框。"""
+    return jsonify({
+        "latestVersionCode": APP_LATEST_VERSION_CODE,
+        "latestVersionName": APP_LATEST_VERSION_NAME,
+        "minVersionCode": APP_MIN_VERSION_CODE,
+        "apkUrl": "/download/app.apk",
+        "pageUrl": "/download",
+        "updateNote": APP_UPDATE_NOTE,
+    })
 
 
 # ============ 页面 ============
