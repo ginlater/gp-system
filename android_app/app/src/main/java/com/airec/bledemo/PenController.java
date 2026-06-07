@@ -113,6 +113,19 @@ public class PenController {
 
     private static final long CONFIRM_TIMEOUT_MS = 5000; // 发开始命令后等笔确认的超时（超时判定休眠/关机）
 
+    // ★开录健康看门狗（A）：你点开始、笔回了"已开录"后，限时内必须出现"真音频证据"
+    //   （实时流来过帧 或 笔上报已录时长>0）。两者都没有 = 笔应了开录但没真录（设备时间停在0、
+    //   保存时笔上找不到文件 → "未成功保存"）。这时立刻停+明确报错，不再墙钟空跑到结束才报。
+    //   一旦出现任一证据即取消，绝不打扰正常录音；只作用于"你主动点开始"的段（笔自发声控录音不干预）。
+    private static final long REC_HEALTH_GRACE_MS = 9000;
+    private volatile int lastPenDurationSec = 0;        // 笔最近上报的已录时长（>0 即视为真在录）
+    private volatile boolean healthWatchdogArmed = false; // 看门狗待命中（避免每帧都扫消息队列）
+
+    // ★断线宽限（B）：录音中蓝牙断开后，保住"重连中·录音继续"显示这么久；超时仍没接回一段真在录的
+    //   会话 → 老实结束本段（只到断开前），停掉网页墙钟空跑，避免"显示9分钟、实际只录35秒"。
+    //   断开后的音频本就丢了，老实报错不会多丢；断开前那段由 pendingRecovery 重连后补传，不丢。
+    private static final long RECONNECT_RECORDING_GRACE_MS = 25000;
+
     // ★后台上传队列
     private static final class UploadTask {
         final String fileName, cookie, uploadUrl, sn;
@@ -484,10 +497,62 @@ public class PenController {
         }
     };
 
+    /** （A）开录健康看门狗：笔回了"已开录"、限时内却既无实时流帧、笔也没报时长 → 判"应了但没真录"。 */
+    private final Runnable recordingHealthWatchdog = new Runnable() {
+        @Override public void run() {
+            healthWatchdogArmed = false;
+            // 只管"你点开始"的这段；笔自发(声控)录音不干预；暂停时不判。
+            if (!sessionActive || !sessionAppInitiated || penPaused) return;
+            boolean haveAudioEvidence = (sessionStreamFrames > 0) || (lastPenDurationSec > 0);
+            if (haveAudioEvidence) return;   // 有真音频证据 → 正常录音，放过
+            Log.w(TAG, "开录健康检查失败：" + REC_HEALTH_GRACE_MS + "ms 内无实时流帧也无时长 → 判定笔未真正开始录音");
+            penLog("★开录看门狗触发(无流无时长)→判未真录、停并报错 frames=" + sessionStreamFrames + " penDur=" + lastPenDurationSec);
+            abortGhostRecording();
+        }
+    };
+
+    /** "笔应了开录但没真录"：干净复位会话、不入队、给出即时明确错误，让用户当场重连重录（不再墙钟空跑）。 */
+    private void abortGhostRecording() {
+        disarmHealthWatchdog();
+        stopStreamCapture();
+        sessionGen++;    // 作废任何挂起的结束兜底
+        penRecording = false; sessionActive = false; appStartPending = false; sessionAppInitiated = false;
+        startElapsedMs = 0; sessionFileName = null; sessionStartWallMs = 0;
+        sessionStreamBuf = null; sessionStreamComplete = false; sessionStreamBytes = 0; sessionStreamFrames = 0;
+        lastPenDurationSec = 0;
+        // 尝试发停止把笔可能的"半开"状态收掉（失败忽略，保留连接好让用户快速重试）。
+        try { AIRECBleManager.getInstance().endRecord(); } catch (Exception ignored) {}
+        post(PhoneMicService.STATE_ERROR, "录音笔没有真正开始录音（信号弱/未唤醒），请靠近后重试", 0, -1);
+    }
+
+    private void armHealthWatchdog() {
+        disarmHealthWatchdog();
+        lastPenDurationSec = 0;
+        healthWatchdogArmed = true;
+        main.postDelayed(recordingHealthWatchdog, REC_HEALTH_GRACE_MS);
+    }
+    private void disarmHealthWatchdog() {
+        healthWatchdogArmed = false;
+        main.removeCallbacks(recordingHealthWatchdog);
+    }
+
+    /** （B）断线宽限到：仍没接回一段真在录的会话 → 老实结束本段，停掉网页墙钟空跑。 */
+    private final Runnable reconnectGiveUp = new Runnable() {
+        @Override public void run() {
+            if (sessionActive || penRecording) return;   // 已重新接上并在录 → 不打扰
+            Log.w(TAG, "断线重连宽限到，仍未恢复录音 → 老实结束本段(只到断开前)");
+            penLog("★重连宽限到仍未恢复→老实结束、停墙钟空跑");
+            // pendingRecovery 仍在：重连后会把断开前那段补传，不丢；这里只是不再假装还在录。
+            post(PhoneMicService.STATE_ERROR, "录音笔信号中断，本段只保存到断开前，请重连后继续", 0, -1);
+        }
+    };
+
     /** App 点「结束陪伴」：发停止命令。笔停 → onRecordStateChanged(false) → 入队后台上传。 */
     public void stopRecording() {
         main.removeCallbacks(confirmTimeout);
         main.removeCallbacks(preStartTimeout);   // 启动确认期间点"取消"也能撤销
+        disarmHealthWatchdog();                  // 用户主动结束 → 撤开录看门狗
+        main.removeCallbacks(reconnectGiveUp);   // 用户在重连宽限期内点结束 → 撤断线宽限
         if (appStartPending && !penRecording) {
             // 还没等到笔确认开录就点了结束 → 没真录，直接回 idle
             appStartPending = false;
@@ -545,6 +610,9 @@ public class PenController {
 
     /** 结束当前这段录音：复位会话显示状态、把这段排进后台上传队列、立刻回到可再开始。 */
     private void finishSessionEnqueue(String fileName, int durSec, long startWallMs) {
+        disarmHealthWatchdog();                  // 本段已收尾 → 撤开录看门狗
+        main.removeCallbacks(reconnectGiveUp);   // 正常收尾 → 撤断线宽限
+        lastPenDurationSec = 0;
         final boolean appInit = sessionAppInitiated;   // 捕获本段是否你主动发起
         // ★先收口实时流：停止捕获、在复位前快照缓冲
         stopStreamCapture();
@@ -642,6 +710,8 @@ public class PenController {
         try { synchronized (buf) { buf.write(data); } } catch (Exception ignore) {}
         sessionStreamBytes += data.length;
         sessionStreamFrames++;
+        // ★有真音频流进来 = 笔确实在录 → 撤开录看门狗（armed 守卫：避免每帧都扫消息队列）
+        if (healthWatchdogArmed) { healthWatchdogArmed = false; main.removeCallbacks(recordingHealthWatchdog); }
     }
 
     private void stopStreamCapture() {
@@ -769,6 +839,8 @@ public class PenController {
                     startStreamCapture();   // ★开始捕获蓝牙实时流(拼 .ops)
                     Log.d(TAG, "镜像：笔开始录音 file=" + sessionFileName + " gen=" + sessionGen);
                     post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
+                    main.removeCallbacks(reconnectGiveUp);   // 新会话已建立 → 撤断线宽限
+                    if (wasAppStart) armHealthWatchdog();    // ★你点的开始：限时内必须出现真音频证据
                 } else if (!TextUtils.isEmpty(fileName)) {
                     sessionFileName = fileName;
                 }
@@ -923,6 +995,7 @@ public class PenController {
             }
             // ★断开必复位会话：否则 sessionActive/penRecording/appStartPending 残留→重连点开始被守卫静默吞→永久卡"正在唤醒"。
             main.removeCallbacks(confirmTimeout);   // 防断开后确认超时误判
+            disarmHealthWatchdog();                 // 断开后开录看门狗无意义，撤掉防误触发
             if (sessionActive || penRecording || appStartPending) {
                 sessionStreamComplete = false;   // ★录音中断开→实时流有缺口，本段回落到"下载补全"路径
                 Log.w(TAG, "断开时复位残留会话 sessionActive=" + sessionActive + " penRecording=" + penRecording + " appStartPending=" + appStartPending);
@@ -940,9 +1013,12 @@ public class PenController {
                 appStartPending = false; sessionAppInitiated = false;
                 startElapsedMs = 0; sessionFileName = null; sessionStartWallMs = 0;
                 if (wasRecording && autoReconnectOn) {
-                    // 录音中断开 + 会自动重连：保持"录音中·重连中"，不切成吓人的"断开"；
-                    // 录音笔其实仍在录，连上后续传，这段不丢。
+                    // 录音中断开 + 会自动重连：先保持"录音中·重连中"，不切成吓人的"断开"。
+                    // ★但只保住 RECONNECT_RECORDING_GRACE_MS：到点还没接回一段真在录的会话 →
+                    //   老实结束本段（断开后的音频本就丢了），停掉网页墙钟空跑（避免"9分钟实际35秒"）。
                     post(PhoneMicService.STATE_RECORDING, "🔄 信号断开，正在自动重连，录音继续中…", wasElapsed, -1);
+                    main.removeCallbacks(reconnectGiveUp);
+                    main.postDelayed(reconnectGiveUp, RECONNECT_RECORDING_GRACE_MS);
                 } else {
                     post(PhoneMicService.STATE_ERROR,
                             willRecover ? "录音笔断开了，正在自动重连…" : "录音笔已断开，正在自动重连…",
@@ -976,6 +1052,7 @@ public class PenController {
                 if (startElapsedMs == 0) startElapsedMs = SystemClock.elapsedRealtime();
                 pauseWorker();
                 post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
+                main.removeCallbacks(reconnectGiveUp);   // 重连后接回一段真在录的会话 → 撤断线宽限
             }
             if (listener != null) main.post(() -> {
                 listener.onPenRecordStatus(recording);
@@ -997,6 +1074,11 @@ public class PenController {
             markPenResponded();
             // 只在镜像会话内同步时长。注意：墙上钟已在网页自走，这里只在差距较大时前跳（不回退）。
             if (!sessionActive) return;
+            // ★笔报了已录时长>0 = 笔确实在录 → 撤开录看门狗（即使实时流没捕获到也算真录证据）
+            if (durationSec > 0) {
+                lastPenDurationSec = (int) durationSec;
+                if (healthWatchdogArmed) { healthWatchdogArmed = false; main.removeCallbacks(recordingHealthWatchdog); }
+            }
             if (listener != null) main.post(() -> listener.onPenRecordDuration((int) durationSec));
         }
     };
