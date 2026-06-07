@@ -4921,9 +4921,8 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   注意：强制更新逻辑是 versionCode≥3 的 App 才内置的；更早版本(1/2)没有这段检查，挡不住，需手动装一次新包。
 APP_LATEST_VERSION_CODE = 4
 APP_LATEST_VERSION_NAME = "2.0.3"
-# ★MIN 暂留 3：v4(SN绑定强制+稳定连接)含未真机充分验证的蓝牙逻辑，先让 v4 可装、不强制全网。
-#   真机验过 v4 后，把 MIN 抬到 4 即强制全网升级。
-APP_MIN_VERSION_CODE = 3                 # 低于此值的客户端 → 强制更新
+# v4 已真机验收通过(2026-06-08) → 抬到 4 强制全网升级。
+APP_MIN_VERSION_CODE = 4                 # 低于此值的客户端 → 强制更新
 APP_UPDATE_NOTE = "新版本：录音笔按管理员绑定的设备连接，避免错连他人录音笔；并修复录音断流截断。请更新后使用。"
 
 
