@@ -952,7 +952,8 @@ function renderPending() {
     else if (isCross) rowBg = 'background:#fdecea';
     const rowStyle = rowBg ? ` style="${rowBg}"` : '';
     const dateStyle = isCross ? 'color:#c0392b;font-weight:600' : 'font-weight:600';
-    const durMin = (x.duration_min != null) ? `${x.duration_min} 分钟` : '—';
+    // 时长用 duration_label(xx分xx秒，=录音本身时长)；缺失才回退到分钟粒度
+    const durTxt = x.duration_label ? x.duration_label : (x.duration_min != null ? `${x.duration_min} 分钟` : '—');
     const span = (x.start_hm && x.end_hm) ? `${x.start_hm} – ${x.end_hm}` : (x.start_hm || '—');
     // 状态横幅（删除审批中 / 删除被拒绝）
     let banner = '';
@@ -988,7 +989,7 @@ function renderPending() {
       ${banner ? `<td colspan="5" style="padding:0 6px">${banner}</td></tr><tr${rowStyle}>` : ''}
       <td data-lbl="服务日期" style="white-space:nowrap;${dateStyle}">${x.service_date || '—'}</td>
       <td data-lbl="时间段" style="white-space:nowrap">${span}</td>
-      <td data-lbl="时长" style="white-space:nowrap;color:#2e7d32;font-weight:600">${durMin}</td>
+      <td data-lbl="时长" style="white-space:nowrap;color:#2e7d32;font-weight:600">${durTxt}</td>
       <td data-lbl="试听">${audio}</td>
       <td class="pending-acts" style="vertical-align:middle">
         <div style="display:flex;flex-direction:column;gap:4px;align-items:stretch">${actsHtml}</div>
