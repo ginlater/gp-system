@@ -12,6 +12,10 @@
     <!-- 前台 Service（录音不被切后台/锁屏打断的关键） -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <!-- 录音笔(蓝牙)录音期间用 connectedDevice 前台 Service 保活进程，防后台/锁屏挂起导致 BLE 流卡死 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- 录音期间持 PARTIAL_WAKE_LOCK 防 CPU 浅睡节流蓝牙通知 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Android 13+ 通知权限（前台 Service 常驻通知可见） -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- 申请加入电池优化白名单（降低被国产 ROM 杀进程的概率） -->
@@ -64,6 +68,12 @@
             android:name=".recording.PhoneMicService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- 录音笔(蓝牙)录音保活 Service：整段录音托住进程，防被切后台/锁屏挂起 -->
+        <service
+            android:name=".recording.PenKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <!-- 录音笔管理页（沿用 Demo，阶段二从接诊页进入） -->
         <!-- exported=true：便于用 adb 直接打开录音笔设置页/恢复出厂（内部调试用） -->

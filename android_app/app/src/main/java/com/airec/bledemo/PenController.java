@@ -13,6 +13,7 @@ import com.airec.blesdk.AIRECBleFile;
 import com.airec.blesdk.AIRECBleManager;
 import com.airec.bledemo.net.Uploader;
 import com.airec.bledemo.recording.PhoneMicService;
+import com.airec.bledemo.recording.PenKeepAliveService;
 import com.airec.bledemo.recording.RecordingBus;
 
 import java.io.File;
@@ -107,9 +108,15 @@ public class PenController {
     private long startElapsedMs = 0;                  // 当前这段计时起点（elapsedRealtime）
     // ★实时流捕获：录音时把蓝牙实时流(80字节KA块)拼成完整 .ops，结束时整包直传(opus端到端，不下载不解码)
     private volatile java.io.ByteArrayOutputStream sessionStreamBuf = null;
-    private volatile boolean sessionStreamComplete = false;  // 本段流是否完整(蓝牙全程没断)
+    private volatile boolean sessionStreamComplete = false;  // 本段流是否完整(蓝牙全程没断 + 没中途卡死)
     private volatile long sessionStreamBytes = 0;
     private volatile int  sessionStreamFrames = 0;
+    // ★录音中卡流看门狗：实时流可能"连着但没数据"(GATT通知静默停)——onDisconnected 不触发、流就这么断了。
+    //   记最后一帧时刻，>STREAM_STALL_MS 没新帧 → 判本段流不完整 → 收尾回落"从笔机身补下载"，绝不直传截断件。
+    private volatile long lastStreamFrameMs = 0;
+    private static final long STREAM_STALL_MS = 6000;
+    // ★保活：录音笔录音整段起前台 Service + 唤醒锁，防 App 被切后台/锁屏挂起→BLE 回调停→流卡死。
+    private volatile boolean keepAliveOn = false;
 
     private static final long CONFIRM_TIMEOUT_MS = 5000; // 发开始命令后等笔确认的超时（超时判定休眠/关机）
 
@@ -450,6 +457,7 @@ public class PenController {
     private void doStartRecord() {
         appStartPending = true;
         sessionStartWallMs = System.currentTimeMillis();
+        enterRecordingKeepAlive();   // ★你点开始时 App 必在前台，此刻起保活最稳，能扛住随后锁屏/切后台
         activate();
         try {
             AIRECBleManager.getInstance().startRecord();
@@ -459,6 +467,7 @@ public class PenController {
         } catch (Exception e) {
             Log.e(TAG, "startRecord failed", e);
             appStartPending = false;
+            exitRecordingKeepAlive();   // ★开录命令就没发出去 → 停保活，别泄漏唤醒锁
             post(PhoneMicService.STATE_ERROR, "录音笔启动失败：" + e.getMessage(), 0, -1);
         }
     }
@@ -491,6 +500,7 @@ public class PenController {
                 Log.w(TAG, "笔未在 " + CONFIRM_TIMEOUT_MS + "ms 内确认开录 → 判定休眠/关机");
                 appStartPending = false;
                 sessionStartWallMs = 0;
+                exitRecordingKeepAlive();   // ★笔没确认开录、这段没真录 → 停保活，别泄漏唤醒锁
                 post(PhoneMicService.STATE_ERROR, "启动失败：录音笔没有响应，请确认它已开机/唤醒后重试", 0, -1);
                 try { AIRECBleManager.getInstance().disconnect(); } catch (Exception ignored) {}
             }
@@ -515,6 +525,7 @@ public class PenController {
     private void abortGhostRecording() {
         disarmHealthWatchdog();
         stopStreamCapture();
+        exitRecordingKeepAlive();   // ★没真录 → 停保活
         sessionGen++;    // 作废任何挂起的结束兜底
         penRecording = false; sessionActive = false; appStartPending = false; sessionAppInitiated = false;
         startElapsedMs = 0; sessionFileName = null; sessionStartWallMs = 0;
@@ -542,6 +553,7 @@ public class PenController {
             if (sessionActive || penRecording) return;   // 已重新接上并在录 → 不打扰
             Log.w(TAG, "断线重连宽限到，仍未恢复录音 → 老实结束本段(只到断开前)");
             penLog("★重连宽限到仍未恢复→老实结束、停墙钟空跑");
+            exitRecordingKeepAlive();   // ★本段已放弃 → 停保活(断开前那段由 pendingRecovery 重连后补传)
             // pendingRecovery 仍在：重连后会把断开前那段补传，不丢；这里只是不再假装还在录。
             post(PhoneMicService.STATE_ERROR, "录音笔信号中断，本段只保存到断开前，请重连后继续", 0, -1);
         }
@@ -557,10 +569,12 @@ public class PenController {
             // 还没等到笔确认开录就点了结束 → 没真录，直接回 idle
             appStartPending = false;
             sessionStartWallMs = 0;
+            exitRecordingKeepAlive();   // ★没真录 → 停保活
             post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
             return;
         }
         if (!penRecording && !sessionActive) {
+            exitRecordingKeepAlive();   // ★本就没在录 → 停保活
             post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
             return;
         }
@@ -617,10 +631,20 @@ public class PenController {
         // ★先收口实时流：停止捕获、在复位前快照缓冲
         stopStreamCapture();
         final java.io.ByteArrayOutputStream streamBuf = sessionStreamBuf;
-        final boolean streamComplete = sessionStreamComplete;
+        boolean streamComplete = sessionStreamComplete;
         final long streamBytes = sessionStreamBytes;
         sessionStreamBuf = null; sessionStreamComplete = false;
         sessionStreamBytes = 0; sessionStreamFrames = 0;
+        // ★防截断件直传(最后一道闸)：实时流估算秒数(KA SILK-WB ≈80B/20ms ≈ 4000B/s) 远小于墙钟 durSec
+        //   → 八成中途静默卡流没被看门狗逮到，别信这段 buffer，回落"从笔机身补下载"拿全段，绝不上传截断件。
+        if (streamComplete && durSec >= 30 && streamBuf != null) {
+            int estStreamSec = (int) (streamBytes / 4000);
+            if (estStreamSec < durSec * 0.6) {
+                Log.w(TAG, "实时流估算" + estStreamSec + "s ≪ 墙钟" + durSec + "s → 疑似截断，回落补下载");
+                penLog("★疑似截断 est=" + estStreamSec + "s wall=" + durSec + "s → 回落补下载");
+                streamComplete = false;
+            }
+        }
 
         sessionGen++;    // ★本段结束：作废任何挂起的结束兜底
         penRecording = false;
@@ -670,6 +694,7 @@ public class PenController {
             }
             post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
         }
+        exitRecordingKeepAlive();   // ★本段录音已收尾入队 → 停保活(上传/补下载由后台队列自带重试，不再占前台)
     }
 
     /** 入队后的公共收尾：建占位 + 立刻回 idle + 延迟启动 worker。 */
@@ -692,14 +717,17 @@ public class PenController {
 
     private void startStreamCapture() {
         sessionStreamBuf = new java.io.ByteArrayOutputStream();
-        sessionStreamComplete = true;   // 先假定完整，蓝牙断过则置 false
+        sessionStreamComplete = true;   // 先假定完整，蓝牙断过/中途卡死则置 false
         sessionStreamBytes = 0; sessionStreamFrames = 0;
+        lastStreamFrameMs = 0;
         try {
             AIRECBleManager.getInstance().setAudioStreamListener(this::onStreamFrame);
         } catch (Exception e) {
             Log.e(TAG, "setAudioStreamListener 失败，本段回落下载", e);
             sessionStreamComplete = false;
         }
+        main.removeCallbacks(streamStallWatch);
+        main.postDelayed(streamStallWatch, 2000);   // ★起卡流看门狗
     }
 
     /** 实时流回调：把 80 字节 KA 块原样拼接(不解码)。 */
@@ -710,12 +738,47 @@ public class PenController {
         try { synchronized (buf) { buf.write(data); } } catch (Exception ignore) {}
         sessionStreamBytes += data.length;
         sessionStreamFrames++;
+        lastStreamFrameMs = SystemClock.elapsedRealtime();   // ★记最后一帧时刻，供卡流看门狗判定
         // ★有真音频流进来 = 笔确实在录 → 撤开录看门狗（armed 守卫：避免每帧都扫消息队列）
         if (healthWatchdogArmed) { healthWatchdogArmed = false; main.removeCallbacks(recordingHealthWatchdog); }
     }
 
+    /** ★录音中卡流看门狗：流来过、但 >STREAM_STALL_MS 没新帧(连着但没数据) → 标本段流不完整，收尾走补下载。 */
+    private final Runnable streamStallWatch = new Runnable() {
+        @Override public void run() {
+            if (sessionStreamBuf == null) return;   // 捕获已停 → 不再续期
+            if (sessionActive && !penPaused && sessionStreamComplete
+                    && lastStreamFrameMs > 0
+                    && (SystemClock.elapsedRealtime() - lastStreamFrameMs) > STREAM_STALL_MS) {
+                sessionStreamComplete = false;   // 误判也只是多走一次"从笔补下载"(拿到全段)，不丢音频——对商业软件是安全方向
+                Log.w(TAG, "实时流卡死 >" + STREAM_STALL_MS + "ms 无新帧 → 标记流不完整，收尾走补下载 bytes=" + sessionStreamBytes);
+                penLog("★实时流卡死无新帧→标不完整(回落补下载) bytes=" + sessionStreamBytes);
+            }
+            main.postDelayed(this, 2000);
+        }
+    };
+
     private void stopStreamCapture() {
+        main.removeCallbacks(streamStallWatch);
         try { AIRECBleManager.getInstance().setAudioStreamListener(null); } catch (Exception ignore) {}
+    }
+
+    // ============ 录音笔录音保活（前台 Service + 唤醒锁，幂等） ============
+
+    /** 录音段开始：起前台保活，托住进程整段不被挂起。幂等。 */
+    private void enterRecordingKeepAlive() {
+        if (keepAliveOn) return;
+        keepAliveOn = true;
+        PenKeepAliveService.start(appCtx);
+        penLog("保活↑(录音笔录音中)");
+    }
+
+    /** 录音段结束/放弃：停前台保活，放唤醒锁。幂等。 */
+    private void exitRecordingKeepAlive() {
+        if (!keepAliveOn) return;
+        keepAliveOn = false;
+        PenKeepAliveService.stop(appCtx);
+        penLog("保活↓");
     }
 
     /** 调试期：连接/录音/重连 状态机事件写文件(vivo 封了 logcat，靠它看)。append。 */
@@ -829,6 +892,7 @@ public class PenController {
                 }
                 if (!sessionActive) {
                     sessionActive = true;
+                    enterRecordingKeepAlive();   // ★笔自发(声控/按钮)开录也要保活；后台启动受限时 start() 已吞异常
                     sessionAppInitiated = wasAppStart;   // 你点的→失败大声提示；笔自发→空录静默丢
                     sessionGen++;    // ★新一段：作废上一段挂起的结束兜底，别误伤这段
                     failedCount = 0; // 新一批录音，失败计数清零
@@ -1019,7 +1083,9 @@ public class PenController {
                     post(PhoneMicService.STATE_RECORDING, "🔄 信号断开，正在自动重连，录音继续中…", wasElapsed, -1);
                     main.removeCallbacks(reconnectGiveUp);
                     main.postDelayed(reconnectGiveUp, RECONNECT_RECORDING_GRACE_MS);
+                    // ★录音中断 + 会自动重连：保活继续(托住进程等重连)，到点没接回由 reconnectGiveUp 停。
                 } else {
+                    exitRecordingKeepAlive();   // ★没在录 / 不会重连 → 停保活
                     post(PhoneMicService.STATE_ERROR,
                             willRecover ? "录音笔断开了，正在自动重连…" : "录音笔已断开，正在自动重连…",
                             0, -1);
@@ -1045,6 +1111,7 @@ public class PenController {
             } else if (recording && !sessionActive) {
                 penRecording = true;
                 sessionActive = true;
+                enterRecordingKeepAlive();   // ★连上即在录(笔更早自发开录) → 也保活
                 sessionGen++;    // ★新一段
                 sessionAppInitiated = false;  // 连上时笔已在录=笔自发，空录静默丢
                 sessionFileName = !TextUtils.isEmpty(fileName) ? fileName : null;

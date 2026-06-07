@@ -470,6 +470,10 @@ def init_db():
         conn.execute("ALTER TABLE recordings ADD COLUMN speaker_confirmed INTEGER DEFAULT 0")
     if "upload_status" not in rec_cols:
         conn.execute("ALTER TABLE recordings ADD COLUMN upload_status TEXT DEFAULT 'done'")
+    # 2026-06-07 断流截断告警：上报时长(墙钟)远大于实测音频时长(ffprobe)时打标，
+    # 兜底提醒"上报X分钟、实际只录到Y秒，疑似蓝牙断流丢失"，并保留原始件待复检。
+    if "truncate_note" not in rec_cols:
+        conn.execute("ALTER TABLE recordings ADD COLUMN truncate_note TEXT")
 
     # 2026-05-28 customer_tags 加 mention_count（本次录音里顾客提及该标签话题的次数）
     ct_cols = {r[1] for r in conn.execute("PRAGMA table_info(customer_tags)").fetchall()}
@@ -1440,12 +1444,25 @@ def _ensure_clean_audio(recording_id, oss_key):
             return oss_key  # 转码异常，回退原文件
         new_key = (oss_key.rsplit(".", 1)[0]) + "_clean.wav"
         oss_bucket.put_object_from_file(new_key, out)
+        # ★断流截断兜底：上报(墙钟)时长 vs 实测音频时长。上报≥60s 且 实测<上报×50% = 录音中途丢了。
+        #   打 truncate_note 兜底提醒，并【保留原始件不删】供复检（默认不可恢复，这里破例留证）。
+        old_row = db_fetchone("SELECT duration_label FROM recordings WHERE id=?", (recording_id,))
+        reported_sec = _parse_duration_label_sec(old_row["duration_label"]) if old_row else 0
+        truncated = (reported_sec >= 60 and dur < reported_sec * 0.5)
+        note = None
+        if truncated:
+            note = (f"上报{_format_duration_label(reported_sec)}、实际只录到{_format_duration_label(dur)}，"
+                    f"疑似蓝牙断流丢失，请核对/重录")
+            app.logger.warning("[truncate] rec %s 上报%ss 实测%.1fs (%.1fx) → 疑似断流截断，保留原始件 %s",
+                               recording_id, reported_sec, dur, reported_sec / max(dur, 0.1), oss_key)
         db_write(
-            "UPDATE recordings SET oss_key=?, duration_label=?, size_bytes=? WHERE id=?",
-            (new_key, _format_duration_label(dur), os.path.getsize(out), recording_id),
+            "UPDATE recordings SET oss_key=?, duration_label=?, size_bytes=?, truncate_note=? WHERE id=?",
+            (new_key, _format_duration_label(dur), os.path.getsize(out), note, recording_id),
         )
-        _oss_delete_quiet(oss_key)  # 删原 webm，失败仅记日志（孤儿可接受）
-        app.logger.info("[clean audio] rec %s 转码 %s → %s (%.1fs)", recording_id, oss_key, new_key, dur)
+        if not truncated:
+            _oss_delete_quiet(oss_key)  # 正常：删原 webm/ogg，失败仅记日志（孤儿可接受）
+        app.logger.info("[clean audio] rec %s 转码 %s → %s (%.1fs)%s", recording_id, oss_key, new_key, dur,
+                        " ★疑似截断" if truncated else "")
         return new_key
     except Exception as e:
         # 转码失败：若已上传 new_key 但 DB 未更新则清掉，回退原文件继续 ASR
@@ -8842,6 +8859,36 @@ def _consultant_required():
     return None
 
 
+def _detect_truncate_note(data, ext, reported_sec):
+    """上传时即测：ffprobe 实测音频秒数 vs 客户端上报(墙钟)秒数。
+    上报≥60s 且 实测<上报×50% → 返回兜底提醒文案，让顾问在「未归档」当场就看到"只录到X秒"，
+    不必等绑定后跑 ASR 才发现。探测失败/不满足 → None（最佳努力，绝不阻断上传）。"""
+    try:
+        if not reported_sec or reported_sec < 60:
+            return None
+        import tempfile, subprocess
+        fd, p = tempfile.mkstemp(suffix="." + (ext or "bin"))
+        try:
+            with os.fdopen(fd, "wb") as fo:
+                fo.write(data)
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", p],
+                capture_output=True, text=True, timeout=15)
+            real = float((out.stdout or "").strip())
+        finally:
+            try: os.remove(p)
+            except OSError: pass
+        if real > 0 and real < reported_sec * 0.5:
+            app.logger.warning("[truncate] upload 上报%ss 实测%.1fs (%.1fx) → 疑似断流截断",
+                               reported_sec, real, reported_sec / max(real, 0.1))
+            return (f"上报{_format_duration_label(reported_sec)}、实际只录到{_format_duration_label(real)}，"
+                    f"疑似蓝牙断流丢失，请核对/重录")
+    except Exception as e:
+        app.logger.info("[truncate] upload 探测跳过: %s", e)
+    return None
+
+
 @app.route("/api/consultant/upload", methods=["POST"])
 @login_required
 def api_consultant_upload():
@@ -8882,6 +8929,12 @@ def api_consultant_upload():
         stem, _, ex = oss_key.rpartition(".")
         oss_key = f"{stem}_{_uuid.uuid4().hex[:4]}.{ex}"
     data = f.read()
+    # ★断流截断兜底(上传即测)：上报墙钟时长 vs ffprobe 实测音频时长，差距大就打标，未归档当场提醒。
+    try:
+        reported_sec = int(float(request.form.get("duration_sec") or 0))
+    except (TypeError, ValueError):
+        reported_sec = 0
+    truncate_note = _detect_truncate_note(data, ext, reported_sec)
     # 回填占位：结束录音时已先建了 processing 占位记录，这里把真音频补上，不新建行
     placeholder_id = request.form.get("placeholder_id")
     if placeholder_id:
@@ -8909,6 +8962,8 @@ def api_consultant_upload():
                        source='consultant-pen', upload_status='done' WHERE id=?""",
                     (oss_key, len(data), dur_label, prow["id"]),
                 )
+            if truncate_note:
+                db_write("UPDATE recordings SET truncate_note=? WHERE id=?", (truncate_note, prow["id"]))
             return jsonify({"id": prow["id"], "oss_key": oss_key})
     try:
         oss_bucket.put_object(oss_key, data)
@@ -8922,6 +8977,8 @@ def api_consultant_upload():
         duration_label=dur_label,
         company_id=company_id, uploader_user_id=u["id"], orphan=True,
     )
+    if truncate_note:
+        db_write("UPDATE recordings SET truncate_note=? WHERE id=?", (truncate_note, rid))
     return jsonify({"id": rid, "oss_key": oss_key})
 
 
@@ -8987,7 +9044,7 @@ def api_consultant_recordings_pending():
     rows = db_fetchall(
         """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
                   asr_status, asr_error, customer, created_at,
-                  asr_speaker_count, asr_speaker_warning, upload_status
+                  asr_speaker_count, asr_speaker_warning, upload_status, truncate_note
            FROM recordings
            WHERE uploader_user_id=? AND session_id IS NULL
            ORDER BY id DESC LIMIT 200""",
@@ -8997,7 +9054,7 @@ def api_consultant_recordings_pending():
     rows2 = db_fetchall(
         """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
                   asr_status, asr_error, customer, created_at,
-                  asr_speaker_count, asr_speaker_warning, upload_status
+                  asr_speaker_count, asr_speaker_warning, upload_status, truncate_note
            FROM recordings
            WHERE advisor=? AND uploader_user_id IS NULL AND session_id IS NULL
            ORDER BY id DESC LIMIT 200""",
