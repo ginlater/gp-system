@@ -20,6 +20,7 @@ from functools import wraps
 from http import HTTPStatus
 from pathlib import Path
 from urllib import request as urllib_request
+from urllib.parse import quote
 
 import oss2
 from flask import (Flask, abort, g, jsonify, redirect, render_template,
@@ -4876,7 +4877,8 @@ def logout():
 
 # ============ App 下载（公开页面，无需登录）============
 APK_PATH = Path(__file__).parent / "app-release.apk"
-APK_DOWNLOAD_NAME = "刁姐陪伴.apk"
+APK_DOWNLOAD_NAME = "刁姐陪伴.apk"       # 现代浏览器显示的中文名（filename*）
+APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回退名（纯 ASCII）
 
 
 @app.route("/download")
@@ -4906,11 +4908,15 @@ def download_apk():
     resp = send_file(
         str(APK_PATH),
         mimetype="application/vnd.android.package-archive",
-        as_attachment=True,
-        download_name=APK_DOWNLOAD_NAME,
         max_age=0,
     )
     resp.headers["Cache-Control"] = "no-cache"
+    # 手动拼 Content-Disposition：filename 给非空 ASCII 回退名，filename* 给中文名。
+    # 不用 send_file 的 download_name —— 它会从中文名剥出 ASCII 回退，结果只剩 ".apk"。
+    resp.headers["Content-Disposition"] = (
+        f"attachment; filename={APK_FALLBACK_NAME}; "
+        f"filename*=UTF-8''{quote(APK_DOWNLOAD_NAME)}"
+    )
     return resp
 
 
