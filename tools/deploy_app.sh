@@ -23,6 +23,17 @@ AAPT="$BT/aapt2"; APKSIGNER="$BT/apksigner"
 red(){ printf '\033[31m%s\033[0m\n' "$*"; }; grn(){ printf '\033[32m%s\033[0m\n' "$*"; }
 die(){ red "✗ $*"; exit 1; }
 
+# --with-backend: 发完 APK 再把后端也上线(git push + 生产 git pull + restart gongpai)，
+# 这样 APK 和后端版本常量真正一条命令同步上线，不留"版本号已抬、包/常量没跟上"的窗口。
+WITH_BACKEND=0
+for a in "$@"; do
+  case "$a" in
+    --with-backend) WITH_BACKEND=1 ;;
+    -h|--help) echo "用法: tools/deploy_app.sh [--with-backend]"; echo "  --with-backend  发完 APK 再 git push + 生产 git pull + restart gongpai"; exit 0 ;;
+    *) die "未知参数: $a (用 --help)" ;;
+  esac
+done
+
 echo "==> 1/6 校验版本号同步 (build.gradle ↔ webapp.py)"
 GRADLE_VC=$(grep -oE 'versionCode[[:space:]]+[0-9]+' "$APP/app/build.gradle" | grep -oE '[0-9]+' | head -1)
 WEBAPP_VC=$(grep -oE 'APP_LATEST_VERSION_CODE[[:space:]]*=[[:space:]]*[0-9]+' "$ROOT/webapp.py" | grep -oE '[0-9]+' | head -1)
@@ -44,17 +55,30 @@ echo "==> 4/6 备份旧包 + 发到生产"
 ssh "$HOST" "cp -n '$REMOTE_APK' '$REMOTE_APK.bak.\$(date +%Y%m%d_%H%M%S)' 2>/dev/null || true"
 scp "$APK" "$HOST:$REMOTE_APK"
 
-echo "==> 5/6 校验生产 APK == 本地"
+echo "==> 5 校验生产 APK == 本地"
 LOCAL_SHA=$(shasum -a 256 "$APK" | cut -d' ' -f1)
 PROD_SHA=$(ssh "$HOST" "sha256sum '$REMOTE_APK' | cut -d' ' -f1")
 [ "$LOCAL_SHA" = "$PROD_SHA" ] || die "生产 sha 不一致 local=$LOCAL_SHA prod=$PROD_SHA"
 echo "    sha256=$PROD_SHA"
 
-echo "==> 6/6 校验后端版本常量是否已部署 (live /api/app/version)"
+if [ "$WITH_BACKEND" = 1 ]; then
+  echo "==> 5.5 后端上线 (git push + 生产 git pull + restart gongpai)"
+  BR=$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)
+  [ -z "$(git -C "$ROOT" status --porcelain -- webapp.py)" ] || die "webapp.py 有未提交改动，先 git commit 再 --with-backend(否则后端不会更新)"
+  git -C "$ROOT" push origin "$BR"
+  ssh "$HOST" "cd '$REMOTE_DIR' && git pull origin $BR && sudo systemctl restart gongpai && sleep 3 && systemctl is-active gongpai" \
+    || die "后端部署失败，去服务器手查 (git pull / systemctl status gongpai)"
+fi
+
+echo "==> 6 校验后端版本常量是否已生效 (live /api/app/version)"
 LIVE_VC=$(ssh "$HOST" "curl -s http://127.0.0.1:5058/api/app/version" | grep -oE '"latestVersionCode":[0-9]+' | grep -oE '[0-9]+' | head -1)
 if [ "$LIVE_VC" = "$APK_VC" ]; then
-  grn "✅ APK v$APK_VC 已发布并校验通过，后端版本常量也已生效。"
+  grn "✅ APK v$APK_VC + 后端 v$LIVE_VC 已发布并校验通过。"
 else
   red  "⚠ APK 已发(v$APK_VC)，但线上 /api/app/version 还是 v$LIVE_VC：后端常量没部署。"
-  echo "   去执行: git push + 生产 git pull + sudo systemctl restart gongpai，否则强制更新会指向错版本。"
+  if [ "$WITH_BACKEND" = 1 ]; then
+    echo "   --with-backend 跑了仍不一致：可能 webapp.py 的 APP_LATEST_VERSION_CODE 没改到 $APK_VC。"
+  else
+    echo "   补救: 重跑加 --with-backend，或手动 git push + 生产 git pull + restart gongpai。"
+  fi
 fi
