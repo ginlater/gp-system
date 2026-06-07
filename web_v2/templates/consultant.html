@@ -581,6 +581,7 @@ function appUpdateSourceRow(){
     phone.title = isCute() ? '用手机录' : '用手机麦克风录音（不走录音笔）';
     phone.style.cssText = appSrcPillStyle(appRecSource === 'phone');
   }
+  if (connected) appClearConnectHint();   // 笔已连 → 顺手清掉残留的"请先连接"提示
 }
 // 点击连接指示：未连则触发原生连接（连上次那支笔）
 function appConnectPen(){
@@ -634,7 +635,17 @@ window.__onNativeRecState = function(state, msg, durSec){
   }
 };
 // 录音笔连接状态变化 → 刷新连接指示行（已连/未连）
-window.__onPenConnChanged = function(connected){ appUpdateSourceRow(); };
+// 笔已连上 → 清掉残留的"请先连接/已断开"提示，避免和"已就绪"并存。录音/上传/启动中不动。
+function appClearConnectHint(){
+  if (window.__appRecording || window.uploading || window.__nativeState==='starting') return;
+  var st = document.getElementById('recStatus');
+  if (!st) return;
+  var t = st.textContent || '';
+  if (t.indexOf('请先连接') >= 0 || t.indexOf('断开') >= 0) {
+    st.innerHTML = '<span class="t-pro">点击开始录音</span><span class="t-cute">点击开始陪伴 💕</span>';
+  }
+}
+window.__onPenConnChanged = function(connected){ appUpdateSourceRow(); if (connected) appClearConnectHint(); };
 
 // 原生上传完一段录音后：刷新未归档列表并自动打开绑定弹窗（复用本页既有流程）
 window.__onNativeUploaded = function(id){
@@ -739,7 +750,9 @@ if (IN_APP) {
     if (now !== window.__appPenLastConn) {
       window.__appPenLastConn = now;
       appUpdateSourceRow();
-      if (!now) {
+      if (now) {
+        appClearConnectHint();   // 刚连上：清掉残留的"请先连接"提示
+      } else {
         // 刚断开：仅录音笔模式、且没在录音/上传时，给个未连提示（手机模式不提示连笔）
         if (appRecSource==='pen' && !window.__appRecording && !window.uploading) {
           var st = document.getElementById('recStatus');
