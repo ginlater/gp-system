@@ -99,7 +99,6 @@ public class PenController {
     private volatile String  penDenyMsg = null;       // 拒绝文案(录音被挡时提示)
     private volatile String  currentMac = null;       // 当前连接的MAC
     private volatile int     snVerifyGen = 0;         // 校验代号：换连接即作废挂起的校验
-    private static final String PEN_PREFS = "pen_prefs";
 
     // 暂停（保留，网页已不暴露暂停）
     private volatile boolean penPaused = false;
@@ -1037,8 +1036,8 @@ public class PenController {
             autoConnectMac = null;
             if (device != null && device.getAddress() != null) lastConnectedMac = device.getAddress();
             currentMac = (device != null ? device.getAddress() : null);
-            penAllowed = prefAllowed(currentMac);   // ★已放行过的→乐观放行(快路<2s)；未知/被拒→先挡，等SN校验
-            penDenyMsg = null;
+            penAllowed = true;   // ★fail-open：默认放行(连上即可录、<2s)。只有后端【明确判拒】才 false+断开；
+            penDenyMsg = null;   //   SN读不到/网络失败/没配上下文 一律不挡录音(商业化：绝不因这些让人录不了)。
             penLog("onConnected GATT就绪 " + (device != null ? device.getAddress() : "?"));
             enableAutoReconnect();   // ★连上了：开启"维持连接"、停掉重连循环
             penSettingsWritten = false;
@@ -1348,17 +1347,6 @@ public class PenController {
         if (uploadUrl.endsWith("/upload")) return uploadUrl.substring(0, uploadUrl.length() - 7) + "/pen/report-sn";
         return uploadUrl.replace("/upload", "/pen/report-sn");
     }
-    private boolean prefAllowed(String mac) {
-        if (mac == null) return false;
-        try { return appCtx.getSharedPreferences(PEN_PREFS, Context.MODE_PRIVATE).getBoolean("allow_" + mac, false); }
-        catch (Exception e) { return false; }
-    }
-    private void prefSetAllowed(String mac, boolean allowed) {
-        if (mac == null) return;
-        try { appCtx.getSharedPreferences(PEN_PREFS, Context.MODE_PRIVATE).edit().putBoolean("allow_" + mac, allowed).apply(); }
-        catch (Exception ignored) {}
-    }
-
     /** 连上验证(verified)后：读SN→问后端准不准用这台。主线程调用。 */
     private void verifyPenAllowed() {
         final int gen = ++snVerifyGen;
@@ -1385,12 +1373,10 @@ public class PenController {
                 if (v.allow) {
                     penAllowed = true; penDenyMsg = null;
                     if (mac != null && mac.equals(penDeniedMac)) penDeniedMac = null;
-                    prefSetAllowed(mac, true);
                     penLog("SN校验通过 sn=" + fsn);
                 } else {
                     penAllowed = false; penDenyMsg = v.message; penDeniedMac = mac;
                     if (mac != null && mac.equals(lastConnectedMac)) lastConnectedMac = null;
-                    prefSetAllowed(mac, false);
                     penLog("★SN校验拒绝→断开 " + v.message);
                     String msg = (v.message == null || v.message.isEmpty()) ? "这台录音笔不是你的，请连你自己的录音笔" : v.message;
                     post(PhoneMicService.STATE_ERROR, msg, 0, -1);
