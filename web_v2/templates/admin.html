@@ -575,6 +575,11 @@ html,body{overflow-x:hidden;max-width:100%}
     <div class="card">
       <h3>未绑定录音 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadUnbound()">刷新</button></h3>
       <div class="tip">这里是尚未归档到任何接诊包的录音。可试听全程后，点「代绑」把它绑给某位顾问当日的客人。绑定后顾问端即可见；分析为手动，需到接诊列表点「开始分析」。</div>
+      <div style="margin:6px 0;display:flex;align-items:center;gap:8px;font-size:13px;flex-wrap:wrap">
+        <input id="ubSearch" placeholder="按顾问名筛选（如 林春华）" style="border:1px solid var(--border);border-radius:4px;padding:5px 10px;font-size:13px;width:200px" onkeydown="if(event.key==='Enter')loadUnbound()">
+        <button class="btn sec" style="padding:4px 12px;font-size:12px" onclick="loadUnbound()">筛选</button>
+        <button class="btn sec" style="padding:4px 12px;font-size:12px" onclick="document.getElementById('ubSearch').value='';loadUnbound()">清空</button>
+      </div>
       <div style="margin:6px 0;display:flex;align-items:center;gap:10px;font-size:13px">
         <span>已选 <b id="ubSelCount">0</b> 条</span>
         <button class="btn" style="padding:3px 12px;font-size:12px;background:#e74c3c;border-color:#e74c3c" onclick="unboundBatchDelete()">批量删除</button>
@@ -2066,7 +2071,9 @@ function unboundBatchDelete() {
   }).catch(e => { if (msg) msg.textContent = '失败：' + e; });
 }
 function loadUnbound() {
-  fetch(BASE + '/api/admin/unbound_recordings').then(r => r.json()).then(d => {
+  const sEl = document.getElementById('ubSearch');
+  const q = (sEl && sEl.value || '').trim();
+  fetch(BASE + '/api/admin/unbound_recordings' + (q ? ('?q=' + encodeURIComponent(q)) : '')).then(r => r.json()).then(d => {
     const tb = document.getElementById('unboundBody');
     unboundSel.clear(); ubUpdateCount();
     const sa = document.getElementById('ubSelAll'); if (sa) sa.checked = false;

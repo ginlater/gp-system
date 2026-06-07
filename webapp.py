@@ -10258,6 +10258,12 @@ def api_admin_unbound_recordings():
     if store_filter is not None:
         where += " AND r.store_id=?"
         params.append(store_filter)
+    # 按顾问名/上传人筛选（recording.advisor 或 上传人的 advisor_name/username）
+    q = (request.args.get("q") or "").strip()
+    if q:
+        where += " AND (r.advisor LIKE ? OR u.advisor_name LIKE ? OR u.username LIKE ?)"
+        like = f"%{q}%"
+        params.extend([like, like, like])
     rows = db_fetchall(
         f"""SELECT r.id, r.advisor, r.recorded_at, r.duration_label, r.asr_status,
                    r.oss_key, r.uploader_user_id, r.store_id,
