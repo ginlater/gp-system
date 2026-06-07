@@ -2070,6 +2070,46 @@ function unboundBatchDelete() {
     unboundSel.clear(); loadUnbound();
   }).catch(e => { if (msg) msg.textContent = '失败：' + e; });
 }
+// 未绑定录音：点「试听」在该行下方展开一个全宽自定义播放器，进度条大、好拖、可点任意位置跳转。
+function _ubFmt(s){ s = Math.max(0, Math.floor(s || 0)); const m = Math.floor(s/60), x = s%60; return String(m).padStart(2,'0')+':'+String(x).padStart(2,'0'); }
+function ubTogglePlayer(btn, id){
+  const row = btn.closest('tr');
+  const nxt = row.nextElementSibling;
+  // 再点同一条 → 收起
+  if (nxt && nxt.classList.contains('ub-player-row') && nxt.dataset.for === String(id)) {
+    const a = nxt.querySelector('audio'); if (a) a.pause();
+    nxt.remove(); return;
+  }
+  // 关掉其它已展开的
+  document.querySelectorAll('#unboundBody .ub-player-row').forEach(el => { const a = el.querySelector('audio'); if (a) a.pause(); el.remove(); });
+  const pr = document.createElement('tr');
+  pr.className = 'ub-player-row'; pr.dataset.for = String(id);
+  pr.innerHTML = `<td colspan="8" style="padding:10px 14px;background:#f2f8ff;border-bottom:1px solid var(--border)">
+    <div style="display:flex;align-items:center;gap:12px">
+      <button class="btn sec ubp-play" style="padding:5px 14px;font-size:15px;min-width:56px">⏸</button>
+      <span class="ubp-cur" style="font-variant-numeric:tabular-nums;font-size:13px;color:#555;min-width:46px;text-align:right">00:00</span>
+      <input type="range" class="ubp-seek" min="0" max="1000" value="0" step="1" style="flex:1;height:8px;cursor:pointer;accent-color:var(--blue)">
+      <span class="ubp-dur" style="font-variant-numeric:tabular-nums;font-size:13px;color:#555;min-width:46px">--:--</span>
+    </div>
+    <audio class="ubp-audio" preload="auto"></audio>
+  </td>`;
+  row.parentNode.insertBefore(pr, row.nextSibling);
+  const audio = pr.querySelector('.ubp-audio'), seek = pr.querySelector('.ubp-seek'),
+        cur = pr.querySelector('.ubp-cur'), dur = pr.querySelector('.ubp-dur'), play = pr.querySelector('.ubp-play');
+  let dragging = false;
+  audio.src = btn.dataset.url || '';   // 不经 innerHTML，避免 URL 转义问题
+  audio.addEventListener('loadedmetadata', () => { dur.textContent = _ubFmt(audio.duration); });
+  audio.addEventListener('timeupdate', () => {
+    if (!dragging && audio.duration) { seek.value = Math.round(audio.currentTime / audio.duration * 1000); cur.textContent = _ubFmt(audio.currentTime); }
+  });
+  audio.addEventListener('play',  () => { play.textContent = '⏸'; });
+  audio.addEventListener('pause', () => { play.textContent = '▶'; });
+  // input=拖动中只更新时间显示；change=松手才真正跳转。点条上任意位置也走这俩。
+  seek.addEventListener('input',  () => { dragging = true;  if (audio.duration) cur.textContent = _ubFmt(seek.value / 1000 * audio.duration); });
+  seek.addEventListener('change', () => { if (audio.duration) audio.currentTime = seek.value / 1000 * audio.duration; dragging = false; });
+  play.addEventListener('click',  () => { if (audio.paused) audio.play().catch(()=>{}); else audio.pause(); });
+  audio.play().catch(()=>{});   // 点了试听即播放(被浏览器拦则保持暂停)
+}
 function loadUnbound() {
   const sEl = document.getElementById('ubSearch');
   const q = (sEl && sEl.value || '').trim();
@@ -2083,7 +2123,7 @@ function loadUnbound() {
     if (!items.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">暂无未绑定录音</td></tr>'; return; }
     tb.innerHTML = items.map(r => {
       const audio = r.audio_url
-        ? `<audio controls preload="none" style="height:30px;max-width:200px" src="${_esc(r.audio_url)}"></audio>
+        ? `<button class="btn sec" style="padding:4px 12px;font-size:12px" data-url="${_esc(r.audio_url)}" onclick="ubTogglePlayer(this, ${r.id})">▶ 试听</button>
            <a href="${_esc(r.audio_url)}" download style="font-size:12px;margin-left:6px">下载</a>`
         : '<span class="muted">无</span>';
       // 未绑定录音均未分析；ASR 完成(转写就绪)时标注「待分析」(纯前端展示，分析需手动开始)
