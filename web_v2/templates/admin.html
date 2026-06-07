@@ -127,11 +127,11 @@ html,body{overflow-x:hidden;max-width:100%}
       </div>
       <table class="tbl">
         <thead><tr>
-          <th>姓名</th><th>角色</th><th>门店</th><th>工号</th><th>用户名</th><th>手机号</th>
+          <th>姓名</th><th>角色</th><th>门店</th><th>工号</th><th>用户名</th><th>手机号</th><th>绑定录音笔SN</th>
           {% if role == 'super' %}<th>公司</th>{% endif %}
           <th>操作</th>
         </tr></thead>
-        <tbody id="consBody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+        <tbody id="consBody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -734,6 +734,28 @@ function changeStaffRole(uid, sel) {
     body: JSON.stringify({role: sel.value}),
   }).then(r => r.json()).then(d => { if (d.error) { alert(d.error); loadConsultants(); } });
 }
+// ---- 录音笔SN绑定 ----
+function _snEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// 下拉只从"该顾问连过/用过的SN"里选(含当前绑定值)，不让手抄；空=未绑定。
+function penSnCell(c){
+  const cur = c.pen_sn || '';
+  const opts = [], seen = {};
+  if (cur) { opts.push(cur); seen[cur] = 1; }
+  (c.recent_sns || []).forEach(sn => { if (sn && !seen[sn]) { opts.push(sn); seen[sn] = 1; } });
+  if (!opts.length) {
+    return '<span class="muted" style="font-size:12px">暂无可绑SN<br>（待顾问连一次笔上报）</span>';
+  }
+  const optHtml = '<option value="">未绑定</option>' + opts.map(sn =>
+    `<option value="${_snEsc(sn)}" ${sn===cur?'selected':''}>${_snEsc(sn)}</option>`).join('');
+  const tag = cur ? '' : ' <span style="color:#c0392b;font-size:11px">未绑</span>';
+  return `<select onchange="bindPenSn(${c.id}, this.value)" style="border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:12px;max-width:160px">${optHtml}</select>${tag}`;
+}
+function bindPenSn(uid, sn){
+  fetch(BASE + '/api/admin/consultants/' + uid, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pen_sn: sn || null}),
+  }).then(r => r.json()).then(d => { if (d.error) alert(d.error); loadConsultants(); });
+}
 function loadConsultants(q) {
   // 确保门店缓存就绪（行内下拉要用）
   const ready = _storesCache.length ? Promise.resolve() : loadStores();
@@ -764,7 +786,7 @@ function _loadConsultants(q) {
       }
     }
     if (!list.length) {
-      tb.innerHTML = '<tr><td colspan="8" class="muted">暂无员工</td></tr>';
+      tb.innerHTML = '<tr><td colspan="9" class="muted">暂无员工</td></tr>';
       return;
     }
     d.consultants = list;
@@ -785,6 +807,7 @@ function _loadConsultants(q) {
         <td>${c.employee_id || '—'}</td>
         <td>${c.username}</td>
         <td>${c.phone || '—'}</td>
+        <td>${penSnCell(c)}</td>
         ${ROLE === 'super' ? `<td>${c.company_id}</td>` : ''}
         <td>
           <button class="btn sec" onclick="resetPwd(${c.id})">重置密码</button>

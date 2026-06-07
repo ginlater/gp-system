@@ -474,6 +474,22 @@ def init_db():
     # 兜底提醒"上报X分钟、实际只录到Y秒，疑似蓝牙断流丢失"，并保留原始件待复检。
     if "truncate_note" not in rec_cols:
         conn.execute("ALTER TABLE recordings ADD COLUMN truncate_note TEXT")
+    # 2026-06-08 录音笔SN绑定：每个顾问绑一台笔的SN，App 端只准用绑定那台录音。
+    #   recordings.device_sn = 产生该录音的笔SN(审计)；users.pen_sn = 绑定的SN；
+    #   pen_sn_sightings = 该顾问连过/用过的SN(供管理员从下拉里选着绑，不用手抄)。
+    if "device_sn" not in rec_cols:
+        conn.execute("ALTER TABLE recordings ADD COLUMN device_sn TEXT")
+    user_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+    if "pen_sn" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN pen_sn TEXT")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pen_sn_sightings (
+            user_id INTEGER NOT NULL,
+            sn TEXT NOT NULL,
+            last_seen_at TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY (user_id, sn)
+        )
+    """)
 
     # 2026-05-28 customer_tags 加 mention_count（本次录音里顾客提及该标签话题的次数）
     ct_cols = {r[1] for r in conn.execute("PRAGMA table_info(customer_tags)").fetchall()}
@@ -6802,11 +6818,25 @@ def api_admin_consultants_list():
         params = base_params
     rows = db_fetchall(
         f"SELECT u.id, u.username, u.role, u.company_id, u.advisor_name, u.employee_id, "
-        f"u.phone, u.created_at, u.store_id, st.name AS store_name "
+        f"u.phone, u.created_at, u.store_id, u.pen_sn, st.name AS store_name "
         f"FROM users u LEFT JOIN stores st ON st.id=u.store_id "
         f"WHERE {where} ORDER BY u.id DESC LIMIT 100",
         tuple(params),
     )
+    cons = [dict(r) for r in rows]
+    # 给每个员工附上"连过/用过的录音笔SN"列表(最近在前)，供绑定时下拉选
+    if cons:
+        ids = [c["id"] for c in cons]
+        ph = ",".join("?" * len(ids))
+        sights = db_fetchall(
+            f"SELECT user_id, sn FROM pen_sn_sightings "
+            f"WHERE user_id IN ({ph}) ORDER BY last_seen_at DESC", tuple(ids),
+        )
+        by_user = {}
+        for s in sights:
+            by_user.setdefault(s["user_id"], []).append(s["sn"])
+        for c in cons:
+            c["recent_sns"] = by_user.get(c["id"], [])
     total = db_fetchone(
         f"SELECT COUNT(*) AS n FROM users u WHERE {where}", tuple(params)
     )["n"]
@@ -6814,7 +6844,7 @@ def api_admin_consultants_list():
         f"SELECT COUNT(*) AS n FROM users u WHERE {base_where}", tuple(base_params)
     )["n"]
     return jsonify({
-        "consultants": [dict(r) for r in rows],
+        "consultants": cons,
         "total": total,
         "total_all": total_all,
     })
@@ -6867,7 +6897,7 @@ def api_admin_consultants_update(uid):
     if data.get("password"):
         sets.append("password_hash=?")
         params.append(_hash_pw(data["password"]))
-    for f in ("advisor_name", "employee_id", "phone"):
+    for f in ("advisor_name", "employee_id", "phone", "pen_sn"):
         if f in data:
             sets.append(f"{f}=?")
             params.append((data[f] or "").strip() or None)
@@ -8914,6 +8944,22 @@ def _detect_truncate_note(data, ext, reported_sec):
     return None
 
 
+def _record_pen_sn_sighting(user_id, sn):
+    """记录某顾问连过/用过的录音笔 SN（供管理员绑定时从下拉里选，不用手抄）。"""
+    sn = (sn or "").strip()
+    if not user_id or not sn:
+        return
+    try:
+        db_write(
+            "INSERT INTO pen_sn_sightings (user_id, sn, last_seen_at) "
+            "VALUES (?,?,datetime('now','localtime')) "
+            "ON CONFLICT(user_id, sn) DO UPDATE SET last_seen_at=datetime('now','localtime')",
+            (user_id, sn),
+        )
+    except Exception as e:
+        app.logger.info("[pen_sn] sighting 记录失败: %s", e)
+
+
 @app.route("/api/consultant/upload", methods=["POST"])
 @login_required
 def api_consultant_upload():
@@ -8960,6 +9006,10 @@ def api_consultant_upload():
     except (TypeError, ValueError):
         reported_sec = 0
     truncate_note = _detect_truncate_note(data, ext, reported_sec)
+    # ★录音笔SN：app 上传时带 sn(=getMacAddress)。存到录音上做审计，并记一条"该顾问用过此SN"供管理员绑定。
+    device_sn = (request.form.get("sn") or "").strip() or None
+    if device_sn:
+        _record_pen_sn_sighting(u["id"], device_sn)
     # 回填占位：结束录音时已先建了 processing 占位记录，这里把真音频补上，不新建行
     placeholder_id = request.form.get("placeholder_id")
     if placeholder_id:
@@ -8989,6 +9039,8 @@ def api_consultant_upload():
                 )
             if truncate_note:
                 db_write("UPDATE recordings SET truncate_note=? WHERE id=?", (truncate_note, prow["id"]))
+            if device_sn:
+                db_write("UPDATE recordings SET device_sn=? WHERE id=?", (device_sn, prow["id"]))
             return jsonify({"id": prow["id"], "oss_key": oss_key})
     try:
         oss_bucket.put_object(oss_key, data)
@@ -9004,7 +9056,40 @@ def api_consultant_upload():
     )
     if truncate_note:
         db_write("UPDATE recordings SET truncate_note=? WHERE id=?", (truncate_note, rid))
+    if device_sn:
+        db_write("UPDATE recordings SET device_sn=? WHERE id=?", (device_sn, rid))
     return jsonify({"id": rid, "oss_key": oss_key})
+
+
+@app.route("/api/consultant/pen/binding", methods=["GET"])
+@login_required
+def api_consultant_pen_binding():
+    """App 登录后查自己被管理员绑定的录音笔 SN。空=未绑定。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    row = db_fetchone("SELECT pen_sn FROM users WHERE id=?", (u["id"],))
+    return jsonify({"pen_sn": (row["pen_sn"] if row and row["pen_sn"] else None)})
+
+
+@app.route("/api/consultant/pen/report-sn", methods=["POST"])
+@login_required
+def api_consultant_pen_report_sn():
+    """App 一连上录音笔就上报它的 SN：记一条 sighting 供管理员绑定，并回传是否与绑定一致。
+    即便未绑定也接受上报（这样管理员才能从下拉里看到这台 SN 去绑）。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    body = request.get_json(silent=True) or {}
+    sn = (request.form.get("sn") or body.get("sn") or "").strip()
+    if not sn:
+        return jsonify({"error": "缺少 sn"}), 400
+    _record_pen_sn_sighting(u["id"], sn)
+    row = db_fetchone("SELECT pen_sn FROM users WHERE id=?", (u["id"],))
+    bound = row["pen_sn"] if row and row["pen_sn"] else None
+    return jsonify({"ok": True, "bound_sn": bound, "match": (bound is not None and bound == sn)})
 
 
 @app.route("/api/consultant/placeholder", methods=["POST"])
