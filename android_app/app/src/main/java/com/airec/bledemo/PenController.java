@@ -93,6 +93,14 @@ public class PenController {
     private static final long HB_INTERVAL_MS = 8000;      // 心跳间隔(空闲)
     private static final long HB_INTERVAL_BUSY_MS = 15000; // 录音/下载时放宽
 
+    // ★录音笔SN绑定校验(Phase2)：连上验证后读SN问后端准不准用。默认 true=fail-open(网络/读不到不挡录音)。
+    private volatile boolean penAllowed = true;       // 当前连接是否准许用(录音前提)
+    private volatile String  penDeniedMac = null;     // 被拒的MAC：不自动重连它(防 deny→重连→deny 死循环)
+    private volatile String  penDenyMsg = null;       // 拒绝文案(录音被挡时提示)
+    private volatile String  currentMac = null;       // 当前连接的MAC
+    private volatile int     snVerifyGen = 0;         // 校验代号：换连接即作废挂起的校验
+    private static final String PEN_PREFS = "pen_prefs";
+
     // 暂停（保留，网页已不暴露暂停）
     private volatile boolean penPaused = false;
     private volatile boolean appInitiatedPauseResume = false;
@@ -222,6 +230,7 @@ public class PenController {
             penLog("★verified=true 收到真回包→确认已连接");
             if (listener != null) main.post(() -> listener.onPenConnected(true));
             startHeartbeat();
+            verifyPenAllowed();   // ★真连上(SN此刻可读) → 校验这台笔归属，不是本人绑定的就断开+拦截录音
             // ★重连后：把上次录音中途断开(笔关机)那段补传(它在笔存储里)。
             if (pendingRecovery != null) {
                 UploadTask r = pendingRecovery; pendingRecovery = null;
@@ -351,7 +360,10 @@ public class PenController {
             android.bluetooth.BluetoothAdapter ad = android.bluetooth.BluetoothAdapter.getDefaultAdapter();
             btOn = ad != null && ad.isEnabled();
         } catch (Exception ignored) {}
-        if (btOn && lastConnectedMac != null) {
+        if (btOn && lastConnectedMac != null && lastConnectedMac.equals(penDeniedMac)) {
+            // ★被拒的那台：不自动重连它，防 deny→重连→deny 死循环。需用户主动在列表里换台。
+            penLog("自动重连跳过被拒的笔 " + lastConnectedMac);
+        } else if (btOn && lastConnectedMac != null) {
             reconnectAttempts++;
             Log.d(TAG, "自动重连尝试#" + reconnectAttempts + " → " + lastConnectedMac);
             penLog("自动重连尝试#" + reconnectAttempts + " 扫描连 " + lastConnectedMac);
@@ -455,6 +467,12 @@ public class PenController {
 
     /** 真正发开始录音命令 + 起确认超时（闸门二：发 startRecord 后等笔回"已开录"帧）。 */
     private void doStartRecord() {
+        if (!penAllowed) {   // ★SN校验没过/还没确认归属 → 不让录(连到别人的笔已被断开，这里挡住"识别中"窗口)
+            String msg = (penDenyMsg != null && !penDenyMsg.isEmpty()) ? penDenyMsg
+                    : "正在确认录音笔归属，请稍候；或在列表里换用你自己的录音笔";
+            post(PhoneMicService.STATE_ERROR, msg, 0, -1);
+            return;
+        }
         appStartPending = true;
         sessionStartWallMs = System.currentTimeMillis();
         enterRecordingKeepAlive();   // ★你点开始时 App 必在前台，此刻起保活最稳，能扛住随后锁屏/切后台
@@ -1018,6 +1036,9 @@ public class PenController {
         public void onConnected(AIRECBleDevice device) {
             autoConnectMac = null;
             if (device != null && device.getAddress() != null) lastConnectedMac = device.getAddress();
+            currentMac = (device != null ? device.getAddress() : null);
+            penAllowed = prefAllowed(currentMac);   // ★已放行过的→乐观放行(快路<2s)；未知/被拒→先挡，等SN校验
+            penDenyMsg = null;
             penLog("onConnected GATT就绪 " + (device != null ? device.getAddress() : "?"));
             enableAutoReconnect();   // ★连上了：开启"维持连接"、停掉重连循环
             penSettingsWritten = false;
@@ -1318,6 +1339,65 @@ public class PenController {
         if (uploadUrl == null) return null;
         if (uploadUrl.endsWith("/upload")) return uploadUrl.substring(0, uploadUrl.length() - 7) + "/placeholder";
         return uploadUrl.replace("/upload", "/placeholder");
+    }
+
+    // ============ 录音笔SN绑定校验 ============
+
+    private static String reportSnUrlFrom(String uploadUrl) {
+        if (uploadUrl == null) return null;
+        if (uploadUrl.endsWith("/upload")) return uploadUrl.substring(0, uploadUrl.length() - 7) + "/pen/report-sn";
+        return uploadUrl.replace("/upload", "/pen/report-sn");
+    }
+    private boolean prefAllowed(String mac) {
+        if (mac == null) return false;
+        try { return appCtx.getSharedPreferences(PEN_PREFS, Context.MODE_PRIVATE).getBoolean("allow_" + mac, false); }
+        catch (Exception e) { return false; }
+    }
+    private void prefSetAllowed(String mac, boolean allowed) {
+        if (mac == null) return;
+        try { appCtx.getSharedPreferences(PEN_PREFS, Context.MODE_PRIVATE).edit().putBoolean("allow_" + mac, allowed).apply(); }
+        catch (Exception ignored) {}
+    }
+
+    /** 连上验证(verified)后：读SN→问后端准不准用这台。主线程调用。 */
+    private void verifyPenAllowed() {
+        final int gen = ++snVerifyGen;
+        final String url = reportSnUrlFrom(uploadUrl);
+        final String ck = cookie;
+        final String mac = currentMac;
+        if (url == null || ck == null) return;   // 没上传上下文 → 没法校验，维持现状(fail-open)
+        verifyPenSnStep(gen, mac, url, ck, 0);
+    }
+    /** SN 在连上后可能略滞后于握手，读不到就退避重试几次(最多 ~2s)。 */
+    private void verifyPenSnStep(final int gen, final String mac, final String url, final String ck, final int attempt) {
+        if (gen != snVerifyGen) return;   // 已换连接，作废
+        String sn = penSn();
+        if (sn == null || sn.isEmpty()) {
+            if (attempt < 8) main.postDelayed(() -> verifyPenSnStep(gen, mac, url, ck, attempt + 1), 250);
+            return;   // 读不到SN → 维持现状(fail-open)
+        }
+        final String fsn = sn;
+        worker.submit(() -> {
+            final Uploader.SnVerdict v = Uploader.reportSn(ck, url, fsn);
+            main.post(() -> {
+                if (gen != snVerifyGen) return;   // 期间换了连接，作废
+                if (v == null) { penAllowed = true; return; }   // 网络/服务端错 → fail-open，不挡录音
+                if (v.allow) {
+                    penAllowed = true; penDenyMsg = null;
+                    if (mac != null && mac.equals(penDeniedMac)) penDeniedMac = null;
+                    prefSetAllowed(mac, true);
+                    penLog("SN校验通过 sn=" + fsn);
+                } else {
+                    penAllowed = false; penDenyMsg = v.message; penDeniedMac = mac;
+                    if (mac != null && mac.equals(lastConnectedMac)) lastConnectedMac = null;
+                    prefSetAllowed(mac, false);
+                    penLog("★SN校验拒绝→断开 " + v.message);
+                    String msg = (v.message == null || v.message.isEmpty()) ? "这台录音笔不是你的，请连你自己的录音笔" : v.message;
+                    post(PhoneMicService.STATE_ERROR, msg, 0, -1);
+                    try { AIRECBleManager.getInstance().disconnect(); } catch (Exception ignored) {}
+                }
+            });
+        });
     }
 
     /** 当前连接笔的 SN（SDK 的 getMacAddress 实为 SN）。读不到返回空串。 */

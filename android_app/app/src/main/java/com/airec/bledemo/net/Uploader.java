@@ -265,4 +265,53 @@ public final class Uploader {
             if (conn != null) conn.disconnect();
         }
     }
+
+    /** SN 校验结果：allow=准不准用这台笔，message=拒绝时给用户的话。 */
+    public static final class SnVerdict {
+        public final boolean allow;
+        public final String message;
+        public SnVerdict(boolean allow, String message) { this.allow = allow; this.message = message; }
+    }
+
+    /**
+     * 连上录音笔后上报它的 SN，问后端这台准不准这个顾问用。
+     * 返回 SnVerdict；网络/服务端出错返回 null（调用方按 fail-open 处理，别因网络抖动挡录音）。
+     */
+    public static SnVerdict reportSn(String cookie, String url, String sn) {
+        if (url == null || url.isEmpty() || sn == null || sn.isEmpty()) return null;
+        HttpURLConnection conn = null;
+        String boundary = "----gongpaiSN" + System.currentTimeMillis();
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setUseCaches(false);
+            conn.setDoOutput(true);
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+            if (cookie != null && !cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
+            try (DataOutputStream out = new DataOutputStream(conn.getOutputStream())) {
+                out.writeBytes("--" + boundary + CRLF);
+                out.writeBytes("Content-Disposition: form-data; name=\"sn\"" + CRLF + CRLF);
+                out.write(sn.getBytes(StandardCharsets.UTF_8));
+                out.writeBytes(CRLF);
+                out.writeBytes("--" + boundary + "--" + CRLF);
+                out.flush();
+            }
+            int code = conn.getResponseCode();
+            String body = readBody(code < 400 ? conn.getInputStream() : conn.getErrorStream());
+            if (code >= 200 && code < 300) {
+                JSONObject o = new JSONObject(body);
+                boolean allow = !"deny".equals(o.optString("decision", "allow"));
+                return new SnVerdict(allow, o.optString("message", ""));
+            }
+            Log.w(TAG, "reportSn http " + code + " " + body);
+            return null;   // 服务端错 → fail-open
+        } catch (Exception e) {
+            Log.w(TAG, "reportSn failed: " + e.getMessage());
+            return null;   // 网络失败 → fail-open
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
 }
