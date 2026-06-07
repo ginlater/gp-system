@@ -274,6 +274,8 @@ body.skin-cute .float-decor{
     <button onclick="batchAnalyze(false)" style="background:var(--blue);color:#fff;border:none;border-radius:4px;padding:5px 14px;font-size:13px;cursor:pointer;font-weight:600">一键分析</button>
     <button onclick="batchAnalyze(true)" title="忽略 ASR 说话人警告（视为误判），强制分析所选接诊"
             style="background:#e67e22;color:#fff;border:none;border-radius:4px;padding:5px 14px;font-size:13px;cursor:pointer;font-weight:600">强制分析</button>
+    <button onclick="batchDelete()" title="彻底删除所选接诊（录音+报告+记录，不可恢复）"
+            style="background:#e74c3c;color:#fff;border:none;border-radius:4px;padding:5px 14px;font-size:13px;cursor:pointer;font-weight:600">批量删除</button>
     <button class="sec" onclick="clearSelection()" style="font-size:12px">清空选择</button>
     <span id="batchMsg" style="color:var(--text-mute);margin-left:auto"></span>
   </div>
@@ -472,6 +474,29 @@ function batchAnalyze(forceConfirm) {
     if ((d.skipped && d.skipped.length) || (d.failed && d.failed.length)) {
       alert(txt);
     }
+    clearSelection();
+    loadList(curPage);
+    refreshCounts();
+  }).catch(e => { msg.textContent = '失败：' + e; });
+}
+
+function batchDelete() {
+  const ids = Array.from(selectedIds);
+  if (!ids.length) return;
+  if (!confirm(`确认彻底删除所选 ${ids.length} 条接诊？\n将删除这些接诊的录音、分析报告和接诊记录，且不可恢复！`)) return;
+  if (!confirm(`再次确认：删除后无法恢复。继续删除 ${ids.length} 条？`)) return;
+  const msg = document.getElementById('batchMsg');
+  msg.textContent = '删除中…';
+  fetch(BASE + '/api/sessions/batch_delete', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids})
+  }).then(r => r.json()).then(d => {
+    if (d.error) { msg.textContent = '失败：' + d.error; return; }
+    let txt = `已删除 ${d.deleted} 条`;
+    if (d.skipped && d.skipped.length) txt += `，跳过 ${d.skipped.length}（不存在/无权）`;
+    msg.textContent = txt;
+    if (d.skipped && d.skipped.length) alert(txt);
     clearSelection();
     loadList(curPage);
     refreshCounts();

@@ -575,9 +575,14 @@ html,body{overflow-x:hidden;max-width:100%}
     <div class="card">
       <h3>未绑定录音 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadUnbound()">刷新</button></h3>
       <div class="tip">这里是尚未归档到任何接诊包的录音。可试听全程后，点「代绑」把它绑给某位顾问当日的客人。绑定后顾问端即可见；分析为手动，需到接诊列表点「开始分析」。</div>
+      <div style="margin:6px 0;display:flex;align-items:center;gap:10px;font-size:13px">
+        <span>已选 <b id="ubSelCount">0</b> 条</span>
+        <button class="btn" style="padding:3px 12px;font-size:12px;background:#e74c3c;border-color:#e74c3c" onclick="unboundBatchDelete()">批量删除</button>
+        <span id="ubBatchMsg" style="color:#888;margin-left:auto"></span>
+      </div>
       <table class="tbl">
-        <thead><tr><th>上传人/顾问</th><th>录音时间</th><th>时长</th><th>门店</th><th>状态</th><th>试听</th><th>操作</th></tr></thead>
-        <tbody id="unboundBody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+        <thead><tr><th style="width:30px;text-align:center"><input type="checkbox" id="ubSelAll" onclick="ubToggleAll(this)"></th><th>上传人/顾问</th><th>录音时间</th><th>时长</th><th>门店</th><th>状态</th><th>试听</th><th>操作</th></tr></thead>
+        <tbody id="unboundBody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
       </table>
       <div class="msg" id="unboundMsg"></div>
     </div>
@@ -2029,13 +2034,46 @@ function markHrViewed(sid) {
 }
 // ============ 未绑定录音 + 代绑 ============
 let _abAdvisors = [];
+let unboundSel = new Set();
+function ubToggleAll(cb) {
+  document.querySelectorAll('#unboundBody .ub-chk').forEach(el => {
+    el.checked = cb.checked;
+    if (cb.checked) unboundSel.add(parseInt(el.value, 10)); else unboundSel.delete(parseInt(el.value, 10));
+  });
+  ubUpdateCount();
+}
+function ubOnCheck() {
+  unboundSel.clear();
+  document.querySelectorAll('#unboundBody .ub-chk:checked').forEach(el => unboundSel.add(parseInt(el.value, 10)));
+  const all = document.querySelectorAll('#unboundBody .ub-chk').length;
+  const sa = document.getElementById('ubSelAll'); if (sa) sa.checked = all > 0 && unboundSel.size === all;
+  ubUpdateCount();
+}
+function ubUpdateCount() { const el = document.getElementById('ubSelCount'); if (el) el.textContent = unboundSel.size; }
+function unboundBatchDelete() {
+  const ids = Array.from(unboundSel);
+  if (!ids.length) { alert('请先勾选要删除的录音'); return; }
+  if (!confirm(`确认彻底删除所选 ${ids.length} 条未绑定录音？\n录音文件将从云端删除，不可恢复！`)) return;
+  const msg = document.getElementById('ubBatchMsg'); if (msg) msg.textContent = '删除中…';
+  fetch(BASE + '/api/admin/recordings/batch_delete', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids})
+  }).then(r => r.json()).then(d => {
+    if (d.error) { if (msg) msg.textContent = '失败：' + d.error; return; }
+    let txt = `已删除 ${d.deleted} 条`;
+    if (d.skipped && d.skipped.length) txt += `，跳过 ${d.skipped.length}（不存在/无权）`;
+    if (msg) msg.textContent = txt;
+    unboundSel.clear(); loadUnbound();
+  }).catch(e => { if (msg) msg.textContent = '失败：' + e; });
+}
 function loadUnbound() {
   fetch(BASE + '/api/admin/unbound_recordings').then(r => r.json()).then(d => {
     const tb = document.getElementById('unboundBody');
-    if (d.error) { tb.innerHTML = `<tr><td colspan="7" class="err">${_esc(d.error)}</td></tr>`; return; }
+    unboundSel.clear(); ubUpdateCount();
+    const sa = document.getElementById('ubSelAll'); if (sa) sa.checked = false;
+    if (d.error) { tb.innerHTML = `<tr><td colspan="8" class="err">${_esc(d.error)}</td></tr>`; return; }
     const items = d.items || [];
     document.getElementById('unboundCount').textContent = items.length ? `(${items.length})` : '';
-    if (!items.length) { tb.innerHTML = '<tr><td colspan="7" class="muted">暂无未绑定录音</td></tr>'; return; }
+    if (!items.length) { tb.innerHTML = '<tr><td colspan="8" class="muted">暂无未绑定录音</td></tr>'; return; }
     tb.innerHTML = items.map(r => {
       const audio = r.audio_url
         ? `<audio controls preload="none" style="height:30px;max-width:200px" src="${_esc(r.audio_url)}"></audio>
@@ -2047,6 +2085,7 @@ function loadUnbound() {
         ? ` <span style="display:inline-block;padding:1px 6px;border-radius:8px;background:#fff3cd;color:#8a6d00;font-size:11px;font-weight:600">待分析</span>`
         : '';
       return `<tr>
+        <td style="text-align:center"><input type="checkbox" class="ub-chk" value="${r.id}" onclick="ubOnCheck()"></td>
         <td>${_esc(r.uploader)}</td>
         <td>${_esc(r.recorded_at || '')}</td>
         <td>${_esc(r.duration_label || '')}</td>

@@ -5787,6 +5787,72 @@ def api_session_delete(sid):
     return jsonify({"ok": True})
 
 
+@app.route("/api/sessions/batch_delete", methods=["POST"])
+@admin_required
+def api_sessions_batch_delete():
+    """批量完全删除接诊(录音OSS+DB+报告+记录)。Body: {ids:[sid,...]}。"""
+    data = request.get_json(silent=True) or {}
+    ids = data.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"error": "ids 为空"}), 400
+    try:
+        ids = [int(x) for x in ids]
+    except (ValueError, TypeError):
+        return jsonify({"error": "ids 含非法值"}), 400
+    is_super = session.get("role") == "super"
+    cid = session.get("company_id")
+    deleted, skipped = 0, []
+    for sid in ids:
+        sess = db_fetchone("SELECT id, company_id FROM sessions WHERE id=?", (sid,))
+        if not sess:
+            skipped.append(sid); continue
+        if not is_super and sess["company_id"] != cid:
+            skipped.append(sid); continue
+        for r in db_fetchall("SELECT id, oss_key FROM recordings WHERE session_id=?", (sid,)):
+            try:
+                oss_bucket.delete_object(r["oss_key"])
+            except Exception as e:
+                app.logger.warning("[batch_delete] OSS %s: %s", r["oss_key"], e)
+            db_write("DELETE FROM delete_requests WHERE recording_id=?", (r["id"],))
+            db_write("DELETE FROM recordings WHERE id=?", (r["id"],))
+        db_write("DELETE FROM evaluations WHERE session_id=?", (sid,))
+        db_write("DELETE FROM customer_tags WHERE source_session_id=?", (sid,))
+        db_write("DELETE FROM sessions WHERE id=?", (sid,))
+        deleted += 1
+    return jsonify({"ok": True, "deleted": deleted, "skipped": skipped})
+
+
+@app.route("/api/admin/recordings/batch_delete", methods=["POST"])
+@admin_required
+def api_admin_recordings_batch_delete():
+    """批量删除录音(OSS+DB)。Body: {ids:[rid,...]}。用于未绑定录音批量删。"""
+    data = request.get_json(silent=True) or {}
+    ids = data.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"error": "ids 为空"}), 400
+    try:
+        ids = [int(x) for x in ids]
+    except (ValueError, TypeError):
+        return jsonify({"error": "ids 含非法值"}), 400
+    is_super = session.get("role") == "super"
+    cid = session.get("company_id")
+    deleted, skipped = 0, []
+    for rid in ids:
+        rec = db_fetchone("SELECT id, oss_key, company_id FROM recordings WHERE id=?", (rid,))
+        if not rec:
+            skipped.append(rid); continue
+        if not is_super and rec["company_id"] != cid:
+            skipped.append(rid); continue
+        try:
+            oss_bucket.delete_object(rec["oss_key"])
+        except Exception as e:
+            app.logger.warning("[batch_delete_rec] OSS %s: %s", rec["oss_key"], e)
+        db_write("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
+        db_write("DELETE FROM recordings WHERE id=?", (rid,))
+        deleted += 1
+    return jsonify({"ok": True, "deleted": deleted, "skipped": skipped})
+
+
 @app.route("/api/session/<int:sid>/recordings/delete", methods=["DELETE"])
 @admin_required
 def api_session_recordings_delete(sid):
