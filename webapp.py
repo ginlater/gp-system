@@ -9076,8 +9076,12 @@ def api_consultant_pen_binding():
 @app.route("/api/consultant/pen/report-sn", methods=["POST"])
 @login_required
 def api_consultant_pen_report_sn():
-    """App 一连上录音笔就上报它的 SN：记一条 sighting 供管理员绑定，并回传是否与绑定一致。
-    即便未绑定也接受上报（这样管理员才能从下拉里看到这台 SN 去绑）。"""
+    """App 一连上录音笔就上报它的 SN。后端做两件事：
+      1. 记一条 sighting（供管理员从下拉里绑）；
+      2. 返回【准/拒】决策（策略集中在后端，改策略不用更新 App）：
+         - 我绑了SN → 只准用我绑的那台；连到别的 → 拒。
+         - 我没绑 → 准用"没被别人绑"的任意一台；连到别人绑的 → 拒。
+    App 收到 decision=deny 就断开 + 弹 message，不让录。"""
     err = _consultant_required()
     if err:
         return err
@@ -9087,9 +9091,42 @@ def api_consultant_pen_report_sn():
     if not sn:
         return jsonify({"error": "缺少 sn"}), 400
     _record_pen_sn_sighting(u["id"], sn)
-    row = db_fetchone("SELECT pen_sn FROM users WHERE id=?", (u["id"],))
+    row = db_fetchone("SELECT pen_sn, company_id FROM users WHERE id=?", (u["id"],))
     bound = row["pen_sn"] if row and row["pen_sn"] else None
-    return jsonify({"ok": True, "bound_sn": bound, "match": (bound is not None and bound == sn)})
+    cid = row["company_id"] if row else None
+    decision, reason, message = "allow", "free", ""
+    if bound:
+        if sn == bound:
+            decision, reason = "allow", "my_pen"
+        else:
+            decision, reason = "deny", "have_other_binding"
+            message = f"这不是你绑定的录音笔。你绑定的是 {bound}，请连那台。"
+    else:
+        # 没绑 → 看这台是不是被【本公司其他人】绑了
+        if cid is not None:
+            owner = db_fetchone(
+                "SELECT advisor_name, username FROM users WHERE pen_sn=? AND company_id=? AND id!=? LIMIT 1",
+                (sn, cid, u["id"]),
+            )
+        else:
+            owner = db_fetchone(
+                "SELECT advisor_name, username FROM users WHERE pen_sn=? AND id!=? LIMIT 1",
+                (sn, u["id"]),
+            )
+        if owner:
+            who = owner["advisor_name"] or owner["username"] or "其他顾问"
+            decision, reason = "deny", "bound_other"
+            message = f"这台录音笔已分配给 {who}，请改用未分配的录音笔。"
+        else:
+            decision, reason = "allow", "free"
+    return jsonify({
+        "ok": True,
+        "bound_sn": bound,
+        "match": (bound is not None and bound == sn),
+        "decision": decision,   # allow | deny
+        "reason": reason,       # my_pen | free | have_other_binding | bound_other
+        "message": message,     # deny 时给 App 弹的话
+    })
 
 
 @app.route("/api/consultant/placeholder", methods=["POST"])
