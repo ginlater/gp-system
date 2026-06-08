@@ -4990,7 +4990,7 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 APP_LATEST_VERSION_CODE = 12
 APP_LATEST_VERSION_NAME = "2.1.1"
 APP_MIN_VERSION_CODE = 12                # 低于此值的客户端 → 强制更新（v12 含录音同步/开机录制关闭等关键修复，强制全网升级）
-APP_UPDATE_NOTE = "新版本：大幅增强录音补传的稳定性——蓝牙差/App被关也会自动接着传、不再卡死丢失。请更新后使用。"
+APP_UPDATE_NOTE = "本次更新让陪伴更稳更省心——开始/结束陪伴会震动提醒（不看屏幕也知道）；页面状态与设备严格同步，不再出现卡顿假象。请更新后继续使用 💛"
 
 
 @app.route("/download")
