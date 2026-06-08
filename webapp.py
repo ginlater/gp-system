@@ -479,9 +479,20 @@ def init_db():
     #   pen_sn_sightings = 该顾问连过/用过的SN(供管理员从下拉里选着绑，不用手抄)。
     if "device_sn" not in rec_cols:
         conn.execute("ALTER TABLE recordings ADD COLUMN device_sn TEXT")
-    # 2026-06-08 录音笔机身文件名（扫描补传去重用：同一上传人同一 pen_file 只入一条）
+    # 2026-06-08 录音笔机身文件名（手动同步去重用：同一上传人同一 pen_file 只入一条）
     if "pen_file" not in rec_cols:
         conn.execute("ALTER TABLE recordings ADD COLUMN pen_file TEXT")
+    # 2026-06-08 删除墓碑：录音被删时记一条，"从录音笔同步"据此显示"已删"、不复活
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pen_tombstone (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uploader_user_id INTEGER,
+            pen_file TEXT,
+            recorded_at TEXT,
+            deleted_at TEXT DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pen_tomb_user ON pen_tombstone(uploader_user_id)")
     user_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
     if "pen_sn" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN pen_sn TEXT")
@@ -5663,7 +5674,7 @@ def api_run_asr(rid):
 @admin_required
 def api_recording_delete(rid):
     """管理员直接删除录音（OSS + DB）"""
-    rec = db_fetchone("SELECT id, oss_key, session_id, company_id FROM recordings WHERE id=?", (rid,))
+    rec = db_fetchone("SELECT id, oss_key, session_id, company_id, uploader_user_id, pen_file, recorded_at FROM recordings WHERE id=?", (rid,))
     if not rec:
         return jsonify({"error": "录音不存在"}), 404
     if session.get("role") != "super" and rec["company_id"] != session.get("company_id"):
@@ -5672,6 +5683,7 @@ def api_recording_delete(rid):
         oss_bucket.delete_object(rec["oss_key"])
     except Exception as e:
         print(f"[delete_recording] OSS delete failed: {e}")
+    _add_pen_tombstone(rec)
     db_write("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
     db_write("DELETE FROM recordings WHERE id=?", (rid,))
     return jsonify({"ok": True})
@@ -5775,12 +5787,13 @@ def api_session_delete(sid):
         return jsonify({"error": "接诊不存在"}), 404
     if session.get("role") != "super" and sess["company_id"] != session.get("company_id"):
         return jsonify({"error": "无权操作"}), 403
-    recs = db_fetchall("SELECT id, oss_key FROM recordings WHERE session_id=?", (sid,))
+    recs = db_fetchall("SELECT id, oss_key, uploader_user_id, pen_file, recorded_at FROM recordings WHERE session_id=?", (sid,))
     for r in recs:
         try:
             oss_bucket.delete_object(r["oss_key"])
         except Exception as e:
             print(f"[session_full_delete] OSS {r['oss_key']}: {e}")
+        _add_pen_tombstone(r)
         db_write("DELETE FROM delete_requests WHERE recording_id=?", (r["id"],))
         db_write("DELETE FROM recordings WHERE id=?", (r["id"],))
     db_write("DELETE FROM evaluations WHERE session_id=?", (sid,))
@@ -5810,11 +5823,12 @@ def api_sessions_batch_delete():
             skipped.append(sid); continue
         if not is_super and sess["company_id"] != cid:
             skipped.append(sid); continue
-        for r in db_fetchall("SELECT id, oss_key FROM recordings WHERE session_id=?", (sid,)):
+        for r in db_fetchall("SELECT id, oss_key, uploader_user_id, pen_file, recorded_at FROM recordings WHERE session_id=?", (sid,)):
             try:
                 oss_bucket.delete_object(r["oss_key"])
             except Exception as e:
                 app.logger.warning("[batch_delete] OSS %s: %s", r["oss_key"], e)
+            _add_pen_tombstone(r)
             db_write("DELETE FROM delete_requests WHERE recording_id=?", (r["id"],))
             db_write("DELETE FROM recordings WHERE id=?", (r["id"],))
         db_write("DELETE FROM evaluations WHERE session_id=?", (sid,))
@@ -5840,7 +5854,7 @@ def api_admin_recordings_batch_delete():
     cid = session.get("company_id")
     deleted, skipped = 0, []
     for rid in ids:
-        rec = db_fetchone("SELECT id, oss_key, company_id FROM recordings WHERE id=?", (rid,))
+        rec = db_fetchone("SELECT id, oss_key, company_id, uploader_user_id, pen_file, recorded_at FROM recordings WHERE id=?", (rid,))
         if not rec:
             skipped.append(rid); continue
         if not is_super and rec["company_id"] != cid:
@@ -5849,6 +5863,7 @@ def api_admin_recordings_batch_delete():
             oss_bucket.delete_object(rec["oss_key"])
         except Exception as e:
             app.logger.warning("[batch_delete_rec] OSS %s: %s", rec["oss_key"], e)
+        _add_pen_tombstone(rec)
         db_write("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
         db_write("DELETE FROM recordings WHERE id=?", (rid,))
         deleted += 1
@@ -9030,6 +9045,44 @@ def _record_pen_sn_sighting(user_id, sn):
         app.logger.info("[pen_sn] sighting 记录失败: %s", e)
 
 
+def _add_pen_tombstone(rec):
+    """录音被删时记墓碑：防"从录音笔同步"把已删的录音又拉回来复活。
+    rec: sqlite Row，含 uploader_user_id / pen_file / recorded_at。"""
+    try:
+        keys = rec.keys()
+        uid = rec["uploader_user_id"] if "uploader_user_id" in keys else None
+        pf = rec["pen_file"] if "pen_file" in keys else None
+        ra = rec["recorded_at"] if "recorded_at" in keys else None
+        if not uid or (not pf and not ra):
+            return
+        db_write("INSERT INTO pen_tombstone (uploader_user_id, pen_file, recorded_at) VALUES (?,?,?)",
+                 (uid, pf, ra))
+    except Exception as e:
+        app.logger.info("[tombstone] 记录失败: %s", e)
+
+
+def _probe_seconds(data, ext):
+    """ffprobe 上传字节的真实时长(秒)；失败返回 None。客户端没传时长(手动同步)时用它补，防 00分00秒。"""
+    try:
+        import tempfile, subprocess
+        fd, p = tempfile.mkstemp(suffix="." + (ext or "bin"))
+        try:
+            with os.fdopen(fd, "wb") as fo:
+                fo.write(data)
+            out = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", p],
+                capture_output=True, text=True, timeout=15)
+            return float((out.stdout or "").strip())
+        except Exception:
+            return None
+        finally:
+            try: os.remove(p)
+            except OSError: pass
+    except Exception:
+        return None
+
+
 @app.route("/api/consultant/upload", methods=["POST"])
 @login_required
 def api_consultant_upload():
@@ -9075,6 +9128,12 @@ def api_consultant_upload():
         reported_sec = int(float(request.form.get("duration_sec") or 0))
     except (TypeError, ValueError):
         reported_sec = 0
+    # 客户端没传时长(手动从录音笔同步时机身列表 durationSec=0) → ffprobe 实测补上，防"00分00秒"
+    if reported_sec <= 0:
+        _real = _probe_seconds(data, ext)
+        if _real and _real > 0.2:
+            reported_sec = int(_real)
+            dur_label = _format_duration_label(_real)
     truncate_note = _detect_truncate_note(data, ext, reported_sec)
     # ★录音笔SN：app 上传时带 sn(=getMacAddress)。存到录音上做审计，并记一条"该顾问用过此SN"供管理员绑定。
     device_sn = (request.form.get("sn") or "").strip() or None
@@ -9220,6 +9279,47 @@ def api_consultant_pen_report_sn():
         "reason": reason,       # my_pen | free | have_other_binding | bound_other
         "message": message,     # deny 时给 App 弹的话
     })
+
+
+@app.route("/api/consultant/pen/sync-preview", methods=["POST"])
+@login_required
+def api_consultant_pen_sync_preview():
+    """手动"从录音笔同步"：给机身文件列表(每条 name + ra录音时刻)，返回每条状态：
+       uploaded(已传) / deleted(已删, 别复活) / new(没传过, 可勾选上传)。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    body = request.get_json(silent=True) or {}
+    items = body.get("items") or []
+    out = []
+    for it in items[:500]:
+        name = (it.get("name") or "").strip()
+        ra = (it.get("ra") or "").strip() or None
+        if not name:
+            continue
+        status, eid = "new", None
+        rec = db_fetchone(
+            "SELECT id FROM recordings WHERE uploader_user_id=? AND pen_file=? LIMIT 1", (u["id"], name))
+        if not rec and ra:
+            rec = db_fetchone(
+                "SELECT id FROM recordings WHERE uploader_user_id=? "
+                "AND ABS(strftime('%s',recorded_at)-strftime('%s',?))<=90 "
+                "AND (source LIKE 'consultant-pen%' OR pen_file IS NOT NULL) LIMIT 1",
+                (u["id"], ra))
+        if rec:
+            status, eid = "uploaded", rec["id"]
+        else:
+            tomb = db_fetchone(
+                "SELECT id FROM pen_tombstone WHERE uploader_user_id=? AND pen_file=? LIMIT 1", (u["id"], name))
+            if not tomb and ra:
+                tomb = db_fetchone(
+                    "SELECT id FROM pen_tombstone WHERE uploader_user_id=? AND recorded_at IS NOT NULL "
+                    "AND ABS(strftime('%s',recorded_at)-strftime('%s',?))<=90 LIMIT 1", (u["id"], ra))
+            if tomb:
+                status = "deleted"
+        out.append({"name": name, "status": status, "existing_id": eid})
+    return jsonify({"items": out})
 
 
 @app.route("/api/consultant/placeholder", methods=["POST"])
