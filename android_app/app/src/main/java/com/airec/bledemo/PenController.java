@@ -172,6 +172,7 @@ public class PenController {
     private volatile int downloadRetries = 0;
     private static final int MAX_FILELIST_ATTEMPTS = 4;
     private static final int MAX_DOWNLOAD_RETRIES = 3;
+    private static final int MAX_DOWNLOAD_REQUEUES = 40;   // ★A1:退避重试上限(~2小时)。超了才真放弃+删占位——音频还在笔上、可日后重新同步，避免"取不出的文件"永远churn
     private static final long DEFER_MAX_MS = 3 * 60 * 1000L; // 文件未出现在笔列表时的重试上限(跨过连录/笔忙/落盘延迟)，超时才放弃
     // ★笔存储清理：删除 >30天 的旧文件(已远超每日上云，确定已上云，安全)
     private static final long FILE_KEEP_MS = 30L * 24 * 3600 * 1000;
@@ -327,6 +328,13 @@ public class PenController {
             if (task == null) return;
             task.downloadRequeues++;
             lastDlProgressMs = 0; main.removeCallbacks(downloadStallWatch);
+            if (task.downloadRequeues > MAX_DOWNLOAD_REQUEUES) {
+                // ★A1:试了~2小时还不成 → 真放弃+删占位(音频还在笔上，日后蓝牙好了用"从录音笔同步"重导)
+                Log.w(TAG, "A1:补传重试耗尽(" + task.downloadRequeues + "次) 放弃 file=" + task.fileName);
+                penLog("★A1 补传重试耗尽(" + task.downloadRequeues + "次)放弃·删占位(音频留笔上可日后重导) " + task.fileName);
+                workerTaskFailed(task, "重试耗尽:" + reason, true);   // 出队+删占位，notifyPending 会同步持久化
+                return;
+            }
             if (uploadQueue.remove(task)) uploadQueue.add(task);   // 挪队尾，别堵后面的
             workerBusy = false; currentTask = null; inflightTask = null; waitingForFile = false;
             long delay = Math.min(10 * 60 * 1000L, 8000L * task.downloadRequeues);  // 退避，封顶10分钟
