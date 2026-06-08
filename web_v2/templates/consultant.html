@@ -807,23 +807,32 @@ function _penSyncRender(files, stat){
     var sizeKb = Math.round((f.size||0)/1024);
     var dis = (s !== 'new');
     return '<label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid #eee;font-size:13px;'+(dis?'opacity:.5':'')+'">'
-      + '<input type="checkbox" class="psf-chk" value="'+_psEsc(f.name)+'" '+(s==='new'?'checked':'')+' '+(dis?'disabled':'')+'>'
+      + '<input type="checkbox" class="psf-chk" value="'+_psEsc(f.name)+'" onchange="_penSyncCount()" '+(dis?'disabled':'')+'>'
       + '<span style="flex:1">'+_psEsc(f.ra||f.name)+'</span>'
       + '<span style="color:#999;min-width:54px;text-align:right">'+sizeKb+'KB</span>'
       + '<span style="min-width:36px;text-align:right">'+badge+'</span></label>';
   }).join('');
   var html = '<div style="font-weight:600;margin-bottom:6px">从录音笔同步</div>'
-    + '<div style="font-size:12px;color:#888;margin-bottom:8px">未传=没上传过(默认勾选)；已传/已删 不会重复拉。补传后时长自动校正。</div>'
-    + '<div style="margin-bottom:8px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.psf-chk:not(:disabled)\').forEach(function(c){c.checked=true})" style="font-size:12px;color:var(--blue)">全选未传</a></div>'
+    + '<div style="font-size:12px;color:#888;margin-bottom:8px">未传=没上传过(<b>默认不勾，自己选要传的</b>)；已传/已删 不会重复拉。补传后时长自动校正。</div>'
+    + '<div style="margin-bottom:8px">'
+    +   '<a href="javascript:void(0)" onclick="document.querySelectorAll(\'.psf-chk:not(:disabled)\').forEach(function(c){c.checked=true});_penSyncCount()" style="font-size:12px;color:var(--blue)">全选未传</a>'
+    +   '<a href="javascript:void(0)" onclick="document.querySelectorAll(\'.psf-chk\').forEach(function(c){c.checked=false});_penSyncCount()" style="font-size:12px;color:#888;margin-left:14px">全不选</a>'
+    + '</div>'
     + '<div style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:0 8px">'+rows+'</div>'
     + '<div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">'
     + '<button class="btn sec" onclick="_penSyncClose()">取消</button>'
-    + '<button class="btn" onclick="penSyncUpload()">上传所选</button></div>';
+    + '<button class="btn" id="penSyncUpBtn" onclick="penSyncUpload()">上传所选 (0)</button></div>';
   _penSyncShow(html);
+}
+function _penSyncCount(){
+  var n = document.querySelectorAll('.psf-chk:checked').length;
+  var b = document.getElementById('penSyncUpBtn');
+  if (b) b.textContent = '上传所选 ('+n+')';
 }
 function penSyncUpload(){
   var names = Array.prototype.map.call(document.querySelectorAll('.psf-chk:checked'), function(c){ return c.value; });
   if (!names.length){ alert('请勾选要上传的录音'); return; }
+  if (!confirm('确定上传选中的 '+names.length+' 条录音？')) return;
   try { window.AndroidBridge.uploadPenFiles(JSON.stringify(names)); }
   catch(e){ alert('上传失败：'+e); return; }
   _penSyncClose();
