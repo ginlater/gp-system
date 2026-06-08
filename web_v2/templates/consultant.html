@@ -747,6 +747,20 @@ if (IN_APP) {
     } catch(e){}
   };
   window.__syncRecState();
+  // ★最终一致性兜底：每 3s 核对原生真实录音态——只要原生不在录(idle)，UI 绝不允许停留在"录音中"。
+  //   不管什么路径(自动开录后笔停/状态回调时序/页面缓存残留)导致的"假录音中"，最多 3s 自动消失。
+  //   这是兜底硬保证：录音笔没在录，陪伴页就一定不会显示录音中。
+  if (!window.__recSyncTimer) {
+    window.__recSyncTimer = setInterval(function(){
+      if (document.hidden) return;
+      try {
+        var gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
+        var realActive = (gs === 'recording' || gs === 'uploading' || gs === 'starting');
+        var uiActive = !!(window.__appRecording || window.uploading);
+        if (!realActive && uiActive) window.__onNativeRecState('idle', '', 0);  // 原生没在录→把 UI 拉回 idle
+      } catch(e){}
+    }, 3000);
+  }
   // 录音笔没连：给个非弹窗提示（真正强制连接发生在点开始时）。cute 下不出现「录音」字。
   setTimeout(function(){
     if (appRecSource==='pen' && !appPenConnected()) {
