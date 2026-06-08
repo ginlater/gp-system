@@ -971,6 +971,12 @@ async function loadPending() {
   const r = await fetch(BASE + '/api/consultant/recordings/pending');
   const d = await r.json();
   pendingListCache = d.recordings || [];
+  // 按录制时间从近到远排序（最新的录音排最上面）
+  pendingListCache.sort(function(a, b){
+    var ka = a.recorded_at || (a.service_date ? a.service_date + ' ' + (a.start_hm || '') : (a.created_at || ''));
+    var kb = b.recorded_at || (b.service_date ? b.service_date + ' ' + (b.start_hm || '') : (b.created_at || ''));
+    return ('' + kb).localeCompare('' + ka);
+  });
   tb.dataset.loaded = '1';
   // 跨日提醒按【全部】未归档算（不只当前页）
   const activeDate0 = currentReceptionDate || _todayStr();
