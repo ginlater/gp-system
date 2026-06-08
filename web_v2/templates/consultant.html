@@ -276,6 +276,21 @@ body.skin-cute .dlg{border-radius:18px}
     </div>
   </div>
 
+  <!-- 底部大播放器：点未归档「🎧 试听」时弹出，大进度条好拖 -->
+  <div id="miniPlayer" style="display:none;position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #eee;box-shadow:0 -3px 16px rgba(0,0,0,.14);padding:12px 16px;z-index:1000">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span id="mpTitle" style="font-size:13px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
+      <button onclick="mpClose()" style="border:none;background:none;font-size:20px;color:#999;padding:0 4px;line-height:1">✕</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <button id="mpPlayBtn" onclick="mpToggle()" style="border:none;background:#e75480;color:#fff;width:46px;height:46px;border-radius:50%;font-size:18px;flex:none">▶</button>
+      <span id="mpCur" style="font-size:13px;color:#666;min-width:44px;text-align:right">0:00</span>
+      <input id="mpSeek" type="range" min="0" max="1000" value="0" step="1" style="flex:1;height:8px" oninput="mpOnSeekInput()" onchange="mpOnSeekChange()">
+      <span id="mpDur" style="font-size:13px;color:#666;min-width:44px">0:00</span>
+    </div>
+    <audio id="mpAudio" preload="metadata"></audio>
+  </div>
+
   <style>
     /* 未归档列表：手机端转卡片布局 */
     @media (max-width: 640px) {
@@ -1080,7 +1095,7 @@ function renderPending() {
       </tr>`;
     }
     const audio = x.audio_url
-      ? `<audio controls preload="metadata" src="${x.audio_url}" style="width:160px;height:28px;vertical-align:middle"></audio>`
+      ? `<button class="btn sec" style="padding:5px 16px;font-size:13px;white-space:nowrap" onclick="openMiniPlayer(${x.id})">🎧 试听</button>`
       : '<span class="muted">无音频</span>';
     const isCross = x.service_date && x.service_date !== activeDate0;
     const drStatus = x.delete_request_status; // null | 'pending' | 'rejected'
@@ -1154,11 +1169,55 @@ function renderPending() {
 if (!window._pendingAutoTimer) {
   window._pendingAutoTimer = setInterval(() => {
     if (document.hidden) return;
-    const playing = document.querySelectorAll('#pendingBody audio');
-    for (const a of playing) { if (!a.paused) return; }
+    const _mp = document.getElementById('mpAudio');   // 底部大播放器在试听 → 别刷新打断
+    if (_mp && !_mp.paused) return;
     loadPending();
   }, 5000);
 }
+
+// ============ 底部大播放器（未归档试听，大进度条好拖） ============
+function _mpFmt(s){ s = Math.max(0, Math.floor(s || 0)); var m = Math.floor(s/60), x = s%60; return m + ':' + (x<10?'0':'') + x; }
+function openMiniPlayer(rid){
+  var x = (pendingListCache || []).find(function(r){ return r.id === rid; });
+  if (!x || !x.audio_url) return;
+  var a = document.getElementById('mpAudio');
+  document.getElementById('mpTitle').textContent =
+    ((x.service_date||'') + ' ' + (x.start_hm||'')).trim() + (x.duration_label ? ' · ' + x.duration_label : '');
+  document.getElementById('mpSeek').value = 0;
+  document.getElementById('mpCur').textContent = '0:00';
+  document.getElementById('mpDur').textContent = x.duration_label || '0:00';
+  a.src = x.audio_url;
+  document.getElementById('miniPlayer').style.display = '';
+  a.play().catch(function(){});
+}
+function mpToggle(){ var a = document.getElementById('mpAudio'); if (a.paused) a.play().catch(function(){}); else a.pause(); }
+var _mpSeeking = false;
+function mpOnSeekInput(){
+  _mpSeeking = true;
+  var a = document.getElementById('mpAudio'), v = +document.getElementById('mpSeek').value;
+  if (a.duration && isFinite(a.duration)) document.getElementById('mpCur').textContent = _mpFmt(v/1000 * a.duration);
+}
+function mpOnSeekChange(){
+  var a = document.getElementById('mpAudio'), v = +document.getElementById('mpSeek').value;
+  if (a.duration && isFinite(a.duration)) a.currentTime = v/1000 * a.duration;
+  _mpSeeking = false;
+}
+function mpClose(){ var a = document.getElementById('mpAudio'); try { a.pause(); } catch(e){} document.getElementById('miniPlayer').style.display = 'none'; }
+(function mpInit(){
+  var a = document.getElementById('mpAudio'); if (!a) return;
+  a.addEventListener('timeupdate', function(){
+    if (_mpSeeking) return;
+    document.getElementById('mpCur').textContent = _mpFmt(a.currentTime);
+    if (a.duration && isFinite(a.duration)) {
+      document.getElementById('mpSeek').value = Math.round(a.currentTime / a.duration * 1000);
+      document.getElementById('mpDur').textContent = _mpFmt(a.duration);
+    }
+  });
+  a.addEventListener('loadedmetadata', function(){ if (a.duration && isFinite(a.duration)) document.getElementById('mpDur').textContent = _mpFmt(a.duration); });
+  a.addEventListener('play',  function(){ document.getElementById('mpPlayBtn').textContent = '⏸'; });
+  a.addEventListener('pause', function(){ document.getElementById('mpPlayBtn').textContent = '▶'; });
+  a.addEventListener('ended', function(){ document.getElementById('mpPlayBtn').textContent = '▶'; a.currentTime = 0; });
+})();
 
 async function loadNeedsConfirm() {
   const r = await fetch(BASE + '/api/consultant/recordings/needs_confirm');
