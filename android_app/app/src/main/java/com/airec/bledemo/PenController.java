@@ -203,6 +203,17 @@ public class PenController {
         catch (Exception e) { return false; }
     }
 
+    /** 录音笔当前是否真在录(会话进行中)。作为 UI"是否陪伴中"的唯一事实源：
+     *  防黑屏时笔结束、idle 状态没传到 Activity(onPause 已解绑)→ state 残留"录音中"。 */
+    public boolean isRecording() { return sessionActive || penRecording; }
+
+    /** 录音笔当前已录秒数(UI 计时同步用)：优先笔上报的时长(最权威、跨黑屏准)，否则用起点连续计时；没在录返回 0。
+     *  切出陪伴页再回来时据此把计时对到笔的真实进度，绝不从 0 重数。 */
+    public int getRecordingElapsedSec() {
+        if (!isRecording()) return 0;
+        return lastPenDurationSec > 0 ? lastPenDurationSec : elapsedSec();
+    }
+
     public AIRECBleCallback getCallback() { return callback; }
 
     /** 让 SDK 的回调指向本控制器（进入接诊页 / 开始用笔录音前调用）。 */

@@ -4975,10 +4975,10 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
 #   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
-APP_LATEST_VERSION_CODE = 12
-APP_LATEST_VERSION_NAME = "2.1.1"
-APP_MIN_VERSION_CODE = 12                # 低于此值的客户端 → 强制更新（v12 含录音同步/开机录制关闭等关键修复，强制全网升级）
-APP_UPDATE_NOTE = "本次更新让陪伴更稳更省心——开始/结束陪伴会震动提醒（不看屏幕也知道）；页面状态与设备严格同步，不再出现卡顿假象。请更新后继续使用 💛"
+APP_LATEST_VERSION_CODE = 13
+APP_LATEST_VERSION_NAME = "2.1.2"
+APP_MIN_VERSION_CODE = 13                # 低于此值的客户端 → 强制更新（v13 修黑屏笔结束卡假录音中 + 切回计时归零，强制全网升级）
+APP_UPDATE_NOTE = "本次更新修好了几处计时与状态问题——切出页面再回来计时不再乱跳、能和录音笔严格对上。请更新后继续使用 💛"
 
 
 @app.route("/download")

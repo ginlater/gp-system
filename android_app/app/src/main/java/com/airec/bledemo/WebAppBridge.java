@@ -28,6 +28,7 @@ public class WebAppBridge {
         void bridgeUploadPenFiles(String namesJson);  // 上传网页勾选的机身文件(JSON 文件名数组)
         void bridgeRetryPenUploads(); // ★A1:网页"重试"按钮：立刻重推待补传队列
         void bridgeUploadDiag();      // 一键诊断：把 penlog/last_result + 设备信息上传后端，供远程排查
+        int bridgeGetRecElapsedSec(); // 录音笔当前已录秒数(切回陪伴页时把计时对到笔真实进度，不从0重数)
     }
 
     private final Host host;
@@ -95,4 +96,8 @@ public class WebAppBridge {
      *  结果异步回调 window.__onDiagUploaded(ok, msg)。 */
     @JavascriptInterface
     public void uploadDiag() { host.bridgeUploadDiag(); }
+
+    /** 录音笔当前已录秒数（没在录返回 0）。切回陪伴页时据此把计时对到笔真实进度。 */
+    @JavascriptInterface
+    public int getRecElapsedSec() { return host.bridgeGetRecElapsedSec(); }
 }

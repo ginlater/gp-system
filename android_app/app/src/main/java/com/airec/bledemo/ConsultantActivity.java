@@ -563,7 +563,15 @@ public class ConsultantActivity extends Activity
             if ("paused".equals(state) && "pen".equals(activeSource) && penController != null) penController.resume();
         });
     }
-    @Override public String bridgeGetState() { return state; }
+    @Override public String bridgeGetState() {
+        // ★以录音笔真实状态为准：显示"录音中"但笔其实没在录(黑屏笔结束、idle 没传到→state 残留) → 返回 idle。
+        //   网页的状态同步/兜底都基于本方法，这里权威了，假"录音中"就一定会被拉回。
+        if ("recording".equals(state) && penController != null && !penController.isRecording()) return "idle";
+        return state;
+    }
+    @Override public int bridgeGetRecElapsedSec() {
+        return penController != null ? penController.getRecordingElapsedSec() : 0;
+    }
     @Override public String bridgeGetSources() {
         return (penController != null && penController.isPenAlive()) ? "phone,pen" : "phone";
     }
@@ -786,11 +794,21 @@ public class ConsultantActivity extends Activity
             // 没连：静默自动连接上次那支笔（开机自动连，无需手点）
             maybeAutoConnectPen();
         }
-        // 把当前录音状态与录音笔连接状态同步回网页
-        evalJs("if(window.__onNativeRecState){window.__onNativeRecState('"
-                + RecordingBus.lastState + "','',"
-                + (recordingStartMs == 0 ? 0 : elapsedSec()) + ");}"
-                + "if(window.__onPenConnChanged){window.__onPenConnChanged("
+        // 把当前录音状态与录音笔连接状态同步回网页。
+        // ★以录音笔真实状态为准：显示"录音中"但笔已不在录(黑屏笔结束、idle 没传到→state/lastState 残留)
+        //   → 当场纠正回 idle，绝不让打开 App 看到假"陪伴进行中"在空走。
+        if ("recording".equals(state) && penController != null && !penController.isRecording()) {
+            recordingStartMs = 0;
+            applyState("idle", null);
+        } else {
+            // ★录音中恢复：用录音笔真实已录秒数对计时，绝不从 0 重数(切出陪伴页又回来时计时会归零的根因)。
+            int penSec = (penController != null) ? penController.getRecordingElapsedSec() : 0;
+            int durSec = penSec > 0 ? penSec : (recordingStartMs == 0 ? 0 : elapsedSec());
+            if (penSec > 0) recordingStartMs = SystemClock.elapsedRealtime() - penSec * 1000L;  // 本地计时基准也对齐笔
+            evalJs("if(window.__onNativeRecState){window.__onNativeRecState('"
+                    + RecordingBus.lastState + "',''," + durSec + ");}");
+        }
+        evalJs("if(window.__onPenConnChanged){window.__onPenConnChanged("
                 + (penController != null && penController.isPenAlive()) + ");}");
         checkForceUpdate();   // ★每次回前台查一次：版本过低 → 弹不可关的强制更新框
     }
