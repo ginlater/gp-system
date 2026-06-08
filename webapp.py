@@ -4933,9 +4933,11 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   - 强制升级：把 APP_MIN_VERSION_CODE 和 LATEST 一起抬到新版本号。
 #   - 可选升级（不挡，仅提示）：只抬 LATEST，MIN 不动。
 #   注意：强制更新逻辑是 versionCode≥3 的 App 才内置的；更早版本(1/2)没有这段检查，挡不住，需手动装一次新包。
-APP_LATEST_VERSION_CODE = 8
-APP_LATEST_VERSION_NAME = "2.0.7"
-# v8(2.0.7): 手动"从录音笔同步"+预览勾选(替代 v6 自动扫描)。MIN 暂留 5(可装不强制)，验过再抬。
+# ★【发布版本】已回退到 v5/2.0.4：/download 给 v5、强制也是 v5，和线上顾问完全一致。
+#   v6/v7/v8(手动同步等)代码仍在 git 历史(build.gradle 已是 8)，要重启用从那继续；
+#   注意：现在 这里(5) 与 build.gradle(8) 故意不一致(=已回退)，重新发版前要先对齐。
+APP_LATEST_VERSION_CODE = 5
+APP_LATEST_VERSION_NAME = "2.0.4"
 APP_MIN_VERSION_CODE = 5                 # 低于此值的客户端 → 强制更新
 APP_UPDATE_NOTE = "新版本：录音笔按管理员绑定的设备连接，避免错连他人录音笔；并修复录音断流截断。请更新后使用。"
 
