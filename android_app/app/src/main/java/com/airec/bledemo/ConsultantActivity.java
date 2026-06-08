@@ -436,6 +436,12 @@ public class ConsultantActivity extends Activity
         ui.post(() -> evalJs("if(window.__onPenProgress){window.__onPenProgress(" + percent + ");}"));
     }
 
+    /** 手动同步：机身文件列表(JSON) → 交给网页渲染预览勾选。 */
+    @Override
+    public void onPenFileList(String filesJson) {
+        ui.post(() -> evalJs("if(window.__onPenFiles){window.__onPenFiles(" + filesJson + ");}"));
+    }
+
     /** 暂停/继续状态变化 → 推给网页（paused / recording）。 */
     @Override
     public void onPenPaused(boolean paused) {
@@ -551,6 +557,12 @@ public class ConsultantActivity extends Activity
     }
     @Override public void bridgeOpenPenManager() {
         ui.post(() -> startActivity(new Intent(this, MainActivity.class)));
+    }
+    @Override public void bridgeSyncPenFiles() {
+        ui.post(() -> { if (penController != null) penController.requestPenFileList(); });
+    }
+    @Override public void bridgeUploadPenFiles(String namesJson) {
+        ui.post(() -> { if (penController != null) penController.uploadPenFiles(namesJson); });
     }
 
     // ============ 权限 ============

@@ -24,6 +24,8 @@ public class WebAppBridge {
         void bridgeConnectPen();
         void bridgeOpenPenManager();
         String bridgePendingInfo();   // "count,failed"：后台待传/失败段数，供页面重载后恢复 badge
+        void bridgeSyncPenFiles();    // 手动"从录音笔同步"：拉机身文件列表(回 window.__onPenFiles)
+        void bridgeUploadPenFiles(String namesJson);  // 上传网页勾选的机身文件(JSON 文件名数组)
     }
 
     private final Host host;
@@ -74,4 +76,12 @@ public class WebAppBridge {
     /** "count,failed"：后台待传/失败段数。页面重载后调它恢复"💾保存中"badge。 */
     @JavascriptInterface
     public String pendingInfo() { return host.bridgePendingInfo(); }
+
+    /** 手动"从录音笔同步"：拉机身文件列表，native 拉到后回调 window.__onPenFiles(json)。 */
+    @JavascriptInterface
+    public void syncPenFiles() { host.bridgeSyncPenFiles(); }
+
+    /** 上传网页勾选的机身文件：namesJson = JSON 文件名数组。 */
+    @JavascriptInterface
+    public void uploadPenFiles(String namesJson) { host.bridgeUploadPenFiles(namesJson); }
 }

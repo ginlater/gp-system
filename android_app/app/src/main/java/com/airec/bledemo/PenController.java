@@ -62,6 +62,8 @@ public class PenController {
         void onPenPlaceholderCreated();
         /** 当前后台下载进度(0-100)，用于显示"保存中 N%"（大文件几分钟，给个进度）。 */
         void onPenProgress(int percent);
+        /** 手动"从录音笔同步"：拉到机身文件列表(JSON 数组)，交给网页渲染预览勾选。 */
+        void onPenFileList(String filesJson);
     }
 
     private final Context appCtx;
@@ -177,6 +179,7 @@ public class PenController {
     //   覆盖"全程断开状态下录的、App 从没感知到"的录音。已传集合持久化(uploadedFileNames)，后端再按 pen_file 去重。
     private volatile boolean pendingSweep = false;
     private static final long SWEEP_WINDOW_MS = 2L * 24 * 3600 * 1000; // 只扫最近2天，避免首次把整盘旧文件全扫
+    private volatile boolean pendingSyncList = false;  // 手动"从录音笔同步"：拉文件列表给网页预览
     // ★扫描补传暂时关闭：v6 的实现有 bug(机身列表 durationSec=0→时长00:00；会复活已删录音；v5无pen_file去重不准)。
     //   关掉止血，待"删除墓碑 + 上传时 ffprobe 补时长 + 后端去重过滤"做对了再开。
     private static final boolean SWEEP_ENABLED = false;
@@ -238,6 +241,77 @@ public class PenController {
         if (cookie == null || uploadUrl == null) return;
         pendingSweep = true;
         try { AIRECBleManager.getInstance().fetchFileList(); } catch (Exception ignored) {}
+    }
+
+    // ============ 手动"从录音笔同步"：拉列表给网页预览 + 上传所选 ============
+
+    /** 网页点"从录音笔同步" → 拉机身文件列表，回调 onPenFileList。 */
+    public void requestPenFileList() {
+        if (!isConnected()) { if (listener != null) listener.onPenFileList("[]"); return; }
+        pendingSyncList = true;
+        try { AIRECBleManager.getInstance().fetchFileList(); } catch (Exception e) {
+            if (listener != null) listener.onPenFileList("[]");
+        }
+    }
+
+    private static String jsEsc(String s) {
+        return s == null ? "" : s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+    private void deliverPenFileList(List<AIRECBleFile> files) {
+        StringBuilder sb = new StringBuilder("[");
+        boolean first = true;
+        if (files != null) {
+            for (AIRECBleFile f : files) {
+                if (f == null) continue;
+                String name = f.getFileName();
+                if (name == null || name.isEmpty()) continue;
+                long startMs = parsePenFileStartMs(name, f);
+                String ra = startMs > 0 ? fmtWall(startMs) : "";
+                if (!first) sb.append(',');
+                first = false;
+                sb.append("{\"name\":\"").append(jsEsc(name))
+                  .append("\",\"ra\":\"").append(jsEsc(ra))
+                  .append("\",\"size\":").append(f.getFileSize())
+                  .append(",\"dur\":").append(f.getDurationSec())
+                  .append(",\"uploaded\":").append(uploadedFileNames.contains(name)).append('}');
+            }
+        }
+        sb.append("]");
+        final String json = sb.toString();
+        if (listener != null) main.post(() -> listener.onPenFileList(json));
+    }
+
+    /** 网页选好后 → 把选中的机身文件名(JSON 数组)入队下载补传(带 pen_file，后端去重/ffprobe补时长)。 */
+    public void uploadPenFiles(String namesJson) {
+        if (cookie == null || uploadUrl == null) return;
+        java.util.List<String> names = new java.util.ArrayList<>();
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(namesJson);
+            for (int i = 0; i < arr.length(); i++) {
+                String n = arr.optString(i, null);
+                if (n != null && !n.isEmpty()) names.add(n);
+            }
+        } catch (Exception e) { Log.w(TAG, "uploadPenFiles parse: " + e.getMessage()); return; }
+        java.util.List<UploadTask> added = new java.util.ArrayList<>();
+        for (String name : names) {
+            if (isQueuedByName(name)) continue;
+            long startMs = parsePenFileStartMs(name, null);
+            UploadTask t = new UploadTask(name, cookie, uploadUrl, penSn(), 0, startMs, false);
+            uploadQueue.add(t);
+            added.add(t);
+            penLog("★手动同步入队 " + name);
+        }
+        if (!added.isEmpty()) {
+            final String phUrl = placeholderUrlFrom(uploadUrl);
+            for (final UploadTask t : added) {
+                worker.submit(() -> {
+                    long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs);
+                    if (pid > 0) { t.placeholderId = pid; if (listener != null) main.post(listener::onPenPlaceholderCreated); }
+                });
+            }
+            notifyPending();
+            main.postDelayed(this::kickWorker, 1200);
+        }
     }
 
     /** 文件名/createTime → 录音开始墙上毫秒；解析不到返回 0。 */
@@ -1052,6 +1126,7 @@ public class PenController {
             markPenResponded();
             if (pendingCleanup) { pendingCleanup = false; cleanupOldFiles(files); }
             if (pendingSweep) { pendingSweep = false; sweepPenStorage(files); }
+            if (pendingSyncList) { pendingSyncList = false; deliverPenFileList(files); }
             final UploadTask task = currentTask;
             if (!waitingForFile || task == null || files == null || files.isEmpty()) return;
             AIRECBleFile target = pickForTask(files, task);

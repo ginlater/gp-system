@@ -262,7 +262,7 @@ body.skin-cute .dlg{border-radius:18px}
 
   <!-- 未选择顾客的录音 -->
   <div class="card">
-    <h3><span class="t-pro">未选择顾客的录音</span><span class="t-cute">💭 还没归档的片段</span> <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button></h3>
+    <h3><span class="t-pro">未选择顾客的录音</span><span class="t-cute">💭 还没归档的片段</span> <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button><button id="penSyncBtn" class="btn sec" style="display:none;float:right;padding:3px 10px;font-size:12px;margin-right:6px" onclick="penSyncOpen()"><span class="t-pro">📥 从录音笔同步</span><span class="t-cute">📥 取回小伙伴</span></button></h3>
     <div class="muted" style="margin-bottom:6px;font-size:12px">未绑定顾客的录音不会进入分析。请试听后绑定到对应日期接诊列表里的顾客。</div>
     <div id="pendingCrossWarn" style="display:none;background:#fdecea;color:#c0392b;padding:6px 8px;border-radius:4px;margin-bottom:6px;font-size:12px;font-weight:600"></div>
     <table class="tbl pending-tbl">
@@ -702,6 +702,8 @@ window.__onPenProgress = function(pct){
 if (IN_APP) {
   // 隐藏之前那条"用底部录音条"的提示（已不需要）
   var _h = document.getElementById('appRecHint'); if (_h) _h.style.display = 'none';
+  // App 内才有"从录音笔同步"(需原生桥)
+  if (window.AndroidBridge && window.AndroidBridge.syncPenFiles) { var _ps = document.getElementById('penSyncBtn'); if (_ps) _ps.style.display = ''; }
   // 录音卡片里、按钮上方注入录音笔连接指示行（点一下连接）。
   // 标签 #appSrcLbl 走双 span 双语：cute 下不出现「录音」字；按钮 #appSrcPen 由 appUpdateSourceRow 按皮肤渲染。
   var _area = document.querySelector('#recCard .rec-area');
@@ -762,6 +764,71 @@ if (IN_APP) {
       }
     }
   }, 2500);
+}
+
+// ============ 从录音笔同步（手动 + 预览勾选）============
+function _psEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function _penSyncShow(innerHtml){
+  var m = document.getElementById('penSyncMask');
+  if (!m){
+    m = document.createElement('div'); m.id = 'penSyncMask';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    m.innerHTML = '<div id="penSyncBox" style="background:#fff;border-radius:10px;max-width:520px;width:100%;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.25)"></div>';
+    document.body.appendChild(m);
+  }
+  document.getElementById('penSyncBox').innerHTML = innerHtml;
+  m.style.display = 'flex';
+}
+function _penSyncClose(){ var m = document.getElementById('penSyncMask'); if (m) m.style.display = 'none'; }
+function penSyncOpen(){
+  if (!(window.AndroidBridge && window.AndroidBridge.syncPenFiles)) { alert('请在 App 内使用'); return; }
+  if (typeof appPenConnected === 'function' && !appPenConnected()) { alert('请先连接录音笔'); return; }
+  _penSyncShow('<div style="padding:30px;text-align:center;color:#666">正在读取录音笔文件…</div>');
+  try { window.AndroidBridge.syncPenFiles(); } catch(e){ _penSyncShow('<div style="padding:24px;text-align:center;color:#c0392b">读取失败：'+_psEsc(''+e)+'</div>'); }
+}
+window.__onPenFiles = function(files){
+  files = files || [];
+  if (!files.length){ _penSyncShow('<div style="padding:24px;text-align:center;color:#666">录音笔里没有文件</div><div style="text-align:right;margin-top:10px"><button class="btn sec" onclick="_penSyncClose()">关闭</button></div>'); return; }
+  var items = files.map(function(f){ return {name:f.name, ra:f.ra}; });
+  fetch(BASE + '/api/consultant/pen/sync-preview', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({items:items})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    var stat = {}; (d.items||[]).forEach(function(x){ stat[x.name] = x.status; });
+    _penSyncRender(files, stat);
+  }).catch(function(){ _penSyncRender(files, {}); });
+};
+function _penSyncRender(files, stat){
+  files = files.slice().sort(function(a,b){ return (''+(b.ra||'')).localeCompare(''+(a.ra||'')); });
+  var rows = files.map(function(f){
+    var s = stat[f.name] || 'new';
+    var badge = s==='uploaded' ? '<span style="color:#27ae60">已传</span>'
+              : s==='deleted'  ? '<span style="color:#c0392b">已删</span>'
+              : '<span style="color:#e67e22;font-weight:600">未传</span>';
+    var sizeKb = Math.round((f.size||0)/1024);
+    var dis = (s !== 'new');
+    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid #eee;font-size:13px;'+(dis?'opacity:.5':'')+'">'
+      + '<input type="checkbox" class="psf-chk" value="'+_psEsc(f.name)+'" '+(s==='new'?'checked':'')+' '+(dis?'disabled':'')+'>'
+      + '<span style="flex:1">'+_psEsc(f.ra||f.name)+'</span>'
+      + '<span style="color:#999;min-width:54px;text-align:right">'+sizeKb+'KB</span>'
+      + '<span style="min-width:36px;text-align:right">'+badge+'</span></label>';
+  }).join('');
+  var html = '<div style="font-weight:600;margin-bottom:6px">从录音笔同步</div>'
+    + '<div style="font-size:12px;color:#888;margin-bottom:8px">未传=没上传过(默认勾选)；已传/已删 不会重复拉。补传后时长自动校正。</div>'
+    + '<div style="margin-bottom:8px"><a href="javascript:void(0)" onclick="document.querySelectorAll(\'.psf-chk:not(:disabled)\').forEach(function(c){c.checked=true})" style="font-size:12px;color:var(--blue)">全选未传</a></div>'
+    + '<div style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:0 8px">'+rows+'</div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">'
+    + '<button class="btn sec" onclick="_penSyncClose()">取消</button>'
+    + '<button class="btn" onclick="penSyncUpload()">上传所选</button></div>';
+  _penSyncShow(html);
+}
+function penSyncUpload(){
+  var names = Array.prototype.map.call(document.querySelectorAll('.psf-chk:checked'), function(c){ return c.value; });
+  if (!names.length){ alert('请勾选要上传的录音'); return; }
+  try { window.AndroidBridge.uploadPenFiles(JSON.stringify(names)); }
+  catch(e){ alert('上传失败：'+e); return; }
+  _penSyncClose();
+  alert('已开始同步 '+names.length+' 条，稍候在未归档列表里查看（时长会自动校正）');
+  setTimeout(loadPending, 3000); setTimeout(loadPending, 10000);
 }
 
 // ============ 皮肤切换（专业版 / 萌系卡通） ============
