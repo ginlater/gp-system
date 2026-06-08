@@ -1474,25 +1474,13 @@ def _ensure_clean_audio(recording_id, oss_key):
             return oss_key  # 转码异常，回退原文件
         new_key = (oss_key.rsplit(".", 1)[0]) + "_clean.wav"
         oss_bucket.put_object_from_file(new_key, out)
-        # ★断流截断兜底：上报(墙钟)时长 vs 实测音频时长。上报≥60s 且 实测<上报×50% = 录音中途丢了。
-        #   打 truncate_note 兜底提醒，并【保留原始件不删】供复检（默认不可恢复，这里破例留证）。
-        old_row = db_fetchone("SELECT duration_label FROM recordings WHERE id=?", (recording_id,))
-        reported_sec = _parse_duration_label_sec(old_row["duration_label"]) if old_row else 0
-        truncated = (reported_sec >= 60 and dur < reported_sec * 0.5)
-        note = None
-        if truncated:
-            note = (f"上报{_format_duration_label(reported_sec)}、实际只录到{_format_duration_label(dur)}，"
-                    f"疑似蓝牙断流丢失，请核对/重录")
-            app.logger.warning("[truncate] rec %s 上报%ss 实测%.1fs (%.1fx) → 疑似断流截断，保留原始件 %s",
-                               recording_id, reported_sec, dur, reported_sec / max(dur, 0.1), oss_key)
+        # 断流截断告警已下线：录音笔暂停/继续会让墙钟>实测而误报。这里不再打标，duration_label 用实测真实值即可。
         db_write(
-            "UPDATE recordings SET oss_key=?, duration_label=?, size_bytes=?, truncate_note=? WHERE id=?",
-            (new_key, _format_duration_label(dur), os.path.getsize(out), note, recording_id),
+            "UPDATE recordings SET oss_key=?, duration_label=?, size_bytes=?, truncate_note=NULL WHERE id=?",
+            (new_key, _format_duration_label(dur), os.path.getsize(out), recording_id),
         )
-        if not truncated:
-            _oss_delete_quiet(oss_key)  # 正常：删原 webm/ogg，失败仅记日志（孤儿可接受）
-        app.logger.info("[clean audio] rec %s 转码 %s → %s (%.1fs)%s", recording_id, oss_key, new_key, dur,
-                        " ★疑似截断" if truncated else "")
+        _oss_delete_quiet(oss_key)  # 删原 webm/ogg，失败仅记日志（孤儿可接受）
+        app.logger.info("[clean audio] rec %s 转码 %s → %s (%.1fs)", recording_id, oss_key, new_key, dur)
         return new_key
     except Exception as e:
         # 转码失败：若已上传 new_key 但 DB 未更新则清掉，回退原文件继续 ASR
@@ -9053,10 +9041,10 @@ def _consultant_required():
 
 
 def _detect_truncate_note(data, ext, reported_sec):
-    """上传时即测：ffprobe 实测音频秒数 vs 客户端上报(墙钟)秒数。
-    上报≥60s 且 实测<上报×50% → 返回兜底提醒文案，让顾问在「未归档」当场就看到"只录到X秒"，
-    不必等绑定后跑 ASR 才发现。探测失败/不满足 → None（最佳努力，绝不阻断上传）。"""
-    try:
+    """（已下线）断流截断告警——录音笔暂停/继续会让墙钟时长 > 实测音频而【误报】，故不再产生此提醒。
+    保留函数与调用点，直接返回 None。时长列已用 ffprobe 实测真实值，无需此告警。"""
+    return None
+    try:  # noqa: 以下为旧逻辑，保留备查，不再执行
         if not reported_sec or reported_sec < 60:
             return None
         import tempfile, subprocess

@@ -1132,10 +1132,7 @@ function renderPending() {
         <button class="btn sec" style="padding:2px 8px;font-size:11px" onclick="dismissDelReject(${x.id})">知道了</button>
       </div>`;
     }
-    // ★断流截断告警：上报时长远大于实测音频 → 醒目提示，别让顾问把"只录到几十秒"的当成完整的绑了
-    if (x.truncate_note) {
-      banner += `<div style="grid-column:1/-1;background:#fff3cd;color:#856404;padding:4px 8px;border-radius:4px;font-size:12px;margin-bottom:4px;font-weight:600">⚠ ${String(x.truncate_note).replace(/</g,'&lt;')}</div>`;
-    }
+    // 断流截断告警已下线：录音笔暂停/继续会让墙钟>实测音频而误报，故不再显示(时长列已是实测真实值)。
     // 操作按钮
     let actsHtml;
     if (isDelPending) {
