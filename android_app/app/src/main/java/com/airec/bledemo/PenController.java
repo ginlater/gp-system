@@ -1143,6 +1143,37 @@ public class PenController {
         } catch (Exception ignore) {}
     }
 
+    private android.os.Vibrator vibrator;
+
+    /** 开启/结束陪伴震动反馈。放在录音引擎层(前台Service常驻、appCtx)：手机黑屏/切到别的App也能震，
+     *  不依赖接诊界面是否在前台。isEnd=true 双短震(结束陪伴)、false 单短震(开始陪伴)。失败静默忽略。 */
+    private void buzz(boolean isEnd) {
+        try {
+            if (vibrator == null) {
+                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    android.os.VibratorManager vm =
+                            (android.os.VibratorManager) appCtx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
+                    vibrator = (vm != null) ? vm.getDefaultVibrator() : null;
+                } else {
+                    vibrator = (android.os.Vibrator) appCtx.getSystemService(Context.VIBRATOR_SERVICE);
+                }
+            }
+            if (vibrator == null || !vibrator.hasVibrator()) return;
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                if (isEnd) {
+                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(
+                            new long[]{0, 90, 120, 90}, -1));   // 嗒-嗒
+                } else {
+                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(
+                            130, android.os.VibrationEffect.DEFAULT_AMPLITUDE));  // 嗒
+                }
+            } else {
+                if (isEnd) vibrator.vibrate(new long[]{0, 90, 120, 90}, -1);
+                else vibrator.vibrate(130);
+            }
+        } catch (Exception ignore) {}
+    }
+
     /** 调试期：把一行状态写到外部目录 stream_ops/last_result.txt（vivo 限制 logcat，靠它看上传结果）。 */
     private void writeProbeStatus(String line) {
         try {
@@ -1250,6 +1281,7 @@ public class PenController {
                     startStreamCapture();   // ★开始捕获蓝牙实时流(拼 .ops)
                     Log.d(TAG, "镜像：笔开始录音 file=" + sessionFileName + " gen=" + sessionGen);
                     post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
+                    buzz(false);   // 开启陪伴：单短震（引擎层触发，黑屏/后台也生效）
                     main.removeCallbacks(reconnectGiveUp);   // 新会话已建立 → 撤断线宽限
                     if (wasAppStart) armHealthWatchdog();    // ★你点的开始：限时内必须出现真音频证据
                 } else if (!TextUtils.isEmpty(fileName)) {
@@ -1262,6 +1294,7 @@ public class PenController {
                     kickWorker();   // 没在跟踪：可能是停后的重复帧，顺便推进后台队列
                     return;
                 }
+                buzz(true);   // 结束陪伴：双短震（引擎层触发，黑屏/后台也生效）
                 finishSessionEnqueue(
                         !TextUtils.isEmpty(fileName) ? fileName : sessionFileName,
                         elapsedSec(), sessionStartWallMs);

@@ -274,6 +274,69 @@ public final class Uploader {
         }
     }
 
+    /** 诊断上传结果。 */
+    public static final class DiagResult {
+        public final boolean ok;
+        public final String message;
+        public DiagResult(boolean ok, String message) { this.ok = ok; this.message = message; }
+    }
+
+    /**
+     * 一键诊断上传：penlog.txt + last_result.txt + 设备信息(meta) multipart POST 给后端。
+     * 文件缺失/为空则跳过该文件，仍传其余。后端 @login_required 据 cookie 识别是哪位顾问。
+     */
+    public static DiagResult uploadDiag(String cookie, String url, File penlog, File lastResult, String meta) {
+        if (url == null || url.isEmpty()) return new DiagResult(false, "诊断地址未配置");
+        String boundary = "----gongpaiDIAG" + System.currentTimeMillis();
+        HttpURLConnection conn = null;
+        try {
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setUseCaches(false);
+            conn.setDoOutput(true);
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(20000);
+            conn.setReadTimeout(60000);
+            conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+            if (cookie != null && !cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
+            conn.setChunkedStreamingMode(0);
+            try (DataOutputStream out = new DataOutputStream(conn.getOutputStream())) {
+                if (meta != null && !meta.isEmpty()) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"meta\"" + CRLF + CRLF);
+                    out.write(meta.getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
+                writeFilePart(out, boundary, "penlog", "penlog.txt", penlog);
+                writeFilePart(out, boundary, "last_result", "last_result.txt", lastResult);
+                out.writeBytes("--" + boundary + "--" + CRLF);
+                out.flush();
+            }
+            int code = conn.getResponseCode();
+            readBody(code < 400 ? conn.getInputStream() : conn.getErrorStream());
+            if (code >= 200 && code < 300) return new DiagResult(true, "已上传");
+            if (code == 401 || code == 403) return new DiagResult(false, "登录已失效，请重新登录");
+            return new DiagResult(false, "服务器返回 " + code);
+        } catch (Exception e) {
+            return new DiagResult(false, e.getMessage() == null ? "网络异常" : e.getMessage());
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    private static void writeFilePart(DataOutputStream out, String boundary, String field,
+                                      String filename, File f) throws Exception {
+        if (f == null || !f.exists() || f.length() == 0) return;
+        out.writeBytes("--" + boundary + CRLF);
+        out.writeBytes("Content-Disposition: form-data; name=\"" + field + "\"; filename=\"" + filename + "\"" + CRLF);
+        out.writeBytes("Content-Type: text/plain" + CRLF + CRLF);
+        try (FileInputStream fis = new FileInputStream(f)) {
+            byte[] buf = new byte[16384];
+            int n;
+            while ((n = fis.read(buf)) != -1) out.write(buf, 0, n);
+        }
+        out.writeBytes(CRLF);
+    }
+
     /** SN 校验结果：allow=准不准用这台笔，message=拒绝时给用户的话。 */
     public static final class SnVerdict {
         public final boolean allow;

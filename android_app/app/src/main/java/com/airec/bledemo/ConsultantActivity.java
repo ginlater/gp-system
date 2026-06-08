@@ -26,12 +26,14 @@ import android.widget.Toast;
 
 import android.app.AlertDialog;
 
+import com.airec.bledemo.net.Uploader;
 import com.airec.bledemo.recording.PhoneMicService;
 import com.airec.bledemo.recording.RecordingBus;
 
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -92,6 +94,11 @@ public class ConsultantActivity extends Activity
         // 去掉结尾 /consultant，拼 /api/consultant/upload；兼容根路径或带 /gp 前缀的部署
         String base = startUrl.replaceAll("/consultant/?$", "");
         return base + "/api/consultant/upload";
+    }
+
+    private static String diagUrlFor(String startUrl) {
+        String base = startUrl.replaceAll("/consultant/?$", "");
+        return base + "/api/consultant/diag/upload";
     }
 
     @Override
@@ -464,49 +471,8 @@ public class ConsultantActivity extends Activity
 
     /** 只维护状态并回推给网页（无原生 UI）。 */
     private void applyState(String newState, String message) {
-        String old = state;
         state = newState;
-        // 开启/结束陪伴震动反馈：顾问不看屏幕也能感知。
-        //  · 真正从停止态进入录音 → 开始陪伴(单短震)；paused↔recording 抖动不重复震。
-        //  · 录音/暂停/上传态回到 idle → 结束陪伴(双短震，和开始可区分)。
-        boolean wasStopped = old == null || "idle".equals(old) || "error".equals(old) || old.isEmpty();
-        boolean wasActive = "recording".equals(old) || "paused".equals(old) || "uploading".equals(old);
-        if (wasStopped && "recording".equals(newState)) {
-            buzz(false);
-        } else if (wasActive && "idle".equals(newState)) {
-            buzz(true);
-        }
         pushStateToWeb(newState, message);
-    }
-
-    private android.os.Vibrator vibrator;
-
-    /** 开启/结束陪伴时震一下。isEnd=true 双短震(结束)，false 单短震(开始)。失败静默忽略。 */
-    private void buzz(boolean isEnd) {
-        try {
-            if (vibrator == null) {
-                if (android.os.Build.VERSION.SDK_INT >= 31) {
-                    android.os.VibratorManager vm =
-                            (android.os.VibratorManager) getSystemService(VIBRATOR_MANAGER_SERVICE);
-                    vibrator = (vm != null) ? vm.getDefaultVibrator() : null;
-                } else {
-                    vibrator = (android.os.Vibrator) getSystemService(VIBRATOR_SERVICE);
-                }
-            }
-            if (vibrator == null || !vibrator.hasVibrator()) return;
-            if (android.os.Build.VERSION.SDK_INT >= 26) {
-                if (isEnd) {
-                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(
-                            new long[]{0, 90, 120, 90}, -1));   // 嗒-嗒
-                } else {
-                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(
-                            130, android.os.VibrationEffect.DEFAULT_AMPLITUDE));  // 嗒
-                }
-            } else {
-                if (isEnd) vibrator.vibrate(new long[]{0, 90, 120, 90}, -1);
-                else vibrator.vibrate(130);
-            }
-        } catch (Exception ignore) {}
     }
 
     private void pushStateToWeb(String st, String message) {
@@ -607,6 +573,39 @@ public class ConsultantActivity extends Activity
     }
     @Override public void bridgeRetryPenUploads() {   // ★A1:网页"重试"→ 立刻重推待补传队列
         ui.post(() -> { if (penController != null) penController.retryPenUploads(); });
+    }
+
+    /** 一键诊断上传：把 stream_ops/penlog.txt + last_result.txt + 设备信息发后端，远程排查。 */
+    @Override public void bridgeUploadDiag() {
+        final String cookie = CookieManager.getInstance().getCookie(START_URL);
+        final String url = diagUrlFor(START_URL);
+        final String meta = buildDiagMeta();
+        final File dir = new File(getExternalFilesDir(null), "stream_ops");
+        new Thread(() -> {
+            Uploader.DiagResult r = Uploader.uploadDiag(cookie, url,
+                    new File(dir, "penlog.txt"), new File(dir, "last_result.txt"), meta);
+            final boolean ok = (r != null && r.ok);
+            final String msg = (r != null && r.message != null) ? r.message : "上传失败";
+            final String safe = msg.replace("\\", "\\\\").replace("'", "\\'");
+            ui.post(() -> evalJs("if(window.__onDiagUploaded){window.__onDiagUploaded(" + ok + ",'" + safe + "');}"));
+        }).start();
+    }
+
+    /** 诊断附带的设备/运行信息（型号、安卓版本、App版本、笔连接、待传队列）。 */
+    private String buildDiagMeta() {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("model", android.os.Build.MODEL);
+            o.put("brand", android.os.Build.BRAND);
+            o.put("android", android.os.Build.VERSION.RELEASE);
+            o.put("sdk", android.os.Build.VERSION.SDK_INT);
+            try { o.put("appVersion", getPackageManager().getPackageInfo(getPackageName(), 0).versionName); }
+            catch (Exception ignore) {}
+            o.put("penConnected", penController != null && penController.isPenAlive());
+            o.put("pending", bridgePendingInfo());
+            o.put("ts", System.currentTimeMillis());
+            return o.toString();
+        } catch (Exception e) { return "{}"; }
     }
 
     // ============ 权限 ============

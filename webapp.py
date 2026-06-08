@@ -4986,10 +4986,10 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   ②下载失败/找不到文件不再3分钟就放弃，改退避重试(8s→16s…)跨重连一直试；
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
-#   与 build.gradle(versionCode 10 / 2.0.9) 已对齐。
-APP_LATEST_VERSION_CODE = 10
-APP_LATEST_VERSION_NAME = "2.0.9"
-APP_MIN_VERSION_CODE = 9                 # 低于此值的客户端 → 强制更新（v10 震动为可选增强，不强制）
+#   与 build.gradle(versionCode 11 / 2.1.0) 已对齐。
+APP_LATEST_VERSION_CODE = 11
+APP_LATEST_VERSION_NAME = "2.1.0"
+APP_MIN_VERSION_CODE = 9                 # 低于此值的客户端 → 强制更新（v11 震动后台化+诊断上传为增强，不强制）
 APP_UPDATE_NOTE = "新版本：大幅增强录音补传的稳定性——蓝牙差/App被关也会自动接着传、不再卡死丢失。请更新后使用。"
 
 
@@ -9426,6 +9426,37 @@ def api_consultant_placeholder_cancel():
         db_write("DELETE FROM recordings WHERE id=?", (row["id"],))
         return jsonify({"ok": True})
     return jsonify({"ok": False})
+
+
+@app.route("/api/consultant/diag/upload", methods=["POST"])
+@login_required
+def api_consultant_diag_upload():
+    """App 一键诊断上传：收 penlog.txt + last_result.txt + 设备信息(meta)，存服务器供远程排查。
+    顾问在 App 里点「上传诊断」即可，不用 adb/连电脑。落到 diag_uploads/<user>_<id>_<ts>/。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_user = re.sub(r"[^0-9A-Za-z_]+", "_", str(u["username"] or u["id"]))
+    base = Path(__file__).parent / "diag_uploads" / f"{safe_user}_{u['id']}_{ts}"
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        meta = request.form.get("meta") or ""
+        if meta:
+            (base / "meta.json").write_text(meta, encoding="utf-8")
+        saved = []
+        for field in ("penlog", "last_result"):
+            f = request.files.get(field)
+            if f and f.filename:
+                f.save(str(base / (field + ".txt")))
+                saved.append(field)
+        app.logger.info("[diag] user=%s id=%s saved=%s dir=%s meta=%s",
+                        safe_user, u["id"], saved, base.name, meta[:300])
+        return jsonify({"ok": True, "saved": saved})
+    except Exception as e:
+        app.logger.warning("[diag] 保存失败 user=%s: %s", u["id"], e)
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/consultant/recordings/pending")

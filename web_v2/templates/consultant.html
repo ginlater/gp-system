@@ -270,6 +270,10 @@ body.skin-cute .dlg{border-radius:18px}
       <tbody id="pendingBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
     </table>
     <div id="pendingPager" style="display:none;align-items:center;justify-content:center;gap:12px;margin-top:8px"></div>
+    <div id="diagRow" style="display:none;text-align:center;margin-top:10px;border-top:1px dashed var(--border);padding-top:8px">
+      <button class="btn sec" style="padding:4px 14px;font-size:12px;opacity:0.8" onclick="uploadDiag()">🩺 上传运行诊断</button>
+      <span id="diagMsg" style="font-size:12px;color:#888;margin-left:6px"></span>
+    </div>
   </div>
 
   <style>
@@ -885,6 +889,30 @@ function toggleSkin(){
   let s = 'cute';
   try { s = localStorage.getItem('skin_pref_v2') || 'cute'; } catch(e){}
   applySkin(s);
+})();
+
+// ============ 一键诊断上传（仅 App 内；老版本 App 无此桥方法则隐藏入口） ============
+window.__onDiagUploaded = function(ok, msg){
+  const m = document.getElementById('diagMsg');
+  if (m) m.textContent = ok ? '✅ 已上传，谢谢！' : ('❌ ' + (msg || '上传失败'));
+};
+function uploadDiag(){
+  const m = document.getElementById('diagMsg');
+  try {
+    if (window.AndroidBridge && typeof window.AndroidBridge.uploadDiag === 'function') {
+      if (m) m.textContent = '上传中…';
+      window.AndroidBridge.uploadDiag();
+    } else if (m) {
+      m.textContent = '请在 App 内使用';
+    }
+  } catch(e){ if (m) m.textContent = '出错：' + e; }
+}
+(function initDiag(){
+  try {
+    if (window.AndroidBridge && typeof window.AndroidBridge.uploadDiag === 'function') {
+      const r = document.getElementById('diagRow'); if (r) r.style.display = '';
+    }
+  } catch(e){}
 })();
 
 // ============ 录音 ============
