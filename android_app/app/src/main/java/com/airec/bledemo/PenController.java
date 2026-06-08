@@ -153,6 +153,7 @@ public class PenController {
         volatile String localOpsPath = null;  // ★非空=直传这个本地拼好的 .ops(实时流完整，不下载不解码)
         volatile int uploadAttempts = 0;      // 上传临时失败(网络抖)的重试次数，退避用
         volatile int downloadRequeues = 0;    // ★A1:下载补传失败/卡死被挪队尾重试的次数(退避用，不再硬放弃)
+        volatile long firstSeenMs = 0;        // ★A1:首次补传失败的墙钟时刻(持久化)→按"已试多久"封顶放弃，跨App重启有效
         UploadTask(String fileName, String cookie, String uploadUrl, String sn, int durSec, long startWallMs, boolean appInitiated) {
             this.fileName = fileName; this.cookie = cookie; this.uploadUrl = uploadUrl;
             this.sn = sn; this.durSec = durSec; this.startWallMs = startWallMs; this.appInitiated = appInitiated;
@@ -172,7 +173,9 @@ public class PenController {
     private volatile int downloadRetries = 0;
     private static final int MAX_FILELIST_ATTEMPTS = 4;
     private static final int MAX_DOWNLOAD_RETRIES = 3;
-    private static final int MAX_DOWNLOAD_REQUEUES = 40;   // ★A1:退避重试上限(~2小时)。超了才真放弃+删占位——音频还在笔上、可日后重新同步，避免"取不出的文件"永远churn
+    private static final int MAX_DOWNLOAD_REQUEUES = 200;       // ★A1:次数兜底上限(墙钟封顶为主)
+    private static final long NOTFOUND_GIVEUP_MS = 15 * 60 * 1000L;     // 文件一直不在笔列表(太短没落盘)→15分钟就放弃清理
+    private static final long FAIL_GIVEUP_MS = 2 * 60 * 60 * 1000L;     // 文件在笔上但下载老失败(链路差)→2小时才放弃，多碰好窗口
     private static final long DEFER_MAX_MS = 3 * 60 * 1000L; // 文件未出现在笔列表时的重试上限(跨过连录/笔忙/落盘延迟)，超时才放弃
     // ★笔存储清理：删除 >30天 的旧文件(已远超每日上云，确定已上云，安全)
     private static final long FILE_KEEP_MS = 30L * 24 * 3600 * 1000;
@@ -243,9 +246,9 @@ public class PenController {
     // ============ A1：下载补传队列持久化 + 卡死看门狗（App被杀不丢任务、烂链路无限退避重试） ============
     private static final class PersistedDl {
         final String fileName; final int durSec; final long startWallMs;
-        final long placeholderId; final boolean appInitiated;
-        PersistedDl(String fn, int d, long sw, long pid, boolean ai) {
-            fileName = fn; durSec = d; startWallMs = sw; placeholderId = pid; appInitiated = ai;
+        final long placeholderId; final boolean appInitiated; final long firstSeenMs;
+        PersistedDl(String fn, int d, long sw, long pid, boolean ai, long fs) {
+            fileName = fn; durSec = d; startWallMs = sw; placeholderId = pid; appInitiated = ai; firstSeenMs = fs;
         }
     }
     // App 启动时从盘里读出的待传任务，等拿到上传上下文(登录态)再用【新 cookie】重建入队
@@ -268,7 +271,7 @@ public class PenController {
                 if (t == null || t.localOpsPath != null || t.fileName == null) continue;
                 org.json.JSONObject o = new org.json.JSONObject();
                 o.put("fn", t.fileName); o.put("dur", t.durSec); o.put("sw", t.startWallMs);
-                o.put("pid", t.placeholderId); o.put("ai", t.appInitiated);
+                o.put("pid", t.placeholderId); o.put("ai", t.appInitiated); o.put("fs", t.firstSeenMs);
                 arr.put(o);
             }
             appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
@@ -289,7 +292,7 @@ public class PenController {
                 String fn = o.optString("fn", "");
                 if (fn.isEmpty() || uploadedFileNames.contains(fn)) continue;
                 pendingRestore.add(new PersistedDl(fn, o.optInt("dur", 0),
-                        o.optLong("sw", 0), o.optLong("pid", -1), o.optBoolean("ai", false)));
+                        o.optLong("sw", 0), o.optLong("pid", -1), o.optBoolean("ai", false), o.optLong("fs", 0)));
             }
             if (!pendingRestore.isEmpty()) {
                 Log.d(TAG, "A1:读到 " + pendingRestore.size() + " 条持久化待补传任务，待上下文就绪续传");
@@ -310,6 +313,7 @@ public class PenController {
             UploadTask t = new UploadTask(p.fileName, cookie, uploadUrl, penSn(),
                     p.durSec, p.startWallMs, p.appInitiated);
             t.placeholderId = p.placeholderId;
+            t.firstSeenMs = p.firstSeenMs;   // ★A1:沿用首次失败时刻→封顶放弃跨重启有效
             uploadQueue.add(t);
             n++;
         }
@@ -327,12 +331,16 @@ public class PenController {
         main.post(() -> {
             if (task == null) return;
             task.downloadRequeues++;
+            if (task.firstSeenMs == 0) task.firstSeenMs = System.currentTimeMillis();
             lastDlProgressMs = 0; main.removeCallbacks(downloadStallWatch);
-            if (task.downloadRequeues > MAX_DOWNLOAD_REQUEUES) {
-                // ★A1:试了~2小时还不成 → 真放弃+删占位(音频还在笔上，日后蓝牙好了用"从录音笔同步"重导)
-                Log.w(TAG, "A1:补传重试耗尽(" + task.downloadRequeues + "次) 放弃 file=" + task.fileName);
-                penLog("★A1 补传重试耗尽(" + task.downloadRequeues + "次)放弃·删占位(音频留笔上可日后重导) " + task.fileName);
-                workerTaskFailed(task, "重试耗尽:" + reason, true);   // 出队+删占位，notifyPending 会同步持久化
+            long elapsed = System.currentTimeMillis() - task.firstSeenMs;
+            boolean notFound = reason != null && reason.contains("未在笔列表找到");
+            // ★A1 墙钟封顶(持久化、跨重启有效)：笔上没有的文件(太短没落盘)15分钟放弃; 文件在笔上但链路差给2小时多碰窗口
+            if ((notFound && elapsed > NOTFOUND_GIVEUP_MS) || elapsed > FAIL_GIVEUP_MS
+                    || task.downloadRequeues > MAX_DOWNLOAD_REQUEUES) {
+                Log.w(TAG, "A1:补传放弃(已试" + (elapsed / 60000) + "min/" + task.downloadRequeues + "次," + reason + ") file=" + task.fileName);
+                penLog("★A1 补传放弃(试了" + (elapsed / 60000) + "分钟·" + reason + ")删占位,音频留笔上可日后重导 " + task.fileName);
+                workerTaskFailed(task, "放弃:" + reason, true);   // 出队+删占位，notifyPending 同步持久化
                 return;
             }
             if (uploadQueue.remove(task)) uploadQueue.add(task);   // 挪队尾，别堵后面的
