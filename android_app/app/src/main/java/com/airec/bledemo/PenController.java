@@ -174,8 +174,7 @@ public class PenController {
     private static final int MAX_FILELIST_ATTEMPTS = 4;
     private static final int MAX_DOWNLOAD_RETRIES = 3;
     private static final int MAX_DOWNLOAD_REQUEUES = 200;       // ★A1:次数兜底上限(墙钟封顶为主)
-    private static final long NOTFOUND_GIVEUP_MS = 15 * 60 * 1000L;     // 文件一直不在笔列表(太短没落盘)→15分钟就放弃清理
-    private static final long FAIL_GIVEUP_MS = 2 * 60 * 60 * 1000L;     // 文件在笔上但下载老失败(链路差)→2小时才放弃，多碰好窗口
+    private static final long FAIL_GIVEUP_MS = 2 * 60 * 60 * 1000L;     // ★A1:补传墙钟封顶——2小时还没成才真放弃+删占位(音频在笔上、可日后重导)
     private static final long DEFER_MAX_MS = 3 * 60 * 1000L; // 文件未出现在笔列表时的重试上限(跨过连录/笔忙/落盘延迟)，超时才放弃
     // ★笔存储清理：删除 >30天 的旧文件(已远超每日上云，确定已上云，安全)
     private static final long FILE_KEEP_MS = 30L * 24 * 3600 * 1000;
@@ -334,10 +333,10 @@ public class PenController {
             if (task.firstSeenMs == 0) task.firstSeenMs = System.currentTimeMillis();
             lastDlProgressMs = 0; main.removeCallbacks(downloadStallWatch);
             long elapsed = System.currentTimeMillis() - task.firstSeenMs;
-            boolean notFound = reason != null && reason.contains("未在笔列表找到");
-            // ★A1 墙钟封顶(持久化、跨重启有效)：笔上没有的文件(太短没落盘)15分钟放弃; 文件在笔上但链路差给2小时多碰窗口
-            if ((notFound && elapsed > NOTFOUND_GIVEUP_MS) || elapsed > FAIL_GIVEUP_MS
-                    || task.downloadRequeues > MAX_DOWNLOAD_REQUEUES) {
+            // ★A1 墙钟封顶(持久化、跨重启有效)：统一2小时。"未在笔列表找到"多半是笔还没把文件提交进列表
+            //   (要等下一段录音才提交，可能拖到下次接诊)，给足时间，避免误删"其实在笔上、只是没提交"的录音；
+            //   真·笔上没有的(如太短没落盘)2小时后才清理。
+            if (elapsed > FAIL_GIVEUP_MS || task.downloadRequeues > MAX_DOWNLOAD_REQUEUES) {
                 Log.w(TAG, "A1:补传放弃(已试" + (elapsed / 60000) + "min/" + task.downloadRequeues + "次," + reason + ") file=" + task.fileName);
                 penLog("★A1 补传放弃(试了" + (elapsed / 60000) + "分钟·" + reason + ")删占位,音频留笔上可日后重导 " + task.fileName);
                 workerTaskFailed(task, "放弃:" + reason, true);   // 出队+删占位，notifyPending 同步持久化
