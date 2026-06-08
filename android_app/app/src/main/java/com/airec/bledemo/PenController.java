@@ -177,6 +177,9 @@ public class PenController {
     //   覆盖"全程断开状态下录的、App 从没感知到"的录音。已传集合持久化(uploadedFileNames)，后端再按 pen_file 去重。
     private volatile boolean pendingSweep = false;
     private static final long SWEEP_WINDOW_MS = 2L * 24 * 3600 * 1000; // 只扫最近2天，避免首次把整盘旧文件全扫
+    // ★扫描补传暂时关闭：v6 的实现有 bug(机身列表 durationSec=0→时长00:00；会复活已删录音；v5无pen_file去重不准)。
+    //   关掉止血，待"删除墓碑 + 上传时 ffprobe 补时长 + 后端去重过滤"做对了再开。
+    private static final boolean SWEEP_ENABLED = false;
 
     public PenController(Context ctx, Listener l) {
         this.appCtx = ctx.getApplicationContext();
@@ -268,6 +271,7 @@ public class PenController {
 
     /** 扫描机身文件：没传过的(最近2天、非正在录的)入队补传。后端按 pen_file 去重，不会重复入库。 */
     private void sweepPenStorage(List<AIRECBleFile> files) {
+        if (!SWEEP_ENABLED) return;   // ★暂时关闭(见 SWEEP_ENABLED 注释)
         if (files == null || files.isEmpty()) return;
         if (penRecording || sessionActive || appStartPending) return;
         if (cookie == null || uploadUrl == null) return;

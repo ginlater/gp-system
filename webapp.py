@@ -4922,10 +4922,9 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   - 强制升级：把 APP_MIN_VERSION_CODE 和 LATEST 一起抬到新版本号。
 #   - 可选升级（不挡，仅提示）：只抬 LATEST，MIN 不动。
 #   注意：强制更新逻辑是 versionCode≥3 的 App 才内置的；更早版本(1/2)没有这段检查，挡不住，需手动装一次新包。
-APP_LATEST_VERSION_CODE = 6
-APP_LATEST_VERSION_NAME = "2.0.5"
-# v6(2.0.5): 录音笔机身存储自动补传(扫描断开期间录的、App没传过的)。MIN 暂留 5(可装不强制)，
-# 真机验过 v6(断开录一段→重连→自动补传上来、不重复) 再抬 MIN=6。
+APP_LATEST_VERSION_CODE = 7
+APP_LATEST_VERSION_NAME = "2.0.6"
+# v7(2.0.6): 关掉 v6 有 bug 的"扫描补传"(会复活已删、时长00:00)。MIN 暂留 5。
 APP_MIN_VERSION_CODE = 5                 # 低于此值的客户端 → 强制更新
 APP_UPDATE_NOTE = "新版本：录音笔按管理员绑定的设备连接，避免错连他人录音笔；并修复录音断流截断。请更新后使用。"
 
