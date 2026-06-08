@@ -173,10 +173,15 @@ public class PenController {
     // ★笔存储清理：删除 >30天 的旧文件(已远超每日上云，确定已上云，安全)
     private static final long FILE_KEEP_MS = 30L * 24 * 3600 * 1000;
     private volatile boolean pendingCleanup = false;
+    // ★扫描补传：连上空闲时扫笔机身文件，把 App 没传过的(最近 SWEEP_WINDOW_MS 内)自动入队补传，
+    //   覆盖"全程断开状态下录的、App 从没感知到"的录音。已传集合持久化(uploadedFileNames)，后端再按 pen_file 去重。
+    private volatile boolean pendingSweep = false;
+    private static final long SWEEP_WINDOW_MS = 2L * 24 * 3600 * 1000; // 只扫最近2天，避免首次把整盘旧文件全扫
 
     public PenController(Context ctx, Listener l) {
         this.appCtx = ctx.getApplicationContext();
         this.listener = l;
+        loadUploadedNames();    // ★恢复"已传文件名"持久化集合(防重启后扫描补传重复下载)
         registerBtReceiver();   // ★监听蓝牙开关，恢复时自动重连
     }
 
@@ -195,8 +200,107 @@ public class PenController {
 
     /** 设置/刷新上传上下文：接诊页在进入/连接/开始时调用，确保笔自发录音也有 cookie/上传地址可用。 */
     public void setUploadContext(String cookie, String uploadUrl) {
+        boolean wasNull = (this.cookie == null || this.uploadUrl == null);
         if (cookie != null && !cookie.isEmpty()) this.cookie = cookie;
         if (uploadUrl != null && !uploadUrl.isEmpty()) this.uploadUrl = uploadUrl;
+        // 刚拿到上传上下文(如刚进接诊页)且笔已连 → 扫一遍机身存储补传(覆盖App未开时录的)
+        if (wasNull && this.cookie != null && this.uploadUrl != null) {
+            main.postDelayed(this::triggerSweep, 3000);
+        }
+    }
+
+    // ============ 扫描补传：把 App 没传过的机身录音自动捞回来 ============
+
+    private void loadUploadedNames() {
+        try {
+            java.util.Set<String> s = appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
+                    .getStringSet("uploaded_files", null);
+            if (s != null) uploadedFileNames.addAll(s);
+        } catch (Exception ignored) {}
+    }
+    private void markUploaded(String fn) {
+        if (fn == null || fn.isEmpty()) return;
+        uploadedFileNames.add(fn);
+        try {
+            java.util.Set<String> snap;
+            synchronized (uploadedFileNames) { snap = new java.util.HashSet<>(uploadedFileNames); }
+            appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
+                    .edit().putStringSet("uploaded_files", snap).apply();
+        } catch (Exception ignored) {}
+    }
+
+    /** 连上且空闲 → 拉文件列表(onFileListUpdated 里 sweepPenStorage 处理)。 */
+    private void triggerSweep() {
+        if (!isConnected() || penRecording || sessionActive || appStartPending || workerBusy) return;
+        if (cookie == null || uploadUrl == null) return;
+        pendingSweep = true;
+        try { AIRECBleManager.getInstance().fetchFileList(); } catch (Exception ignored) {}
+    }
+
+    /** 文件名/createTime → 录音开始墙上毫秒；解析不到返回 0。 */
+    private long parsePenFileStartMs(String name, AIRECBleFile f) {
+        try {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("(\\d{14})").matcher(name == null ? "" : name);
+            if (m.find()) {
+                java.util.Date d = new java.text.SimpleDateFormat("yyyyMMddHHmmss", java.util.Locale.US).parse(m.group(1));
+                if (d != null) return d.getTime();
+            }
+        } catch (Exception ignored) {}
+        try {
+            String ct = (f != null) ? f.getCreateTime() : null;
+            if (ct != null && !ct.isEmpty()) {
+                for (String fmt : new String[]{"yyyy-MM-dd HH:mm:ss", "yyyy/MM/dd HH:mm:ss", "yyyyMMddHHmmss"}) {
+                    try { java.util.Date d = new java.text.SimpleDateFormat(fmt, java.util.Locale.US).parse(ct); if (d != null) return d.getTime(); }
+                    catch (Exception ignored) {}
+                }
+            }
+        } catch (Exception ignored) {}
+        return 0;
+    }
+    private boolean isQueuedByName(String name) {
+        if (name == null) return false;
+        UploadTask c = currentTask, inf = inflightTask;
+        if (c != null && name.equals(c.fileName)) return true;
+        if (inf != null && name.equals(inf.fileName)) return true;
+        for (UploadTask t : uploadQueue) if (t != null && name.equals(t.fileName)) return true;
+        return false;
+    }
+
+    /** 扫描机身文件：没传过的(最近2天、非正在录的)入队补传。后端按 pen_file 去重，不会重复入库。 */
+    private void sweepPenStorage(List<AIRECBleFile> files) {
+        if (files == null || files.isEmpty()) return;
+        if (penRecording || sessionActive || appStartPending) return;
+        if (cookie == null || uploadUrl == null) return;
+        final long now = System.currentTimeMillis();
+        java.util.List<UploadTask> added = new java.util.ArrayList<>();
+        for (AIRECBleFile f : files) {
+            if (f == null) continue;
+            String name = f.getFileName();
+            if (name == null || name.isEmpty()) continue;
+            if (uploadedFileNames.contains(name)) continue;       // 已传过
+            if (name.equals(sessionFileName)) continue;            // 正在录的那个
+            if (isQueuedByName(name)) continue;                    // 已在队列
+            long startMs = parsePenFileStartMs(name, f);
+            if (startMs <= 0) continue;                            // 解析不到时间，保守跳过
+            if ((now - startMs) > SWEEP_WINDOW_MS) continue;       // 太老
+            if ((now - startMs) < 60_000) continue;                // 太新(可能还在写)，留给正常流程
+            UploadTask t = new UploadTask(name, cookie, uploadUrl, penSn(), f.getDurationSec(), startMs, false);
+            uploadQueue.add(t);
+            added.add(t);
+            penLog("★扫描补传入队 " + name + " dur=" + f.getDurationSec() + "s start=" + fmtWall(startMs));
+        }
+        if (!added.isEmpty()) {
+            Log.d(TAG, "扫描录音笔存储：补传入队 " + added.size() + " 条");
+            final String phUrl = placeholderUrlFrom(uploadUrl);
+            for (final UploadTask t : added) {
+                worker.submit(() -> {
+                    long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs);
+                    if (pid > 0) { t.placeholderId = pid; if (listener != null) main.post(listener::onPenPlaceholderCreated); }
+                });
+            }
+            notifyPending();
+            main.postDelayed(this::kickWorker, 1500);
+        }
     }
 
     /** 当前后台待传/在传段数。 */
@@ -401,6 +505,7 @@ public class PenController {
     private void triggerCleanup() {
         if (!isConnected() || penRecording || sessionActive || appStartPending || workerBusy) return;
         pendingCleanup = true;
+        pendingSweep = true;   // ★连上清理时顺带扫描补传(一次文件列表两用)
         try { AIRECBleManager.getInstance().fetchFileList(); } catch (Exception ignored) {}
     }
 
@@ -860,7 +965,7 @@ public class PenController {
                 String name = stripExt(baseName(task.localOpsPath)) + ".ogg";
                 long t0 = SystemClock.elapsedRealtime();
                 Uploader.Result r = Uploader.upload(ogg, task.durSec, task.cookie, task.uploadUrl,
-                        name, "audio/ogg", task.sn, task.placeholderId, fmtWall(task.startWallMs));
+                        name, "audio/ogg", task.sn, task.placeholderId, fmtWall(task.startWallMs), task.fileName);
                 long ms = SystemClock.elapsedRealtime() - t0;
                 writeProbeStatus("[直传ogg] " + name + " ogg=" + ogg.length() + "B 上传" + ms + "ms ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
@@ -942,6 +1047,7 @@ public class PenController {
         public void onFileListUpdated(List<AIRECBleFile> files) {
             markPenResponded();
             if (pendingCleanup) { pendingCleanup = false; cleanupOldFiles(files); }
+            if (pendingSweep) { pendingSweep = false; sweepPenStorage(files); }
             final UploadTask task = currentTask;
             if (!waitingForFile || task == null || files == null || files.isEmpty()) return;
             AIRECBleFile target = pickForTask(files, task);
@@ -1221,7 +1327,7 @@ public class PenController {
     private void workerTaskDone(final UploadTask task, final long recId) {
         main.post(() -> {
             uploadQueue.remove(task);
-            if (task.fileName != null) uploadedFileNames.add(task.fileName);   // ★记下已传，防重复
+            if (task.fileName != null) markUploaded(task.fileName);   // ★记下已传(持久化)，防重复扫描下载
             workerBusy = false; currentTask = null; inflightTask = null; waitingForFile = false;
             Log.d(TAG, "后台完成 file=" + task.fileName + " recId=" + recId + " 剩余=" + uploadQueue.size());
             if (recId > 0 && listener != null) listener.onPenUploaded(recId);
@@ -1311,7 +1417,7 @@ public class PenController {
                     }
                 }
                 Uploader.Result r = Uploader.upload(new File(uploadPath), durSec,
-                        task.cookie, task.uploadUrl, name, mime, task.sn, task.placeholderId, fmtWall(task.startWallMs));
+                        task.cookie, task.uploadUrl, name, mime, task.sn, task.placeholderId, fmtWall(task.startWallMs), task.fileName);
                 writeProbeStatus("[补下载兜底ogg] file=" + name + " ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
                     try { if (!uploadPath.equals(localPath)) new File(uploadPath).delete(); new File(localPath).delete(); } catch (Exception ignore) {}

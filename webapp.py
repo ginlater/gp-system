@@ -479,6 +479,9 @@ def init_db():
     #   pen_sn_sightings = 该顾问连过/用过的SN(供管理员从下拉里选着绑，不用手抄)。
     if "device_sn" not in rec_cols:
         conn.execute("ALTER TABLE recordings ADD COLUMN device_sn TEXT")
+    # 2026-06-08 录音笔机身文件名（扫描补传去重用：同一上传人同一 pen_file 只入一条）
+    if "pen_file" not in rec_cols:
+        conn.execute("ALTER TABLE recordings ADD COLUMN pen_file TEXT")
     user_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
     if "pen_sn" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN pen_sn TEXT")
@@ -4919,9 +4922,10 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   - 强制升级：把 APP_MIN_VERSION_CODE 和 LATEST 一起抬到新版本号。
 #   - 可选升级（不挡，仅提示）：只抬 LATEST，MIN 不动。
 #   注意：强制更新逻辑是 versionCode≥3 的 App 才内置的；更早版本(1/2)没有这段检查，挡不住，需手动装一次新包。
-APP_LATEST_VERSION_CODE = 5
-APP_LATEST_VERSION_NAME = "2.0.4"
-# v5(2.0.4) 真机验收通过 → 抬到 5 强制全网升级。
+APP_LATEST_VERSION_CODE = 6
+APP_LATEST_VERSION_NAME = "2.0.5"
+# v6(2.0.5): 录音笔机身存储自动补传(扫描断开期间录的、App没传过的)。MIN 暂留 5(可装不强制)，
+# 真机验过 v6(断开录一段→重连→自动补传上来、不重复) 再抬 MIN=6。
 APP_MIN_VERSION_CODE = 5                 # 低于此值的客户端 → 强制更新
 APP_UPDATE_NOTE = "新版本：录音笔按管理员绑定的设备连接，避免错连他人录音笔；并修复录音断流截断。请更新后使用。"
 
@@ -9079,6 +9083,25 @@ def api_consultant_upload():
         _record_pen_sn_sighting(u["id"], device_sn)
     # 回填占位：结束录音时已先建了 processing 占位记录，这里把真音频补上，不新建行
     placeholder_id = request.form.get("placeholder_id")
+    # ★录音笔文件去重：扫描补传/重连补传可能把同一支笔文件再传一次。命中 (上传人,pen_file)
+    #   或 (上传人,recorded_at 同秒) 已存在的真录音 → 跳过，不重复传 OSS/入库（清掉本次占位）。
+    pen_file = (request.form.get("pen_file") or "").strip() or None
+    dup = None
+    if pen_file:
+        dup = db_fetchone(
+            "SELECT id FROM recordings WHERE uploader_user_id=? AND pen_file=? "
+            "AND upload_status!='processing' LIMIT 1", (u["id"], pen_file))
+    if not dup and recorded_at_form:
+        dup = db_fetchone(
+            "SELECT id FROM recordings WHERE uploader_user_id=? AND recorded_at=? "
+            "AND source LIKE 'consultant-pen%' AND upload_status!='processing' LIMIT 1",
+            (u["id"], recorded_at_form))
+    if dup:
+        if placeholder_id:
+            db_write("DELETE FROM recordings WHERE id=? AND upload_status='processing' AND uploader_user_id=?",
+                     (placeholder_id, u["id"]))
+        app.logger.info("[upload] 去重跳过 pen_file=%s ra=%s → 已存在 rec %s", pen_file, recorded_at_form, dup["id"])
+        return jsonify({"id": dup["id"], "deduped": True})
     if placeholder_id:
         prow = db_fetchone(
             "SELECT id, uploader_user_id, upload_status FROM recordings WHERE id=?",
@@ -9108,6 +9131,8 @@ def api_consultant_upload():
                 db_write("UPDATE recordings SET truncate_note=? WHERE id=?", (truncate_note, prow["id"]))
             if device_sn:
                 db_write("UPDATE recordings SET device_sn=? WHERE id=?", (device_sn, prow["id"]))
+            if pen_file:
+                db_write("UPDATE recordings SET pen_file=? WHERE id=?", (pen_file, prow["id"]))
             return jsonify({"id": prow["id"], "oss_key": oss_key})
     try:
         oss_bucket.put_object(oss_key, data)
@@ -9125,6 +9150,8 @@ def api_consultant_upload():
         db_write("UPDATE recordings SET truncate_note=? WHERE id=?", (truncate_note, rid))
     if device_sn:
         db_write("UPDATE recordings SET device_sn=? WHERE id=?", (device_sn, rid))
+    if pen_file:
+        db_write("UPDATE recordings SET pen_file=? WHERE id=?", (pen_file, rid))
     return jsonify({"id": rid, "oss_key": oss_key})
 
 

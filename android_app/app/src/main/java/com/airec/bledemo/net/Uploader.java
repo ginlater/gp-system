@@ -61,7 +61,7 @@ public final class Uploader {
     /** 带 SN + 占位记录 id 的上传：placeholderId>0 时后端回填该占位行(不新建)，否则照旧新建。 */
     public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
                                 String fileName, String mime, String sn, long placeholderId) {
-        return upload(file, durationSec, cookie, uploadUrl, fileName, mime, sn, placeholderId, null);
+        return upload(file, durationSec, cookie, uploadUrl, fileName, mime, sn, placeholderId, null, null);
     }
 
     /** 直传录音笔实时流拼好的 opus(.ops)：opus 端到端、后端解码；recordedAtWallMs>0 时保留真实录音时间。 */
@@ -72,12 +72,13 @@ public final class Uploader {
             ra = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
                     .format(new java.util.Date(recordedAtWallMs));
         }
-        return upload(file, durationSec, cookie, uploadUrl, fileName, "audio/opus", sn, placeholderId, ra);
+        return upload(file, durationSec, cookie, uploadUrl, fileName, "audio/opus", sn, placeholderId, ra, null);
     }
 
-    /** 完整签名：多一个 recordedAt(yyyy-MM-dd HH:mm:ss，可空)，作表单字段 recorded_at 提交，后端保留真实录音时间。 */
+    /** 完整签名：recordedAt(可空) + penFile(录音笔机身文件名，后端去重用，可空)。 */
     public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
-                                String fileName, String mime, String sn, long placeholderId, String recordedAt) {
+                                String fileName, String mime, String sn, long placeholderId, String recordedAt,
+                                String penFile) {
         if (file == null || !file.exists() || file.length() == 0) {
             return new Result(false, -1, "录音文件为空");
         }
@@ -132,6 +133,13 @@ public final class Uploader {
                     out.writeBytes("--" + boundary + CRLF);
                     out.writeBytes("Content-Disposition: form-data; name=\"recorded_at\"" + CRLF + CRLF);
                     out.write(recordedAt.getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
+                // pen_file 字段（录音笔机身文件名，后端按它去重，防扫描补传重复；可空）
+                if (penFile != null && !penFile.isEmpty()) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"pen_file\"" + CRLF + CRLF);
+                    out.write(penFile.getBytes(StandardCharsets.UTF_8));
                     out.writeBytes(CRLF);
                 }
 
