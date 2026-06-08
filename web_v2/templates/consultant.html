@@ -731,18 +731,22 @@ if (IN_APP) {
     _area.insertBefore(_row, _recBtn);
     appUpdateSourceRow();
   }
-  // 若返回本页时原生仍在录音/上传（例如切到接诊列表又切回），同步一下按钮状态
-  try {
-    var _gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
-    if (_gs === 'recording' || _gs === 'uploading' || _gs === 'starting' || _gs === 'error')
-      window.__onNativeRecState(_gs, '', 0);
-    // 页面重载后从原生恢复"💾保存中"badge(后台上传队列在原生里没丢，跳转回来也能看到)
+  // 把"按原生【真实】态同步本页录音 UI"封装，供首次进入 + 从「美丽档案」返回(pageshow/页面可见)复用。
+  // ★必须含 idle：切到档案页又切回时，本页(WebView bfcache)残留的"录音中"计时会空走、还露出"结束录音"按钮，
+  //   但录音笔其实早停了(原生 idle)。只有严格按 getState 同步(含把 UI 拉回 idle)才能避免这种"瞎录制"假象。
+  window.__syncRecState = function(){
+    try { applySkin((localStorage.getItem('skin_pref_v2')) || 'cute'); } catch(e){}  // 皮肤先就绪，录音文案才不漏「录音」字
     try {
+      var _gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
+      var _show = (_gs === 'recording' || _gs === 'uploading' || _gs === 'starting') ? _gs : 'idle';
+      window.__onNativeRecState(_show, '', 0);
+      // 从原生恢复"💾保存中"badge(后台上传队列在原生里没丢，跳转回来也能看到)
       var _pi = (window.AndroidBridge.pendingInfo && window.AndroidBridge.pendingInfo()) || '0,0';
       var _p = ('' + _pi).split(',');
       window.__onPenPending(parseInt(_p[0], 10) || 0, parseInt(_p[1], 10) || 0);
     } catch(e){}
-  } catch(e){}
+  };
+  window.__syncRecState();
   // 录音笔没连：给个非弹窗提示（真正强制连接发生在点开始时）。cute 下不出现「录音」字。
   setTimeout(function(){
     if (appRecSource==='pen' && !appPenConnected()) {
@@ -2123,9 +2127,12 @@ loadReception();
 setInterval(() => { if (!currentReceptionDate) loadReception(); }, 20000);
 loadReminders();
 setInterval(loadReminders, 120000);
-// 查看报告等返回本页/重新可见时，主动重拉一次以体现「即时-1」
-document.addEventListener('visibilitychange', () => { if (!document.hidden) loadReminders(); });
-window.addEventListener('pageshow', () => loadReminders());
+// 查看报告等返回本页/重新可见时，主动重拉一次以体现「即时-1」；
+// 并按原生真实录音态重新同步本页 UI（防 bfcache 残留的"录音中"计时空走、漏出"结束录音"按钮）。
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { loadReminders(); if (window.__syncRecState) window.__syncRecState(); }
+});
+window.addEventListener('pageshow', () => { loadReminders(); if (window.__syncRecState) window.__syncRecState(); });
 </script>
 </body>
 </html>
