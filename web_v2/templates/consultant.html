@@ -1034,7 +1034,7 @@ function renderPending() {
       </tr>`;
     }
     const audio = x.audio_url
-      ? `<audio controls preload="none" src="${x.audio_url}" style="width:160px;height:28px;vertical-align:middle"></audio>`
+      ? `<audio controls preload="metadata" src="${x.audio_url}" style="width:160px;height:28px;vertical-align:middle"></audio>`
       : '<span class="muted">无音频</span>';
     const isCross = x.service_date && x.service_date !== activeDate0;
     const drStatus = x.delete_request_status; // null | 'pending' | 'rejected'
@@ -1124,7 +1124,7 @@ async function loadNeedsConfirm() {
   card.style.display = '';
   tb.innerHTML = list.map(x => {
     const audio = x.audio_url
-      ? `<audio controls preload="none" src="${x.audio_url}" style="max-width:200px;height:32px"></audio>`
+      ? `<audio controls preload="metadata" src="${x.audio_url}" style="max-width:200px;height:32px"></audio>`
       : '—';
     return `<tr>
       <td>${x.created_at || x.recorded_at || '—'}</td>
@@ -1631,7 +1631,7 @@ async function refreshPkg() {
   const bound = d.bound || [];
   const unbound = d.unbound || [];
   document.getElementById('pkgBound').innerHTML = bound.length ? bound.map(x => {
-    const audio = x.audio_url ? `<audio controls preload="none" src="${x.audio_url}" style="max-width:180px;height:28px"></audio>` : '';
+    const audio = x.audio_url ? `<audio controls preload="metadata" src="${x.audio_url}" style="max-width:180px;height:28px"></audio>` : '';
     const info = JSON.stringify({rid:x.id, recorded_at:x.recorded_at, duration_label:x.duration_label});
     const rebindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick='openRebind(${info})'>换绑</button>`;
     const unbindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px;color:#e74c3c;border-color:#e74c3c" onclick='openUnbind(${info})'>退回未归档</button>`;
@@ -1644,7 +1644,7 @@ async function refreshPkg() {
   }).join('') : '<div class="empty-tip">接诊包内还没有录音</div>';
 
   document.getElementById('pkgUnbound').innerHTML = unbound.length ? unbound.map(x => {
-    const audio = x.audio_url ? `<audio controls preload="none" src="${x.audio_url}" data-cap="60" style="max-width:180px;height:28px"></audio>` : '';
+    const audio = x.audio_url ? `<audio controls preload="metadata" src="${x.audio_url}" data-cap="60" style="max-width:180px;height:28px"></audio>` : '';
     const bindBtn = pkgLocked ? '' :
       `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="pkgBind(${x.id}, this)">加入本接诊包</button>`;
     return `<div class="pkg-rec unbound">

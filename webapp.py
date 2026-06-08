@@ -1504,6 +1504,54 @@ def _ensure_clean_audio(recording_id, oss_key):
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
+def _clean_audio_async(recording_id):
+    """未归档录音入库后的【后台预清洗】：把录音笔/浏览器产出的无时长头 ogg/webm/opus
+    用 ffmpeg 转成带正确时长头的 wav，当场修正两件事——
+      (1) duration_label：客户端上报的【墙钟】时长 → ffprobe【实测】真实时长。断流补传时墙钟含断连空跑，
+          比实际音频长，列表「时长」就和试听对不上；用实测值校正后一致。
+      (2) 试听：无时长头的 ogg 让浏览器 audio.duration=Infinity，播放器恒显 0:00/0:00 且不能拖动；
+          转成带头 wav 后总时长/进度条/拖动全部正常。
+    复用 ASR 同款 _ensure_clean_audio（已含截断告警 + OSS 对象替换），幂等：已是 wav/mp3 直接跳过，
+    故绑定后再跑 ASR 不会重复转码。放后台线程跑：不阻塞上传响应、不冒 gunicorn worker 超时；
+    未归档列表 5s 自动刷新即可见正确时长。失败仅记日志（绑定跑 ASR 时还会再清洗一次兜底）。"""
+    try:
+        rec = db_fetchone("SELECT oss_key, upload_status FROM recordings WHERE id=?", (recording_id,))
+        if not rec or (rec["upload_status"] or "") == "processing":
+            return  # 占位行还没回填真音频，跳过
+        _ensure_clean_audio(recording_id, rec["oss_key"])
+    except Exception as e:
+        app.logger.warning("[clean audio async] rec %s 预清洗失败(忽略，ASR 时会重试): %s", recording_id, e)
+
+
+# 未归档录音预清洗：全局小并发池 + in-flight 去重。
+# 既给【入库即转】用，也给【惰性补转存量】用（未归档列表刷新时对旧 ogg 逐步补转）。
+# 限流到 2 路并发，避免一次刷新把几十条旧录音同时丢给 ffmpeg 打满 CPU。
+_clean_pool = _cf.ThreadPoolExecutor(max_workers=2, thread_name_prefix="clean-audio")
+_clean_inflight = set()
+_clean_inflight_lock = threading.Lock()
+
+
+def _kick_clean_audio_async(recording_id):
+    """入队后台预清洗（见 _clean_audio_async）。同一录音在飞时不重复入队；池满则 FIFO 排队。"""
+    with _clean_inflight_lock:
+        if recording_id in _clean_inflight:
+            return
+        _clean_inflight.add(recording_id)
+
+    def _job():
+        try:
+            _clean_audio_async(recording_id)
+        finally:
+            with _clean_inflight_lock:
+                _clean_inflight.discard(recording_id)
+
+    try:
+        _clean_pool.submit(_job)
+    except Exception:
+        with _clean_inflight_lock:
+            _clean_inflight.discard(recording_id)
+
+
 def run_asr(recording_id):
     rec = db_fetchone("SELECT oss_key FROM recordings WHERE id = ?", (recording_id,))
     if not rec:
@@ -9196,6 +9244,7 @@ def api_consultant_upload():
                 db_write("UPDATE recordings SET device_sn=? WHERE id=?", (device_sn, prow["id"]))
             if pen_file:
                 db_write("UPDATE recordings SET pen_file=? WHERE id=?", (pen_file, prow["id"]))
+            _kick_clean_audio_async(prow["id"])  # 后台转带头 wav：校正时长 + 让试听器可显时长/拖动
             return jsonify({"id": prow["id"], "oss_key": oss_key})
     try:
         oss_bucket.put_object(oss_key, data)
@@ -9215,6 +9264,7 @@ def api_consultant_upload():
         db_write("UPDATE recordings SET device_sn=? WHERE id=?", (device_sn, rid))
     if pen_file:
         db_write("UPDATE recordings SET pen_file=? WHERE id=?", (pen_file, rid))
+    _kick_clean_audio_async(rid)  # 后台转带头 wav：校正时长 + 让试听器可显时长/拖动
     return jsonify({"id": rid, "oss_key": oss_key})
 
 
@@ -9449,6 +9499,18 @@ def api_consultant_recordings_pending():
             d["delete_request_status"] = None
             d["delete_reject_reason"] = None
         out.append(d)
+    # 惰性补转存量：旧片段(无时长头 ogg/webm)还没转成带头 wav → 后台逐步转，下次刷新即显真实时长/可拖动。
+    # 每次最多 kick 8 条(配合 in-flight 去重 + 池限流 2 路)，不阻塞本次响应，列表 5s 自动刷新会逐步清完。
+    _kicked = 0
+    for d in out:
+        if _kicked >= 8:
+            break
+        ok = (d.get("upload_status") == "done") and d.get("oss_key")
+        if ok:
+            _ek = d["oss_key"].rsplit(".", 1)[-1].lower() if "." in d["oss_key"] else ""
+            if _ek not in ("wav", "mp3", "m4a"):
+                _kick_clean_audio_async(d["id"])
+                _kicked += 1
     return jsonify({"recordings": out})
 
 
