@@ -464,8 +464,49 @@ public class ConsultantActivity extends Activity
 
     /** 只维护状态并回推给网页（无原生 UI）。 */
     private void applyState(String newState, String message) {
+        String old = state;
         state = newState;
+        // 开启/结束陪伴震动反馈：顾问不看屏幕也能感知。
+        //  · 真正从停止态进入录音 → 开始陪伴(单短震)；paused↔recording 抖动不重复震。
+        //  · 录音/暂停/上传态回到 idle → 结束陪伴(双短震，和开始可区分)。
+        boolean wasStopped = old == null || "idle".equals(old) || "error".equals(old) || old.isEmpty();
+        boolean wasActive = "recording".equals(old) || "paused".equals(old) || "uploading".equals(old);
+        if (wasStopped && "recording".equals(newState)) {
+            buzz(false);
+        } else if (wasActive && "idle".equals(newState)) {
+            buzz(true);
+        }
         pushStateToWeb(newState, message);
+    }
+
+    private android.os.Vibrator vibrator;
+
+    /** 开启/结束陪伴时震一下。isEnd=true 双短震(结束)，false 单短震(开始)。失败静默忽略。 */
+    private void buzz(boolean isEnd) {
+        try {
+            if (vibrator == null) {
+                if (android.os.Build.VERSION.SDK_INT >= 31) {
+                    android.os.VibratorManager vm =
+                            (android.os.VibratorManager) getSystemService(VIBRATOR_MANAGER_SERVICE);
+                    vibrator = (vm != null) ? vm.getDefaultVibrator() : null;
+                } else {
+                    vibrator = (android.os.Vibrator) getSystemService(VIBRATOR_SERVICE);
+                }
+            }
+            if (vibrator == null || !vibrator.hasVibrator()) return;
+            if (android.os.Build.VERSION.SDK_INT >= 26) {
+                if (isEnd) {
+                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(
+                            new long[]{0, 90, 120, 90}, -1));   // 嗒-嗒
+                } else {
+                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(
+                            130, android.os.VibrationEffect.DEFAULT_AMPLITUDE));  // 嗒
+                }
+            } else {
+                if (isEnd) vibrator.vibrate(new long[]{0, 90, 120, 90}, -1);
+                else vibrator.vibrate(130);
+            }
+        } catch (Exception ignore) {}
     }
 
     private void pushStateToWeb(String st, String message) {

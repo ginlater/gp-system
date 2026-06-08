@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- 震动（开启/结束陪伴时震一下，顾问不看屏幕也能感知） -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
     <!-- 录音（手机麦克风原生录音） -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
