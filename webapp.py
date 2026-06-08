@@ -4933,14 +4933,16 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   - 强制升级：把 APP_MIN_VERSION_CODE 和 LATEST 一起抬到新版本号。
 #   - 可选升级（不挡，仅提示）：只抬 LATEST，MIN 不动。
 #   注意：强制更新逻辑是 versionCode≥3 的 App 才内置的；更早版本(1/2)没有这段检查，挡不住，需手动装一次新包。
-# ★【发布版本】v8/2.0.7 强制全网升级(2026-06-08)：/download 给 v8、MIN=8 强制。
-#   v8 = v5(SN fail-open + 稳定连接 + 状态栏蓝) + 手动「从录音笔同步」+预览
-#   (未传默认不勾、显示数量、二次确认；自动扫描 SWEEP_ENABLED=false 关着)。
-#   与 build.gradle(versionCode 8 / 2.0.7) 已对齐。
-APP_LATEST_VERSION_CODE = 8
-APP_LATEST_VERSION_NAME = "2.0.7"
-APP_MIN_VERSION_CODE = 8                 # 低于此值的客户端 → 强制更新
-APP_UPDATE_NOTE = "新版本：新增「从录音笔同步」，可把录音笔机身里没传上来的录音补传进系统；并修复若干稳定性问题。请更新后使用。"
+# ★【发布版本】v9/2.0.8 强制全网升级(2026-06-08)：/download 给 v9、MIN=9 强制。
+#   v9 = v8 + A1 下载补传加固：①待补传任务持久化(App被杀也不丢，重启续传)；
+#   ②下载失败/找不到文件不再3分钟就放弃，改退避重试(8s→16s…)跨重连一直试；
+#   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
+#   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
+#   与 build.gradle(versionCode 9 / 2.0.8) 已对齐。
+APP_LATEST_VERSION_CODE = 9
+APP_LATEST_VERSION_NAME = "2.0.8"
+APP_MIN_VERSION_CODE = 9                 # 低于此值的客户端 → 强制更新
+APP_UPDATE_NOTE = "新版本：大幅增强录音补传的稳定性——蓝牙差/App被关也会自动接着传、不再卡死丢失。请更新后使用。"
 
 
 @app.route("/download")
