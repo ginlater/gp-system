@@ -64,6 +64,8 @@ public class PenController {
         void onPenProgress(int percent);
         /** 手动"从录音笔同步"：拉到机身文件列表(JSON 数组)，交给网页渲染预览勾选。 */
         void onPenFileList(String filesJson);
+        /** 检测到笔"开机自动录制"开着并已自动关闭 → 弹框提示顾问把笔关机重开(让设置生效、停掉本次开机自录)。 */
+        void onPenPowerOnRecordDisabled();
     }
 
     private final Context appCtx;
@@ -617,6 +619,9 @@ public class PenController {
                     verifiedConnected = false;
                     try { AIRECBleManager.getInstance().disconnect(); } catch (Exception ignored) {}
                     if (listener != null) main.post(() -> listener.onPenConnected(false));
+                    // ★关键修复：失联时主动复位录音会话 + 更新 UI，绝不干等 onDisconnected 回调。
+                    //   笔关机/走远时该回调常不来→否则 sessionActive 残留、UI 永久卡"录制中"(瞎录制)、还能点结束。
+                    resetSessionOnLinkDown();
                     stopHeartbeat();
                     return;
                 }
@@ -754,17 +759,34 @@ public class PenController {
         if (deleted > 0) Log.d(TAG, "本次共清理 " + deleted + " 个超期文件");
     }
 
-    /** 连上后只读取设备设置打日志，不再写任何设置（见交接文档：写声控关不掉、还有风险）。 */
+    /** 连上后读取设备设置打日志；并【关掉"开机自动录制"】——它会让笔一开机就自录、App 完全不知情(瞎录制)，
+     *  与"App 必须和录音设备严格同步"直接冲突。故连接时检测：开着就 setPowerOnRecord(false) 关掉。
+     *  写后笔会回 onInitParamUpdated 再次走到这里，读 powerOnRec 验证是否真关上了——还开着就再写，
+     *  确认关闭后 penSettingsWritten 置 true 收敛(本次连接不再反复写)；断开时(onDisconnected)重置以便下次重连再查。
+     *  其余设置(降噪/分段/USB/空闲关机)只读不写(交接文档：乱写有风险)。 */
     private void ensurePenConfigured() {
         try {
             AIRECBleManager mgr = AIRECBleManager.getInstance();
             if (!mgr.isConnected()) return;
-            Log.d(TAG, "笔设置(只读不改): noise=" + mgr.getNoiseSwitch()
+            boolean powerOnRec = mgr.getPowerOnRecord();
+            Log.d(TAG, "笔设置(读): noise=" + mgr.getNoiseSwitch()
                     + " segDur=" + mgr.getSegmentDuration()
-                    + " powerOnRec=" + mgr.getPowerOnRecord()
+                    + " powerOnRec=" + powerOnRec
                     + " idle=" + mgr.getIdleShutdown());
+            if (penSettingsWritten) return;   // 本次连接已检查处理过 → 不重复(onInitParamUpdated 会多次回调)
+            penSettingsWritten = true;
+            if (powerOnRec) {
+                // ★开机自动录制开着：笔一开机就自动录、App 完全不知情=瞎录制。关掉它，并弹框提示顾问把笔关机重开
+                //   ——改设置要等下次开机才生效，且"本次开机已在进行的自动录制"也得靠重启才停。
+                mgr.setPowerOnRecord(false);
+                Log.w(TAG, "★检测到开机自动录制=开 → setPowerOnRecord(false) 关闭 + 提示重启");
+                penLog("★开机自动录制=开 → 已关闭，弹框提示重启笔");
+                if (listener != null) main.post(() -> listener.onPenPowerOnRecordDisabled());
+            } else {
+                penLog("开机自动录制=关 (无需处理)");
+            }
         } catch (Exception e) {
-            Log.e(TAG, "ensurePenConfigured(read) failed", e);
+            Log.e(TAG, "ensurePenConfigured failed", e);
         }
     }
 
@@ -905,6 +927,41 @@ public class PenController {
             post(PhoneMicService.STATE_ERROR, "录音笔信号中断，本段只保存到断开前，请重连后继续", 0, -1);
         }
     };
+
+    /** 链路掉了（onDisconnected 或【心跳判失联】）统一的录音会话收尾：复位录音状态、存断开前那段待补传，
+     *  按是否自动重连决定"录音中·重连中(25s宽限)"还是"已断开"，并把状态【如实推给 UI】(不再空走计时/留结束按钮)。
+     *  幂等：没在录就只确保不残留。★关键：心跳判失联必须主动调它——不能干等 onDisconnected 回调
+     *  (笔关机/走远时该回调常不来，注释见 heartbeat)，否则 sessionActive 残留→UI 永久卡"录制中"=瞎录制。 */
+    private void resetSessionOnLinkDown() {
+        main.removeCallbacks(confirmTimeout);   // 防断开后确认超时误判
+        disarmHealthWatchdog();                 // 断开后开录看门狗无意义，撤掉防误触发
+        if (!(sessionActive || penRecording || appStartPending)) return;
+        sessionStreamComplete = false;   // ★录音中断→实时流有缺口，本段回落到"下载补全"路径
+        Log.w(TAG, "链路掉→复位残留会话 sessionActive=" + sessionActive + " penRecording=" + penRecording + " appStartPending=" + appStartPending);
+        // ★录音中途断链(笔关机/走远/信号丢)：这段其实已录在笔存储里，存它的信息，等重连+笔空闲自动补下载，不丢。
+        if (sessionActive && !TextUtils.isEmpty(sessionFileName) && cookie != null && uploadUrl != null) {
+            pendingRecovery = new UploadTask(sessionFileName, cookie, uploadUrl, penSn(),
+                    elapsedSec(), sessionStartWallMs, sessionAppInitiated);
+            Log.w(TAG, "录音中断链路，保存待补传 file=" + sessionFileName);
+        }
+        boolean willRecover = (pendingRecovery != null);
+        boolean wasRecording = (sessionActive || penRecording);
+        int wasElapsed = elapsedSec();   // 复位前捕获，重连显示时计时不归零
+        sessionGen++;   // 作废挂起的结束兜底
+        penRecording = false; sessionActive = false;
+        appStartPending = false; sessionAppInitiated = false;
+        startElapsedMs = 0; sessionFileName = null; sessionStartWallMs = 0;
+        if (wasRecording && autoReconnectOn) {
+            // 给 25s 重连宽限：接回真在录的会话则续；到点没接回由 reconnectGiveUp 老实结束、停墙钟空跑。
+            post(PhoneMicService.STATE_RECORDING, "🔄 信号断开，正在自动重连，录音继续中…", wasElapsed, -1);
+            main.removeCallbacks(reconnectGiveUp);
+            main.postDelayed(reconnectGiveUp, RECONNECT_RECORDING_GRACE_MS);
+        } else {
+            exitRecordingKeepAlive();   // ★没在录 / 不会重连 → 停保活
+            post(PhoneMicService.STATE_ERROR,
+                    willRecover ? "录音笔断开了，正在自动重连…" : "录音笔已断开，正在自动重连…", 0, -1);
+        }
+    }
 
     /** App 点「结束陪伴」：发停止命令。笔停 → onRecordStateChanged(false) → 入队后台上传。 */
     public void stopRecording() {
@@ -1143,34 +1200,39 @@ public class PenController {
         } catch (Exception ignore) {}
     }
 
-    private android.os.Vibrator vibrator;
-
-    /** 开启/结束陪伴震动反馈。放在录音引擎层(前台Service常驻、appCtx)：手机黑屏/切到别的App也能震，
-     *  不依赖接诊界面是否在前台。isEnd=true 双短震(结束陪伴)、false 单短震(开始陪伴)。失败静默忽略。 */
-    private void buzz(boolean isEnd) {
+    /** 开启/结束陪伴震动反馈：用「通知震动」实现——震动由系统执行，不受 Android 10+ 对【后台应用】
+     *  Vibrator 的限制(直接调 Vibrator 在后台/黑屏会被静默丢弃)。笔自发开录、手机黑屏/切后台都能震。
+     *  isEnd=true 双短震「嗒-嗒」(结束陪伴)、false 单短震「嗒」(开启陪伴)。通知 1.5s 自动消失。失败静默。 */
+    private void buzz(final boolean isEnd) {
         try {
-            if (vibrator == null) {
-                if (android.os.Build.VERSION.SDK_INT >= 31) {
-                    android.os.VibratorManager vm =
-                            (android.os.VibratorManager) appCtx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE);
-                    vibrator = (vm != null) ? vm.getDefaultVibrator() : null;
-                } else {
-                    vibrator = (android.os.Vibrator) appCtx.getSystemService(Context.VIBRATOR_SERVICE);
-                }
-            }
-            if (vibrator == null || !vibrator.hasVibrator()) return;
+            android.app.NotificationManager nm =
+                    (android.app.NotificationManager) appCtx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+            final String chId = isEnd ? "pen_buzz_end" : "pen_buzz_start";
+            final long[] pattern = isEnd ? new long[]{0, 90, 120, 90} : new long[]{0, 130};
             if (android.os.Build.VERSION.SDK_INT >= 26) {
-                if (isEnd) {
-                    vibrator.vibrate(android.os.VibrationEffect.createWaveform(
-                            new long[]{0, 90, 120, 90}, -1));   // 嗒-嗒
-                } else {
-                    vibrator.vibrate(android.os.VibrationEffect.createOneShot(
-                            130, android.os.VibrationEffect.DEFAULT_AMPLITUDE));  // 嗒
+                if (nm.getNotificationChannel(chId) == null) {
+                    android.app.NotificationChannel ch = new android.app.NotificationChannel(
+                            chId, isEnd ? "结束陪伴提示" : "开启陪伴提示",
+                            android.app.NotificationManager.IMPORTANCE_DEFAULT);
+                    ch.enableVibration(true);
+                    ch.setVibrationPattern(pattern);
+                    ch.setSound(null, null);     // 只震不响
+                    ch.setShowBadge(false);
+                    nm.createNotificationChannel(ch);
                 }
-            } else {
-                if (isEnd) vibrator.vibrate(new long[]{0, 90, 120, 90}, -1);
-                else vibrator.vibrate(130);
             }
+            android.app.Notification.Builder b = (android.os.Build.VERSION.SDK_INT >= 26)
+                    ? new android.app.Notification.Builder(appCtx, chId)
+                    : new android.app.Notification.Builder(appCtx).setVibrate(pattern);
+            android.app.Notification n = b
+                    .setContentTitle(isEnd ? "结束陪伴" : "开启陪伴")
+                    .setSmallIcon(R.mipmap.ic_launcher)
+                    .setAutoCancel(true)
+                    .build();
+            final int id = isEnd ? 5301 : 5300;
+            nm.notify(id, n);
+            main.postDelayed(() -> { try { nm.cancel(id); } catch (Exception ignore) {} }, 1500);
         } catch (Exception ignore) {}
     }
 
@@ -1281,7 +1343,7 @@ public class PenController {
                     startStreamCapture();   // ★开始捕获蓝牙实时流(拼 .ops)
                     Log.d(TAG, "镜像：笔开始录音 file=" + sessionFileName + " gen=" + sessionGen);
                     post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
-                    buzz(false);   // 开启陪伴：单短震（引擎层触发，黑屏/后台也生效）
+                    buzz(false);   // 开启陪伴：单短震（通知震动，黑屏/后台/笔自发开录也生效）
                     main.removeCallbacks(reconnectGiveUp);   // 新会话已建立 → 撤断线宽限
                     if (wasAppStart) armHealthWatchdog();    // ★你点的开始：限时内必须出现真音频证据
                 } else if (!TextUtils.isEmpty(fileName)) {
@@ -1369,6 +1431,11 @@ public class PenController {
                 workerTaskFailed(task, "pen recording: " + reason, false);
                 return;
             }
+            // ★泄漏锁自愈：SDK 回"已有文件正在下载"=上一次下载断开时锁没释放。主动 cancelDownload 清锁，
+            //   下一轮 fetchFileList→downloadFile 就能正常发起，不必等 App 重启。
+            if (reason != null && reason.contains("正在下载")) {
+                try { AIRECBleManager.getInstance().cancelDownload(); } catch (Exception ignored) {}
+            }
             if (downloadRetries < MAX_DOWNLOAD_RETRIES) {
                 downloadRetries++;
                 Log.w(TAG, "后台下载失败(" + reason + ")，第 " + downloadRetries + " 次快速重试");
@@ -1418,7 +1485,13 @@ public class PenController {
                 try { AIRECBleManager.getInstance().fetchAllDeviceInfo(); }
                 catch (Exception e) { Log.e(TAG, "fetchAllDeviceInfo failed", e); }
             }, 600);
-            main.postDelayed(() -> ensurePenConfigured(), 3500);
+            // ★读"初始化参数"(含开机自动录制 powerOnRecord)：必须主动 fetchInitParam，否则 getPowerOnRecord
+            //   读的是上次旧缓存——笔关了重连仍误判=开、重复弹框。读回后由 onInitParamUpdated→ensurePenConfigured 判断；
+            //   不再用固定延迟直接读(那样必读旧值)。fetchInitParam 没回则不判(宁可漏检也不误弹)。
+            main.postDelayed(() -> {
+                try { AIRECBleManager.getInstance().fetchInitParam(); }
+                catch (Exception e) { Log.e(TAG, "fetchInitParam failed", e); }
+            }, 1200);
             // 连上后若有积压的后台上传，趁笔空闲推进。
             main.postDelayed(this::tryResumeWorker, 4000);
             // 连上空闲后清理笔上 >30天 旧文件。
@@ -1440,42 +1513,14 @@ public class PenController {
             if (listener != null) main.post(() -> listener.onPenConnected(false));
             // 断开时若后台正在下载，标记失败留队，重连后再续。
             if (workerBusy && currentTask != null) {
+                // ★断开中若有 BLE 下载在飞，必须显式 cancelDownload 释放 SDK 那把"正在下载"锁，
+                //   否则锁泄漏→重连后每次 downloadFile 都被回"已有文件正在下载"，队列永久卡死(35%定格)。
+                try { AIRECBleManager.getInstance().cancelDownload(); } catch (Exception ignored) {}
+                lastDlProgressMs = 0; main.removeCallbacks(downloadStallWatch);
                 workerTaskFailed(currentTask, "disconnected", false);
             }
-            // ★断开必复位会话：否则 sessionActive/penRecording/appStartPending 残留→重连点开始被守卫静默吞→永久卡"正在唤醒"。
-            main.removeCallbacks(confirmTimeout);   // 防断开后确认超时误判
-            disarmHealthWatchdog();                 // 断开后开录看门狗无意义，撤掉防误触发
-            if (sessionActive || penRecording || appStartPending) {
-                sessionStreamComplete = false;   // ★录音中断开→实时流有缺口，本段回落到"下载补全"路径
-                Log.w(TAG, "断开时复位残留会话 sessionActive=" + sessionActive + " penRecording=" + penRecording + " appStartPending=" + appStartPending);
-                // ★录音中途断开(如笔被按键关机)：这段其实已录在笔存储里。存它的信息，等重连+笔空闲自动补下载上传，不丢这段。
-                if (sessionActive && !TextUtils.isEmpty(sessionFileName) && cookie != null && uploadUrl != null) {
-                    pendingRecovery = new UploadTask(sessionFileName, cookie, uploadUrl, penSn(),
-                            elapsedSec(), sessionStartWallMs, sessionAppInitiated);
-                    Log.w(TAG, "录音中断开，保存待补传 file=" + sessionFileName);
-                }
-                boolean willRecover = (pendingRecovery != null);
-                boolean wasRecording = (sessionActive || penRecording);
-                int wasElapsed = elapsedSec();   // 复位前捕获，重连显示时计时不归零
-                sessionGen++;   // 作废挂起的结束兜底
-                penRecording = false; sessionActive = false;
-                appStartPending = false; sessionAppInitiated = false;
-                startElapsedMs = 0; sessionFileName = null; sessionStartWallMs = 0;
-                if (wasRecording && autoReconnectOn) {
-                    // 录音中断开 + 会自动重连：先保持"录音中·重连中"，不切成吓人的"断开"。
-                    // ★但只保住 RECONNECT_RECORDING_GRACE_MS：到点还没接回一段真在录的会话 →
-                    //   老实结束本段（断开后的音频本就丢了），停掉网页墙钟空跑（避免"9分钟实际35秒"）。
-                    post(PhoneMicService.STATE_RECORDING, "🔄 信号断开，正在自动重连，录音继续中…", wasElapsed, -1);
-                    main.removeCallbacks(reconnectGiveUp);
-                    main.postDelayed(reconnectGiveUp, RECONNECT_RECORDING_GRACE_MS);
-                    // ★录音中断 + 会自动重连：保活继续(托住进程等重连)，到点没接回由 reconnectGiveUp 停。
-                } else {
-                    exitRecordingKeepAlive();   // ★没在录 / 不会重连 → 停保活
-                    post(PhoneMicService.STATE_ERROR,
-                            willRecover ? "录音笔断开了，正在自动重连…" : "录音笔已断开，正在自动重连…",
-                            0, -1);
-                }
-            }
+            // ★断开必复位会话：否则 sessionActive/penRecording/appStartPending 残留→UI 卡"录制中"、重连点开始被守卫静默吞。
+            resetSessionOnLinkDown();
             // ★断开后：若仍要维持连接，自动重连回同一支笔(扫到该MAC就连)
             if (autoReconnectOn) {
                 Log.d(TAG, "断开 → 启动自动重连循环");

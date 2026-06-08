@@ -411,6 +411,22 @@ public class ConsultantActivity extends Activity
         });
     }
 
+    /** 检测到笔"开机自动录制"开着、已自动关闭 → 弹框引导顾问把笔关机重开（让设置生效、停掉本次开机自录）。
+     *  点"知道了"时主动结束当前这段开机自动录制（这段是设备误录，不该继续占着"陪伴中"）。 */
+    @Override public void onPenPowerOnRecordDisabled() {
+        ui.post(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            try {
+                new AlertDialog.Builder(this)
+                        .setTitle("请重启录音笔")
+                        .setMessage("已自动关闭录音笔的「开机自动录制」功能。\n\n请在录音设备上向下拨动玻片关机，再重新开机，即可正常使用。")
+                        .setCancelable(false)
+                        .setPositiveButton("知道了", (d, w) -> stopRecordingInternal())  // 主动结束这段开机误录
+                        .show();
+            } catch (Exception ignore) {}
+        });
+    }
+
     private int lastFailedCount = 0;
     /** 后台待传/在传段数 + 失败段数变化 → 推给网页指示；新增失败时弹一次提示，确保用户知道没保存成功。 */
     @Override

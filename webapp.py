@@ -4986,10 +4986,10 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   ②下载失败/找不到文件不再3分钟就放弃，改退避重试(8s→16s…)跨重连一直试；
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
-#   与 build.gradle(versionCode 11 / 2.1.0) 已对齐。
-APP_LATEST_VERSION_CODE = 11
-APP_LATEST_VERSION_NAME = "2.1.0"
-APP_MIN_VERSION_CODE = 9                 # 低于此值的客户端 → 强制更新（v11 震动后台化+诊断上传为增强，不强制）
+#   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
+APP_LATEST_VERSION_CODE = 12
+APP_LATEST_VERSION_NAME = "2.1.1"
+APP_MIN_VERSION_CODE = 12                # 低于此值的客户端 → 强制更新（v12 含录音同步/开机录制关闭等关键修复，强制全网升级）
 APP_UPDATE_NOTE = "新版本：大幅增强录音补传的稳定性——蓝牙差/App被关也会自动接着传、不再卡死丢失。请更新后使用。"
 
 
