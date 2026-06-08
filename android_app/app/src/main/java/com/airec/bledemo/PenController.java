@@ -152,6 +152,7 @@ public class PenController {
         volatile long firstAttemptMs = 0;  // 首次尝试定位文件的时刻；笔提交延迟时据此判断挂多久才放弃
         volatile String localOpsPath = null;  // ★非空=直传这个本地拼好的 .ops(实时流完整，不下载不解码)
         volatile int uploadAttempts = 0;      // 上传临时失败(网络抖)的重试次数，退避用
+        volatile int downloadRequeues = 0;    // ★A1:下载补传失败/卡死被挪队尾重试的次数(退避用，不再硬放弃)
         UploadTask(String fileName, String cookie, String uploadUrl, String sn, int durSec, long startWallMs, boolean appInitiated) {
             this.fileName = fileName; this.cookie = cookie; this.uploadUrl = uploadUrl;
             this.sn = sn; this.durSec = durSec; this.startWallMs = startWallMs; this.appInitiated = appInitiated;
@@ -188,6 +189,7 @@ public class PenController {
         this.appCtx = ctx.getApplicationContext();
         this.listener = l;
         loadUploadedNames();    // ★恢复"已传文件名"持久化集合(防重启后扫描补传重复下载)
+        loadPendingQueue();     // ★A1:恢复"待补传下载任务"(App被杀也不丢,等上下文就绪续传)
         registerBtReceiver();   // ★监听蓝牙开关，恢复时自动重连
     }
 
@@ -213,6 +215,8 @@ public class PenController {
         if (wasNull && this.cookie != null && this.uploadUrl != null) {
             main.postDelayed(this::triggerSweep, 3000);
         }
+        // ★A1:上下文就绪 → 把上次没传完、被App杀掉时存盘的待补传任务用新cookie重建续传
+        if (this.cookie != null && this.uploadUrl != null) materializeRestored();
     }
 
     // ============ 扫描补传：把 App 没传过的机身录音自动捞回来 ============
@@ -233,6 +237,127 @@ public class PenController {
             appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
                     .edit().putStringSet("uploaded_files", snap).apply();
         } catch (Exception ignored) {}
+    }
+
+    // ============ A1：下载补传队列持久化 + 卡死看门狗（App被杀不丢任务、烂链路无限退避重试） ============
+    private static final class PersistedDl {
+        final String fileName; final int durSec; final long startWallMs;
+        final long placeholderId; final boolean appInitiated;
+        PersistedDl(String fn, int d, long sw, long pid, boolean ai) {
+            fileName = fn; durSec = d; startWallMs = sw; placeholderId = pid; appInitiated = ai;
+        }
+    }
+    // App 启动时从盘里读出的待传任务，等拿到上传上下文(登录态)再用【新 cookie】重建入队
+    private final java.util.List<PersistedDl> pendingRestore =
+            java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+    private volatile long lastDlProgressMs = 0;     // 最近一次下载进度时刻，0=没在下载
+    private static final long DL_STALL_MS = 30000;   // 下载 >30s 无进度 → 判卡死、取消重试
+
+    private boolean isDownloadQueued(String fn) {
+        if (fn == null) return false;
+        for (UploadTask t : uploadQueue) if (t != null && fn.equals(t.fileName)) return true;
+        return false;
+    }
+
+    /** 把当前队列里的"下载补传"任务(localOpsPath==null)存盘。队列每次变动调一次。 */
+    private void persistPendingQueue() {
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (UploadTask t : uploadQueue) {
+                if (t == null || t.localOpsPath != null || t.fileName == null) continue;
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("fn", t.fileName); o.put("dur", t.durSec); o.put("sw", t.startWallMs);
+                o.put("pid", t.placeholderId); o.put("ai", t.appInitiated);
+                arr.put(o);
+            }
+            appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
+                    .edit().putString("pending_dl", arr.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    /** App 启动读盘 → 暂存 pendingRestore（此刻还没 cookie，等 setUploadContext 再 materialize）。 */
+    private void loadPendingQueue() {
+        try {
+            String s = appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
+                    .getString("pending_dl", null);
+            if (s == null || s.isEmpty()) return;
+            org.json.JSONArray arr = new org.json.JSONArray(s);
+            for (int i = 0; i < arr.length(); i++) {
+                org.json.JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                String fn = o.optString("fn", "");
+                if (fn.isEmpty() || uploadedFileNames.contains(fn)) continue;
+                pendingRestore.add(new PersistedDl(fn, o.optInt("dur", 0),
+                        o.optLong("sw", 0), o.optLong("pid", -1), o.optBoolean("ai", false)));
+            }
+            if (!pendingRestore.isEmpty())
+                Log.d(TAG, "A1:读到 " + pendingRestore.size() + " 条持久化待补传任务，待上下文就绪续传");
+        } catch (Exception ignored) {}
+    }
+
+    /** 上传上下文就绪(登录)后：用【当前新 cookie/url】重建读盘的待传任务、入队续传。 */
+    private void materializeRestored() {
+        if (cookie == null || uploadUrl == null || pendingRestore.isEmpty()) return;
+        java.util.List<PersistedDl> snap;
+        synchronized (pendingRestore) { snap = new java.util.ArrayList<>(pendingRestore); pendingRestore.clear(); }
+        int n = 0;
+        for (PersistedDl p : snap) {
+            if (p == null || p.fileName == null) continue;
+            if (uploadedFileNames.contains(p.fileName) || isDownloadQueued(p.fileName)) continue;
+            UploadTask t = new UploadTask(p.fileName, cookie, uploadUrl, penSn(),
+                    p.durSec, p.startWallMs, p.appInitiated);
+            t.placeholderId = p.placeholderId;
+            uploadQueue.add(t);
+            n++;
+        }
+        if (n > 0) {
+            Log.d(TAG, "A1:续传 重建 " + n + " 条待补传任务入队");
+            persistPendingQueue();
+            notifyPending();
+            main.postDelayed(this::kickWorker, 1500);
+        }
+    }
+
+    /** A1:下载补传【暂未成】(找不到文件/下载失败/卡死)：不放弃，挪队尾、退避后跨重连重试。 */
+    private void requeueDownloadTask(final UploadTask task, final String reason) {
+        main.post(() -> {
+            if (task == null) return;
+            task.downloadRequeues++;
+            lastDlProgressMs = 0; main.removeCallbacks(downloadStallWatch);
+            if (uploadQueue.remove(task)) uploadQueue.add(task);   // 挪队尾，别堵后面的
+            workerBusy = false; currentTask = null; inflightTask = null; waitingForFile = false;
+            long delay = Math.min(10 * 60 * 1000L, 8000L * task.downloadRequeues);  // 退避，封顶10分钟
+            Log.w(TAG, "A1:下载补传暂未成(" + reason + ")，第" + task.downloadRequeues + "次，" + (delay / 1000) + "s后重试 file=" + task.fileName);
+            persistPendingQueue();
+            notifyPending();
+            main.postDelayed(PenController.this::kickWorker, delay);
+        });
+    }
+
+    /** A1:下载卡死看门狗——下载中 >DL_STALL_MS 没新进度 → cancelDownload + 挪队尾重来。 */
+    private final Runnable downloadStallWatch = new Runnable() {
+        @Override public void run() {
+            UploadTask t = currentTask;
+            boolean downloading = (t != null && t.localOpsPath == null && !waitingForFile && inflightTask == null);
+            if (downloading && lastDlProgressMs > 0
+                    && System.currentTimeMillis() - lastDlProgressMs > DL_STALL_MS) {
+                Log.w(TAG, "A1:下载卡死>" + (DL_STALL_MS / 1000) + "s 无进度，取消重试 file=" + t.fileName);
+                try { AIRECBleManager.getInstance().cancelDownload(); } catch (Exception ignored) {}
+                requeueDownloadTask(t, "下载卡死");   // 内部已清 lastDlProgressMs、移除本看门狗
+                return;
+            }
+            if (lastDlProgressMs > 0) main.postDelayed(this, 10000);  // 还在下载，继续盯
+        }
+    };
+
+    /** ★A1:网页「重试」按钮 → 立刻重推待补传(读盘任务materialize + 重置退避 + kick)。 */
+    public void retryPenUploads() {
+        main.post(() -> {
+            materializeRestored();
+            for (UploadTask t : uploadQueue) if (t != null) t.downloadRequeues = 0;  // 重置退避，立刻试一轮
+            Log.d(TAG, "A1:手动重试待补传 队列=" + uploadQueue.size());
+            kickWorker();
+        });
     }
 
     /** 连上且空闲 → 拉文件列表(onFileListUpdated 里 sweepPenStorage 处理)。 */
@@ -423,6 +548,7 @@ public class PenController {
                     Log.d(TAG, "重连后跳过重复补传 file=" + r.fileName);
                 }
             }
+            materializeRestored();   // ★A1:连上且有上下文 → 把App被杀时存盘的待补传任务重建入队
             // 重连后重新尝试队列里所有任务(含之前"延迟提交、暂未找到"挪到队尾的)：
             // 文件这时多半已被笔提交进列表，能找到就下载上传，不丢。笔在录时 kickWorker 会自动等空闲。
             kickWorker();
@@ -1143,29 +1269,26 @@ public class PenController {
                             try { AIRECBleManager.getInstance().fetchFileList(); } catch (Exception ignored) {}
                         }
                     }, 2000);
-                } else if (System.currentTimeMillis() - task.firstAttemptMs < DEFER_MAX_MS) {
-                    // 文件暂未在笔列表里(连录时笔忙、刚停还没落盘)。挪到队尾、先处理别的，稍后再试。
-                    long waited = (System.currentTimeMillis() - task.firstAttemptMs) / 1000;
-                    Log.w(TAG, "暂未在笔列表找到 " + task.fileName + " dur=" + task.durSec + "s，挪队尾稍后重试(已等" + waited + "s)");
-                    uploadQueue.remove(task);
-                    uploadQueue.add(task);     // 挪到队尾，先处理别的；本任务稍后再轮到
-                    workerBusy = false; currentTask = null; waitingForFile = false;
-                    notifyPending();
-                    main.postDelayed(PenController.this::kickWorker, 8000);
                 } else {
-                    workerTaskFailed(task, "not found", true);
+                    // ★A1:4次还没在笔列表里找到 → 不再3分钟就放弃，挪队尾、退避后跨重连继续(笔忙/落盘延迟/断连都熬得住)
+                    requeueDownloadTask(task, "未在笔列表找到");
                 }
                 return;
             }
             waitingForFile = false;
             Log.d(TAG, "后台：定位到文件 " + target.getFileName() + "（任务名=" + task.fileName + "）");
-            try { AIRECBleManager.getInstance().downloadFile(target); }
-            catch (Exception e) { workerTaskFailed(task, "download err: " + e.getMessage(), true); }
+            try {
+                AIRECBleManager.getInstance().downloadFile(target);
+                lastDlProgressMs = System.currentTimeMillis();        // ★A1:启动卡死看门狗
+                main.removeCallbacks(downloadStallWatch);
+                main.postDelayed(downloadStallWatch, 10000);
+            } catch (Exception e) { requeueDownloadTask(task, "download err: " + e.getMessage()); }
         }
 
         @Override
         public void onFileDownloadProgress(AIRECBleFile file, int progress) {
             markPenResponded();
+            lastDlProgressMs = System.currentTimeMillis();   // ★A1:喂看门狗(有进度就不算卡死)
             // 后台进度：推给 UI 显示"保存中 N%"(大文件几分钟)。不抢占当前录音 UI。
             if (listener != null) main.post(() -> listener.onPenProgress(progress));
             Log.d(TAG, "后台下载 " + progress + "%");
@@ -1174,6 +1297,7 @@ public class PenController {
         @Override
         public void onFileDownloadComplete(AIRECBleFile file, String localPath) {
             markPenResponded();
+            lastDlProgressMs = 0; main.removeCallbacks(downloadStallWatch);   // ★A1:下完了，停看门狗
             downloadRetries = 0;
             final UploadTask task = currentTask;
             if (task == null) return;
@@ -1183,6 +1307,7 @@ public class PenController {
 
         @Override
         public void onFileDownloadFailed(AIRECBleFile file, String reason) {
+            lastDlProgressMs = 0; main.removeCallbacks(downloadStallWatch);   // ★A1:停看门狗
             final UploadTask task = currentTask;
             if (task == null) return;
             if (penRecording) {
@@ -1192,7 +1317,7 @@ public class PenController {
             }
             if (downloadRetries < MAX_DOWNLOAD_RETRIES) {
                 downloadRetries++;
-                Log.w(TAG, "后台下载失败(" + reason + ")，第 " + downloadRetries + " 次重试");
+                Log.w(TAG, "后台下载失败(" + reason + ")，第 " + downloadRetries + " 次快速重试");
                 waitingForFile = true;
                 main.postDelayed(() -> {
                     if (waitingForFile) {
@@ -1200,7 +1325,8 @@ public class PenController {
                     }
                 }, 2500);
             } else {
-                workerTaskFailed(task, reason, true);
+                // ★A1:快速重试也失败 → 不放弃，挪队尾、退避后跨重连重来(烂链路逮到好窗口就能凑成)
+                requeueDownloadTask(task, "下载失败:" + reason);
             }
         }
 
@@ -1460,6 +1586,7 @@ public class PenController {
     }
 
     private void notifyPending() {
+        persistPendingQueue();   // ★A1:队列一变就存盘，App被杀也能续传
         final int n = uploadQueue.size();
         final int f = failedCount;
         if (listener != null) main.post(() -> listener.onPenPendingChanged(n, f));

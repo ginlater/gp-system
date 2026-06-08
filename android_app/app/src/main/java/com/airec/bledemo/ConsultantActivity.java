@@ -564,6 +564,9 @@ public class ConsultantActivity extends Activity
     @Override public void bridgeUploadPenFiles(String namesJson) {
         ui.post(() -> { if (penController != null) penController.uploadPenFiles(namesJson); });
     }
+    @Override public void bridgeRetryPenUploads() {   // ★A1:网页"重试"→ 立刻重推待补传队列
+        ui.post(() -> { if (penController != null) penController.retryPenUploads(); });
+    }
 
     // ============ 权限 ============
 

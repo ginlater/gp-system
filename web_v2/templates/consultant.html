@@ -829,6 +829,17 @@ function _penSyncCount(){
   var b = document.getElementById('penSyncUpBtn');
   if (b) b.textContent = '上传所选 ('+n+')';
 }
+// ★A1:未归档里"上传中"的录音，App(v9+)上给个「重试」——立刻重推后台补传队列
+function penRetryBtn(){
+  try { if (window.AndroidBridge && window.AndroidBridge.retryPenUploads)
+    return ' <a href="javascript:void(0)" onclick="penRetryUploads()" style="font-size:12px;color:var(--blue)">重试</a>'; } catch(e){}
+  return '';
+}
+function penRetryUploads(){
+  try { window.AndroidBridge.retryPenUploads(); } catch(e){ return; }
+  alert('已重新开始补传——请保持录音笔连着、贴近手机，稍候在列表里看结果');
+  setTimeout(loadPending, 4000); setTimeout(loadPending, 12000); setTimeout(loadPending, 30000);
+}
 function penSyncUpload(){
   var names = Array.prototype.map.call(document.querySelectorAll('.psf-chk:checked'), function(c){ return c.value; });
   if (!names.length){ alert('请勾选要上传的录音'); return; }
@@ -1019,7 +1030,7 @@ function renderPending() {
         <td data-lbl="时间段" style="white-space:nowrap;color:#999">${x.start_hm || '—'}</td>
         <td data-lbl="时长" style="white-space:nowrap;color:#f39c12;font-weight:600">⏳ 上传中…</td>
         <td data-lbl="试听"><span class="muted">传完可试听</span></td>
-        <td class="pending-acts"><span class="muted" style="font-size:12px">处理中，请稍候</span></td>
+        <td class="pending-acts"><span class="muted" style="font-size:12px">处理中，请稍候</span>${penRetryBtn()}</td>
       </tr>`;
     }
     const audio = x.audio_url
