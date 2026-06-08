@@ -290,8 +290,10 @@ public class PenController {
                 pendingRestore.add(new PersistedDl(fn, o.optInt("dur", 0),
                         o.optLong("sw", 0), o.optLong("pid", -1), o.optBoolean("ai", false)));
             }
-            if (!pendingRestore.isEmpty())
+            if (!pendingRestore.isEmpty()) {
                 Log.d(TAG, "A1:读到 " + pendingRestore.size() + " 条持久化待补传任务，待上下文就绪续传");
+                penLog("★A1 读到 " + pendingRestore.size() + " 条持久化待补传(等登录态续传)");
+            }
         } catch (Exception ignored) {}
     }
 
@@ -312,6 +314,7 @@ public class PenController {
         }
         if (n > 0) {
             Log.d(TAG, "A1:续传 重建 " + n + " 条待补传任务入队");
+            penLog("★A1 续传:重建 " + n + " 条待补传入队(App被杀后恢复)");
             persistPendingQueue();
             notifyPending();
             main.postDelayed(this::kickWorker, 1500);
@@ -328,6 +331,7 @@ public class PenController {
             workerBusy = false; currentTask = null; inflightTask = null; waitingForFile = false;
             long delay = Math.min(10 * 60 * 1000L, 8000L * task.downloadRequeues);  // 退避，封顶10分钟
             Log.w(TAG, "A1:下载补传暂未成(" + reason + ")，第" + task.downloadRequeues + "次，" + (delay / 1000) + "s后重试 file=" + task.fileName);
+            penLog("★A1 补传暂未成(" + reason + ") 第" + task.downloadRequeues + "次 " + (delay / 1000) + "s后重试 " + task.fileName);
             persistPendingQueue();
             notifyPending();
             main.postDelayed(PenController.this::kickWorker, delay);
@@ -342,6 +346,7 @@ public class PenController {
             if (downloading && lastDlProgressMs > 0
                     && System.currentTimeMillis() - lastDlProgressMs > DL_STALL_MS) {
                 Log.w(TAG, "A1:下载卡死>" + (DL_STALL_MS / 1000) + "s 无进度，取消重试 file=" + t.fileName);
+                penLog("★A1 下载卡死>" + (DL_STALL_MS / 1000) + "s无进度 取消重试 " + t.fileName);
                 try { AIRECBleManager.getInstance().cancelDownload(); } catch (Exception ignored) {}
                 requeueDownloadTask(t, "下载卡死");   // 内部已清 lastDlProgressMs、移除本看门狗
                 return;
@@ -356,6 +361,7 @@ public class PenController {
             materializeRestored();
             for (UploadTask t : uploadQueue) if (t != null) t.downloadRequeues = 0;  // 重置退避，立刻试一轮
             Log.d(TAG, "A1:手动重试待补传 队列=" + uploadQueue.size());
+            penLog("★A1 手动重试待补传 队列=" + uploadQueue.size());
             kickWorker();
         });
     }
