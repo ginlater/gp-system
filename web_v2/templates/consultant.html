@@ -753,8 +753,18 @@ if (IN_APP) {
     try { applySkin((localStorage.getItem('skin_pref_v2')) || 'cute'); } catch(e){}  // 皮肤先就绪，录音文案才不漏「录音」字
     try {
       var _gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
-      var _show = (_gs === 'recording' || _gs === 'uploading' || _gs === 'starting') ? _gs : 'idle';
-      window.__onNativeRecState(_show, '', 0);
+      var _realActive = (_gs === 'recording' || _gs === 'uploading' || _gs === 'starting');
+      var _uiActive = !!(window.__appRecording || window.uploading);
+      if (_realActive && _uiActive) {
+        // 两边都在录/传 → 不动！保持计时器时间戳起点，切出陪伴页又回来时计时不归零(接着笔的进度走)
+      } else if (_realActive) {
+        // 笔在录但本页没显示(冷启动/刚恢复) → 用录音笔【真实已录秒数】恢复，绝不从 0 重数
+        var _sec = 0;
+        try { _sec = (window.AndroidBridge.getRecElapsedSec && window.AndroidBridge.getRecElapsedSec()) || 0; } catch(e){}
+        window.__onNativeRecState(_gs, '', _sec);
+      } else {
+        window.__onNativeRecState('idle', '', 0);  // 笔没在录 → 把残留的"录音中"拉回 idle
+      }
       // 从原生恢复"💾保存中"badge(后台上传队列在原生里没丢，跳转回来也能看到)
       var _pi = (window.AndroidBridge.pendingInfo && window.AndroidBridge.pendingInfo()) || '0,0';
       var _p = ('' + _pi).split(',');
