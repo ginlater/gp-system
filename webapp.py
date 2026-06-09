@@ -4978,7 +4978,7 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 APP_LATEST_VERSION_CODE = 14
 APP_LATEST_VERSION_NAME = "2.1.3"
 APP_MIN_VERSION_CODE = 14                # 低于此值的客户端 → 强制更新（v14 保活去抖(治声控刷爆前台服务→进程被杀/卡) + 补传僵尸2h放弃 + 下载退避跨重启持久化 + 开机自录强提醒，强制全网升级）
-APP_UPDATE_NOTE = "本次更新修好了几处计时与状态问题——切出页面再回来计时不再乱跳、能和录音笔严格对上。请更新后继续使用 💛"
+APP_UPDATE_NOTE = "本次更新让录音笔连接更稳：减少后台被系统杀、卡顿，卡住的补传会自动收尾不再一直转圈；从录音笔同步只显示没传过的、更清爽。请更新后继续使用 💛"
 
 
 @app.route("/download")
