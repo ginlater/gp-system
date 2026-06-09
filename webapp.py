@@ -23,8 +23,8 @@ from urllib import request as urllib_request
 from urllib.parse import quote
 
 import oss2
-from flask import (Flask, abort, g, jsonify, redirect, render_template,
-                   request, send_file, session, url_for)
+from flask import (Flask, abort, g, jsonify, make_response, redirect,
+                   render_template, request, send_file, session, url_for)
 
 import dashscope
 from dashscope.audio.asr import Transcription
@@ -5074,12 +5074,16 @@ def consultant_page():
     u = current_user()
     if not u:
         return redirect(url_for("logout"))
-    return render_template(
+    resp = make_response(render_template(
         "consultant.html",
         username=u["username"],
         advisor_name=u["advisor_name"] or "",
         role=u["role"],
-    )
+    ))
+    # ★在线打开必取最新网页：否则改了 consultant.html，App 的 WebView(LOAD_DEFAULT)还显示缓存的旧版
+    #   (本次"已传/已删还在显示"就是缓存旧页)。no-cache=每次在线先回源校验；仍允许离线冷启用缓存(LOAD_CACHE_ELSE_NETWORK)。
+    resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
 
 
 @app.route("/session/<int:sid>")
