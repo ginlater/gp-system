@@ -418,12 +418,20 @@ public class ConsultantActivity extends Activity
             if (isFinishing() || isDestroyed()) return;
             try {
                 new AlertDialog.Builder(this)
-                        .setTitle("请重启录音笔")
-                        .setMessage("已自动关闭录音笔的「开机自动录制」功能。\n\n请在录音设备上向下拨动玻片关机，再重新开机，即可正常使用。")
+                        .setTitle("⚠️ 请立即重启录音笔")
+                        .setMessage("检测到录音笔「开机自动录制」是开着的——它会让笔一开机就自己偷偷录音、App 并不知情，这些录音很可能传不上来、最后丢失。\n\n已帮你关闭该功能，但必须把录音笔【关机再开机】才能真正生效：\n在录音设备上向下拨动玻片关机，停一两秒，再向上拨动开机。\n\n不重启的话，接下来录的内容还是可能传不上来。")
                         .setCancelable(false)
-                        .setPositiveButton("知道了", (d, w) -> stopRecordingInternal())  // 主动结束这段开机误录
+                        .setPositiveButton("知道了，现在去重启", (d, w) -> stopRecordingInternal())  // 主动结束这段开机误录
                         .show();
             } catch (Exception ignore) {}
+        });
+    }
+
+    /** 开机自动录制确认已关闭（用户把笔关机重开生效）→ 正反馈，消除焦虑。 */
+    @Override public void onPenPowerOnRecordConfirmedOff() {
+        ui.post(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            Toast.makeText(this, "录音笔已恢复正常 ✅ 现在录音会正常上传", Toast.LENGTH_LONG).show();
         });
     }
 

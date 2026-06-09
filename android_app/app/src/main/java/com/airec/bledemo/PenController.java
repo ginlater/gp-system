@@ -66,6 +66,8 @@ public class PenController {
         void onPenFileList(String filesJson);
         /** 检测到笔"开机自动录制"开着并已自动关闭 → 弹框提示顾问把笔关机重开(让设置生效、停掉本次开机自录)。 */
         void onPenPowerOnRecordDisabled();
+        /** 之前提示过重启、本次连接读到"开机自动录制=关" → 用户已把笔关机重开生效 → 给个正反馈、消除焦虑。 */
+        void onPenPowerOnRecordConfirmedOff();
     }
 
     private final Context appCtx;
@@ -155,10 +157,12 @@ public class PenController {
         volatile String localOpsPath = null;  // ★非空=直传这个本地拼好的 .ops(实时流完整，不下载不解码)
         volatile int uploadAttempts = 0;      // 上传临时失败(网络抖)的重试次数，退避用
         volatile int downloadRequeues = 0;    // ★A1:下载补传失败/卡死被挪队尾重试的次数(退避用，不再硬放弃)
-        volatile long firstSeenMs = 0;        // ★A1:首次补传失败的墙钟时刻(持久化)→按"已试多久"封顶放弃，跨App重启有效
+        volatile long firstSeenMs = 0;        // ★A1:任务入队(初次出现)的墙钟时刻(构造即打戳、持久化)→按"已挂多久"封顶放弃；手动重新同步=新任务从这里重新计时
+        volatile long nextAttemptWallMs = 0;  // ★A1:下次允许发起下载的墙钟时刻(退避到期，持久化)→App重启也尊重冷却，不一上来就秒重试敲爆BLE
         UploadTask(String fileName, String cookie, String uploadUrl, String sn, int durSec, long startWallMs, boolean appInitiated) {
             this.fileName = fileName; this.cookie = cookie; this.uploadUrl = uploadUrl;
             this.sn = sn; this.durSec = durSec; this.startWallMs = startWallMs; this.appInitiated = appInitiated;
+            this.firstSeenMs = System.currentTimeMillis();   // ★A1:入队即打戳→封顶放弃从"这次入队"算起(手动重新同步旧文件=重新计时2h，不被旧录音时间误删)
         }
     }
     private final ConcurrentLinkedQueue<UploadTask> uploadQueue = new ConcurrentLinkedQueue<>();
@@ -259,8 +263,10 @@ public class PenController {
     private static final class PersistedDl {
         final String fileName; final int durSec; final long startWallMs;
         final long placeholderId; final boolean appInitiated; final long firstSeenMs;
-        PersistedDl(String fn, int d, long sw, long pid, boolean ai, long fs) {
+        final int downloadRequeues; final long nextAttemptMs;
+        PersistedDl(String fn, int d, long sw, long pid, boolean ai, long fs, int rq, long na) {
             fileName = fn; durSec = d; startWallMs = sw; placeholderId = pid; appInitiated = ai; firstSeenMs = fs;
+            downloadRequeues = rq; nextAttemptMs = na;
         }
     }
     // App 启动时从盘里读出的待传任务，等拿到上传上下文(登录态)再用【新 cookie】重建入队
@@ -268,6 +274,7 @@ public class PenController {
             java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     private volatile long lastDlProgressMs = 0;     // 最近一次下载进度时刻，0=没在下载
     private static final long DL_STALL_MS = 30000;   // 下载 >30s 无进度 → 判卡死、取消重试
+    private static final long STALE_GIVEUP_MS = 2 * 60 * 60 * 1000L;   // ★A1:补传任务从"入队时刻"起算超此时长仍没传成→放弃+清占位(不依赖是否发起过下载，治"进程被反复杀/链路烂、下载一个周期都跑不完"的僵尸)。★放弃只删未归档里那条"处理中"占位，音频仍在笔上→顾问可重新「取回小伙伴」，那是一条新任务、重新计时2h，不会被秒删
 
     private boolean isDownloadQueued(String fn) {
         if (fn == null) return false;
@@ -284,6 +291,7 @@ public class PenController {
                 org.json.JSONObject o = new org.json.JSONObject();
                 o.put("fn", t.fileName); o.put("dur", t.durSec); o.put("sw", t.startWallMs);
                 o.put("pid", t.placeholderId); o.put("ai", t.appInitiated); o.put("fs", t.firstSeenMs);
+                o.put("rq", t.downloadRequeues); o.put("na", t.nextAttemptWallMs);
                 arr.put(o);
             }
             appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
@@ -304,7 +312,8 @@ public class PenController {
                 String fn = o.optString("fn", "");
                 if (fn.isEmpty() || uploadedFileNames.contains(fn)) continue;
                 pendingRestore.add(new PersistedDl(fn, o.optInt("dur", 0),
-                        o.optLong("sw", 0), o.optLong("pid", -1), o.optBoolean("ai", false), o.optLong("fs", 0)));
+                        o.optLong("sw", 0), o.optLong("pid", -1), o.optBoolean("ai", false), o.optLong("fs", 0),
+                        o.optInt("rq", 0), o.optLong("na", 0)));
             }
             if (!pendingRestore.isEmpty()) {
                 Log.d(TAG, "A1:读到 " + pendingRestore.size() + " 条持久化待补传任务，待上下文就绪续传");
@@ -326,6 +335,9 @@ public class PenController {
                     p.durSec, p.startWallMs, p.appInitiated);
             t.placeholderId = p.placeholderId;
             t.firstSeenMs = p.firstSeenMs;   // ★A1:沿用首次失败时刻→封顶放弃跨重启有效
+            t.downloadRequeues = p.downloadRequeues;   // ★A1:沿用重试次数→退避继续escalate，不重启就回到秒级
+            t.nextAttemptWallMs = p.nextAttemptMs;     // ★A1:沿用退避到期→重启后尊重冷却(kickWorker据此延后)
+            if (giveUpIfStale(t)) continue;  // ★A1:僵尸任务(从未传成且太老)直接清掉，不再重建入队 → 打破"重启→重建→又被杀"的无限循环
             uploadQueue.add(t);
             n++;
         }
@@ -336,6 +348,29 @@ public class PenController {
             notifyPending();
             main.postDelayed(this::kickWorker, 1500);
         }
+    }
+
+    /** 任务"入队(初次出现)"以来的墙钟时长(ms)。
+     *  ★优先用入队时刻 firstSeenMs：顾问手动重新同步一个旧录音 = 一条新任务、从现在重新计时，绝不被"旧录音时间"一上来就判超时误删
+     *    → 保证"今天还想重传"始终能传。firstSeenMs 缺失(老数据=0)才退回录音墙钟 startWallMs，让历史僵尸也能按真实年龄尽快清掉。 */
+    private long taskAgeMs(UploadTask t) {
+        if (t == null) return -1;
+        long ref = (t.firstSeenMs > 0) ? t.firstSeenMs : t.startWallMs;
+        return ref > 0 ? (System.currentTimeMillis() - ref) : -1;
+    }
+
+    /** ★A1 僵尸自愈：下载补传任务从"录音时刻"起算已超 STALE_GIVEUP_MS 仍没传成 → 放弃 + 清占位，返回 true=已处理掉。
+     *  治本点：进程被反复杀/蓝牙烂导致"下载一个完整周期都没跑完"的任务，requeueDownloadTask 那套(必须先发起过下载并失败)
+     *  根本轮不到，firstSeenMs 永远是 0、2小时封顶永不触发 → 任务被无限重建、UI 永远"上传中"(宋艳那台华为就是这样)。
+     *  这里不依赖任何下载尝试，按真实年龄直接收尾，打破"重启→重建入队→又被杀→重启"的死循环。 */
+    private boolean giveUpIfStale(UploadTask t) {
+        if (t == null || t.localOpsPath != null) return false;   // 只管"从笔下载补传"，本地直传(实时流)不在此列
+        long age = taskAgeMs(t);
+        if (age <= STALE_GIVEUP_MS) return false;
+        Log.w(TAG, "A1:补传放弃(僵尸·已挂" + (age / 60000) + "min·从未传成) file=" + t.fileName);
+        penLog("★A1 补传放弃(僵尸·挂了" + (age / 60000) + "分钟·从未传成)删占位,音频留笔上可日后重导 " + t.fileName);
+        workerTaskFailed(t, "stale-giveup", true);   // 出队(若在队)+清占位+持久化，不再重建
+        return true;
     }
 
     /** A1:下载补传【暂未成】(找不到文件/下载失败/卡死)：不放弃，挪队尾、退避后跨重连重试。 */
@@ -358,6 +393,7 @@ public class PenController {
             if (uploadQueue.remove(task)) uploadQueue.add(task);   // 挪队尾，别堵后面的
             workerBusy = false; currentTask = null; inflightTask = null; waitingForFile = false;
             long delay = Math.min(10 * 60 * 1000L, 8000L * task.downloadRequeues);  // 退避，封顶10分钟
+            task.nextAttemptWallMs = System.currentTimeMillis() + delay;   // ★A1:退避到期持久化→App被杀重启后 kickWorker 仍尊重冷却，不秒重试敲爆BLE
             Log.w(TAG, "A1:下载补传暂未成(" + reason + ")，第" + task.downloadRequeues + "次，" + (delay / 1000) + "s后重试 file=" + task.fileName);
             penLog("★A1 补传暂未成(" + reason + ") 第" + task.downloadRequeues + "次 " + (delay / 1000) + "s后重试 " + task.fileName);
             persistPendingQueue();
@@ -387,7 +423,7 @@ public class PenController {
     public void retryPenUploads() {
         main.post(() -> {
             materializeRestored();
-            for (UploadTask t : uploadQueue) if (t != null) t.downloadRequeues = 0;  // 重置退避，立刻试一轮
+            for (UploadTask t : uploadQueue) if (t != null) { t.downloadRequeues = 0; t.nextAttemptWallMs = 0; }  // 重置退避+清冷却，立刻试一轮
             Log.d(TAG, "A1:手动重试待补传 队列=" + uploadQueue.size());
             penLog("★A1 手动重试待补传 队列=" + uploadQueue.size());
             kickWorker();
@@ -787,18 +823,37 @@ public class PenController {
             if (penSettingsWritten) return;   // 本次连接已检查处理过 → 不重复(onInitParamUpdated 会多次回调)
             penSettingsWritten = true;
             if (powerOnRec) {
-                // ★开机自动录制开着：笔一开机就自动录、App 完全不知情=瞎录制。关掉它，并弹框提示顾问把笔关机重开
-                //   ——改设置要等下次开机才生效，且"本次开机已在进行的自动录制"也得靠重启才停。
+                // ★开机自动录制开着：笔一开机就自动录、App 完全不知情=瞎录制，这些文件只能走脆弱的"下载补传"路、极易传不上来。
+                //   关掉它，持久化"等用户重启"状态(跨 App 被杀仍记得)，并弹框强提示顾问把笔关机重开。
+                //   ——改设置要等下次开机才生效，且"本次开机已在进行的自动录制"也得靠重启才停；未重启前每次重连都重检测、持续提醒。
                 mgr.setPowerOnRecord(false);
-                Log.w(TAG, "★检测到开机自动录制=开 → setPowerOnRecord(false) 关闭 + 提示重启");
-                penLog("★开机自动录制=开 → 已关闭，弹框提示重启笔");
+                setPoweronRestartPending(true);
+                Log.w(TAG, "★检测到开机自动录制=开 → setPowerOnRecord(false) 关闭 + 强提示重启(未重启不生效)");
+                penLog("★开机自动录制=开 → 已关闭，强提示重启笔(未重启前每次连接持续提醒)");
                 if (listener != null) main.post(() -> listener.onPenPowerOnRecordDisabled());
             } else {
                 penLog("开机自动录制=关 (无需处理)");
+                if (isPoweronRestartPending()) {   // ★之前提示过、现在读到=关 → 用户已把笔关机重开生效 → 收尾 + 正反馈
+                    setPoweronRestartPending(false);
+                    Log.i(TAG, "★开机自动录制已确认关闭(用户已重启笔)");
+                    penLog("★开机自动录制已确认关闭(用户已重启笔)");
+                    if (listener != null) main.post(() -> listener.onPenPowerOnRecordConfirmedOff());
+                }
             }
         } catch (Exception e) {
             Log.e(TAG, "ensurePenConfigured failed", e);
         }
+    }
+
+    /** ★开机自动录制"已关、等用户把笔关机重开生效"的持久化标记——跨 App 被杀仍记得，
+     *  以便重连读到"已关"时确认用户已重启、给正反馈，并避免遗漏提醒。 */
+    private void setPoweronRestartPending(boolean v) {
+        try { appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
+                .edit().putBoolean("poweron_restart_pending", v).apply(); } catch (Exception ignored) {}
+    }
+    private boolean isPoweronRestartPending() {
+        try { return appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
+                .getBoolean("poweron_restart_pending", false); } catch (Exception e) { return false; }
     }
 
     // ============ App 主动控制 ============
@@ -1182,19 +1237,35 @@ public class PenController {
 
     /** 录音段开始：起前台保活，托住进程整段不被挂起。幂等。 */
     private void enterRecordingKeepAlive() {
+        main.removeCallbacks(keepAliveStopRun);   // ★去抖：刚排了延迟停止又要录 → 撤掉，别让前台服务被刷成秒级起停
         if (keepAliveOn) return;
         keepAliveOn = true;
         PenKeepAliveService.start(appCtx);
         penLog("保活↑(录音笔录音中)");
     }
 
-    /** 录音段结束/放弃：停前台保活，放唤醒锁。幂等。 */
+    /** 录音段结束/放弃：不立刻停，linger 去抖后再停——治声控/暂停把录音状态秒级 toggle 导致前台服务起停churn、
+     *  进程被华为等机型杀掉的问题。linger 期间又要录、或还有待补传任务(下载也需进程活着) → 继续托住。幂等。 */
     private void exitRecordingKeepAlive() {
         if (!keepAliveOn) return;
-        keepAliveOn = false;
-        PenKeepAliveService.stop(appCtx);
-        penLog("保活↓");
+        main.removeCallbacks(keepAliveStopRun);
+        main.postDelayed(keepAliveStopRun, KEEPALIVE_LINGER_MS);
     }
+
+    private static final long KEEPALIVE_LINGER_MS = 12000;   // ★保活去抖窗口：停止前先等这么久，期间重新开录则不真停
+    private final Runnable keepAliveStopRun = new Runnable() {
+        @Override public void run() {
+            if (!keepAliveOn) return;
+            // ★还在录 / 还有待补传任务 → 继续保活(下载补传也要进程活着)，过会儿再判；都没了才真停
+            if (penRecording || sessionActive || !uploadQueue.isEmpty()) {
+                main.postDelayed(keepAliveStopRun, KEEPALIVE_LINGER_MS);
+                return;
+            }
+            keepAliveOn = false;
+            PenKeepAliveService.stop(appCtx);
+            penLog("保活↓");
+        }
+    };
 
     /** 调试期：连接/录音/重连 状态机事件写文件(vivo 封了 logcat，靠它看)。append。 */
     private void penLog(String ev) {
@@ -1611,7 +1682,13 @@ public class PenController {
             UploadTask task = uploadQueue.peek();
             if (task == null) { notifyPending(); return; }
             if (task == inflightTask) { notifyPending(); return; }   // 该段已在上传阶段，别重复处理
+            if (giveUpIfStale(task)) return;   // ★A1:队头是僵尸(从未传成且太老)→清占位、推进下一个，别再空转
             boolean isLocal = (task.localOpsPath != null);
+            // ★A1:下载补传退避未到期(跨重启持久化的冷却)→按剩余时间排一次kick再返回，别一重启就对烂链路秒重试敲爆BLE
+            if (!isLocal && task.nextAttemptWallMs > 0) {
+                long wait = task.nextAttemptWallMs - System.currentTimeMillis();
+                if (wait > 0) { main.postDelayed(this::kickWorker, Math.min(wait, 10 * 60 * 1000L)); return; }
+            }
             // 下载任务需等笔空闲(0xFD冲突)；本地直传不占蓝牙，录音中也能传
             if (!isLocal && (penRecording || sessionActive || appStartPending)) return;
             workerBusy = true; currentTask = task;

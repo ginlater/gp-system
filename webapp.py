@@ -4975,9 +4975,9 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
 #   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
-APP_LATEST_VERSION_CODE = 13
-APP_LATEST_VERSION_NAME = "2.1.2"
-APP_MIN_VERSION_CODE = 13                # 低于此值的客户端 → 强制更新（v13 修黑屏笔结束卡假录音中 + 切回计时归零，强制全网升级）
+APP_LATEST_VERSION_CODE = 14
+APP_LATEST_VERSION_NAME = "2.1.3"
+APP_MIN_VERSION_CODE = 14                # 低于此值的客户端 → 强制更新（v14 保活去抖(治声控刷爆前台服务→进程被杀/卡) + 补传僵尸2h放弃 + 下载退避跨重启持久化 + 开机自录强提醒，强制全网升级）
 APP_UPDATE_NOTE = "本次更新修好了几处计时与状态问题——切出页面再回来计时不再乱跳、能和录音笔严格对上。请更新后继续使用 💛"
 
 
@@ -6012,7 +6012,7 @@ def api_admin_delete_request_approve(req_id):
         return jsonify({"error": "申请不存在"}), 404
     if dr["status"] != "pending":
         return jsonify({"error": "该申请已处理"}), 400
-    rec = db_fetchone("SELECT id, oss_key, company_id FROM recordings WHERE id=?", (dr["recording_id"],))
+    rec = db_fetchone("SELECT id, oss_key, company_id, uploader_user_id, pen_file, recorded_at FROM recordings WHERE id=?", (dr["recording_id"],))
     if not rec:
         # 录音已不存在，直接更新申请状态
         db_write(
@@ -6028,6 +6028,7 @@ def api_admin_delete_request_approve(req_id):
     except Exception as e:
         print(f"[approve_delete] OSS delete failed: {e}")
     affected_sid = dr["session_id"] if "session_id" in dr.keys() else None
+    _add_pen_tombstone(rec)   # ★审批通过删除也要记墓碑，否则"从录音笔同步"会把已删录音当"未传"又拉回复活(其它删除路径都记了，唯独这里漏了)
     db_write("DELETE FROM recordings WHERE id=?", (rec["id"],))
     db_write(
         "UPDATE delete_requests SET status='approved', reviewer_user_id=?, reviewer_name=?, reviewed_at=datetime('now','localtime') WHERE id=?",

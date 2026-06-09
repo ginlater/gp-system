@@ -844,37 +844,69 @@ window.__onPenFiles = function(files){
     _penSyncRender(files, stat);
   }).catch(function(){ _penSyncRender(files, {}); });
 };
+// ★只显示"未传"的(已传/已删-含删除申请已通过的 一律不显示) + 分页，避免笔里几十条文件一次性渲染卡爆
+var _penSyncNew = [];      // 过滤后只剩"未传"，按时间倒序
+var _penSyncSel = {};      // 跨页保持的勾选集合 name->true（翻页不丢选）
+var _penSyncPage = 0;
+var PEN_SYNC_PAGE_SIZE = 20;
 function _penSyncRender(files, stat){
-  files = files.slice().sort(function(a,b){ return (''+(b.ra||'')).localeCompare(''+(a.ra||'')); });
-  var rows = files.map(function(f){
-    var s = stat[f.name] || 'new';
-    var badge = s==='uploaded' ? '<span style="color:#27ae60">已传</span>'
-              : s==='deleted'  ? '<span style="color:#c0392b">已删</span>'
-              : '<span style="color:#e67e22;font-weight:600">未传</span>';
+  var all = files.slice().sort(function(a,b){ return (''+(b.ra||'')).localeCompare(''+(a.ra||'')); });
+  _penSyncNew = all.filter(function(f){ return (stat[f.name]||'new') === 'new'; });  // 已传uploaded / 已删deleted 都不要
+  _penSyncSel = {};
+  _penSyncPage = 0;
+  _penSyncDrawPage();
+}
+function _penSyncDrawPage(){
+  var total = _penSyncNew.length;
+  if (total === 0){
+    _penSyncShow('<div style="font-weight:600;margin-bottom:6px">从录音笔同步</div>'
+      + '<div style="padding:18px;text-align:center;color:#666">没有需要同步的录音 ✅<br><span style="font-size:12px;color:#999">（已上传、已删除的不显示）</span></div>'
+      + '<div style="text-align:right;margin-top:8px"><button class="btn sec" onclick="_penSyncClose()">关闭</button></div>');
+    return;
+  }
+  var pages = Math.ceil(total / PEN_SYNC_PAGE_SIZE);
+  if (_penSyncPage >= pages) _penSyncPage = pages - 1;
+  if (_penSyncPage < 0) _penSyncPage = 0;
+  var start = _penSyncPage * PEN_SYNC_PAGE_SIZE;
+  var pageFiles = _penSyncNew.slice(start, start + PEN_SYNC_PAGE_SIZE);
+  var rows = pageFiles.map(function(f){
     var sizeKb = Math.round((f.size||0)/1024);
-    var dis = (s !== 'new');
-    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid #eee;font-size:13px;'+(dis?'opacity:.5':'')+'">'
-      + '<input type="checkbox" class="psf-chk" value="'+_psEsc(f.name)+'" onchange="_penSyncCount()" '+(dis?'disabled':'')+'>'
+    var ck = _penSyncSel[f.name] ? ' checked' : '';
+    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid #eee;font-size:13px">'
+      + '<input type="checkbox" class="psf-chk" value="'+_psEsc(f.name)+'" onchange="_penSyncToggle(this)"'+ck+'>'
       + '<span style="flex:1">'+_psEsc(f.ra||f.name)+'</span>'
-      + '<span style="color:#999;min-width:54px;text-align:right">'+sizeKb+'KB</span>'
-      + '<span style="min-width:36px;text-align:right">'+badge+'</span></label>';
+      + '<span style="color:#999;min-width:54px;text-align:right">'+sizeKb+'KB</span></label>';
   }).join('');
+  var pager = '<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;font-size:13px">'
+    + '<button class="btn sec" style="padding:3px 10px" '+(_penSyncPage<=0?'disabled':'')+' onclick="_penSyncGo(-1)">‹ 上一页</button>'
+    + '<span style="color:#666">第 '+(_penSyncPage+1)+'/'+pages+' 页 · 共 '+total+' 条未传</span>'
+    + '<button class="btn sec" style="padding:3px 10px" '+(_penSyncPage>=pages-1?'disabled':'')+' onclick="_penSyncGo(1)">下一页 ›</button></div>';
+  var selN = Object.keys(_penSyncSel).length;
   var html = '<div style="font-weight:600;margin-bottom:6px">从录音笔同步</div>'
-    + '<div style="font-size:12px;color:#888;margin-bottom:8px">未传=没上传过(<b>默认不勾，自己选要传的</b>)；已传/已删 不会重复拉。补传后时长自动校正。</div>'
-    + '<div style="margin-bottom:8px">'
-    +   '<a href="javascript:void(0)" onclick="document.querySelectorAll(\'.psf-chk:not(:disabled)\').forEach(function(c){c.checked=true});_penSyncCount()" style="font-size:12px;color:var(--blue)">全选未传</a>'
-    +   '<a href="javascript:void(0)" onclick="document.querySelectorAll(\'.psf-chk\').forEach(function(c){c.checked=false});_penSyncCount()" style="font-size:12px;color:#888;margin-left:14px">全不选</a>'
+    + '<div style="font-size:12px;color:#888;margin-bottom:8px">只显示<b>未传</b>的（已传/已删不显示）。默认不勾，自己选要传的；补传后时长自动校正。</div>'
+    + '<div style="margin-bottom:6px">'
+    +   '<a href="javascript:void(0)" onclick="_penSyncSelPage(true)" style="font-size:12px;color:var(--blue)">本页全选</a>'
+    +   '<a href="javascript:void(0)" onclick="_penSyncSelPage(false)" style="font-size:12px;color:#888;margin-left:14px">本页全不选</a>'
+    +   '<a href="javascript:void(0)" onclick="_penSyncClearAll()" style="font-size:12px;color:#888;margin-left:14px">清空选择</a>'
     + '</div>'
-    + '<div style="max-height:46vh;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:0 8px">'+rows+'</div>'
+    + '<div style="max-height:42vh;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:0 8px">'+rows+'</div>'
+    + pager
     + '<div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">'
     + '<button class="btn sec" onclick="_penSyncClose()">取消</button>'
-    + '<button class="btn" id="penSyncUpBtn" onclick="penSyncUpload()">上传所选 (0)</button></div>';
+    + '<button class="btn" id="penSyncUpBtn" onclick="penSyncUpload()">上传所选 ('+selN+')</button></div>';
   _penSyncShow(html);
 }
+function _penSyncGo(d){ _penSyncPage += d; _penSyncDrawPage(); }
+function _penSyncToggle(cb){ if (cb.checked) _penSyncSel[cb.value]=true; else delete _penSyncSel[cb.value]; _penSyncCount(); }
+function _penSyncSelPage(on){
+  var start = _penSyncPage * PEN_SYNC_PAGE_SIZE;
+  _penSyncNew.slice(start, start + PEN_SYNC_PAGE_SIZE).forEach(function(f){ if(on) _penSyncSel[f.name]=true; else delete _penSyncSel[f.name]; });
+  _penSyncDrawPage();
+}
+function _penSyncClearAll(){ _penSyncSel = {}; _penSyncDrawPage(); }
 function _penSyncCount(){
-  var n = document.querySelectorAll('.psf-chk:checked').length;
   var b = document.getElementById('penSyncUpBtn');
-  if (b) b.textContent = '上传所选 ('+n+')';
+  if (b) b.textContent = '上传所选 ('+Object.keys(_penSyncSel).length+')';
 }
 // ★A1:未归档里"上传中"的录音，App(v9+)上给个「重试」——立刻重推后台补传队列
 function penRetryBtn(){
@@ -888,7 +920,7 @@ function penRetryUploads(){
   setTimeout(loadPending, 4000); setTimeout(loadPending, 12000); setTimeout(loadPending, 30000);
 }
 function penSyncUpload(){
-  var names = Array.prototype.map.call(document.querySelectorAll('.psf-chk:checked'), function(c){ return c.value; });
+  var names = Object.keys(_penSyncSel);   // ★跨页保持的选择，不只当前页
   if (!names.length){ alert('请勾选要上传的录音'); return; }
   if (!confirm('确定上传选中的 '+names.length+' 条录音？')) return;
   try { window.AndroidBridge.uploadPenFiles(JSON.stringify(names)); }
