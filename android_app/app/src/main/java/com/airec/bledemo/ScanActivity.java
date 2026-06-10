@@ -129,54 +129,61 @@ public class ScanActivity extends AppCompatActivity {
 
             @Override
             public void onDeviceFound(AIRECBleDevice device) {
-                if (device == null) return;
-                // 信号太弱(太远/半睡)直接不收，避免列出根本连不上的笔
-                if (device.getRssi() != 0 && device.getRssi() < RSSI_MIN) return;
-                String mac = device.getAddress();
-                lastSeen.put(mac, SystemClock.elapsedRealtime());   // ★刷新新鲜度，过期定时器据此移除
-                boolean exists = false;
-                for (AIRECBleDevice d : deviceList) {
-                    if (d.getAddress().equals(mac)) { exists = true; break; }
-                }
-                if (!exists) {
-                    deviceList.add(device);
-                    adapter.notifyItemInserted(deviceList.size() - 1);
-                }
-                binding.tvStatus.setText("发现 " + deviceList.size() + " 台设备，点击连接");
-                // 自动连接上次用过的录音笔（一发现就连，无需手动点；过期逻辑保证关机笔不会进这里）
-                if (!autoConnectTried && lastMac != null && lastMac.equals(mac)) {
-                    autoConnectTried = true;
-                    binding.progressBar.setVisibility(View.VISIBLE);
-                    binding.tvStatus.setText("自动连接上次的录音笔：" + device.getName() + "…");
-                    AIRECBleManager.getInstance().stopScan();
-                    AIRECBleManager.getInstance().connect(device);
-                }
+                // ★SDK 回调现在在后台线程(BLE 已挪后台治下载卡死)，这里碰 UI 必须切回主线程，否则 CalledFromWrongThreadException 闪退。
+                runOnUiThread(() -> {
+                    if (device == null) return;
+                    // 信号太弱(太远/半睡)直接不收，避免列出根本连不上的笔
+                    if (device.getRssi() != 0 && device.getRssi() < RSSI_MIN) return;
+                    String mac = device.getAddress();
+                    lastSeen.put(mac, SystemClock.elapsedRealtime());   // ★刷新新鲜度，过期定时器据此移除
+                    boolean exists = false;
+                    for (AIRECBleDevice d : deviceList) {
+                        if (d.getAddress().equals(mac)) { exists = true; break; }
+                    }
+                    if (!exists) {
+                        deviceList.add(device);
+                        adapter.notifyItemInserted(deviceList.size() - 1);
+                    }
+                    binding.tvStatus.setText("发现 " + deviceList.size() + " 台设备，点击连接");
+                    // 自动连接上次用过的录音笔（一发现就连，无需手动点；过期逻辑保证关机笔不会进这里）
+                    if (!autoConnectTried && lastMac != null && lastMac.equals(mac)) {
+                        autoConnectTried = true;
+                        binding.progressBar.setVisibility(View.VISIBLE);
+                        binding.tvStatus.setText("自动连接上次的录音笔：" + device.getName() + "…");
+                        AIRECBleManager.getInstance().stopScan();
+                        AIRECBleManager.getInstance().connect(device);
+                    }
+                });
             }
 
             @Override
             public void onConnected(AIRECBleDevice device) {
-                // 记住这支笔，下次开始录音时自动连
-                getSharedPreferences(PEN_PREFS, MODE_PRIVATE).edit()
-                        .putString(KEY_LAST_MAC, device.getAddress())
-                        .putString(KEY_LAST_NAME, device.getName())
-                        .apply();
-                // 切换到 mainCallback，并手动触发 onConnected 确保 MainActivity 收到
-                AIRECBleCallback main = App.getMainCallback();
-                if (main != null) {
-                    AIRECBleManager.getInstance().setCallback(main);
-                    main.onConnected(device);
-                }
-                setResult(RESULT_OK, new Intent());
-                finish();
+                runOnUiThread(() -> {
+                    // 记住这支笔，下次开始录音时自动连
+                    getSharedPreferences(PEN_PREFS, MODE_PRIVATE).edit()
+                            .putString(KEY_LAST_MAC, device.getAddress())
+                            .putString(KEY_LAST_NAME, device.getName())
+                            .apply();
+                    // 切换到 mainCallback，并手动触发 onConnected 确保 MainActivity 收到
+                    AIRECBleCallback main = App.getMainCallback();
+                    if (main != null) {
+                        AIRECBleManager.getInstance().setCallback(main);
+                        main.onConnected(device);
+                    }
+                    setResult(RESULT_OK, new Intent());
+                    finish();
+                });
             }
 
             @Override
             public void onDisconnected(AIRECBleDevice device, String reason) {
-                binding.progressBar.setVisibility(View.GONE);
-                String msg = (reason != null && reason.contains("超时"))
-                        ? "连接超时，请靠近设备重试" : "连接失败，请重试";
-                binding.tvStatus.setText(msg);
-                Toast.makeText(ScanActivity.this, msg, Toast.LENGTH_SHORT).show();
+                runOnUiThread(() -> {
+                    binding.progressBar.setVisibility(View.GONE);
+                    String msg = (reason != null && reason.contains("超时"))
+                            ? "连接超时，请靠近设备重试" : "连接失败，请重试";
+                    binding.tvStatus.setText(msg);
+                    Toast.makeText(ScanActivity.this, msg, Toast.LENGTH_SHORT).show();
+                });
             }
 
             @Override public void onDeviceInfoUpdated(AIRECBleDevice device) {}
@@ -188,10 +195,12 @@ public class ScanActivity extends AppCompatActivity {
 
             @Override
             public void onBluetoothStateChanged(boolean enabled) {
-                if (!enabled) {
-                    binding.progressBar.setVisibility(View.GONE);
-                    binding.tvStatus.setText("蓝牙已关闭，请开启蓝牙");
-                }
+                runOnUiThread(() -> {
+                    if (!enabled) {
+                        binding.progressBar.setVisibility(View.GONE);
+                        binding.tvStatus.setText("蓝牙已关闭，请开启蓝牙");
+                    }
+                });
             }
         });
 

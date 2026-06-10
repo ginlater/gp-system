@@ -5039,9 +5039,9 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
 #   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
-APP_LATEST_VERSION_CODE = 20
-APP_LATEST_VERSION_NAME = "2.1.9"
-APP_MIN_VERSION_CODE = 20                # 低于此值的客户端 → 强制更新（v20 把杰理SDK的BLE工作线程从主线程挪到后台：根治"录音下载时整个App卡死"+"下载卡5~7%"(BLE被UI抢占饿死)；下载卡死看门狗30s→20s；"下载失败"不再误提示"请重录"(录音在笔里没丢)、加重试按钮；含v19/v18/v17全部修复，强制全网升级）
+APP_LATEST_VERSION_CODE = 21
+APP_LATEST_VERSION_NAME = "2.1.10"
+APP_MIN_VERSION_CODE = 21                # 低于此值的客户端 → 强制更新（v21 热修 v20 回归：BLE 挪后台后扫描界面 ScanActivity 回调直接动 UI→点"小伙伴"闪退；4个回调用 runOnUiThread 包回主线程。v20 的下载不卡死/不卡5~7%/不喊重录全保留；含 v19/v18/v17 全部修复，强制全网升级）
 APP_UPDATE_NOTE = "本次更新：① 录音笔下载录音时不再卡住整个 App，下载也更顺(不再卡在 5%、7%)；② 下载失败不会再叫你重录——录音在录音笔里没丢，可点「重试」或「从录音笔同步」重新导入；③ 手机录音熄屏不中断、息屏回来仍能看到录音中和结束按钮。请更新后继续使用 💛"
 
 
