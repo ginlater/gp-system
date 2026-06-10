@@ -52,6 +52,48 @@ public class ATWOpusConverter {
         }
     }
 
+    /**
+     * 下载完整性自检：KA/ATW 私有 opus = 等长块流(KA 每块 80B)。蓝牙残缺/错位下载(丢了「非整块字节」)
+     * 会让正文长度不是块长的整数倍 → 本类 extractFrames 固定步长会从断点起把后段全切成垃圾 opus 包 →
+     * 解出来满刻度乱码噪声(顾问端看似录好实则后段全乱，见服务器端兜底检测)。这里在转码前提前逮住。
+     *
+     * 返回 null = 看起来完整 / 无法判断(一律放行，fail-open，绝不误伤好文件)；
+     * 非 null = 可疑残缺的原因串(调用方应拒绝转码上传、挪队尾重新下载)。
+     */
+    public static String integrityWarning(String path) {
+        try {
+            String fmt = detectFormat(path);
+            if (fmt == null) return null;                 // 不认识格式 → 放行
+            byte[] raw = readFile(path);
+            if (raw.length < 1600) return null;           // 太短(不到~20块) → 不判
+            int s0 = fmt.equals("ATW") ? 0x5B : 0x4B;
+            int s1 = fmt.equals("ATW") ? 0x50 : 0x41;
+            java.util.List<Integer> seps = new java.util.ArrayList<>();
+            for (int i = 0; i < raw.length - 1; i++)
+                if ((raw[i] & 0xFF) == s0 && (raw[i + 1] & 0xFF) == s1) seps.add(i);
+            if (seps.size() < 16) return null;            // 分隔符样本太少 → 不判
+            java.util.Map<Integer, Integer> gc = new java.util.HashMap<>();
+            for (int i = 1; i < seps.size(); i++) gc.merge(seps.get(i) - seps.get(i - 1), 1, Integer::sum);
+            int stride = 0, mode = 0, total = 0;
+            for (java.util.Map.Entry<Integer, Integer> e : gc.entrySet()) {
+                total += e.getValue();
+                if (e.getValue() > mode) { mode = e.getValue(); stride = e.getKey(); }
+            }
+            if (stride < 40 || stride > 200) return null; // 步长不像 80(异常形态) → 不判
+            if (mode * 100 < total * 60) return null;     // 众数步长占比 <60%(本就不规整/变长帧) → 不判
+            int first = seps.get(0);
+            if (first > stride) return null;              // 第一个块不在开头 → 形态不符 → 放行不误伤
+            int body = raw.length - first;
+            int rem = body % stride;
+            // 正文不是「整数个块」，且缺口不是 1~2 字节微尾 → 判残缺(典型：BLE 丢了非整块字节)
+            if (rem >= 3 && rem <= stride - 3)
+                return "下载残缺(正文" + body + "B非块长" + stride + "整数倍·余" + rem + ")";
+            return null;
+        } catch (Exception e) {
+            return null;                                  // 任何异常 → 放行(fail-open)
+        }
+    }
+
     private static String detectFormat(String path) throws IOException {
         try (FileInputStream fis = new FileInputStream(path)) {
             byte[] h = new byte[2];

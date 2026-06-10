@@ -1791,6 +1791,20 @@ public class PenController {
                     workerTaskFailed(task, "下载文件不存在", true);
                     return;
                 }
+                // ★v17 下载完整性自检：BLE 残缺/错位下载(SDK 自称成功却悄悄丢了「非整块字节」)会让 .ops 不是
+                //   「整数个块」→ 转换器固定步长从断点起把后段全转成乱码噪声(顾问看似录好实则后段全乱)。
+                //   提前逮住：删本地残件、挪队尾重新下载，绝不转码上传垃圾(2h 内换好窗口凑成；音频在笔上不丢)。
+                //   integrityWarning 是 fail-open(任何不确定都返回 null 放行)，最坏只多重下一次，不误伤好文件。
+                long _actual = new File(localPath).length();
+                long _reported = (file != null) ? file.getFileSize() : 0;
+                String _integ = ATWOpusConverter.integrityWarning(localPath);
+                penLog("★下载校验 " + task.fileName + " 本地=" + _actual + "B 笔报=" + _reported + "B " + (_integ == null ? "ok" : _integ));
+                if (_integ != null) {
+                    try { new File(localPath).delete(); } catch (Exception ignore) {}
+                    Log.w(TAG, "下载残缺 " + _integ + " → 挪队尾重下 " + task.fileName);
+                    requeueDownloadTask(task, _integ);
+                    return;
+                }
                 String uploadPath, name, mime;
                 // ★官方转换：下载到的 KA/ATW 私有 opus → 标准 OGG Opus(不解码、不放大、后端不用解)
                 String ogg = ATWOpusConverter.convert(localPath);

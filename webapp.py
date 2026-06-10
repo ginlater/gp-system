@@ -5039,10 +5039,10 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
 #   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
-APP_LATEST_VERSION_CODE = 16
-APP_LATEST_VERSION_NAME = "2.1.5"
-APP_MIN_VERSION_CODE = 16                # 低于此值的客户端 → 强制更新（v16 64位通用包(纯64位新机型才装得上) + 手机麦"2秒不见了"修复 + v14全部修复，强制全网升级）
-APP_UPDATE_NOTE = "本次更新：新机型（纯64位手机）现在也能正常安装；没连录音笔时用手机也能录音了；并继续优化录音笔连接稳定性。请更新后继续使用 💛"
+APP_LATEST_VERSION_CODE = 17
+APP_LATEST_VERSION_NAME = "2.1.6"
+APP_MIN_VERSION_CODE = 17                # 低于此值的客户端 → 强制更新（v17 蓝牙补下载完整性自检：残缺/错位下载不再悄悄转成乱码上传，拒绝重下，治"录音后段全乱码"；含v16全部修复，强制全网升级）
+APP_UPDATE_NOTE = "本次更新：修复了录音笔蓝牙补传时偶尔「后半段变乱码、听不清」的问题——现在传输不完整会自动重传，不会再把没传好的录音当成功。请更新后继续使用 💛"
 
 
 @app.route("/download")
