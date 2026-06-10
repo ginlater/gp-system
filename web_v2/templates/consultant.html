@@ -698,7 +698,14 @@ function __renderPendBadge(){
       if (window.__penDlPct >= 0 && window.__penDlPct < 100) t += '（下载 '+window.__penDlPct+'%）';
       lines.push(t);
     }
-    if (window.__penFailed > 0) lines.push('⚠️ '+window.__penFailed+' 段没保存成功，请重录');
+    if (window.__penFailed > 0) {
+      // ★绝不提示"重录"：录音在录音笔机身里没丢，只是「笔→手机」蓝牙没传上来，可重试 / 用「从录音笔同步」重新导入。
+      var _ft = isCute()
+        ? ('⚠️ '+window.__penFailed+' 段还没从小伙伴传上来（录音在小伙伴里没丢，可重试或用上方「从录音笔同步」重新导入）')
+        : ('⚠️ '+window.__penFailed+' 段还没从录音笔传上来（录音在录音笔里没丢，可重试或用上方「从录音笔同步」重新导入）');
+      _ft += ' <a href="javascript:void(0)" onclick="appRetryPenUploads(event)" style="color:#c0392b;text-decoration:underline;font-weight:700">重试</a>';
+      lines.push(_ft);
+    }
     if (lines.length) {
       badge.innerHTML = lines.join('<br>');
       badge.style.color = window.__penFailed > 0 ? '#e74c3c' : 'var(--text-mute,#888)';
@@ -716,6 +723,12 @@ window.__onPenPending = function(count, failed){
 window.__onPenProgress = function(pct){
   window.__penDlPct = (typeof pct === 'number') ? pct : -1;
   __renderPendBadge();
+};
+// ★「重试」：立刻重推待补传队列(从录音笔重新下载)。给不出队的已放弃段→提示走「从录音笔同步」。
+window.appRetryPenUploads = function(ev){
+  try { if (ev && ev.preventDefault) ev.preventDefault(); } catch(e){}
+  try { if (window.AndroidBridge && window.AndroidBridge.retryPenUploads) window.AndroidBridge.retryPenUploads(); } catch(e){}
+  try { var b = document.getElementById('appPendingBadge'); if (b) b.insertAdjacentHTML('beforeend','<br><span style="color:#888">正在重试，从录音笔重新传…</span>'); } catch(e){}
 };
 
 if (IN_APP) {

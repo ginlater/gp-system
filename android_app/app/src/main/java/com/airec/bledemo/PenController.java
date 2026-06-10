@@ -197,9 +197,45 @@ public class PenController {
     public PenController(Context ctx, Listener l) {
         this.appCtx = ctx.getApplicationContext();
         this.listener = l;
+        moveSdkBleOffMainThread();   // ★把 SDK 的 BLE 工作线程从主线程挪到后台(治"下载时整个App卡死"+"卡5~7%")
         loadUploadedNames();    // ★恢复"已传文件名"持久化集合(防重启后扫描补传重复下载)
         loadPendingQueue();     // ★A1:恢复"待补传下载任务"(App被杀也不丢,等上下文就绪续传)
         registerBtReceiver();   // ★监听蓝牙开关，恢复时自动重连
+    }
+
+    /**
+     * ★把杰理 SDK 的工作 Handler 从【主线程】换到【后台 HandlerThread】。
+     * 根因：SDK 内部唯一的工作 Handler 用 Looper.getMainLooper() 建（已反编译确认），整个 BLE 状态机——
+     * 包括下载大文件时每个 GATT 块的读写——全 post 到主线程。大文件下载几分钟，主线程被 BLE 操作灌满
+     * → 整个 App 卡死动不了；且下载的 GATT 操作被 WebView/UI 抢占而饿死 → 进度卡在 5~7% 不动。
+     * 把这个 Handler 换到专用后台线程后，BLE 不再占主线程，UI 不卡、下载也不被抢占。
+     * 实现：反射改 SDK 的 public final 字段 a（同进程、本应用自带类，反射可行）。
+     * fail-open：任何异常都吞掉、维持原主线程 Handler（顶多还卡，绝不崩）。App 内的 SDK 回调本就全部
+     * main.post 回主线程做 UI，不依赖回调线程，故切换对上层透明。仅做一次（静态标志）。
+     */
+    private static volatile boolean sBleHandlerMoved = false;
+    private void moveSdkBleOffMainThread() {
+        if (sBleHandlerMoved) return;
+        try {
+            AIRECBleManager mgr = AIRECBleManager.getInstance();   // 触发单例初始化(此时它建的是主线程 Handler)
+            java.lang.reflect.Field f = AIRECBleManager.class.getDeclaredField("a");
+            f.setAccessible(true);
+            Object cur = f.get(mgr);
+            if (cur instanceof android.os.Handler
+                    && ((android.os.Handler) cur).getLooper() != android.os.Looper.getMainLooper()) {
+                sBleHandlerMoved = true; return;   // 已经不在主线程，无需处理
+            }
+            android.os.HandlerThread ht = new android.os.HandlerThread(
+                    "airec-ble", android.os.Process.THREAD_PRIORITY_FOREGROUND);
+            ht.start();
+            f.set(mgr, new android.os.Handler(ht.getLooper()));
+            sBleHandlerMoved = true;
+            Log.w(TAG, "★SDK BLE Handler 已切到后台线程 airec-ble");
+            penLog("★SDK BLE Handler 切后台线程 ok");
+        } catch (Throwable t) {
+            Log.w(TAG, "切 SDK BLE Handler 失败(维持主线程，下载可能仍卡): " + t.getMessage());
+            try { penLog("★SDK BLE Handler 切后台失败:" + t.getMessage()); } catch (Throwable ignore) {}
+        }
     }
 
     public boolean isConnected() {
@@ -273,7 +309,7 @@ public class PenController {
     private final java.util.List<PersistedDl> pendingRestore =
             java.util.Collections.synchronizedList(new java.util.ArrayList<>());
     private volatile long lastDlProgressMs = 0;     // 最近一次下载进度时刻，0=没在下载
-    private static final long DL_STALL_MS = 30000;   // 下载 >30s 无进度 → 判卡死、取消重试
+    private static final long DL_STALL_MS = 20000;   // 下载 >20s 无进度 → 判卡死、取消重试(卡5~7%更快恢复；有进度就一直喂、不误杀慢链路)
     private static final long STALE_GIVEUP_MS = 2 * 60 * 60 * 1000L;   // ★A1:补传任务从"入队时刻"起算超此时长仍没传成→放弃+清占位(不依赖是否发起过下载，治"进程被反复杀/链路烂、下载一个周期都跑不完"的僵尸)。★放弃只删未归档里那条"处理中"占位，音频仍在笔上→顾问可重新「取回小伙伴」，那是一条新任务、重新计时2h，不会被秒删
 
     private boolean isDownloadQueued(String fn) {
@@ -415,7 +451,7 @@ public class PenController {
                 requeueDownloadTask(t, "下载卡死");   // 内部已清 lastDlProgressMs、移除本看门狗
                 return;
             }
-            if (lastDlProgressMs > 0) main.postDelayed(this, 10000);  // 还在下载，继续盯
+            if (lastDlProgressMs > 0) main.postDelayed(this, 5000);  // 还在下载，继续盯(5s 巡检)
         }
     };
 

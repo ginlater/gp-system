@@ -442,7 +442,8 @@ public class ConsultantActivity extends Activity
         ui.post(() -> {
             evalJs("if(window.__onPenPending){window.__onPenPending(" + pending + "," + failed + ");}");
             if (failed > lastFailedCount) {
-                Toast.makeText(this, "有 " + failed + " 段录音没能保存（录音笔可能没存上），请检查录音笔后重录",
+                // ★绝不说"重录"：录音在录音笔机身里没丢，只是蓝牙没传上来；可重试 / 用「从录音笔同步」重新导入。
+                Toast.makeText(this, "有 " + failed + " 段还没从录音笔传上来（录音在笔里没丢，可点「重试」或用「从录音笔同步」重新导入）",
                         Toast.LENGTH_LONG).show();
             }
             lastFailedCount = failed;
