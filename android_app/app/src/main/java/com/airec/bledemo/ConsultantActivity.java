@@ -574,7 +574,10 @@ public class ConsultantActivity extends Activity
     @Override public String bridgeGetState() {
         // ★以录音笔真实状态为准：显示"录音中"但笔其实没在录(黑屏笔结束、idle 没传到→state 残留) → 返回 idle。
         //   网页的状态同步/兜底都基于本方法，这里权威了，假"录音中"就一定会被拉回。
-        if ("recording".equals(state) && penController != null && !penController.isRecording()) return "idle";
+        //   ★但只对"录音笔模式"成立：手机麦模式(activeSource=="phone")下笔本就不在录，绝不能拿笔的状态判，
+        //     否则正在录的手机麦会被网页看门狗每3s判成"假录音中"拉回 idle → 录音中 UI"2秒就不见了"(PhoneMicService 仍在偷录)。
+        if ("recording".equals(state) && !"phone".equals(activeSource)
+                && penController != null && !penController.isRecording()) return "idle";
         return state;
     }
     @Override public int bridgeGetRecElapsedSec() {
