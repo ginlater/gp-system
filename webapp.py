@@ -9244,6 +9244,11 @@ def api_consultant_upload():
         if _real and _real > 0.2:
             reported_sec = int(_real)
             dur_label = _format_duration_label(_real)
+    # ★手机录音等"录完即传"路径不带 recorded_at → 上面默认用了 now(=按停止那一刻=录音结束时刻)，
+    #   会让未归档列表「时间段」整体后移(开始被当成结束、结束跑到未来：11分钟录音停在 03:39 却显示 03:39–03:50)。
+    #   没传 recorded_at 时改用 now − 时长 = 真实开始时刻(录完即传，误差仅几秒上传耗时)。录音笔路径会传 recorded_at，不受影响。
+    if recorded_at_form is None and reported_sec > 0:
+        recorded_at = (now - timedelta(seconds=reported_sec)).strftime("%Y-%m-%d %H:%M:%S")
     truncate_note = _detect_truncate_note(data, ext, reported_sec)
     # ★录音笔SN：app 上传时带 sn(=getMacAddress)。存到录音上做审计，并记一条"该顾问用过此SN"供管理员绑定。
     device_sn = (request.form.get("sn") or "").strip() or None
