@@ -11,6 +11,7 @@ import android.content.pm.ServiceInfo;
 import android.media.MediaRecorder;
 import android.os.Build;
 import android.os.IBinder;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -48,6 +49,12 @@ public class PhoneMicService extends Service {
 
     private static final int NOTIFICATION_ID = 5206;
     private static final String CHANNEL_ID = "rec_channel";
+    // 唤醒锁兜底超时(纯防泄漏，不是录音上限)：哪怕某条结束路径漏调释放，也不会无限持锁。
+    private static final long WAKELOCK_MAX_MS = 4 * 60 * 60 * 1000L; // 4h
+
+    // ★熄屏不中断的关键：录音/上传期间持 PARTIAL_WAKE_LOCK，否则息屏后 CPU 深睡，前台服务虽在、
+    //   MediaRecorder 却拿不到 CPU 而停（这正是"熄屏就断"的根因）。与录音笔 PenKeepAliveService 同款。
+    private PowerManager.WakeLock wakeLock;
 
     private MediaRecorder recorder;
     private File currentFile;
@@ -80,6 +87,7 @@ public class PhoneMicService extends Service {
         }
         try {
             startForegroundCompat();
+            acquireWakeLock();   // ★熄屏不中断：整段录音持唤醒锁，停止/上传完才释放
 
             File dir = new File(getFilesDir(), "recordings");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("无法创建录音目录");
@@ -103,6 +111,7 @@ public class PhoneMicService extends Service {
             safeReleaseRecorder();
             recording = false;
             broadcast(STATE_ERROR, "无法开始录音：" + e.getMessage(), 0, -1);
+            releaseWakeLock();
             stopForeground(true);
             stopSelf();
         }
@@ -122,6 +131,7 @@ public class PhoneMicService extends Service {
             Log.e(TAG, "recorder.stop failed", e);
             safeReleaseRecorder();
             broadcast(STATE_ERROR, "录音过短或失败，请重试", 0, -1);
+            releaseWakeLock();
             stopForeground(true);
             stopSelf();
             return;
@@ -142,6 +152,7 @@ public class PhoneMicService extends Service {
                 // 上传失败：保留本地文件，避免丢录音
                 broadcast(STATE_ERROR, "上传失败：" + r.error, durSec, -1);
             }
+            releaseWakeLock();   // 唤醒锁覆盖到上传结束（息屏也能把录音传完）
             stopForeground(true);
             stopSelf();
         }, "rec-upload").start();
@@ -150,6 +161,25 @@ public class PhoneMicService extends Service {
     private int elapsedSec() {
         if (startElapsedMs == 0) return 0;
         return (int) Math.max(0, (SystemClock.elapsedRealtime() - startElapsedMs) / 1000);
+    }
+
+    /** 录音/上传期间持 PARTIAL_WAKE_LOCK：息屏后 CPU 不深睡，MediaRecorder 持续编码不中断。幂等、吞异常。 */
+    private void acquireWakeLock() {
+        try {
+            if (wakeLock != null && wakeLock.isHeld()) return;
+            PowerManager pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
+            if (pm == null) return;
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "gongpai:phone-rec");
+            wakeLock.setReferenceCounted(false);
+            wakeLock.acquire(WAKELOCK_MAX_MS);   // 带超时，再保险一层防泄漏
+        } catch (Throwable t) {
+            Log.w(TAG, "acquireWakeLock failed: " + t.getMessage());
+        }
+    }
+
+    private void releaseWakeLock() {
+        try { if (wakeLock != null && wakeLock.isHeld()) wakeLock.release(); } catch (Throwable ignored) {}
+        wakeLock = null;
     }
 
     private void safeReleaseRecorder() {
@@ -205,6 +235,7 @@ public class PhoneMicService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        releaseWakeLock();
         safeReleaseRecorder();
     }
 }
