@@ -572,15 +572,19 @@ public class ConsultantActivity extends Activity
         });
     }
     @Override public String bridgeGetState() {
-        // ★以录音笔真实状态为准：显示"录音中"但笔其实没在录(黑屏笔结束、idle 没传到→state 残留) → 返回 idle。
-        //   网页的状态同步/兜底都基于本方法，这里权威了，假"录音中"就一定会被拉回。
-        //   ★但只对"录音笔模式"成立：手机麦模式(activeSource=="phone")下笔本就不在录，绝不能拿笔的状态判，
-        //     否则正在录的手机麦会被网页看门狗每3s判成"假录音中"拉回 idle → 录音中 UI"2秒就不见了"(PhoneMicService 仍在偷录)。
+        // ★手机麦：以 PhoneMicService 真实存活态为准(跨 Activity 重建有效)。实例 state/activeSource 在
+        //   Activity 被系统回收重建后会丢→曾导致"息屏回来看不到录音中/结束陪伴"(服务仍在录)。这里权威纠正。
+        if (PhoneMicService.isRecording()) return "recording";
+        if (PhoneMicService.isUploading()) return "uploading";
+        // ★录音笔：显示"录音中"但笔其实没在录(黑屏笔结束、idle 没传到→state 残留) → 返回 idle。只对笔模式成立，
+        //   手机麦上面已用服务态权威处理；不能拿笔的状态判手机麦(否则正录的手机麦被每3s看门狗拉回 idle)。
         if ("recording".equals(state) && !"phone".equals(activeSource)
                 && penController != null && !penController.isRecording()) return "idle";
         return state;
     }
     @Override public int bridgeGetRecElapsedSec() {
+        int ph = PhoneMicService.currentElapsedSec();   // 手机麦在录→用服务真实秒数(息屏/重建都准)
+        if (ph > 0) return ph;
         return penController != null ? penController.getRecordingElapsedSec() : 0;
     }
     @Override public String bridgeGetSources() {
@@ -806,9 +810,17 @@ public class ConsultantActivity extends Activity
             maybeAutoConnectPen();
         }
         // 把当前录音状态与录音笔连接状态同步回网页。
-        // ★以录音笔真实状态为准：显示"录音中"但笔已不在录(黑屏笔结束、idle 没传到→state/lastState 残留)
-        //   → 当场纠正回 idle，绝不让打开 App 看到假"陪伴进行中"在空走。
-        if ("recording".equals(state) && penController != null && !penController.isRecording()) {
+        if (PhoneMicService.isRecording()) {
+            // ★手机麦在后台录着(息屏/切后台/Activity 被回收重建都不丢)：恢复"录音中"UI，用服务真实秒数，
+            //   绝不拿录音笔状态把它误判成 idle(这正是"息屏回来看不到结束陪伴/录音"的根因)。
+            activeSource = "phone";
+            state = "recording";
+            int durSec = PhoneMicService.currentElapsedSec();
+            recordingStartMs = SystemClock.elapsedRealtime() - durSec * 1000L;
+            evalJs("if(window.__onNativeRecState){window.__onNativeRecState('recording',''," + durSec + ");}");
+        } else if ("recording".equals(state) && penController != null && !penController.isRecording()) {
+            // ★录音笔模式：显示"录音中"但笔已不在录(黑屏笔结束、idle 没传到→state/lastState 残留)
+            //   → 当场纠正回 idle，绝不让打开 App 看到假"陪伴进行中"在空走。
             recordingStartMs = 0;
             applyState("idle", null);
         } else {

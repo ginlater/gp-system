@@ -63,6 +63,24 @@ public class PhoneMicService extends Service {
     private volatile boolean uploading;
     private String uploadUrl;
 
+    // ★静态存活态(跨 Activity 重建有效)：接诊页/桥据此回显"手机麦此刻在不在录"。
+    //   不能用 ConsultantActivity 的实例 state/activeSource——Activity 被系统回收重建后它们会丢，
+    //   而 PhoneMicService 作为前台服务仍在录；之前"息屏回来看不到结束陪伴/录音"就是这么来的。
+    private static volatile boolean sRecording = false;
+    private static volatile boolean sUploading = false;
+    private static volatile long sStartElapsedMs = 0;
+
+    /** 手机麦此刻是否正在录音（权威，供回显/恢复判断，跨 Activity 重建有效）。 */
+    public static boolean isRecording() { return sRecording; }
+    /** 手机麦此刻是否正在上传（停止后到上传完之间）。 */
+    public static boolean isUploading() { return sUploading; }
+    /** 手机麦当前已录秒数（未在录返回 0）。用 elapsedRealtime 基准，息屏也准。 */
+    public static int currentElapsedSec() {
+        long st = sStartElapsedMs;
+        if (!sRecording || st == 0) return 0;
+        return (int) Math.max(0, (SystemClock.elapsedRealtime() - st) / 1000);
+    }
+
     @Override
     public IBinder onBind(Intent intent) { return null; }
 
@@ -105,11 +123,13 @@ public class PhoneMicService extends Service {
 
             recording = true;
             startElapsedMs = SystemClock.elapsedRealtime();
+            sRecording = true; sUploading = false; sStartElapsedMs = startElapsedMs;   // ★存活态：供回显/恢复
             broadcast(STATE_RECORDING, "录音中…", 0, -1);
         } catch (Exception e) {
             Log.e(TAG, "startRecording failed", e);
             safeReleaseRecorder();
             recording = false;
+            sRecording = false; sUploading = false;
             broadcast(STATE_ERROR, "无法开始录音：" + e.getMessage(), 0, -1);
             releaseWakeLock();
             stopForeground(true);
@@ -124,6 +144,7 @@ public class PhoneMicService extends Service {
         }
         final int durSec = elapsedSec();
         recording = false;
+        sRecording = false;
         try {
             recorder.stop();
         } catch (Exception e) {
@@ -131,6 +152,7 @@ public class PhoneMicService extends Service {
             Log.e(TAG, "recorder.stop failed", e);
             safeReleaseRecorder();
             broadcast(STATE_ERROR, "录音过短或失败，请重试", 0, -1);
+            sUploading = false;
             releaseWakeLock();
             stopForeground(true);
             stopSelf();
@@ -140,11 +162,13 @@ public class PhoneMicService extends Service {
 
         final File file = currentFile;
         uploading = true;
+        sUploading = true;
         broadcast(STATE_UPLOADING, "上传中…", durSec, -1);
 
         new Thread(() -> {
             Uploader.Result r = Uploader.upload(file, durSec, cookie, uploadUrl);
             uploading = false;
+            sUploading = false;
             if (r.ok) {
                 broadcast(STATE_IDLE, "已上传，请选择顾客", durSec, r.recordingId);
                 if (file != null) file.delete();
@@ -235,6 +259,8 @@ public class PhoneMicService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        // 仅当本实例确实在录/传时才清静态态：防止"新实例已 START、旧实例 onDestroy"误清掉在录标志。
+        if (recording || uploading) { sRecording = false; sUploading = false; }
         releaseWakeLock();
         safeReleaseRecorder();
     }
