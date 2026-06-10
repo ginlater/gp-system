@@ -4975,10 +4975,10 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
 #   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
-APP_LATEST_VERSION_CODE = 14
-APP_LATEST_VERSION_NAME = "2.1.3"
-APP_MIN_VERSION_CODE = 14                # 低于此值的客户端 → 强制更新（v14 保活去抖(治声控刷爆前台服务→进程被杀/卡) + 补传僵尸2h放弃 + 下载退避跨重启持久化 + 开机自录强提醒，强制全网升级）
-APP_UPDATE_NOTE = "本次更新让录音笔连接更稳：减少后台被系统杀、卡顿，卡住的补传会自动收尾不再一直转圈；从录音笔同步只显示没传过的、更清爽。请更新后继续使用 💛"
+APP_LATEST_VERSION_CODE = 16
+APP_LATEST_VERSION_NAME = "2.1.5"
+APP_MIN_VERSION_CODE = 16                # 低于此值的客户端 → 强制更新（v16 64位通用包(纯64位新机型才装得上) + 手机麦"2秒不见了"修复 + v14全部修复，强制全网升级）
+APP_UPDATE_NOTE = "本次更新：新机型（纯64位手机）现在也能正常安装；没连录音笔时用手机也能录音了；并继续优化录音笔连接稳定性。请更新后继续使用 💛"
 
 
 @app.route("/download")
