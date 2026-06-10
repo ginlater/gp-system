@@ -1449,6 +1449,41 @@ def _asr_submit_with_retry(audio_url, attempts=5):
     raise RuntimeError(f"DashScope async_call 重试 {attempts} 次仍失败: {last_err}")
 
 
+def _detect_garbled_audio(wav_path, win_sec=5):
+    """检测「错位/损坏的 opus 帧被解码出来的满刻度噪声」段。
+    成因：蓝牙补下载/实时流丢了非整块字节 → 录音笔 KA 80B 块对齐错位 → 端上 ATWOpusConverter 固定步长
+    把这一错位放大成「后段全是垃圾 opus 包」→ 解出来就是削到 ±满刻度的宽带噪声，
+    顾问以为录好了、实际后半段全是乱码（典型：前段正常、某点后整条尾巴废）。
+    判据（逐 win_sec 窗口，单遍 ffmpeg astats metadata）：Peak_level > -0.5dB 且 Flat_factor > 3.0。
+    干净语音 Flat_factor 恒为 0、峰值不会持续顶满刻度；错位噪声两者同时成立。累计 ≥3 窗口才判定，避免偶发误报。
+    实测 2026-06-10：recId970(坏) 75s 起全中；979/982/986(好) 共 348 窗口零误报。
+    返回 (is_garbled, first_bad_sec, bad_sec_total)；任何异常都返回 (False, None, 0)，绝不阻断主流程。"""
+    try:
+        n_samples = int(16000 * win_sec)
+        r = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-nostats", "-i", wav_path,
+             "-af", f"asetnsamples=n={n_samples}:p=0,astats=metadata=1:reset=1,ametadata=print:file=-",
+             "-f", "null", "-"],
+            capture_output=True, text=True, timeout=180)
+        peaks, flats = [], []
+        for line in (r.stdout or "").splitlines() + (r.stderr or "").splitlines():
+            line = line.strip()
+            if line.startswith("lavfi.astats.1.Peak_level="):
+                try: peaks.append(float(line.split("=", 1)[1]))
+                except ValueError: pass
+            elif line.startswith("lavfi.astats.1.Flat_factor="):
+                try: flats.append(float(line.split("=", 1)[1]))
+                except ValueError: pass
+        m = min(len(peaks), len(flats))
+        bad = [i for i in range(m) if peaks[i] > -0.5 and flats[i] > 3.0]
+        if len(bad) < 3:
+            return (False, None, 0)
+        return (True, bad[0] * win_sec, len(bad) * win_sec)
+    except Exception as e:
+        app.logger.info("[garble] 检测跳过 %s: %s", wav_path, e)
+        return (False, None, 0)
+
+
 def _ensure_clean_audio(recording_id, oss_key):
     """ASR/播放/分割前确保音频是带正确时长头与时间戳的干净格式。
     浏览器 webm/opus 录音常无时长头 → 三连坑：(1)DashScope 解码会提前停、转录覆盖不全；
@@ -1474,10 +1509,20 @@ def _ensure_clean_audio(recording_id, oss_key):
             return oss_key  # 转码异常，回退原文件
         new_key = (oss_key.rsplit(".", 1)[0]) + "_clean.wav"
         oss_bucket.put_object_from_file(new_key, out)
-        # 断流截断告警已下线：录音笔暂停/继续会让墙钟>实测而误报。这里不再打标，duration_label 用实测真实值即可。
+        # ★兜底检测：蓝牙补下载/实时流丢字节 → KA 块错位 → 后段全是乱码噪声（顾问以为录好了实则乱码）。
+        #   命中就把损坏说明写进 truncate_note，未归档/未绑定列表会标红，绝不当成正常录音静默放过。
+        #   断流时长告警仍下线（暂停/继续会让墙钟>实测而误报）；这里查的是「内容损坏」，与时长无关。
+        garbled, gbad_start, gbad_sec = _detect_garbled_audio(out)
+        gnote = None
+        if garbled:
+            gnote = (f"⚠️ 后段疑似蓝牙传输损坏：约第 {_format_duration_label(gbad_start)} 起 "
+                     f"{_format_duration_label(gbad_sec)} 为乱码噪声（非真实录音），"
+                     f"原始音频多半还在录音笔机身，建议用 USB 从笔重新导出该文件")
+            app.logger.warning("[garble] rec %s 检测到后段损坏：起%ss 计%ss key=%s",
+                               recording_id, gbad_start, gbad_sec, new_key)
         db_write(
-            "UPDATE recordings SET oss_key=?, duration_label=?, size_bytes=?, truncate_note=NULL WHERE id=?",
-            (new_key, _format_duration_label(dur), os.path.getsize(out), recording_id),
+            "UPDATE recordings SET oss_key=?, duration_label=?, size_bytes=?, truncate_note=? WHERE id=?",
+            (new_key, _format_duration_label(dur), os.path.getsize(out), gnote, recording_id),
         )
         _oss_delete_quiet(oss_key)  # 删原 webm/ogg，失败仅记日志（孤儿可接受）
         app.logger.info("[clean audio] rec %s 转码 %s → %s (%.1fs)", recording_id, oss_key, new_key, dur)
@@ -10482,7 +10527,7 @@ def api_admin_unbound_recordings():
         params.extend([like, like, like])
     rows = db_fetchall(
         f"""SELECT r.id, r.advisor, r.recorded_at, r.duration_label, r.asr_status,
-                   r.oss_key, r.uploader_user_id, r.store_id,
+                   r.oss_key, r.uploader_user_id, r.store_id, r.truncate_note,
                    u.advisor_name AS uploader_advisor_name, u.username AS uploader_username,
                    st.name AS store_name
             FROM recordings r
@@ -10510,6 +10555,7 @@ def api_admin_unbound_recordings():
             "store_name": r["store_name"],
             "audio_url": url,
             "rec_date": _rec_date_of(r),
+            "truncate_note": r["truncate_note"],
         })
     return jsonify({"items": out})
 

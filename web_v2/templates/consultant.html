@@ -1164,7 +1164,13 @@ function renderPending() {
         <button class="btn sec" style="padding:2px 8px;font-size:11px" onclick="dismissDelReject(${x.id})">知道了</button>
       </div>`;
     }
-    // 断流截断告警已下线：录音笔暂停/继续会让墙钟>实测音频而误报，故不再显示(时长列已是实测真实值)。
+    // 断流时长告警仍下线(暂停/继续会让墙钟>实测而误报)；但「内容损坏」(后段乱码噪声)是真问题，要显示。
+    // 蓝牙补下载/实时流丢字节→录音笔块错位→后段全是乱码噪声，顾问以为录好了实则没录到，提示需从笔重新导出。
+    if (x.truncate_note) {
+      banner += `<div style="grid-column:1/-1;background:#fdecea;color:#c0392b;padding:4px 8px;border-radius:4px;font-size:12px;margin-bottom:4px">
+        ${String(x.truncate_note).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+      </div>`;
+    }
     // 操作按钮
     let actsHtml;
     if (isDelPending) {
