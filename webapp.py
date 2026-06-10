@@ -5039,9 +5039,9 @@ APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
 #   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
-APP_LATEST_VERSION_CODE = 21
-APP_LATEST_VERSION_NAME = "2.1.10"
-APP_MIN_VERSION_CODE = 21                # 低于此值的客户端 → 强制更新（v21 热修 v20 回归：BLE 挪后台后扫描界面 ScanActivity 回调直接动 UI→点"小伙伴"闪退；4个回调用 runOnUiThread 包回主线程。v20 的下载不卡死/不卡5~7%/不喊重录全保留；含 v19/v18/v17 全部修复，强制全网升级）
+APP_LATEST_VERSION_CODE = 22
+APP_LATEST_VERSION_NAME = "2.1.11"
+APP_MIN_VERSION_CODE = 22                # 低于此值的客户端 → 强制更新（v22 紧急修：v17 下载完整性校验用错判据(长度非80整数倍=残缺)把【完整下载】无限误判残缺→录音笔补下载永远存不上；改用 本地字节数 vs 笔报大小 判完整。含 v21~v17 全部修复，强制全网升级）
 APP_UPDATE_NOTE = "本次更新：① 录音笔下载录音时不再卡住整个 App，下载也更顺(不再卡在 5%、7%)；② 下载失败不会再叫你重录——录音在录音笔里没丢，可点「重试」或「从录音笔同步」重新导入；③ 手机录音熄屏不中断、息屏回来仍能看到录音中和结束按钮。请更新后继续使用 💛"
 
 

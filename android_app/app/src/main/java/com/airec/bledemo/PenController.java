@@ -1833,12 +1833,17 @@ public class PenController {
                 //   integrityWarning 是 fail-open(任何不确定都返回 null 放行)，最坏只多重下一次，不误伤好文件。
                 long _actual = new File(localPath).length();
                 long _reported = (file != null) ? file.getFileSize() : 0;
-                String _integ = ATWOpusConverter.integrityWarning(localPath);
-                penLog("★下载校验 " + task.fileName + " 本地=" + _actual + "B 笔报=" + _reported + "B " + (_integ == null ? "ok" : _integ));
-                if (_integ != null) {
+                // ★完整性判据 = 下载字节数 vs 笔机身文件大小：相等就是完整。
+                //   绝不能用"长度非80整数倍"判残缺——KA .ops 长度本就不一定是80整数倍(有头/尾字节)，
+                //   那会把【完整下载】无限误判成残缺、反复重下，录音永远存不上(v17~v21 的严重 bug，本次修正)。
+                //   只在【本地明显少于笔报大小】=确实没传完时才判残缺重下；笔没报大小(=0)则放行(fail-open)。
+                boolean _truncated = (_reported > 4096 && _actual > 0 && _actual < _reported - 64);
+                penLog("★下载校验 " + task.fileName + " 本地=" + _actual + "B 笔报=" + _reported + "B "
+                        + (_truncated ? ("残缺(少" + (_reported - _actual) + "B)") : "ok"));
+                if (_truncated) {
                     try { new File(localPath).delete(); } catch (Exception ignore) {}
-                    Log.w(TAG, "下载残缺 " + _integ + " → 挪队尾重下 " + task.fileName);
-                    requeueDownloadTask(task, _integ);
+                    Log.w(TAG, "下载残缺(本地" + _actual + "<笔报" + _reported + ") → 挪队尾重下 " + task.fileName);
+                    requeueDownloadTask(task, "下载残缺(" + _actual + "/" + _reported + ")");
                     return;
                 }
                 String uploadPath, name, mime;
