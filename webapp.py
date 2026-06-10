@@ -1455,8 +1455,9 @@ def _detect_garbled_audio(wav_path, win_sec=5):
     把这一错位放大成「后段全是垃圾 opus 包」→ 解出来就是削到 ±满刻度的宽带噪声，
     顾问以为录好了、实际后半段全是乱码（典型：前段正常、某点后整条尾巴废）。
     判据（逐 win_sec 窗口，单遍 ffmpeg astats metadata）：Peak_level > -0.5dB 且 Flat_factor > 3.0。
-    干净语音 Flat_factor 恒为 0、峰值不会持续顶满刻度；错位噪声两者同时成立。累计 ≥3 窗口才判定，避免偶发误报。
-    实测 2026-06-10：recId970(坏) 75s 起全中；979/982/986(好) 共 348 窗口零误报。
+    干净语音 Flat_factor 恒为 0、峰值不会持续顶满刻度；错位噪声两者同时成立。
+    且只认「坏段连续延伸到文件结尾」(≥3 窗口)：BLE 错位后固定步长转换器回不来、必然烂到 EOF；中段短块(真实削波)会恢复成语音，排除以免误报。
+    实测 2026-06-10：recId970(坏) 75s 起一路烂到结尾全中；979/982/986(好) 共 348 窗口零误报。
     返回 (is_garbled, first_bad_sec, bad_sec_total)；任何异常都返回 (False, None, 0)，绝不阻断主流程。"""
     try:
         n_samples = int(16000 * win_sec)
@@ -1475,10 +1476,27 @@ def _detect_garbled_audio(wav_path, win_sec=5):
                 try: flats.append(float(line.split("=", 1)[1]))
                 except ValueError: pass
         m = min(len(peaks), len(flats))
-        bad = [i for i in range(m) if peaks[i] > -0.5 and flats[i] > 3.0]
-        if len(bad) < 3:
+        is_bad = [(peaks[i] > -0.5 and flats[i] > 3.0) for i in range(m)]
+        # ★BLE 错位损坏的铁律：固定步长转换器一旦错位就再也回不来 → 必然一路烂到文件结尾。
+        #   所以只认「连续延伸到结尾」的坏段；中段短块(真实削波/大声笑/拍麦)会恢复成干净语音，不是本类损坏，排除以免误报。
+        last_bad = max((i for i in range(m) if is_bad[i]), default=-1)
+        if last_bad < m - 2:            # 坏段没到结尾(在中段) → 不是 BLE 错位损坏
             return (False, None, 0)
-        return (True, bad[0] * win_sec, len(bad) * win_sec)
+        start = last_bad
+        clean_gap = 0
+        i = last_bad
+        while i >= 0:                   # 从结尾往回数坏段，容忍单个干净窗口间隔(阈值噪声)
+            if is_bad[i]:
+                start = i; clean_gap = 0
+            else:
+                clean_gap += 1
+                if clean_gap > 1:
+                    break
+            i -= 1
+        bad_in_run = sum(1 for k in range(start, last_bad + 1) if is_bad[k])
+        if bad_in_run < 3:              # 尾部坏段不足 15s → 不判定(避免偶发)
+            return (False, None, 0)
+        return (True, start * win_sec, (last_bad - start + 1) * win_sec)
     except Exception as e:
         app.logger.info("[garble] 检测跳过 %s: %s", wav_path, e)
         return (False, None, 0)
