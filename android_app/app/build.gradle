@@ -17,14 +17,16 @@ android {
         applicationId "com.aibeautyfulwomen.gongpai"
         minSdk 24
         targetSdk 34
-        versionCode 15
-        versionName "2.1.4"
+        versionCode 16
+        versionName "2.1.5"
 
         ndk {
-            // 只保留 armeabi-v7a：droidkit:opus 只提供了 v7a 的 libopus.so（无 arm64）。
-            // 若同时打 arm64，64 位设备会优先选 arm64 → 找不到 libopus.so → 录音笔解码失败。
-            // 统一跑 32 位，libopus.so 与 libjnidispatch.so 的 v7a 版都齐全。
-            abiFilters "armeabi-v7a"
+            // ★同时打 32 位(v7a) + 64 位(arm64)，做通用包，纯 64 位机型(新荣耀/华为)才装得上。
+            //   v7a: libopus.so 来自 droidkit:opus(2014老库, 仅v7a)、libjnidispatch.so 来自 JNA。
+            //   arm64: libopus.so 是我们用 NDK 自己交叉编的官方 opus 1.5.2(放 src/main/jniLibs/arm64-v8a/，
+            //          标准 opus_decode* 符号、仅依赖 libc/m/dl)；libjnidispatch.so 的 arm64 版 JNA 自带。
+            //   两套 .so 都齐 → 32/64 位设备各取所需，不会再"找不到 libopus.so 解码失败"。
+            abiFilters "armeabi-v7a", "arm64-v8a"
         }
     }
 
