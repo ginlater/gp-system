@@ -1460,6 +1460,7 @@ def _detect_garbled_audio(wav_path, win_sec=5):
     实测 2026-06-10：recId970(坏) 75s 起一路烂到结尾全中；979/982/986(好) 共 348 窗口零误报。
     返回 (is_garbled, first_bad_sec, bad_sec_total)；任何异常都返回 (False, None, 0)，绝不阻断主流程。"""
     try:
+        import subprocess
         n_samples = int(16000 * win_sec)
         r = subprocess.run(
             ["ffmpeg", "-hide_banner", "-nostats", "-i", wav_path,
