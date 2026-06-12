@@ -1742,30 +1742,72 @@ public class PenController {
     private void kickWorker() {
         main.post(() -> {
             if (workerBusy) return;
-            UploadTask task = uploadQueue.peek();
-            if (task == null) { notifyPending(); return; }
-            if (task == inflightTask) { notifyPending(); return; }   // 该段已在上传阶段，别重复处理
-            if (giveUpIfStale(task)) return;   // ★A1:队头是僵尸(从未传成且太老)→清占位、推进下一个，别再空转
-            boolean isLocal = (task.localOpsPath != null);
-            // ★A1:下载补传退避未到期(跨重启持久化的冷却)→按剩余时间排一次kick再返回，别一重启就对烂链路秒重试敲爆BLE
-            if (!isLocal && task.nextAttemptWallMs > 0) {
-                long wait = task.nextAttemptWallMs - System.currentTimeMillis();
-                if (wait > 0) { main.postDelayed(this::kickWorker, Math.min(wait, 10 * 60 * 1000L)); return; }
+            if (uploadQueue.isEmpty()) { notifyPending(); return; }
+            final long now = System.currentTimeMillis();
+            final boolean penBusy = (penRecording || sessionActive || appStartPending);
+            // ★A1(v24)：不再只盯队头——队头若是"退避冷却中"的下载任务(常见：笔上没有的僵尸文件，退避最长10min)，
+            //   原来整个 worker 就睡到它冷却结束，把后面【已就绪】的任务全饿死(手动重传/新段白等几分钟)。
+            //   现改为遍历队列挑第一个能立刻干的：本地直传(不占蓝牙)最优先 → 再挑退避到期且笔空闲的下载任务。
+            UploadTask chosen = null;
+            for (UploadTask t : uploadQueue) {
+                if (t != null && t != inflightTask && t.localOpsPath != null) { chosen = t; break; }
             }
-            // 下载任务需等笔空闲(0xFD冲突)；本地直传不占蓝牙，录音中也能传
-            if (!isLocal && (penRecording || sessionActive || appStartPending)) return;
-            workerBusy = true; currentTask = task;
-            notifyPending();
-            if (isLocal) {
-                inflightTask = task;   // 直传阶段：去重 + pauseWorker 不打断
-                Log.d(TAG, "后台开始【直传实时流opus】 file=" + task.fileName + " 剩余=" + uploadQueue.size());
-                uploadLocalOps(task);
+            long earliestRetry = Long.MAX_VALUE;   // 没有就绪任务时，最近一个下载任务的重试时刻(用于排下次kick)
+            if (chosen == null && !penBusy) {
+                for (UploadTask t : uploadQueue) {
+                    if (t == null || t == inflightTask || t.localOpsPath != null) continue;
+                    long wait = t.nextAttemptWallMs - now;
+                    if (wait <= 0) { chosen = t; break; }   // ★跳过仍在冷却的，挑第一个到期的——别被队头僵尸堵死
+                    if (t.nextAttemptWallMs < earliestRetry) earliestRetry = t.nextAttemptWallMs;
+                }
+            }
+            if (chosen == null) {
+                // 没有可立刻处理的：有下载任务在冷却→按最近到期时刻排一次kick；笔忙则等录音结束的回调来kick
+                if (!penBusy && earliestRetry != Long.MAX_VALUE) {
+                    main.postDelayed(this::kickWorker, Math.min(Math.max(earliestRetry - now, 500L), 10 * 60 * 1000L));
+                }
+                notifyPending();
                 return;
             }
-            waitingForFile = true; pendingFileName = task.fileName;
+            // 选中的是下载任务且太老(僵尸)→放弃+清占位，giveUpIfStale 内部已重新 kick，这里直接返回
+            if (chosen.localOpsPath == null && giveUpIfStale(chosen)) return;
+            workerBusy = true; currentTask = chosen;
+            notifyPending();
+            if (chosen.localOpsPath != null) {
+                inflightTask = chosen;   // 直传阶段：去重 + pauseWorker 不打断
+                Log.d(TAG, "后台开始【直传实时流opus】 file=" + chosen.fileName + " 剩余=" + uploadQueue.size());
+                uploadLocalOps(chosen);
+                return;
+            }
+            waitingForFile = true; pendingFileName = chosen.fileName;
             fileListAttempts = 0; downloadRetries = 0;
-            Log.d(TAG, "后台开始处理 file=" + task.fileName + " 剩余=" + uploadQueue.size());
+            Log.d(TAG, "后台开始处理 file=" + chosen.fileName + " 剩余=" + uploadQueue.size());
             try { AIRECBleManager.getInstance().fetchFileList(); } catch (Exception ignored) {}
+        });
+    }
+
+    /** 网页「取消上传」→ 按 placeholderId 把这条任务从补传队列移除(录音仍在笔里，可日后重新取回)。修"上传中点了取消、App 后台还在空转重试"。 */
+    public void cancelUpload(String placeholderIdStr) {
+        main.post(() -> {
+            long pid;
+            try { pid = Long.parseLong(placeholderIdStr == null ? "" : placeholderIdStr.trim()); }
+            catch (Exception e) { return; }
+            if (pid <= 0) return;
+            UploadTask target = null;
+            for (UploadTask t : uploadQueue) if (t != null && t.placeholderId == pid) { target = t; break; }
+            if (target == null) return;   // 不在队列(已传完/已被清)，网页那边删占位即可
+            // 正在处理这条 → 复位 worker、停看门狗、取消在飞的下载(释放 SDK 下载锁)
+            if (target == currentTask || target == inflightTask) {
+                workerBusy = false; currentTask = null; inflightTask = null; waitingForFile = false;
+                main.removeCallbacks(downloadStallWatch);
+                try { AIRECBleManager.getInstance().cancelDownload(); } catch (Exception ignored) {}
+            }
+            uploadQueue.remove(target);
+            persistPendingQueue();
+            Log.d(TAG, "用户取消上传 placeholderId=" + pid + " file=" + target.fileName);
+            penLog("★取消上传(用户) placeholderId=" + pid + " " + target.fileName);
+            notifyPending();
+            kickWorker();   // 推进队列里其他任务
         });
     }
 

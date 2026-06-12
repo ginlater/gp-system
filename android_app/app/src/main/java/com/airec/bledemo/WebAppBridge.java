@@ -27,8 +27,10 @@ public class WebAppBridge {
         void bridgeSyncPenFiles();    // 手动"从录音笔同步"：拉机身文件列表(回 window.__onPenFiles)
         void bridgeUploadPenFiles(String namesJson);  // 上传网页勾选的机身文件(JSON 文件名数组)
         void bridgeRetryPenUploads(); // ★A1:网页"重试"按钮：立刻重推待补传队列
+        void bridgeCancelPenUpload(String id);  // 网页"取消上传"：按 placeholderId 从补传队列移除该段任务
         void bridgeUploadDiag();      // 一键诊断：把 penlog/last_result + 设备信息上传后端，供远程排查
         int bridgeGetRecElapsedSec(); // 录音笔当前已录秒数(切回陪伴页时把计时对到笔真实进度，不从0重数)
+        String bridgeAppVersionName(); // 本机已安装的 versionName(如 "2.1.13")，给陪伴页显示版本号
     }
 
     private final Host host;
@@ -39,7 +41,7 @@ public class WebAppBridge {
     public boolean isApp() { return true; }
 
     @JavascriptInterface
-    public String appVersion() { return "2.0.0"; }
+    public String appVersion() { return host.bridgeAppVersionName(); }
 
     /** 当前可用录音来源，逗号分隔。阶段一只有手机麦克风；阶段二加 "pen"。 */
     @JavascriptInterface
@@ -91,6 +93,9 @@ public class WebAppBridge {
     /** ★A1:网页"重试"按钮：立刻重推待补传(下载补全)队列。 */
     @JavascriptInterface
     public void retryPenUploads() { host.bridgeRetryPenUploads(); }
+
+    @JavascriptInterface
+    public void cancelPenUpload(String id) { host.bridgeCancelPenUpload(id); }
 
     /** 一键诊断上传：收集 penlog/last_result + 设备信息发后端，供远程排查上传失败等问题。
      *  结果异步回调 window.__onDiagUploaded(ok, msg)。 */

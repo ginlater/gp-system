@@ -177,7 +177,7 @@ body.skin-cute .dlg{border-radius:18px}
 <body>
 <div class="wrap">
   <div class="header-bar">
-    <div class="header-title"><span class="t-pro">接诊录音</span><span class="t-cute">美丽陪伴</span></div>
+    <div class="header-title"><span class="t-pro">接诊录音</span><span class="t-cute">美丽陪伴</span><span id="appVerTag" style="display:none;font-size:11px;font-weight:400;margin-left:8px;vertical-align:middle"></span></div>
     <div class="header-user">
       <button id="reminderBell" onclick="toggleReminderPanel()" title="提醒" style="position:relative;background:none;border:none;cursor:pointer;font-size:18px;vertical-align:middle;margin-right:6px">🔔<span id="reminderDot" style="display:none;position:absolute;top:-2px;right:-4px;background:#e74c3c;color:#fff;border-radius:99px;font-size:10px;padding:0 4px;line-height:14px"></span></button>
       {{ advisor_name or username }}（{% if role == 'store_manager' %}店长{% else %}<span class="t-pro">顾问</span><span class="t-cute">陪伴师</span>{% endif %}） ·
@@ -508,6 +508,27 @@ const ROLE = {{ role|tojson }};
 // 仅当被 Android App 的 WebView 加载、且 AndroidBridge.isApp() 为 true 时为 true。
 // 普通浏览器里恒为 false，下面所有 IN_APP 分支都不会执行，行为 100% 不变。
 var IN_APP = !!(window.AndroidBridge && window.AndroidBridge.isApp && window.AndroidBridge.isApp());
+
+// ============ 陪伴页顶部显示 App 版本号 + 是否最新（只在 App 内显示，浏览器不显示）============
+// 让陪伴师一眼知道自己装的是不是最新版。当前版本来自原生桥 appVersion()；最新版来自后端 /api/app/version。
+// 注意：旧桥(≤v23)的 appVersion() 写死返回 "2.0.0"——遇到这个值就提示"请更新"，不显示错的号。
+function showAppVersion(){
+  var el = document.getElementById('appVerTag');
+  if (!el) return;
+  if (!IN_APP || !(window.AndroidBridge && window.AndroidBridge.appVersion)) { el.style.display='none'; return; }
+  var cur = '';
+  try { cur = (window.AndroidBridge.appVersion() || '').trim(); } catch(e){}
+  el.style.display = 'inline';
+  if (!cur || cur === '2.0.0') { el.textContent = '请更新到最新版'; el.style.color = '#e67e22'; return; }
+  el.textContent = 'v' + cur;
+  el.style.color = '#b3a0ad';
+  fetch(BASE + '/api/app/version').then(function(r){ return r.json(); }).then(function(d){
+    var latest = ((d && d.latestVersionName) || '').trim();
+    if (latest && cur !== latest) { el.textContent = 'v' + cur + ' · 有新版本'; el.style.color = '#e67e22'; }
+    else { el.textContent = 'v' + cur + ' · 已是最新'; el.style.color = '#9bbf9b'; }
+  }).catch(function(){});
+}
+try { showAppVersion(); } catch(e){}
 
 // ============ App 内：录音走原生桥（录音笔 / 手机麦克风，可切换），UI 仍是本页这个录音按钮 ============
 // 录音卡片在 App 内照常显示；「开始/停止」驱动原生录音引擎。

@@ -592,6 +592,10 @@ public class ConsultantActivity extends Activity
         if (ph > 0) return ph;
         return penController != null ? penController.getRecordingElapsedSec() : 0;
     }
+    @Override public String bridgeAppVersionName() {
+        try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; }
+        catch (Exception e) { return ""; }
+    }
     @Override public String bridgeGetSources() {
         return (penController != null && penController.isPenAlive()) ? "phone,pen" : "phone";
     }
@@ -617,6 +621,9 @@ public class ConsultantActivity extends Activity
     }
     @Override public void bridgeRetryPenUploads() {   // ★A1:网页"重试"→ 立刻重推待补传队列
         ui.post(() -> { if (penController != null) penController.retryPenUploads(); });
+    }
+    @Override public void bridgeCancelPenUpload(String id) {   // 网页"取消上传"→ 从补传队列移除该段任务
+        ui.post(() -> { if (penController != null) penController.cancelUpload(id); });
     }
 
     /** 一键诊断上传：把 stream_ops/penlog.txt + last_result.txt + 设备信息发后端，远程排查。 */

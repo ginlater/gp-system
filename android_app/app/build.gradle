@@ -17,8 +17,8 @@ android {
         applicationId "com.aibeautyfulwomen.gongpai"
         minSdk 24
         targetSdk 34
-        versionCode 23
-        versionName "2.1.12"
+        versionCode 24
+        versionName "2.1.13"
 
         ndk {
             // ★同时打 32 位(v7a) + 64 位(arm64)，做通用包，纯 64 位机型(新荣耀/华为)才装得上。
