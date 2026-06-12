@@ -11853,6 +11853,26 @@ def api_consultant_session_start_analysis():
 
     sig = compute_session_signature(sess["id"])
 
+    # ★转写未完成时别开分析（修"录完急着点、转写没跟上→分析没内容→显示失败"）：
+    #   检查接诊包里录音的 ASR 状态，只要还有在转写/没转写的，就不锁定/不入队/不标失败，
+    #   返回 asr_pending 让前端显示"转写中，请稍候"；并兜底触发漏启动(awaiting_intake)的转写。
+    asr_wait = db_fetchall(
+        "SELECT id, asr_status FROM recordings WHERE session_id=? "
+        "AND asr_status IN ('pending','running','awaiting_intake')",
+        (sess["id"],),
+    )
+    if asr_wait:
+        for rec in asr_wait:
+            if rec["asr_status"] == "awaiting_intake":   # 漏触发的补一刀，别只干等
+                try:
+                    trigger_pipeline_for_recording(rec["id"])
+                except Exception:
+                    pass
+        return jsonify({
+            "ok": False, "asr_pending": True, "pending_count": len(asr_wait),
+            "msg": f"录音还在转写中（剩 {len(asr_wait)} 段），稍等片刻、转写完成后再点开始分析 🕐",
+        })
+
     # ② 已锁定 + signature 没变 + 已完成 → 不允许重跑
     if (sess_detail["locked"]
             and sess_detail["analysis_signature"] == sig
@@ -11989,6 +12009,7 @@ def api_consultant_analyze():
         return jsonify({"error": "时间段内没有该顾客的录音"}), 404
     triggered = []
     skipped = []
+    pending_asr = []
     for r in rows:
         sid = r["id"]
         sess_detail = db_fetchone(
@@ -11998,6 +12019,13 @@ def api_consultant_analyze():
         if not sess_detail:
             continue
         if sess_detail["analysis_status"] in ("running", "queued"):
+            continue
+        # ★转写未完成的 session 不分析(同 start_analysis)，加入 pending_asr 让前端提示稍候
+        _aw = db_fetchone(
+            "SELECT COUNT(*) AS c FROM recordings WHERE session_id=? "
+            "AND asr_status IN ('pending','running','awaiting_intake')", (sid,))
+        if _aw and _aw["c"] > 0:
+            pending_asr.append(sid)
             continue
         sig = compute_session_signature(sid)
         if (sess_detail["analysis_status"] == "done"
@@ -12009,7 +12037,7 @@ def api_consultant_analyze():
             triggered.append(sid)
         except Exception:
             pass
-    return jsonify({"ok": True, "session_ids": triggered, "skipped": skipped})
+    return jsonify({"ok": True, "session_ids": triggered, "skipped": skipped, "pending_asr": pending_asr})
 
 
 @app.route("/healthz")

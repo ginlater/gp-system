@@ -1953,6 +1953,12 @@ async function startAnalysisPkg() {
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
+    // ★转写未完成：不是失败，给"转写中"的温和提示(非红)，让顾问稍候再点，别误以为坏了反复点
+    if (d.asr_pending) {
+      document.getElementById('pkgMsg').textContent = d.msg || '录音还在转写中，稍等片刻、转写完成后再点开始分析 🕐';
+      document.getElementById('pkgMsg').className = 'msg';
+      return;
+    }
     document.getElementById('pkgMsg').textContent = '已开始分析（session #' + d.session_id + '），可去接诊列表查看进度。';
     document.getElementById('pkgMsg').className = 'msg';
     refreshPkg(); loadReception();
