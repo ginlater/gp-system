@@ -1412,6 +1412,12 @@ public class PenController {
         }
     }
 
+    /** 上传用最新 cookie：实例 this.cookie(连接/录音状态变化、重登时 setUploadContext 刷新)优先，
+     *  回退任务固化的旧 cookie。→ cookie 过期后用户重登，队列里旧任务的重试自动用新 cookie，不必重启 App。 */
+    private String cookieNow(UploadTask t) {
+        return (cookie != null && !cookie.isEmpty()) ? cookie : t.cookie;
+    }
+
     /** 直传本地拼好的 .ops(不占蓝牙、不解码、opus 端到端)。 */
     private void uploadLocalOps(final UploadTask task) {
         worker.submit(() -> {
@@ -1426,13 +1432,18 @@ public class PenController {
                 File ogg = new File(oggPath);
                 String name = stripExt(baseName(task.localOpsPath)) + ".ogg";
                 long t0 = SystemClock.elapsedRealtime();
-                Uploader.Result r = Uploader.upload(ogg, task.durSec, task.cookie, task.uploadUrl,
+                Uploader.Result r = Uploader.upload(ogg, task.durSec, cookieNow(task), task.uploadUrl,
                         name, "audio/ogg", task.sn, task.placeholderId, fmtWall(task.startWallMs), task.fileName);
                 long ms = SystemClock.elapsedRealtime() - t0;
                 writeProbeStatus("[直传ogg] " + name + " ogg=" + ogg.length() + "B 上传" + ms + "ms ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
                     try { ops.delete(); ogg.delete(); } catch (Exception ignore) {}   // 成功即删
                     workerTaskDone(task, r.recordingId);
+                } else if (r.needsReauth) {
+                    // ★登录失效：绝不丢音频(重登就能救)。删 ogg 临时产物，保留 ops 与占位，留队退避，等重登后用新 cookie 自动重传。
+                    try { ogg.delete(); } catch (Exception ignore) {}
+                    Log.w(TAG, "ogg上传需重登(留队等重登，不丢)：" + r.error);
+                    requeueTransient(task);
                 } else if (r.transientFail) {
                     try { ogg.delete(); } catch (Exception ignore) {}   // 删ogg临时产物，保留ops待重试
                     Log.w(TAG, "ogg上传临时失败(重试)：" + r.error);
@@ -1934,11 +1945,17 @@ public class PenController {
                     }
                 }
                 Uploader.Result r = Uploader.upload(new File(uploadPath), durSec,
-                        task.cookie, task.uploadUrl, name, mime, task.sn, task.placeholderId, fmtWall(task.startWallMs), task.fileName);
+                        cookieNow(task), task.uploadUrl, name, mime, task.sn, task.placeholderId, fmtWall(task.startWallMs), task.fileName);
                 writeProbeStatus("[补下载兜底ogg] file=" + name + " ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
                 if (r.ok) {
                     try { if (!uploadPath.equals(localPath)) new File(uploadPath).delete(); new File(localPath).delete(); } catch (Exception ignore) {}
                     workerTaskDone(task, r.recordingId);
+                } else if (r.needsReauth) {
+                    // ★登录失效：绝不丢音频。保留下载的原文件+占位，留队等重登后用新 cookie 自动重传。
+                    try { if (!uploadPath.equals(localPath)) new File(uploadPath).delete(); } catch (Exception ignore) {}  // 只删ogg临时产物
+                    task.localOpsPath = localPath;   // 重试走本地直传，不再重新下载
+                    Log.w(TAG, "兜底上传需重登(留队等重登，不丢)：" + r.error);
+                    requeueTransient(task);
                 } else if (r.transientFail) {
                     try { if (!uploadPath.equals(localPath)) new File(uploadPath).delete(); } catch (Exception ignore) {}  // 删ogg，留下载的原文件
                     task.localOpsPath = localPath;   // 重试走本地直传，不再重新下载

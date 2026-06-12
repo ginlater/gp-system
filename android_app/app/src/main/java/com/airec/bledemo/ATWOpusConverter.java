@@ -68,10 +68,42 @@ public class ATWOpusConverter {
 
     private static List<byte[]> extractFrames(String path, String format) throws IOException {
         byte[] raw = readFile(path);
-        int sep0 = format.equals("ATW") ? 0x5B : 0x4B;
-        int sep1 = format.equals("ATW") ? 0x50 : 0x41;
 
-        // 扫描所有分隔符位置
+        // ── KA(杰理)专用分帧：固定 80 字节块，每块 = 1 个 Opus 帧(config9 SILK-WB 20ms, TOC=0x48)。
+        //    短帧块(头 4B 41)：byte[2]=padlen，payload=block[3 : 3+(77-padlen)]，TOC 被剥离需补回 0x48 再封。
+        //    长帧块(头非 4B41)：整 80 字节即完整 opus 包(含TOC)，原样。
+        //    ★修：旧实现把 4B41 当"每帧分隔符"算众数 stride——但 4B41 只在【短帧块】出现，长帧块没有，
+        //      方向就是错的；且短帧块的补零(padding)没剥、TOC 没补 → 写进 ogg 的 opus 包损坏 = 后段乱码。
+        //      KA 本质是固定 80 字节块，这里与 OpusBridge.extractFrames(本地解码路径,参照厂家demo)对齐。
+        if ("KA".equals(format)) {
+            final int BLK = 80;
+            final byte KA_TOC = 0x48;
+            List<byte[]> kaFrames = new ArrayList<>();
+            int pos = 0;
+            while (pos + BLK <= raw.length) {
+                int b0 = raw[pos] & 0xFF, b1 = raw[pos + 1] & 0xFF;
+                byte[] frame;
+                if (b0 == 0x4B && b1 == 0x41) {            // 短帧块：剥 padding、补回 TOC
+                    int padlen = raw[pos + 2] & 0xFF;
+                    int plen = 77 - padlen;
+                    if (plen < 0) plen = 0;
+                    if (plen > 77) plen = 77;
+                    frame = new byte[1 + plen];
+                    frame[0] = KA_TOC;
+                    System.arraycopy(raw, pos + 3, frame, 1, plen);
+                } else {                                   // 长帧块：整 80 字节即完整 opus 包
+                    frame = new byte[BLK];
+                    System.arraycopy(raw, pos, frame, 0, BLK);
+                }
+                kaFrames.add(frame);
+                pos += BLK;
+            }
+            android.util.Log.d("AIREC_CONV", "KA extracted " + kaFrames.size() + " frames (80B blocks)");
+            return kaFrames;
+        }
+
+        // ── ATW：5B 50 是纯分隔符(每帧都有)，按众数 stride 提取(此法对 ATW 成立) ──
+        int sep0 = 0x5B, sep1 = 0x50;
         List<Integer> sepPositions = new ArrayList<>();
         for (int i = 0; i < raw.length - 1; i++) {
             if ((raw[i] & 0xFF) == sep0 && (raw[i + 1] & 0xFF) == sep1) {
@@ -82,8 +114,6 @@ public class ATWOpusConverter {
             android.util.Log.e("AIREC_CONV", "Too few separators: " + sepPositions.size());
             return new ArrayList<>();
         }
-
-        // 计算相邻分隔符间距的众数 → 真实帧步长
         java.util.Map<Integer, Integer> gapCount = new java.util.HashMap<>();
         for (int i = 1; i < sepPositions.size(); i++) {
             int gap = sepPositions.get(i) - sepPositions.get(i - 1);
@@ -94,34 +124,20 @@ public class ATWOpusConverter {
             if (e.getValue() > maxCount) { maxCount = e.getValue(); stride = e.getKey(); }
         }
         int frameDataSize = stride - 2;
-        android.util.Log.d("AIREC_CONV", "Frame stride=" + stride + " dataSize=" + frameDataSize
-                + " gaps=" + gapCount);
-
+        android.util.Log.d("AIREC_CONV", "ATW Frame stride=" + stride + " dataSize=" + frameDataSize);
         if (frameDataSize < 10 || frameDataSize > 500) {
             android.util.Log.e("AIREC_CONV", "Invalid frame size: " + frameDataSize);
             return new ArrayList<>();
         }
-
-        // 按固定步长提取帧
         List<byte[]> frames = new ArrayList<>();
         int pos = sepPositions.get(0);
         while (pos + stride <= raw.length) {
-            if (format.equals("ATW")) {
-                // ATW 格式：5B 50 是纯分隔符，帧数据从分隔符后开始（不含分隔符）
-                byte[] frame = new byte[frameDataSize];
-                System.arraycopy(raw, pos + 2, frame, 0, frameDataSize);
-                frames.add(frame);
-            } else {
-                // KA 格式：4B 41 是 opus TOC 字节，属于帧数据，保留
-                byte[] frame = new byte[Math.min(stride, raw.length - pos)];
-                System.arraycopy(raw, pos, frame, 0, frame.length);
-                frames.add(frame);
-            }
+            byte[] frame = new byte[frameDataSize];
+            System.arraycopy(raw, pos + 2, frame, 0, frameDataSize);   // 5B 50 是纯分隔符，帧数据在其后
+            frames.add(frame);
             pos += stride;
         }
-
-        android.util.Log.d("AIREC_CONV", "Extracted " + frames.size() + " frames (" + format
-                + "), raw=" + sepPositions.size() + " seps");
+        android.util.Log.d("AIREC_CONV", "ATW extracted " + frames.size() + " frames");
         return frames;
     }
 

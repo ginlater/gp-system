@@ -1629,7 +1629,9 @@ def run_asr(recording_id):
             if transcription["subtask_status"] != "SUCCEEDED":
                 raise RuntimeError(f"识别失败: {transcription}")
             detailed = json.loads(
-                urllib_request.urlopen(transcription["transcription_url"]).read().decode("utf8")
+                # ★加 timeout：无超时时下载转写结果若 hang，run_asr 线程永远挂在 try 里、
+                #   asr_status 永远停在 running、进不了 except 标 failed → 前端永久"处理中"。
+                urllib_request.urlopen(transcription["transcription_url"], timeout=60).read().decode("utf8")
             )
             full_json.append(detailed)
             for tr in detailed.get("transcripts", []):
@@ -12279,6 +12281,39 @@ def task_health_check_loop():
                         print(f"[task_health_check] session {s['id']} task 全 done，修正状态为 done")
                 except (json.JSONDecodeError, TypeError):
                     pass
+
+            # ── 新增：recording 级 ASR 卡死兜底（防 run_asr 线程挂死，如下载转写结果 hang）。
+            #    原来 task_health_check 只管 sessions，不碰 recordings.asr_status → 卡 running 唯一自愈是重启进程。 ──
+            asr_stale = db_fetchall("""
+                SELECT id FROM recordings
+                WHERE asr_status='running' AND asr_started_at IS NOT NULL
+                  AND (julianday('now','localtime') - julianday(asr_started_at)) * 1440 > 30
+            """)
+            for r in asr_stale:
+                db_write(
+                    """UPDATE recordings SET asr_status='failed',
+                       asr_error='转写卡在 running 超 30 分钟，自动标记失败（音频在，可重试）',
+                       asr_finished_at=datetime('now','localtime')
+                       WHERE id=? AND asr_status='running'""",
+                    (r["id"],),
+                )
+                print(f"[task_health_check] recording {r['id']} ASR 卡 running 超时，标 failed")
+
+            # ── 新增：processing 占位僵尸兜底（App 卸载/换机/永久离线 → 占位永远"上传中"，服务器原本无 TTL）。
+            #    阈值 3h > App 端 2h 自愈窗口，只兜底 App 再也起不来的情况，不与还活着的 App 抢。
+            #    音频仍在录音笔机身上，顾问可日后「取回小伙伴」重新导入。 ──
+            ph_stale = db_fetchall("""
+                SELECT id FROM recordings
+                WHERE upload_status='processing' AND source='consultant-pen-placeholder'
+                  AND (julianday('now','localtime') - julianday(created_at)) * 24 > 3
+            """)
+            for r in ph_stale:
+                db_write(
+                    "DELETE FROM recordings WHERE id=? AND upload_status='processing' "
+                    "AND source='consultant-pen-placeholder'",
+                    (r["id"],),
+                )
+                print(f"[task_health_check] processing 占位 {r['id']} 超 3h 未回填，删除（音频在笔上可重新取回）")
 
         except Exception as e:
             print(f"[task_health_check] {e}")

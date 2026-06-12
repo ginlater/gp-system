@@ -29,9 +29,12 @@ public final class Uploader {
         public final long recordingId;   // 成功时为后端返回的录音 id，否则 -1
         public final String error;
         public final boolean transientFail;  // true=临时故障(网络/5xx)可重试；false=成功或永久失败(4xx/拒绝)
-        Result(boolean ok, long recordingId, String error) { this(ok, recordingId, error, false); }
-        Result(boolean ok, long recordingId, String error, boolean transientFail) {
-            this.ok = ok; this.recordingId = recordingId; this.error = error; this.transientFail = transientFail;
+        public final boolean needsReauth;    // ★true=登录失效(401/403)→留队等重登，绝不丢音频(重登就能救)
+        Result(boolean ok, long recordingId, String error) { this(ok, recordingId, error, false, false); }
+        Result(boolean ok, long recordingId, String error, boolean transientFail) { this(ok, recordingId, error, transientFail, false); }
+        Result(boolean ok, long recordingId, String error, boolean transientFail, boolean needsReauth) {
+            this.ok = ok; this.recordingId = recordingId; this.error = error;
+            this.transientFail = transientFail; this.needsReauth = needsReauth;
         }
     }
 
@@ -175,7 +178,9 @@ public final class Uploader {
                 }
             }
             if (code == 401 || code == 403) {
-                return new Result(false, -1, "登录已失效，请在 App 里重新登录");  // 永久(重试也没用，需重登)
+                // ★needsReauth：不当永久失败丢弃！只是 cookie 过期，留队、等用户重登后用新 cookie 自动重传。
+                //   原来当永久失败 drop → 删任务+删占位(本地直传还删 .ops)，顾问重登本可救的录音被丢了。
+                return new Result(false, -1, "登录已失效，请在 App 里重新登录", false, true);
             }
             // 5xx=服务器临时故障→可重试；4xx=请求被拒(永久)
             return new Result(false, -1, "服务器返回 " + code, code >= 500);
