@@ -675,9 +675,17 @@ window.__onNativeUploaded = function(id){
   } catch(e) { console.warn(e); }
 };
 
-// 后台异步上传完成一段：只刷新未归档列表，不自动弹绑定（避免打断正在录的下一段；稍后从列表里绑）。
+// 后台异步上传完成一段：刷新未归档列表；若此刻没在录下一段、绑定弹窗也没开着，
+// 自动弹绑定弹窗（和手机录音一致，不然顾问永远不知道要去「待整理」绑顾客）。
+// 正在录/正在传/正在绑则不打断——稍后从列表里绑。
 window.__onPenUploaded = function(id){
-  try { if (typeof loadPending === 'function') loadPending(); } catch(e) { console.warn(e); }
+  try {
+    if (typeof loadPending === 'function') loadPending();
+    var mask = document.getElementById('bindMask');
+    if (id && id > 0 && !window.__appRecording && !window.uploading
+        && !(mask && mask.classList.contains('show'))
+        && typeof openBind === 'function') openBind(id);
+  } catch(e) { console.warn(e); }
 };
 
 // 后台异步上传指示：显示"💾 N 段保存中…"+"⚠️ M 段没保存成功"，不阻塞当前录音。都为 0 时隐藏。

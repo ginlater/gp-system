@@ -9294,16 +9294,23 @@ def api_consultant_upload():
                 return jsonify({"error": _friendly_oss_error(e)}), 500
             # 占位行建占位时已带真实 recorded_at；仅当本次上传也带了 recorded_at 才覆盖，
             # 否则别用上传时刻 now 覆盖掉占位的真实开始时间。
+            # ★asr_status 同步置 awaiting_intake：和手机录音(ingest orphan=True)一致——
+            #   未绑定顾客前不跑 ASR(省钱)，且「待整理」里状态统一；绑定时会翻回 pending 起流水线。
+            #   只动还没跑过 ASR 的(pending)，别覆盖已在跑/已完成的。
             if recorded_at_form:
                 db_write(
                     """UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
-                       recorded_at=?, source='consultant-pen', upload_status='done' WHERE id=?""",
+                       recorded_at=?, source='consultant-pen', upload_status='done',
+                       asr_status=CASE WHEN asr_status='pending' THEN 'awaiting_intake' ELSE asr_status END
+                       WHERE id=?""",
                     (oss_key, len(data), dur_label, recorded_at_form, prow["id"]),
                 )
             else:
                 db_write(
                     """UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
-                       source='consultant-pen', upload_status='done' WHERE id=?""",
+                       source='consultant-pen', upload_status='done',
+                       asr_status=CASE WHEN asr_status='pending' THEN 'awaiting_intake' ELSE asr_status END
+                       WHERE id=?""",
                     (oss_key, len(data), dur_label, prow["id"]),
                 )
             if truncate_note:
