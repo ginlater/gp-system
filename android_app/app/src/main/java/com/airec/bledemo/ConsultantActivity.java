@@ -119,6 +119,10 @@ public class ConsultantActivity extends Activity
         } else {
             webView.restoreState(savedInstanceState);
         }
+
+        // ★电池白名单：所有顾问启动后都检查一次(原来只有手机麦录音才弹→用笔的人永远看不到)。
+        //   不在白名单 → 弹系统"允许后台运行"框；已在白名单/点过 → 静默跳过。延迟几秒避开启动时的权限弹框扎堆。
+        ui.postDelayed(this::maybeAskBatteryExemption, 8000);
     }
 
     // ============ WebView ============

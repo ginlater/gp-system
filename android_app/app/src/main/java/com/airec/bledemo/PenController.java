@@ -640,6 +640,7 @@ public class PenController {
             main.removeCallbacks(handshakeTimeout);
             Log.d(TAG, "收到笔真实回包 → 确认真连上");
             penLog("★verified=true 收到真回包→确认已连接");
+            connKeepAlive(true);   // ★笔真连上 → 挂连接级前台服务，App 在后台/锁屏也不被杀(蓝牙不断)
             if (listener != null) main.post(() -> listener.onPenConnected(true));
             startHeartbeat();
             verifyPenAllowed();   // ★真连上(SN此刻可读) → 校验这台笔归属，不是本人绑定的就断开+拦截录音
@@ -700,6 +701,7 @@ public class PenController {
                     Log.w(TAG, "笔失联 → 断开，连接指示如实改未连接");
                     penLog("★心跳连续2次未回→判失联、主动断开");
                     verifiedConnected = false;
+                    connKeepAlive(false);   // ★笔失联 → 去抖90s后撤连接级保活(其间重连成功会取消)
                     try { AIRECBleManager.getInstance().disconnect(); } catch (Exception ignored) {}
                     if (listener != null) main.post(() -> listener.onPenConnected(false));
                     // ★关键修复：失联时主动复位录音会话 + 更新 UI，绝不干等 onDisconnected 回调。
@@ -1273,35 +1275,59 @@ public class PenController {
 
     /** 录音段开始：起前台保活，托住进程整段不被挂起。幂等。 */
     private void enterRecordingKeepAlive() {
-        main.removeCallbacks(keepAliveStopRun);   // ★去抖：刚排了延迟停止又要录 → 撤掉，别让前台服务被刷成秒级起停
+        main.removeCallbacks(keepAliveStopRun);   // ★去抖：刚排了延迟停止又要录 → 撤掉，别让唤醒锁被刷成秒级起停
         if (keepAliveOn) return;
         keepAliveOn = true;
-        PenKeepAliveService.start(appCtx);
-        penLog("保活↑(录音笔录音中)");
+        PenKeepAliveService.recOn(appCtx);   // 录音级：FGS + 唤醒锁
+        penLog("保活↑(录音中, FGS+唤醒锁)");
     }
 
-    /** 录音段结束/放弃：不立刻停，linger 去抖后再停——治声控/暂停把录音状态秒级 toggle 导致前台服务起停churn、
-     *  进程被华为等机型杀掉的问题。linger 期间又要录、或还有待补传任务(下载也需进程活着) → 继续托住。幂等。 */
+    /** 录音段结束/放弃：不立刻撤，linger 去抖后再撤"录音级"持有——治声控/暂停把录音状态秒级 toggle 导致churn。
+     *  linger 期间又要录、或还有待补传任务(下载也需唤醒锁) → 继续持有。幂等。
+     *  ★注意：撤的只是录音级(放唤醒锁)；只要笔还连着，连接级 FGS 仍托住进程，后台依旧不被杀。 */
     private void exitRecordingKeepAlive() {
         if (!keepAliveOn) return;
         main.removeCallbacks(keepAliveStopRun);
         main.postDelayed(keepAliveStopRun, KEEPALIVE_LINGER_MS);
     }
 
-    private static final long KEEPALIVE_LINGER_MS = 12000;   // ★保活去抖窗口：停止前先等这么久，期间重新开录则不真停
+    private static final long KEEPALIVE_LINGER_MS = 12000;   // ★录音级去抖窗口：停前先等这么久，期间重新开录则不真停
     private final Runnable keepAliveStopRun = new Runnable() {
         @Override public void run() {
             if (!keepAliveOn) return;
-            // ★还在录 / 还有待补传任务 → 继续保活(下载补传也要进程活着)，过会儿再判；都没了才真停
+            // ★还在录 / 还有待补传任务 → 继续持唤醒锁，过会儿再判；都没了才放锁(FGS 由连接级决定去留)
             if (penRecording || sessionActive || !uploadQueue.isEmpty()) {
                 main.postDelayed(keepAliveStopRun, KEEPALIVE_LINGER_MS);
                 return;
             }
             keepAliveOn = false;
-            PenKeepAliveService.stop(appCtx);
-            penLog("保活↓");
+            PenKeepAliveService.recOff(appCtx);   // 放唤醒锁；若仍连着 FGS 继续(连接级)
+            penLog("保活↓(录音结束放唤醒锁, 连接级FGS仍保持)");
         }
     };
+
+    // ====== 连接级保活：只要笔连着就挂前台服务(后台不被杀)，断开 90s 还没回来才撤(扛短暂抖动/重连，不翻转) ======
+    private static final long CONN_KEEPALIVE_LINGER_MS = 90000;
+    private volatile boolean connKeepAliveOn = false;
+    private final Runnable connKeepAliveStopRun = new Runnable() {
+        @Override public void run() {
+            connKeepAliveOn = false;
+            PenKeepAliveService.connOff(appCtx);   // 撤连接级；FGS 若无录音级持有则停
+            penLog("保活·连接级↓(笔断开超" + (CONN_KEEPALIVE_LINGER_MS / 1000) + "s)");
+        }
+    };
+    /** 笔真连上 → 挂连接级 FGS(进程后台不被杀)；笔断开 → 去抖 90s 再撤(短暂抖动/重连期间不撤)。 */
+    private void connKeepAlive(boolean connected) {
+        if (connected) {
+            main.removeCallbacks(connKeepAliveStopRun);
+            if (!connKeepAliveOn) { connKeepAliveOn = true; penLog("保活·连接级↑(笔已连, FGS托住后台)"); }
+            PenKeepAliveService.connOn(appCtx);
+        } else {
+            if (!connKeepAliveOn) return;
+            main.removeCallbacks(connKeepAliveStopRun);
+            main.postDelayed(connKeepAliveStopRun, CONN_KEEPALIVE_LINGER_MS);
+        }
+    }
 
     /** 调试期：连接/录音/重连 状态机事件写文件(vivo 封了 logcat，靠它看)。append。 */
     private void penLog(String ev) {
@@ -1626,6 +1652,7 @@ public class PenController {
             penLog("onDisconnected reason=" + reason);
             // 复位真连接/心跳状态
             verifiedConnected = false; lastRxMs = 0;
+            connKeepAlive(false);   // ★断开 → 去抖90s后撤连接级保活(其间自动重连成功会取消)
             stopHeartbeat();
             main.removeCallbacks(handshakeTimeout);
             if (listener != null) main.post(() -> listener.onPenConnected(false));
