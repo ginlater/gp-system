@@ -836,6 +836,39 @@ if (IN_APP) {
 
 // ============ 从录音笔同步（手动 + 预览勾选）============
 function _psEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ★损坏段一键「重新上传」：直接从小伙伴机身重下这段的完整版（笔上原件一直在），
+//   后端会用完整版替换掉这条损坏记录、清除损坏标记。免去"申请删除→审批→再同步"三步。
+function reuploadDamaged(penFile, btn){
+  if (!penFile) { alert('缺少文件信息，请用上方「取回小伙伴」手动选这段重传'); return; }
+  if (!(window.AndroidBridge && window.AndroidBridge.uploadPenFiles)) { alert('请在 App 内操作'); return; }
+  if (typeof appPenConnected === 'function' && !appPenConnected()) { alert('请先连接小伙伴再重新上传'); return; }
+  if (btn){ btn.disabled = true; btn.textContent = '重新上传中…'; }
+  try {
+    window.AndroidBridge.uploadPenFiles(JSON.stringify([penFile]));
+    // 入队后台下载补传；完成时 __onPenUploaded 会刷新本列表，损坏标记随之消失。
+  } catch(e){
+    if (btn){ btn.disabled = false; btn.textContent = '重新上传'; }
+    alert('重新上传失败：' + e);
+  }
+}
+
+// ★「上传中」的占位段取消：删占位记录（录音仍在小伙伴里，可稍后取回），修「上传中不能取消」。
+async function cancelUploading(rid, btn){
+  if (!confirm('取消这段的上传？\n（录音仍在小伙伴机身里没丢，稍后可用「取回小伙伴」重新导入）')) return;
+  if (btn){ btn.disabled = true; btn.textContent = '取消中…'; }
+  try {
+    // 先让 App 停止该段的后台补传任务（有此桥才调；没有也不影响——占位删了 App 重试找不到会自然放弃）
+    try { if (window.AndroidBridge && window.AndroidBridge.cancelPenUpload) window.AndroidBridge.cancelPenUpload(''+rid); } catch(e){}
+    const r = await fetch(BASE + '/api/consultant/placeholder/cancel', {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body: 'placeholder_id=' + encodeURIComponent(rid)
+    });
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok || d.error) { alert(d.error || '取消失败'); if(btn){btn.disabled=false;btn.textContent='取消';} return; }
+    if (typeof loadPending === 'function') loadPending();
+  } catch(e){ alert('取消失败：'+e); if(btn){btn.disabled=false;btn.textContent='取消';} }
+}
 function _penSyncShow(innerHtml){
   var m = document.getElementById('penSyncMask');
   if (!m){
@@ -851,7 +884,7 @@ function _penSyncClose(){ var m = document.getElementById('penSyncMask'); if (m)
 function penSyncOpen(){
   if (!(window.AndroidBridge && window.AndroidBridge.syncPenFiles)) { alert('请在 App 内使用'); return; }
   if (typeof appPenConnected === 'function' && !appPenConnected()) { alert('请先连接录音笔'); return; }
-  _penSyncShow('<div style="padding:30px;text-align:center;color:#666">正在读取录音笔文件…</div>');
+  _penSyncShow('<div style="padding:30px;text-align:center;color:#666">正在读取小伙伴里的录音…<br><span style="font-size:12px;color:#999">小伙伴里文件多时要十几秒，请稍候</span></div>');
   try { window.AndroidBridge.syncPenFiles(); } catch(e){ _penSyncShow('<div style="padding:24px;text-align:center;color:#c0392b">读取失败：'+_psEsc(''+e)+'</div>'); }
 }
 window.__onPenFiles = function(files){
@@ -869,27 +902,54 @@ window.__onPenFiles = function(files){
 var _penSyncNew = [];      // 过滤后只剩"未传"，按时间倒序
 var _penSyncSel = {};      // 跨页保持的勾选集合 name->true（翻页不丢选）
 var _penSyncPage = 0;
+var _penSyncDateFilter = '';   // 日期筛选 YYYY-MM-DD，空=全部
+var _penSyncFiltered = null;   // 当前日期筛选后的列表（供"本页全选"）
 var PEN_SYNC_PAGE_SIZE = 20;
 function _penSyncRender(files, stat){
   var all = files.slice().sort(function(a,b){ return (''+(b.ra||'')).localeCompare(''+(a.ra||'')); });
   _penSyncNew = all.filter(function(f){ return (stat[f.name]||'new') === 'new'; });  // 已传uploaded / 已删deleted 都不要
   _penSyncSel = {};
   _penSyncPage = 0;
+  // 默认聚焦"未传里最近的那天"——多数补传都是当天没传上来的那几段，省得在一长串里翻
+  _penSyncDateFilter = _penSyncNew.length ? (''+(_penSyncNew[0].ra||'')).slice(0,10) : '';
   _penSyncDrawPage();
 }
+// 蓝牙读取无法按日期加速（笔只能整包吐全部列表）；这里是读完后在网页侧筛，纯为好找。
+function _penSyncDates(){
+  var seen = {}, out = [];
+  _penSyncNew.forEach(function(f){ var d = (''+(f.ra||'')).slice(0,10); if (d && !seen[d]){ seen[d]=1; out.push(d); } });
+  return out;  // 已按时间倒序（_penSyncNew 本身倒序）
+}
+function _penSyncSetDate(d){ _penSyncDateFilter = d; _penSyncPage = 0; _penSyncDrawPage(); }
 function _penSyncDrawPage(){
-  var total = _penSyncNew.length;
-  if (total === 0){
+  if (_penSyncNew.length === 0){
     _penSyncShow('<div style="font-weight:600;margin-bottom:6px">从录音笔同步</div>'
       + '<div style="padding:18px;text-align:center;color:#666">没有需要同步的录音 ✅<br><span style="font-size:12px;color:#999">（已上传、已删除的不显示）</span></div>'
       + '<div style="text-align:right;margin-top:8px"><button class="btn sec" onclick="_penSyncClose()">关闭</button></div>');
     return;
   }
+  // 日期筛选条（全部 + 各天）；筛后为空则回退到全部
+  var dates = _penSyncDates();
+  if (_penSyncDateFilter && dates.indexOf(_penSyncDateFilter) < 0) _penSyncDateFilter = '';
+  var filtered = _penSyncDateFilter
+    ? _penSyncNew.filter(function(f){ return (''+(f.ra||'')).slice(0,10) === _penSyncDateFilter; })
+    : _penSyncNew;
+  var chip = function(label, val){
+    var on = (_penSyncDateFilter === val);
+    return '<a href="javascript:void(0)" onclick="_penSyncSetDate(\''+val+'\')" '
+      + 'style="display:inline-block;font-size:12px;padding:3px 10px;margin:0 6px 6px 0;border-radius:14px;'
+      + (on?'background:var(--blue,#3a7afe);color:#fff':'background:#eef;color:#446')+'">'+label+'</a>';
+  };
+  var dateBar = '<div style="margin-bottom:6px">' + chip('全部('+_penSyncNew.length+')','')
+    + dates.map(function(d){ var n=_penSyncNew.filter(function(f){return (''+(f.ra||'')).slice(0,10)===d;}).length;
+        return chip(d.slice(5)+'('+n+')', d); }).join('') + '</div>';
+  var total = filtered.length;
   var pages = Math.ceil(total / PEN_SYNC_PAGE_SIZE);
   if (_penSyncPage >= pages) _penSyncPage = pages - 1;
   if (_penSyncPage < 0) _penSyncPage = 0;
+  _penSyncFiltered = filtered;   // 供"本页全选"按当前筛选结果选
   var start = _penSyncPage * PEN_SYNC_PAGE_SIZE;
-  var pageFiles = _penSyncNew.slice(start, start + PEN_SYNC_PAGE_SIZE);
+  var pageFiles = filtered.slice(start, start + PEN_SYNC_PAGE_SIZE);
   var rows = pageFiles.map(function(f){
     var sizeKb = Math.round((f.size||0)/1024);
     var ck = _penSyncSel[f.name] ? ' checked' : '';
@@ -904,7 +964,8 @@ function _penSyncDrawPage(){
     + '<button class="btn sec" style="padding:3px 10px" '+(_penSyncPage>=pages-1?'disabled':'')+' onclick="_penSyncGo(1)">下一页 ›</button></div>';
   var selN = Object.keys(_penSyncSel).length;
   var html = '<div style="font-weight:600;margin-bottom:6px">从录音笔同步</div>'
-    + '<div style="font-size:12px;color:#888;margin-bottom:8px">只显示<b>未传</b>的（已传/已删不显示）。默认不勾，自己选要传的；补传后时长自动校正。</div>'
+    + '<div style="font-size:12px;color:#888;margin-bottom:8px">只显示<b>未传</b>的（已传/已删不显示）。按日期挑会更好找；补传后时长自动校正。</div>'
+    + dateBar
     + '<div style="margin-bottom:6px">'
     +   '<a href="javascript:void(0)" onclick="_penSyncSelPage(true)" style="font-size:12px;color:var(--blue)">本页全选</a>'
     +   '<a href="javascript:void(0)" onclick="_penSyncSelPage(false)" style="font-size:12px;color:#888;margin-left:14px">本页全不选</a>'
@@ -920,8 +981,9 @@ function _penSyncDrawPage(){
 function _penSyncGo(d){ _penSyncPage += d; _penSyncDrawPage(); }
 function _penSyncToggle(cb){ if (cb.checked) _penSyncSel[cb.value]=true; else delete _penSyncSel[cb.value]; _penSyncCount(); }
 function _penSyncSelPage(on){
+  var src = _penSyncFiltered || _penSyncNew;
   var start = _penSyncPage * PEN_SYNC_PAGE_SIZE;
-  _penSyncNew.slice(start, start + PEN_SYNC_PAGE_SIZE).forEach(function(f){ if(on) _penSyncSel[f.name]=true; else delete _penSyncSel[f.name]; });
+  src.slice(start, start + PEN_SYNC_PAGE_SIZE).forEach(function(f){ if(on) _penSyncSel[f.name]=true; else delete _penSyncSel[f.name]; });
   _penSyncDrawPage();
 }
 function _penSyncClearAll(){ _penSyncSel = {}; _penSyncDrawPage(); }
@@ -1154,7 +1216,12 @@ function renderPending() {
         <td data-lbl="时间段" style="white-space:nowrap;color:#999">${x.start_hm || '—'}</td>
         <td data-lbl="时长" style="white-space:nowrap;color:#f39c12;font-weight:600">⏳ 上传中…</td>
         <td data-lbl="试听"><span class="muted">传完可试听</span></td>
-        <td class="pending-acts"><span class="muted" style="font-size:12px">处理中，请稍候</span>${penRetryBtn()}</td>
+        <td class="pending-acts">
+          <div style="display:flex;flex-direction:column;gap:4px;align-items:stretch">
+            <span class="muted" style="font-size:12px">处理中，请稍候</span>${penRetryBtn()}
+            <a href="javascript:void(0)" onclick="cancelUploading(${x.id}, this)" style="font-size:12px;color:#e74c3c">取消上传</a>
+          </div>
+        </td>
       </tr>`;
     }
     const audio = x.audio_url
@@ -1185,11 +1252,13 @@ function renderPending() {
         <button class="btn sec" style="padding:2px 8px;font-size:11px" onclick="dismissDelReject(${x.id})">知道了</button>
       </div>`;
     }
-    // 断流时长告警仍下线(暂停/继续会让墙钟>实测而误报)；但「内容损坏」(后段乱码噪声)是真问题，要显示。
-    // 蓝牙补下载/实时流丢字节→录音笔块错位→后段全是乱码噪声，顾问以为录好了实则没录到，提示需从笔重新导出。
+    // 「内容损坏」(后段乱码噪声)：蓝牙补下载/实时流丢字节→块错位→后段乱码。原始完整音频还在小伙伴机身里。
+    // ★从用户视角：不甩"USB导出"那种吓人长文案，给一句话 + 一键「重新上传」(App 内、笔已连时直接从笔重下完整版)。
     if (x.truncate_note) {
-      banner += `<div style="grid-column:1/-1;background:#fdecea;color:#c0392b;padding:4px 8px;border-radius:4px;font-size:12px;margin-bottom:4px">
-        ${String(x.truncate_note).replace(/&/g,'&amp;').replace(/</g,'&lt;')}
+      const canReup = x.pen_file && window.AndroidBridge && window.AndroidBridge.uploadPenFiles;
+      banner += `<div style="grid-column:1/-1;background:#fdecea;color:#c0392b;padding:6px 8px;border-radius:4px;font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span>⚠️ 这段上传时出了点问题，需要重新上传一次</span>
+        ${canReup ? `<button class="btn" style="padding:3px 12px;font-size:12px;white-space:nowrap;background:#c0392b;border-color:#c0392b" onclick="reuploadDamaged('${_psEsc(x.pen_file)}', this)">重新上传</button>` : ''}
       </div>`;
     }
     // 操作按钮

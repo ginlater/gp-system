@@ -9268,14 +9268,45 @@ def api_consultant_upload():
     dup = None
     if pen_file:
         dup = db_fetchone(
-            "SELECT id FROM recordings WHERE uploader_user_id=? AND pen_file=? "
+            "SELECT id, truncate_note, oss_key, session_id FROM recordings "
+            "WHERE uploader_user_id=? AND pen_file=? "
             "AND upload_status!='processing' LIMIT 1", (u["id"], pen_file))
     if not dup and recorded_at_form:
         dup = db_fetchone(
-            "SELECT id FROM recordings WHERE uploader_user_id=? AND recorded_at=? "
+            "SELECT id, truncate_note, oss_key, session_id FROM recordings "
+            "WHERE uploader_user_id=? AND recorded_at=? "
             "AND source LIKE 'consultant-pen%' AND upload_status!='processing' LIMIT 1",
             (u["id"], recorded_at_form))
     if dup:
+        # ★命中的旧记录是「后段乱码/损坏」段、且还没绑定顾客 → 本次多半是从笔重新下载的【完整版】。
+        #   不再当重复跳过(那样完整版会被白白丢弃)，而是用完整版替换旧损坏版、清掉损坏标记。
+        #   已绑定(session_id 非空)的不动，避免破坏既有归属/命名，走原去重跳过。
+        if dup["truncate_note"] and not dup["session_id"] and data:
+            try:
+                oss_bucket.put_object(oss_key, data)
+            except Exception as e:
+                app.logger.exception("顾问端上传 OSS 失败(替换损坏段)")
+                return jsonify({"error": _friendly_oss_error(e)}), 500
+            db_write(
+                """UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
+                   source='consultant-pen', upload_status='done', truncate_note=NULL,
+                   recorded_at=COALESCE(?, recorded_at),
+                   asr_status='awaiting_intake'
+                   WHERE id=?""",
+                (oss_key, len(data), dur_label, recorded_at_form, dup["id"]),
+            )
+            if dup["oss_key"] and dup["oss_key"] != oss_key:
+                _oss_delete_quiet(dup["oss_key"])
+            if pen_file:
+                db_write("UPDATE recordings SET pen_file=? WHERE id=?", (pen_file, dup["id"]))
+            if device_sn:
+                db_write("UPDATE recordings SET device_sn=? WHERE id=?", (device_sn, dup["id"]))
+            if placeholder_id:
+                db_write("DELETE FROM recordings WHERE id=? AND upload_status='processing' AND uploader_user_id=?",
+                         (placeholder_id, u["id"]))
+            _kick_clean_audio_async(dup["id"])
+            app.logger.info("[upload] 替换损坏段 rec %s pen_file=%s ra=%s", dup["id"], pen_file, recorded_at_form)
+            return jsonify({"id": dup["id"], "replaced": True})
         if placeholder_id:
             db_write("DELETE FROM recordings WHERE id=? AND upload_status='processing' AND uploader_user_id=?",
                      (placeholder_id, u["id"]))
@@ -9545,7 +9576,7 @@ def api_consultant_recordings_pending():
     rows = db_fetchall(
         """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
                   asr_status, asr_error, customer, created_at,
-                  asr_speaker_count, asr_speaker_warning, upload_status, truncate_note
+                  asr_speaker_count, asr_speaker_warning, upload_status, truncate_note, pen_file
            FROM recordings
            WHERE uploader_user_id=? AND session_id IS NULL
            ORDER BY id DESC LIMIT 200""",
@@ -9555,7 +9586,7 @@ def api_consultant_recordings_pending():
     rows2 = db_fetchall(
         """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
                   asr_status, asr_error, customer, created_at,
-                  asr_speaker_count, asr_speaker_warning, upload_status, truncate_note
+                  asr_speaker_count, asr_speaker_warning, upload_status, truncate_note, pen_file
            FROM recordings
            WHERE advisor=? AND uploader_user_id IS NULL AND session_id IS NULL
            ORDER BY id DESC LIMIT 200""",
