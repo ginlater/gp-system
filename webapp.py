@@ -5024,8 +5024,9 @@ def logout():
 
 # ============ App 下载（公开页面，无需登录）============
 APK_PATH = Path(__file__).parent / "app-release.apk"
-APK_DOWNLOAD_NAME = "刁姐陪伴.apk"       # 现代浏览器显示的中文名（filename*）
-APK_FALLBACK_NAME = "app-release.apk"   # 不支持 filename* 的老浏览器回退名（纯 ASCII）
+# ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
+#   每个版本同名("刁姐陪伴.apk")时，上次强更留在手机下载目录里的旧包会顶包——浏览器弹"该文件已下载"
+#   或存成"(1)"副本，顾问点开装的还是旧版 → 版本仍 < MIN → 又弹强更，"点了立即更新还要更新"死循环。
 
 # ============ App 版本 / 强制更新 ============
 # ★发版时：和 android_app/app/build.gradle 的 versionCode/versionName 一起改这里。
@@ -5061,6 +5062,7 @@ def download_page():
         size_mb=size_mb,
         updated=updated,
         available=APK_PATH.exists(),
+        apk_version=APP_LATEST_VERSION_CODE,   # 链接带版本参数，防下载管理器按 URL 去重给旧文件
     )
 
 
@@ -5077,9 +5079,12 @@ def download_apk():
     resp.headers["Cache-Control"] = "no-cache"
     # 手动拼 Content-Disposition：filename 给非空 ASCII 回退名，filename* 给中文名。
     # 不用 send_file 的 download_name —— 它会从中文名剥出 ASCII 回退，结果只剩 ".apk"。
+    # ★文件名带版本号：防上次强更留下的同名旧包顶包（详见上方 APK 命名注释），发版自动跟随版本常量。
+    fallback_name = f"app-release-v{APP_LATEST_VERSION_CODE}.apk"
+    download_name = f"刁姐陪伴-{APP_LATEST_VERSION_NAME}.apk"
     resp.headers["Content-Disposition"] = (
-        f"attachment; filename={APK_FALLBACK_NAME}; "
-        f"filename*=UTF-8''{quote(APK_DOWNLOAD_NAME)}"
+        f"attachment; filename={fallback_name}; "
+        f"filename*=UTF-8''{quote(download_name)}"
     )
     return resp
 
@@ -5092,7 +5097,8 @@ def app_version():
         "latestVersionCode": APP_LATEST_VERSION_CODE,
         "latestVersionName": APP_LATEST_VERSION_NAME,
         "minVersionCode": APP_MIN_VERSION_CODE,
-        "apkUrl": "/download/app.apk",
+        # ★URL 带版本参数：部分浏览器/下载管理器按 URL 去重("该文件已下载"直接给旧文件)，变 URL 强制真下载
+        "apkUrl": f"/download/app.apk?v={APP_LATEST_VERSION_CODE}",
         "pageUrl": "/download",
         "updateNote": APP_UPDATE_NOTE,
     })

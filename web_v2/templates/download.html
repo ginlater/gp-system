@@ -29,7 +29,7 @@ h1{font-size:20px;color:#1c3461;margin-bottom:4px}
     安卓 App 安装包{% if size_mb %} · {{ size_mb }} MB{% endif %}{% if updated %} · 更新于 {{ updated }}{% endif %}
   </div>
   {% if available %}
-    <a class="btn" href="{{ url_for('download_apk') }}">下载安装包（.apk）</a>
+    <a class="btn" href="{{ url_for('download_apk', v=apk_version) }}">下载安装包（.apk）</a>
   {% else %}
     <span class="btn disabled">安装包暂不可用</span>
   {% endif %}
