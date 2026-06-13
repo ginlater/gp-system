@@ -66,6 +66,8 @@ public class PenController {
         void onPenFileList(String filesJson);
         /** #4 连上空闲检测到笔上有 N 段"未传"录音(已传/已删不算) → 提示顾问去「取回小伙伴」手动导入。0=隐藏提示。 */
         void onPenUnsynced(int count);
+        /** 录满90分钟自动结束这一段 → 提示顾问"已自动保存,要继续请点开始陪伴"。 */
+        void onPenAutoStopped();
         /** 检测到笔"开机自动录制"开着并已自动关闭 → 弹框提示顾问把笔关机重开(让设置生效、停掉本次开机自录)。 */
         void onPenPowerOnRecordDisabled();
         /** 之前提示过重启、本次连接读到"开机自动录制=关" → 用户已把笔关机重开生效 → 给个正反馈、消除焦虑。 */
@@ -127,6 +129,9 @@ public class PenController {
     private volatile boolean appStartPending = false; // App 发了开始命令、还在等笔确认（用于休眠检测 + "启动中"显示）
     private volatile String  sessionFileName = null;  // 当前这段笔在录的文件名
     private volatile long    sessionStartWallMs = 0;  // 当前这段开始的墙上时间
+    // ★录满90分钟强制结束(App控制,不碰笔固件):到点笔+App都停、这段正常保存上传;顾问要继续手动点开始(不自动续,免与声控打架)
+    private static final int MAX_REC_SEC = 90 * 60;
+    private volatile boolean autoStoppedAt90 = false;   // 本段是否已触发90分钟自动结束(防重复)
     private long startElapsedMs = 0;                  // 当前这段计时起点（elapsedRealtime）
     // ★实时流捕获：录音时把蓝牙实时流(80字节KA块)拼成完整 .ops，结束时整包直传(opus端到端，不下载不解码)
     private volatile java.io.ByteArrayOutputStream sessionStreamBuf = null;
@@ -697,6 +702,8 @@ public class PenController {
         @Override public void run() {
             try { if (!AIRECBleManager.getInstance().isConnected()) { stopHeartbeat(); return; } }
             catch (Exception e) { stopHeartbeat(); return; }
+            // ★兜底:笔万一不上报时长,心跳里也查一次已录秒数,到90分钟强制结束
+            if (isRecording() && getRecordingElapsedSec() >= MAX_REC_SEC) maybeAutoStopAt90(getRecordingElapsedSec());
             long now = SystemClock.elapsedRealtime();
             boolean busy = penRecording || sessionActive || workerBusy || waitingForFile;
             // 录音/下载中有业务帧在流动就当心跳，不主动发命令抢通道(0xFD)
@@ -1081,6 +1088,20 @@ public class PenController {
     }
 
     /** App 点「结束陪伴」：发停止命令。笔停 → onRecordStateChanged(false) → 入队后台上传。 */
+    /** 录满90分钟强制结束:笔+App都停、这段正常保存上传;顾问要继续手动点「开始陪伴」(不自动续,免与声控打架)。
+     *  统一 main.post 到主线程检查+置位,防 onRecordDurationUpdated 与心跳双触发重复停。 */
+    private void maybeAutoStopAt90(int durSec) {
+        if (durSec < MAX_REC_SEC) return;
+        main.post(() -> {
+            if (autoStoppedAt90 || !isRecording()) return;
+            autoStoppedAt90 = true;
+            Log.w(TAG, "录满90分钟 → 自动结束 dur=" + durSec);
+            penLog("★录满90分钟,自动结束保存(要继续请点开始陪伴)");
+            stopRecording();   // 笔 endRecord + App 收尾上传(走正常结束流程,这段照常保存)
+            if (listener != null) listener.onPenAutoStopped();
+        });
+    }
+
     public void stopRecording() {
         main.removeCallbacks(confirmTimeout);
         main.removeCallbacks(preStartTimeout);   // 启动确认期间点"取消"也能撤销
@@ -1500,6 +1521,7 @@ public class PenController {
                 }
                 if (!sessionActive) {
                     sessionActive = true;
+                    autoStoppedAt90 = false;     // ★新一段:重置90分钟自动结束标记,重新计时
                     enterRecordingKeepAlive();   // ★笔自发(声控/按钮)开录也要保活；后台启动受限时 start() 已吞异常
                     sessionAppInitiated = wasAppStart;   // 你点的→失败大声提示；笔自发→空录静默丢
                     sessionGen++;    // ★新一段：作废上一段挂起的结束兜底，别误伤这段
@@ -1765,6 +1787,7 @@ public class PenController {
             if (durationSec > 0) {
                 lastPenDurationSec = (int) durationSec;
                 if (healthWatchdogArmed) { healthWatchdogArmed = false; main.removeCallbacks(recordingHealthWatchdog); }
+                if (durationSec >= MAX_REC_SEC) maybeAutoStopAt90((int) durationSec);   // ★录满90分钟→自动结束
             }
             if (listener != null) main.post(() -> listener.onPenRecordDuration((int) durationSec));
         }

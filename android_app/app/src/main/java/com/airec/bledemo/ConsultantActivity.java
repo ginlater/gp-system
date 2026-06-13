@@ -471,6 +471,15 @@ public class ConsultantActivity extends Activity
         ui.post(() -> evalJs("if(window.__onPenUnsynced){window.__onPenUnsynced(" + count + ");}"));
     }
 
+    /** 录满90分钟自动结束 → 弹提示告诉顾问已保存、要继续手动点开始陪伴。 */
+    @Override
+    public void onPenAutoStopped() {
+        ui.post(() -> {
+            Toast.makeText(this, "已录满 90 分钟，自动保存并结束这一段。要继续请点「开始陪伴」💛", Toast.LENGTH_LONG).show();
+            evalJs("if(window.__onPenAutoStopped){window.__onPenAutoStopped();}");
+        });
+    }
+
     /** 已建占位片段 → 刷新未归档列表，让它带服务日期立刻显示("处理中")。 */
     @Override
     public void onPenPlaceholderCreated() {
