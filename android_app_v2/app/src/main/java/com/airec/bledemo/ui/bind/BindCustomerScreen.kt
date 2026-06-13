@@ -529,11 +529,11 @@ private fun NewCustomerPane(
         FormField(label = "顾客姓名", required = true) {
             PlainInput(value = name, onValueChange = onNameChange, placeholder = "如：李雪", keyboardType = KeyboardType.Text)
         }
-        FormField(label = "手机尾号（4 位，可选）", required = false) {
+        FormField(label = "手机尾号（4 位）", required = true) {
             PlainInput(value = phoneTail, onValueChange = onPhoneTailChange, placeholder = "如：8821", keyboardType = KeyboardType.Number)
         }
         Text(
-            text = "新增即为该陪伴当天补登一次接诊，并自动选中这位顾客；写错了可在列表里点「删除」撤回（名下已有片段则无法删除）。",
+            text = "会员号自动生成。新增即为该陪伴当天补登一次接诊，并自动选中这位顾客；写错了可在列表里点「删除」撤回（名下已有片段则无法删除）。",
             style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.5f.sp, lineHeight = 17.sp),
             color = MeiliPalette.Ink3,
         )

@@ -32,7 +32,7 @@ import kotlinx.coroutines.launch
  *  - 录音有变更（outdated）：单独成态，提示需重跑，可「重新分析」（不并进待开始）。
  *
  * 全程只调 ConsultantRepository 现有方法：session / sessionPreview / sessionPreviewRemove /
- * bind / directRebind / unbind / confirmSpeakers / rebindCandidates / startAnalysis /
+ * bind / directRebind / confirmSpeakers / rebindCandidates / startAnalysis /
  * cancelAnalysis。不新增 api/repo/model。
  */
 class SessionPreviewViewModel(
@@ -43,7 +43,7 @@ class SessionPreviewViewModel(
     enum class AnalysisPhase { Idle, Running, Done, Failed, Outdated }
 
     /** 行内操作类型（同一行同一时刻只允许一个进行中，用于按钮转圈/禁点）。 */
-    enum class RowOp { Remove, Bind, Rebind, Unbind, Confirm }
+    enum class RowOp { Remove, Bind, Rebind, Confirm }
 
     /** 换绑弹层状态（候选搜索 + 提交）。 */
     data class RebindSheet(
@@ -54,18 +54,6 @@ class SessionPreviewViewModel(
         val query: String = "",
         val searching: Boolean = false,
         val candidates: List<Customer> = emptyList(),
-        val submitting: Boolean = false,
-        val error: String? = null,
-    ) {
-        val visible: Boolean get() = recordingId != null
-    }
-
-    /** 退回未归档弹层状态（理由必填）。 */
-    data class UnbindSheet(
-        val recordingId: Long? = null,
-        val recordedAt: String? = null,
-        val durationLabel: String? = null,
-        val reason: String = "",
         val submitting: Boolean = false,
         val error: String? = null,
     ) {
@@ -102,8 +90,6 @@ class SessionPreviewViewModel(
         val playingId: Long? = null,
         /** 换绑弹层。 */
         val rebindSheet: RebindSheet = RebindSheet(),
-        /** 退回未归档弹层。 */
-        val unbindSheet: UnbindSheet = UnbindSheet(),
     ) {
         /** 是否可改动接诊包片段（加入/移除/换绑/退回）：未锁 + 非分析中。 */
         val editable: Boolean get() = !locked && phase != AnalysisPhase.Running
@@ -261,7 +247,7 @@ class SessionPreviewViewModel(
                 is ApiResult.Success -> {
                     _state.update {
                         it.copy(
-                            toast = "已移出本次分析",
+                            toast = "已退回待整理",
                             bound = it.bound.filterNot { rec -> rec.id == recordingId },
                         )
                     }
@@ -396,49 +382,6 @@ class SessionPreviewViewModel(
                 }
                 is ApiResult.Failure ->
                     _state.update { it.copy(rebindSheet = it.rebindSheet.copy(submitting = false, error = r.message)) }
-            }
-        }
-    }
-
-    // ── 退回未归档弹层 ──
-
-    fun openUnbind(rec: PreviewRecording) {
-        if (!_state.value.editable) return
-        _state.update {
-            it.copy(
-                unbindSheet = UnbindSheet(
-                    recordingId = rec.id,
-                    recordedAt = rec.recordedAt,
-                    durationLabel = rec.durationLabel,
-                ),
-            )
-        }
-    }
-
-    fun closeUnbind() = _state.update { it.copy(unbindSheet = UnbindSheet()) }
-
-    fun onUnbindReasonChange(reason: String) =
-        _state.update { it.copy(unbindSheet = it.unbindSheet.copy(reason = reason, error = null)) }
-
-    /** 提交退回：把该段退回未归档（repo.unbind，理由必填）。成功后刷新。 */
-    fun submitUnbind() {
-        val s = _state.value
-        val rid = s.unbindSheet.recordingId ?: return
-        val reason = s.unbindSheet.reason.trim()
-        if (s.unbindSheet.submitting) return
-        if (reason.isEmpty()) {
-            _state.update { it.copy(unbindSheet = it.unbindSheet.copy(error = "请填写退回理由")) }
-            return
-        }
-        viewModelScope.launch {
-            _state.update { it.copy(unbindSheet = it.unbindSheet.copy(submitting = true, error = null)) }
-            when (val r = repo.unbind(rid, reason)) {
-                is ApiResult.Success -> {
-                    _state.update { it.copy(unbindSheet = UnbindSheet(), toast = "已退回未归档") }
-                    refresh(initial = false)
-                }
-                is ApiResult.Failure ->
-                    _state.update { it.copy(unbindSheet = it.unbindSheet.copy(submitting = false, error = r.message)) }
             }
         }
     }

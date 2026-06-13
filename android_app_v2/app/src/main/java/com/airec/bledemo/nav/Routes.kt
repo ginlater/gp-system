@@ -37,8 +37,11 @@ object Routes {
     /** 待整理：未绑定陪伴片段列表。 */
     const val Pending = "pending"
 
-    /** 档案：顾客「美丽档案」搜索/详情。 */
+    /** 报告：顾客接诊分析报告列表（原「档案」，方案A 改名 + 精简行）。 */
     const val Archive = "archive"
+
+    /** 客户：顾客搜索 → 美丽档案详情（方案A 新增 tab）。 */
+    const val Customer = "customer"
 
     // ============ 栈内次级页 ============
 
@@ -96,5 +99,15 @@ object Routes {
         const val ARG_SESSION_ID = "sessionId"
         const val routePattern = "report/{$ARG_SESSION_ID}"
         fun build(sessionId: Long): String = "report/$sessionId"
+    }
+
+    /**
+     * 客户详情（美丽档案）：从「客户」tab 点某位顾客 push。
+     * 携带顾客标识 [customerId]。
+     */
+    object CustomerDetail {
+        const val ARG_CUSTOMER_ID = "customerId"
+        const val routePattern = "customerDetail/{$ARG_CUSTOMER_ID}"
+        fun build(customerId: Long): String = "customerDetail/$customerId"
     }
 }

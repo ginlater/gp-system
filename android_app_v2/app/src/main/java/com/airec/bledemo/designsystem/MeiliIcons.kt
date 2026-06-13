@@ -311,6 +311,21 @@ object MeiliIcons {
         }
     }
 
+    /** 设置/我的：齿轮（中心圆 + 8 根辐条），用于右上角「我的/设置」入口。 */
+    val Settings: ImageVector by lazy {
+        stroke("ic_settings") {
+            circle(12f, 12f, 3.2f)
+            moveTo(12f, 3.8f); lineTo(12f, 6.2f)
+            moveTo(12f, 17.8f); lineTo(12f, 20.2f)
+            moveTo(3.8f, 12f); lineTo(6.2f, 12f)
+            moveTo(17.8f, 12f); lineTo(20.2f, 12f)
+            moveTo(6.2f, 6.2f); lineTo(7.9f, 7.9f)
+            moveTo(16.1f, 16.1f); lineTo(17.8f, 17.8f)
+            moveTo(17.8f, 6.2f); lineTo(16.1f, 7.9f)
+            moveTo(7.9f, 16.1f); lineTo(6.2f, 17.8f)
+        }
+    }
+
     /** 刷新：单向环形箭头（reception/重跑用）。 */
     val Refresh: ImageVector by lazy {
         stroke("ic_refresh") {

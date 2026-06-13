@@ -106,10 +106,10 @@ class BindCustomerViewModel(
         val boundSessionId: Long? = null,       // 非空=绑定/换绑成功，screen 据此回调跳预览
         val finished: Boolean = false,          // 退回/删除成功后无 session 可跳，仅返回
     ) {
-        /** 新增顾客可提交：姓名必填；手机尾号填了就必须 4 位数字。 */
+        /** 新增顾客可提交：姓名必填；手机尾号必填且为 4 位数字（会员号后端自动生成）。 */
         val canSubmitNew: Boolean
             get() = newName.isNotBlank() &&
-                (newPhoneTail.isEmpty() || newPhoneTail.length == 4) &&
+                newPhoneTail.length == 4 &&
                 !submitting
 
         /** 删除审批中：除「撤回」外其余操作应禁用（与待整理屏一致）。 */

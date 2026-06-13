@@ -1,8 +1,15 @@
 package com.airec.bledemo.ui.home
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,7 +23,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -27,8 +36,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,35 +55,32 @@ import com.airec.bledemo.designsystem.MeiliIcons
 import com.airec.bledemo.designsystem.MeiliPalette
 import com.airec.bledemo.designsystem.MeiliShapes
 import com.airec.bledemo.designsystem.MeiliTheme
-import com.airec.bledemo.designsystem.components.CompanionStage
 import com.airec.bledemo.designsystem.components.MeiliCard
 import com.airec.bledemo.designsystem.components.SectionLabel
 import com.airec.bledemo.recording.CompanionSource
 import com.airec.bledemo.recording.RecordingState
 
 /**
- * 陪伴首页（SPEC §4.2 / warm_2 #home）。
+ * 陪伴首页（SPEC §4.2 / redesign_2026-06-13 方案A #home）。
  *
- * 顶部问候 + 「美丽陪伴」+ 陪伴师 chip；中部大「点击开启陪伴」圆钮（[CompanionStage]：
- * 进行中=呼吸态「陪伴进行中」+计时，结束=「结束陪伴」）；陪伴来源 手机/陪伴笔分段切换；
- * 陪伴笔状态卡（已连接·电量 / 未连接 + 「从陪伴笔同步」入口）；待传/失败 badge。
+ * 顶部问候 + 「美丽陪伴」+ 陪伴师 chip（右侧仅一个设置齿轮）；陪伴卡改为「紧凑横排」：
+ * 左侧小圆钮（空闲=陪伴渐变+并蒂花蕊，进行中=呼吸玫瑰渐变+白色停止方块），右侧计时 + 状态文案；
+ * 细分隔下保留 陪伴笔 / 手机麦克风 来源切换 + 待传/失败 badge。卡片下方两个 tile：
+ * 「提醒」（铃 + 未读红点）与「今天的接诊与待整理」。
  *
- * 数据：[HomeViewModel] —— repo.penBinding()(绑定) / repo.pending()(待传计数) + RecordingController 实时态。
+ * 数据：[HomeViewModel] —— repo 兜底（笔绑定 / 待传 / 提醒计数）+ RecordingController 实时态。
  *
- * @param onOpenPending 跳「待整理」（「未选择顾客的陪伴」入口 + 待传 badge 点击）
+ * @param onOpenReception 跳「接诊（接诊+待整理合并）」入口；默认空实现
  * @param onBindCustomer 陪伴成功结束后→绑定该段(recordingId)到顾客（引擎回传 lastRecordingId 时触发）
- * @param onOpenReception 跳「今日接诊」（「看看今天的陪伴」入口）；默认空实现
- * @param onOpenReminders 跳「提醒」（顶部铃铛）；默认空实现
- * @param onOpenPenSync 「从陪伴笔同步」点击 → 上层唤起陪伴笔机身记录 sheet；默认空实现
+ * @param onOpenReminders 跳「提醒」（提醒 tile）；默认空实现
+ * @param onOpenSettings 右上角设置齿轮；默认空实现
  * @param modifier 由 AppScaffold 传入（含底栏避让 padding）
  */
 @Composable
 fun HomeScreen(
-    onOpenPending: () -> Unit = {},
-    onBindCustomer: (recordingId: Long) -> Unit = {},
     onOpenReception: () -> Unit = {},
+    onBindCustomer: (recordingId: Long) -> Unit = {},
     onOpenReminders: () -> Unit = {},
-    onOpenPenSync: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = viewModel(),
@@ -79,7 +88,6 @@ fun HomeScreen(
     val header by viewModel.header.collectAsStateWithLifecycle()
     val companion by viewModel.companion.collectAsStateWithLifecycle()
     val source by viewModel.source.collectAsStateWithLifecycle()
-    val pendingOnServer by viewModel.pendingOnServer.collectAsStateWithLifecycle()
     val reminderCount by viewModel.reminderCount.collectAsStateWithLifecycle()
     val toast by viewModel.toast.collectAsStateWithLifecycle()
 
@@ -125,17 +133,12 @@ fun HomeScreen(
         header = header,
         companion = companion,
         source = source,
-        pendingOnServer = pendingOnServer,
         reminderCount = reminderCount,
         onToggleCompanion = viewModel::toggleCompanion,
         onPickSource = viewModel::pickSource,
         onRetryUploads = viewModel::retryUploads,
-        onOpenPending = onOpenPending,
         onOpenReception = onOpenReception,
         onOpenReminders = onOpenReminders,
-        onOpenPenSync = {
-            if (viewModel.onPenSyncClicked()) onOpenPenSync()
-        },
         onOpenSettings = onOpenSettings,
         modifier = modifier,
     )
@@ -147,15 +150,12 @@ private fun HomeContent(
     header: HomeHeader,
     companion: CompanionUiState,
     source: CompanionSource,
-    pendingOnServer: Int,
     reminderCount: Int = 0,
     onToggleCompanion: () -> Unit,
     onPickSource: (CompanionSource) -> Unit,
     onRetryUploads: () -> Unit,
-    onOpenPending: () -> Unit,
     onOpenReception: () -> Unit,
     onOpenReminders: () -> Unit,
-    onOpenPenSync: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -168,8 +168,6 @@ private fun HomeContent(
     ) {
         AppHeader(
             header = header,
-            reminderCount = reminderCount,
-            onOpenReminders = onOpenReminders,
             onOpenSettings = onOpenSettings,
         )
 
@@ -179,36 +177,31 @@ private fun HomeContent(
             onToggleCompanion = onToggleCompanion,
             onPickSource = onPickSource,
             onRetryUploads = onRetryUploads,
-            onOpenPenSync = onOpenPenSync,
         )
 
+        // ── 提醒 tile（铃 + 未读红点 badge；0 不显示 badge）──
+        ReminderTile(
+            count = reminderCount,
+            onClick = onOpenReminders,
+        )
+        // ── 今日接诊 + 待整理（合并入口）──
         EntryTile(
             icon = MeiliIcons.Reception,
-            background = MeiliPalette.ClayTint,
-            border = MeiliPalette.ClaySoft,
-            title = "看看今天的陪伴",
-            subtitle = "所有接诊记录、分析报告、点评",
-            onClick = onOpenReception,
-        )
-        EntryTile(
-            icon = MeiliIcons.Tidy,
             background = MeiliPalette.SageTint,
             border = MeiliPalette.SageSoft,
-            title = "未选择顾客的陪伴",
-            subtitle = pendingSubtitle(pendingOnServer),
-            onClick = onOpenPending,
+            title = "今天的接诊与待整理",
+            subtitle = "接诊记录、分析报告，以及待绑定的陪伴",
+            onClick = onOpenReception,
         )
     }
 }
 
 // ─────────────────────────── 顶部 appbar ───────────────────────────
 
-/** .appbar：问候 + 「美丽陪伴」衬线标题 + 陪伴师 chip / 名·店；右侧主题 + 提醒铃（带 badge）。 */
+/** .appbar：问候 + 「美丽陪伴」衬线标题 + 陪伴师 chip / 名·店；右侧仅设置齿轮。 */
 @Composable
 private fun AppHeader(
     header: HomeHeader,
-    reminderCount: Int,
-    onOpenReminders: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     Row(
@@ -248,33 +241,7 @@ private fun AppHeader(
                 }
             }
         }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButtonBox(icon = MeiliIcons.Palette, onClick = onOpenSettings)
-            // 铃铛 + 未读红点 badge（对齐 web reminderDot）：0 不显示。
-            ReminderBell(count = reminderCount, onClick = onOpenReminders)
-        }
-    }
-}
-
-/** 提醒铃铛：复用 [IconButtonBox]，右上角叠加未读计数红点（对齐 web 的 #reminderDot）。 */
-@Composable
-private fun ReminderBell(
-    count: Int,
-    onClick: () -> Unit,
-) {
-    Box {
-        IconButtonBox(icon = MeiliIcons.Reminder, onClick = onClick)
-        if (count > 0) {
-            ReminderBadge(
-                count = count,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .offset(x = 5.dp, y = (-5).dp),
-            )
-        }
+        IconButtonBox(icon = MeiliIcons.Settings, onClick = onOpenSettings)
     }
 }
 
@@ -360,7 +327,7 @@ private fun IconButtonBox(
     }
 }
 
-// ─────────────────────────── 陪伴卡（圆钮 + 来源 + badge + 笔状态） ───────────────────────────
+// ─────────────────────────── 陪伴卡（紧凑横排：小圆钮 + 计时/状态 + 来源 + badge） ───────────────────────────
 
 @Composable
 private fun CompanionCard(
@@ -369,7 +336,6 @@ private fun CompanionCard(
     onToggleCompanion: () -> Unit,
     onPickSource: (CompanionSource) -> Unit,
     onRetryUploads: () -> Unit,
-    onOpenPenSync: () -> Unit,
 ) {
     // .comp-card：顶部柔光高光的渐变底。
     val compBrush = Brush.radialGradient(
@@ -386,15 +352,11 @@ private fun CompanionCard(
                 .background(compBrush)
                 .padding(Dimens.CardPad),
         ) {
-            CompanionStage(
-                timerText = formatTimer(companion.elapsedSec),
-                statusText = companion.statusText(source),
-                hint = companion.hintText(),
-                live = companion.live,
+            // ── .rec-mini：左小圆钮 + 右计时/状态 ──
+            CompactCompanionRow(
+                companion = companion,
+                source = source,
                 onToggle = onToggleCompanion,
-                starting = companion.starting,
-                enabled = !companion.uploading,
-                modifier = Modifier.fillMaxWidth(),
             )
 
             HrLine(modifier = Modifier.padding(vertical = 15.dp))
@@ -426,15 +388,134 @@ private fun CompanionCard(
                     modifier = Modifier.padding(top = 8.dp),
                 )
             }
+        }
+    }
+}
 
-            // ── 陪伴笔状态 + 从陪伴笔同步入口 ──
-            PenStatusLine(
-                penConnected = companion.penConnected,
-                modifier = Modifier.padding(top = 15.dp),
+/**
+ * .rec-mini：紧凑横排——左侧小圆钮（[CompactCompanionButton]），右侧计时 + 状态文案列。
+ * 取代旧的居中大舞台；点击圆钮仍走同一个 [onToggle]（toggleCompanion）。
+ */
+@Composable
+private fun CompactCompanionRow(
+    companion: CompanionUiState,
+    source: CompanionSource,
+    onToggle: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        CompactCompanionButton(
+            live = companion.live,
+            starting = companion.starting,
+            enabled = !companion.uploading,
+            onClick = onToggle,
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = formatTimer(companion.elapsedSec),
+                style = MeiliTheme.timerStyle.copy(fontSize = 32.sp, lineHeight = 36.sp, letterSpacing = 1.sp),
+                color = MeiliPalette.Ink,
+                maxLines = 1,
             )
-            PenSyncRow(
-                onClick = onOpenPenSync,
-                modifier = Modifier.padding(top = 13.dp),
+            Row(
+                modifier = Modifier.padding(top = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                if (companion.live) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .background(MeiliPalette.Rose, CircleShape),
+                    )
+                }
+                Text(
+                    text = companion.statusText(source),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MeiliPalette.Ink2,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 紧凑版陪伴小圆钮（~80dp）。复用 [MeiliPalette.CompanionGradient]（空闲）/
+ * [MeiliPalette.CompanionLiveGradient]（进行中），进行中/唤醒中加轻微呼吸缩放：
+ *  - 空闲：陪伴渐变 + 并蒂花蕊（[MeiliIcons.Companion]）。
+ *  - 进行中：玫瑰渐变 + 白色停止方块（comp-square 缩比例 ~22dp）。
+ *  - 唤醒/连接中：玫瑰渐变 + 白色转圈，点击=取消。
+ *  - 保存中：置灰半透明不可点。
+ *
+ * 红线：绝不出现「录音/录制」字样或图形（停止用纯方块，不带「REC」）。
+ */
+@Composable
+private fun CompactCompanionButton(
+    live: Boolean,
+    starting: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val active = live || starting
+
+    // 呼吸态：轻微缩放脉动（对齐大圆钮 breathe，幅度收小适配 80dp）。
+    val transition = rememberInfiniteTransition(label = "breatheMini")
+    val pulse by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = if (active) 1.05f else 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1300),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "pulse",
+    )
+
+    Box(
+        modifier = Modifier
+            .size(80.dp)
+            .scale((if (pressed) 0.96f else 1f) * pulse)
+            .alpha(if (enabled) 1f else 0.5f)
+            .background(
+                brush = if (active) MeiliPalette.CompanionLiveGradient else MeiliPalette.CompanionGradient,
+                shape = CircleShape,
+            )
+            .border(1.5.dp, Color.White.copy(alpha = 0.45f), CircleShape)
+            .then(
+                if (enabled) {
+                    Modifier.clickable(
+                        interactionSource = interaction,
+                        indication = null,
+                        onClick = onClick,
+                    )
+                } else {
+                    Modifier
+                },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            starting -> CircularProgressIndicator(
+                modifier = Modifier.size(26.dp),
+                color = Color.White,
+                strokeWidth = 3.dp,
+            )
+            live -> Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .background(Color.White, RoundedCornerShape(7.dp)),
+            )
+            else -> Icon(
+                MeiliIcons.Companion,
+                contentDescription = "开启陪伴",
+                tint = Color.White,
+                modifier = Modifier.size(30.dp),
             )
         }
     }
@@ -594,87 +675,62 @@ private fun InlinePill(
     }
 }
 
-/** 陪伴笔已连接·电量 / 未连接 文字行（warm_2 用 dotg + 文字；电量未知时省略）。 */
-@Composable
-private fun PenStatusLine(
-    penConnected: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        if (penConnected) {
-            GreenDot()
-            Text(
-                text = "陪伴笔 已连接",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 12.5f.sp,
-                    fontWeight = FontWeight.Bold,
-                ),
-                color = MeiliPalette.Ink2,
-            )
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(7.dp)
-                    .background(MeiliPalette.Ink4, CircleShape),
-            )
-            Text(
-                text = "陪伴笔 未连接",
-                style = MaterialTheme.typography.bodySmall.copy(
-                    fontSize = 12.5f.sp,
-                    fontWeight = FontWeight.Bold,
-                ),
-                color = MeiliPalette.Ink2,
-            )
-        }
-    }
-}
+// ─────────────────────────── 提醒 tile + 大入口 tile ───────────────────────────
 
-/** .penrow：陶土 tint 行，「从陪伴笔同步」入口（拉机身保存、未导入片段）。 */
+/** .entry + badge：提醒入口（铃图标右上叠未读红点；0 不显示 badge）。 */
 @Composable
-private fun PenSyncRow(
+private fun ReminderTile(
+    count: Int,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val interaction = remember { MutableInteractionSource() }
     Surface(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
+            .padding(bottom = Dimens.S3)
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
-        shape = MeiliShapes.Md,
+        shape = MeiliShapes.Lg,
         color = MeiliPalette.ClayTint,
         border = androidx.compose.foundation.BorderStroke(Dimens.BorderThin, MeiliPalette.ClaySoft),
+        shadowElevation = Dimens.Elev2,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
+            modifier = Modifier.padding(Dimens.S4),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(15.dp),
         ) {
-            Surface(
-                shape = MeiliShapes.Xs,
-                color = MeiliPalette.Surface,
-                contentColor = MeiliPalette.ClayDeep,
-                shadowElevation = Dimens.Elev1,
-                modifier = Modifier.size(38.dp),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(MeiliIcons.Sync, contentDescription = null, modifier = Modifier.size(Dimens.IconSm))
+            Box {
+                Surface(
+                    shape = MeiliShapes.Md,
+                    color = MeiliPalette.Surface,
+                    contentColor = MeiliPalette.ClayDeep,
+                    shadowElevation = Dimens.Elev1,
+                    modifier = Modifier.size(50.dp),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(MeiliIcons.Reminder, contentDescription = null, modifier = Modifier.size(Dimens.IconLg))
+                    }
+                }
+                if (count > 0) {
+                    ReminderBadge(
+                        count = count,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = 6.dp, y = (-6).dp),
+                    )
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "从陪伴笔同步",
-                    style = MaterialTheme.typography.titleSmall.copy(fontSize = 13.5f.sp),
-                    color = MeiliPalette.ClayDeep,
+                    text = "提醒",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MeiliPalette.Ink,
                 )
                 Text(
-                    text = "拉取陪伴笔机身保存、还没导入的片段",
-                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                    text = "未绑定 / 报告待看 / 需跟进",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5f.sp),
                     color = MeiliPalette.Ink2,
-                    modifier = Modifier.padding(top = 2.dp),
+                    modifier = Modifier.padding(top = 3.dp),
                 )
             }
             Icon(
@@ -687,9 +743,7 @@ private fun PenSyncRow(
     }
 }
 
-// ─────────────────────────── 大入口 tile ───────────────────────────
-
-/** .entry：渐变底大入口（看看今天的陪伴 / 未选择顾客的陪伴）。 */
+/** .entry：渐变底大入口（今天的接诊与待整理）。 */
 @Composable
 private fun EntryTile(
     icon: ImageVector,
@@ -787,10 +841,6 @@ private fun pillTextStyle() = MaterialTheme.typography.labelMedium.copy(
     letterSpacing = 0.sp,
 )
 
-/** 待整理入口副标题：有数则「… · N 段待整理」。 */
-private fun pendingSubtitle(count: Int): String =
-    if (count > 0) "试听后绑定到对应顾客 · $count 段待整理" else "试听后绑定到对应顾客"
-
 /** 简单时段问候（不依赖系统语言；上午/下午/晚上）。 */
 private fun greeting(): String {
     val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
@@ -821,7 +871,7 @@ private fun HomeHeader.subtitleText(): String {
     return listOfNotNull(name, store).joinToString(" · ")
 }
 
-/** 圆钮上方状态文案：唤醒中/进行中/暂停/上传中/空闲（守红线，绝不出现「录音」）。 */
+/** 圆钮旁状态文案：唤醒中/进行中/暂停/上传中/空闲（守红线，绝不出现「录音」）。 */
 private fun CompanionUiState.statusText(source: CompanionSource): String = when (val st = state) {
     // 唤醒/连接中：用引擎附带文案（「正在连接陪伴笔…」/「正在唤醒陪伴笔…」），无则给个默认。
     is RecordingState.Recording -> if (st.starting) (st.message ?: "正在唤醒陪伴笔…") else "陪伴进行中"
@@ -829,21 +879,12 @@ private fun CompanionUiState.statusText(source: CompanionSource): String = when 
     is RecordingState.Uploading -> "正在保存这次陪伴…"
     // 空闲：选了陪伴笔但还没连上 → 先提示连接（对齐 web 进页/掉线时的「请先连接录音笔」），否则给开启引导。
     is RecordingState.Idle -> st.message ?: st.errorMessage
-        ?: if (source == CompanionSource.Pen && !penConnected) "请先连接陪伴笔" else "点击下方 · 开启今天的陪伴"
-}
-
-/** 圆钮下方小提示。 */
-private fun CompanionUiState.hintText(): String = when (state) {
-    // 唤醒中：还没真开录，提示「可取消」(对齐 starting 态点击=取消)，不说「正在记录」。
-    is RecordingState.Recording -> if (starting) "正在准备这次陪伴 · 再次点击可取消。" else "正在温柔记录这次陪伴 · 结束后绑定顾客即可。"
-    is RecordingState.Paused -> "正在温柔记录这次陪伴 · 结束后绑定顾客即可。"
-    is RecordingState.Uploading -> "稍候片刻，保存完成后即可绑定顾客。"
-    is RecordingState.Idle -> "陪伴结束后，请把这段陪伴绑定到今日接诊里的顾客。"
+        ?: if (source == CompanionSource.Pen && !penConnected) "请先连接陪伴笔" else "点一下 · 开启今天的陪伴"
 }
 
 // ─────────────────────────── Preview ───────────────────────────
 
-@Preview(showBackground = true, backgroundColor = 0xFFF8F3ED, widthDp = 360, heightDp = 860)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F3ED, widthDp = 360, heightDp = 760)
 @Composable
 private fun HomeIdlePreview() {
     MeiliTheme {
@@ -851,21 +892,18 @@ private fun HomeIdlePreview() {
             header = HomeHeader(advisorName = "张敏", storeName = "朝阳旗舰店", loaded = true),
             companion = CompanionUiState(penConnected = true),
             source = CompanionSource.Pen,
-            pendingOnServer = 2,
             reminderCount = 3,
             onToggleCompanion = {},
             onPickSource = {},
             onRetryUploads = {},
-            onOpenPending = {},
             onOpenReception = {},
             onOpenReminders = {},
-            onOpenPenSync = {},
             onOpenSettings = {},
         )
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFFF8F3ED, widthDp = 360, heightDp = 860)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F3ED, widthDp = 360, heightDp = 760)
 @Composable
 private fun HomeLivePreview() {
     MeiliTheme {
@@ -879,20 +917,18 @@ private fun HomeLivePreview() {
                 progressPercent = 60,
             ),
             source = CompanionSource.Pen,
-            pendingOnServer = 2,
+            reminderCount = 0,
             onToggleCompanion = {},
             onPickSource = {},
             onRetryUploads = {},
-            onOpenPending = {},
             onOpenReception = {},
             onOpenReminders = {},
-            onOpenPenSync = {},
             onOpenSettings = {},
         )
     }
 }
 
-@Preview(showBackground = true, backgroundColor = 0xFFF8F3ED, widthDp = 360, heightDp = 860)
+@Preview(showBackground = true, backgroundColor = 0xFFF8F3ED, widthDp = 360, heightDp = 760)
 @Composable
 private fun HomePenOfflinePreview() {
     MeiliTheme {
@@ -905,14 +941,12 @@ private fun HomePenOfflinePreview() {
                 progressPercent = 30,
             ),
             source = CompanionSource.Phone,
-            pendingOnServer = 0,
+            reminderCount = 0,
             onToggleCompanion = {},
             onPickSource = {},
             onRetryUploads = {},
-            onOpenPending = {},
             onOpenReception = {},
             onOpenReminders = {},
-            onOpenPenSync = {},
             onOpenSettings = {},
         )
     }

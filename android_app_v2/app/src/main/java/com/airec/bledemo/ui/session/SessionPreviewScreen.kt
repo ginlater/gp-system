@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,7 +36,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -136,7 +134,6 @@ fun SessionPreviewScreen(
                     onRemove = viewModel::removeFromPackage,
                     onAdd = viewModel::addToPackage,
                     onRebind = viewModel::openRebind,
-                    onUnbind = viewModel::openUnbind,
                     onConfirmSpeakers = viewModel::confirmSpeakers,
                     onStartClick = { showConfirm = true },
                     onCancel = viewModel::cancelAnalysis,
@@ -204,14 +201,6 @@ fun SessionPreviewScreen(
         onQueryChange = viewModel::onRebindQueryChange,
         onPick = viewModel::submitRebind,
     )
-
-    // 退回未归档弹层（理由必填；repo.unbind）
-    UnbindSheet(
-        sheet = state.unbindSheet,
-        onDismiss = viewModel::closeUnbind,
-        onReasonChange = viewModel::onUnbindReasonChange,
-        onSubmit = viewModel::submitUnbind,
-    )
 }
 
 private fun subtitleFor(s: SessionPreviewViewModel.UiState): String {
@@ -224,7 +213,7 @@ private fun subtitleFor(s: SessionPreviewViewModel.UiState): String {
         SessionPreviewViewModel.AnalysisPhase.Outdated ->
             listOfNotNull(date, "陪伴片段有变更，需重新分析").joinToString(" · ")
         else ->
-            listOfNotNull(date, "核对顾客信息后开始分析，如绑错可换绑或退回未归档").joinToString(" · ")
+            listOfNotNull(date, "核对顾客信息后开始分析，如绑错可换绑或退回待整理").joinToString(" · ")
     }
 }
 
@@ -237,7 +226,6 @@ private fun PreviewBody(
     onRemove: (Long) -> Unit,
     onAdd: (Long) -> Unit,
     onRebind: (PreviewRecording) -> Unit,
-    onUnbind: (PreviewRecording) -> Unit,
     onConfirmSpeakers: (Long) -> Unit,
     onStartClick: () -> Unit,
     onCancel: () -> Unit,
@@ -303,7 +291,6 @@ private fun PreviewBody(
                 onPlay = { onPlay(rec) },
                 onRemove = { onRemove(rec.id) },
                 onRebind = { onRebind(rec) },
-                onUnbind = { onUnbind(rec) },
                 onConfirmSpeakers = { onConfirmSpeakers(rec.id) },
                 modifier = Modifier.padding(bottom = 12.dp),
             )
@@ -515,7 +502,7 @@ private fun StatusPhasePill(state: SessionPreviewViewModel.UiState) {
 
 /**
  * 已绑定片段卡：日期/时长 + 识别状态 + 全程试听 + 操作区。
- * 操作区（可编辑时）：换绑 / 退回未归档 / 移出本次分析；
+ * 操作区（可编辑时）：换绑顾客 / 退回待整理（退回=移出本接诊包，片段回到待整理，无需理由）；
  * 若片段有说话人警告未确认，额外给「确认说话人」入口（解除 speaker_unconfirmed 阻塞）。
  */
 @Composable
@@ -528,7 +515,6 @@ private fun BoundRecordingCard(
     onPlay: () -> Unit,
     onRemove: () -> Unit,
     onRebind: () -> Unit,
-    onUnbind: () -> Unit,
     onConfirmSpeakers: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -605,25 +591,20 @@ private fun BoundRecordingCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 GhostButton(
-                    text = if (busyOp == SessionPreviewViewModel.RowOp.Rebind) "换绑中…" else "换绑",
+                    text = if (busyOp == SessionPreviewViewModel.RowOp.Rebind) "换绑中…" else "换绑顾客",
                     onClick = onRebind,
                     icon = MeiliIcons.Link,
                     enabled = !anyRowBusy && rec.pendingRebindRequestId == null,
                     size = MeiliButtonSize.Small,
+                    modifier = Modifier.weight(1f),
                 )
                 GhostButton(
-                    text = if (busyOp == SessionPreviewViewModel.RowOp.Unbind) "退回中…" else "退回未归档",
-                    onClick = onUnbind,
+                    text = if (busyOp == SessionPreviewViewModel.RowOp.Remove) "退回中…" else "退回待整理",
+                    onClick = onRemove,
                     icon = MeiliIcons.Unbind,
                     enabled = !anyRowBusy,
                     size = MeiliButtonSize.Small,
-                )
-                GhostButton(
-                    text = if (busyOp == SessionPreviewViewModel.RowOp.Remove) "移出中…" else "移出",
-                    onClick = onRemove,
-                    icon = MeiliIcons.Trash,
-                    enabled = !anyRowBusy,
-                    size = MeiliButtonSize.Small,
+                    modifier = Modifier.weight(1f),
                 )
             }
         }
@@ -849,64 +830,6 @@ private fun rebindCandidateMeta(c: Customer): String {
         c.inDay == true -> "已在当日接诊"
         base.isNotBlank() -> "$base · 选中后将补登当天接诊"
         else -> "选中后将补登当天接诊"
-    }
-}
-
-// ────────────────────────────── 退回未归档弹层 ──────────────────────────────
-
-/** 退回未归档弹层（点 2）：理由必填 → repo.unbind。若该段已分析将作废。 */
-@Composable
-private fun UnbindSheet(
-    sheet: SessionPreviewViewModel.UnbindSheet,
-    onDismiss: () -> Unit,
-    onReasonChange: (String) -> Unit,
-    onSubmit: () -> Unit,
-) {
-    MeiliBottomSheet(
-        visible = sheet.visible,
-        onDismiss = onDismiss,
-        title = "退回未归档片段",
-        subtitle = "退回后这段陪伴回到未归档列表，可重新整理绑定。若已分析将作废原报告。",
-    ) {
-        Text(
-            text = "陪伴：${sheet.recordedAt ?: "—"} · ${sheet.durationLabel ?: ""}",
-            style = MaterialTheme.typography.bodySmall,
-            color = MeiliPalette.Ink2,
-            modifier = Modifier.padding(bottom = 12.dp),
-        )
-        Text(
-            text = "退回理由 *",
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = MeiliPalette.Ink,
-            modifier = Modifier.padding(bottom = 6.dp),
-        )
-        OutlinedTextField(
-            value = sheet.reason,
-            onValueChange = onReasonChange,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 84.dp),
-            placeholder = {
-                Text(
-                    "请说明退回原因，便于管理员复盘",
-                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.5f.sp),
-                    color = MeiliPalette.Ink3,
-                )
-            },
-            shape = MeiliShapes.Sm,
-            textStyle = MaterialTheme.typography.bodyMedium.copy(fontSize = 14.5f.sp),
-            colors = sessionFieldColors(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-        )
-        if (sheet.error != null) {
-            SheetMsg(sheet.error, error = true)
-        }
-        Spacer(Modifier.height(14.dp))
-        PrimaryButton(
-            text = if (sheet.submitting) "退回中…" else "确认退回未归档",
-            onClick = onSubmit,
-            icon = MeiliIcons.Unbind,
-            enabled = !sheet.submitting,
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }
 
