@@ -94,6 +94,13 @@ public class PenController {
     private volatile boolean verifiedConnected = false;   // App 层"已验证在线"
     private volatile long    lastRxMs = 0;                // 最近一次收到笔真实回包(elapsedRealtime)
     private volatile int     hbMissed = 0;                // 心跳连续未回次数
+    // ★诊断用:笔电量% 和 蓝牙信号RSSI(dBm)。空闲心跳每8s fetchDeviceInfo→onDeviceInfoUpdated 刷新。
+    //   排查"蓝牙老断"时直接看信号弱不弱、电量低不低,不用靠猜(刘爽案例)。
+    private volatile int     lastBattery = -1;            // 笔电量%(-1=未知)
+    private volatile int     lastRssi = 0;                // 蓝牙RSSI dBm(0=未知,正常为负值如-60)
+    private volatile int     lastLoggedBattery = -999;    // penlog 节流:上次记录的电量
+    private volatile int     lastLoggedRssi = 0;          // penlog 节流:上次记录的RSSI
+    private volatile long    lastDevInfoLogMs = 0;        // penlog 节流:上次记录设备信息的时刻
     private static final long HANDSHAKE_TIMEOUT_MS = 5000; // 连上后等"真回包"的握手超时
     private static final long STALE_RX_MS = 12000;        // 超过这么久没回包 → 视为不在线
     private static final long HB_INTERVAL_MS = 8000;      // 心跳间隔(空闲)
@@ -721,6 +728,10 @@ public class PenController {
     };
     private void startHeartbeat() { hbMissed = 0; main.removeCallbacks(heartbeat); main.postDelayed(heartbeat, HB_INTERVAL_MS); }
     private void stopHeartbeat() { main.removeCallbacks(heartbeat); hbMissed = 0; }
+
+    /** 诊断用:最新笔电量%(-1=未知) 和 蓝牙信号RSSI dBm(0=未知,正常负值如-60,越接近0越强)。 */
+    public int penBattery() { return lastBattery; }
+    public int penRssi() { return lastRssi; }
 
     /**
      * App 打开/回到前台时，静默自动连接上次那支笔（不弹扫描页）。
@@ -1657,6 +1668,27 @@ public class PenController {
 
         @Override
         public void onInitParamUpdated() { markPenResponded(); ensurePenConfigured(); }
+
+        @Override
+        public void onDeviceInfoUpdated(AIRECBleDevice device) {
+            markPenResponded();   // 收到设备信息 = 笔有真实回包,顺带当心跳
+            if (device == null) return;
+            int bat = device.getBattery();
+            int rssi = device.getRssi();
+            lastBattery = bat;
+            lastRssi = rssi;
+            // penlog 节流写入(空闲每8s会回调,别刷屏):电量变化 / RSSI跨档(≥8dBm) / 距上次>60s 才记一行,
+            //   留下信号&电量随时间的趋势,便于看"断连前信号是不是在掉"。
+            long now = SystemClock.elapsedRealtime();
+            if (bat != lastLoggedBattery
+                    || Math.abs(rssi - lastLoggedRssi) >= 8
+                    || (now - lastDevInfoLogMs) > 60000) {
+                penLog("设备信息 电量=" + bat + "% 信号=" + rssi + "dBm");
+                lastLoggedBattery = bat;
+                lastLoggedRssi = rssi;
+                lastDevInfoLogMs = now;
+            }
+        }
 
         @Override
         public void onDisconnected(AIRECBleDevice device, String reason) {

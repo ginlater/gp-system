@@ -654,6 +654,9 @@ public class ConsultantActivity extends Activity
             catch (Exception ignore) {}
             o.put("penConnected", penController != null && penController.isPenAlive());
             o.put("pending", bridgePendingInfo());
+            // ★笔电量% 和 蓝牙信号RSSI dBm:排查"蓝牙老断"直接看信号/电量,不靠猜
+            o.put("battery", penController != null ? penController.penBattery() : -1);
+            o.put("rssi", penController != null ? penController.penRssi() : 0);
             o.put("ts", System.currentTimeMillis());
             return o.toString();
         } catch (Exception e) { return "{}"; }
