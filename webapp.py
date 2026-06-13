@@ -1660,12 +1660,39 @@ def run_asr(recording_id):
             (json.dumps(full_json, ensure_ascii=False), transcript,
              spk_count, warning, recording_id),
         )
+        # ★顾问转写没完时点了"开始分析"(session 标 queued 等转写)→ 这段转完后,若全转完就自动开始真分析。
+        _maybe_autostart_analysis_after_asr(recording_id)
     except Exception as e:
         db_write(
             """UPDATE recordings SET asr_status='failed', asr_error=?,
                asr_finished_at=datetime('now','localtime') WHERE id=?""",
             (str(e)[:2000], recording_id),
         )
+        # 即使本段转写失败,也看看 session 其它段是否都已结束(done/failed)→ 别让"已请求分析"的 session 永远卡 queued
+        _maybe_autostart_analysis_after_asr(recording_id)
+
+
+def _maybe_autostart_analysis_after_asr(recording_id):
+    """顾问在转写未完成时点过"开始分析"(session 被标 queued 等转写)。这段 ASR 结束后检查：
+       该 session 已无"在转写/没转写"的录音 → 自动开始真分析，不用顾问回来再点一次。"""
+    try:
+        rec = db_fetchone("SELECT session_id FROM recordings WHERE id=?", (recording_id,))
+        if not rec or not rec["session_id"]:
+            return
+        sid = rec["session_id"]
+        sess = db_fetchone("SELECT analysis_status FROM sessions WHERE id=?", (sid,))
+        if not sess or sess["analysis_status"] != "queued":
+            return   # 没被请求分析(等转写)就不插手——queued 是 start_analysis 等转写时标的
+        still = db_fetchone(
+            "SELECT COUNT(*) AS c FROM recordings WHERE session_id=? "
+            "AND asr_status IN ('pending','running','awaiting_intake')", (sid,))
+        if still and still["c"] > 0:
+            return   # 还有没转完的，等最后一段转完再触发
+        sig = compute_session_signature(sid)
+        app.logger.info("[autostart] session=%s 转写全完成 → 自动开始分析", sid)
+        submit_analysis(sid, sig)
+    except Exception as e:
+        app.logger.warning("[autostart] session 自动分析失败: %s", e)
 
 
 # ============ Claude 知识库分析 ============
@@ -5426,9 +5453,11 @@ def api_sessions():
                SUM(CASE WHEN r.asr_status='running' THEN 1 ELSE 0 END) AS asr_running_count,
                SUM(CASE WHEN r.asr_status='failed' THEN 1 ELSE 0 END) AS asr_failed_count,
                MIN(r.recorded_at) AS first_recorded_at,
-               MAX(r.recorded_at) AS last_recorded_at
+               MAX(r.recorded_at) AS last_recorded_at,
+               cc.member_card AS member_card
         FROM sessions s
         LEFT JOIN recordings r ON r.session_id = s.id
+        LEFT JOIN company_customers cc ON cc.id = s.customer_id
         {where_sql}
         GROUP BY s.id
         ORDER BY s.service_date DESC, s.id DESC
@@ -12022,9 +12051,9 @@ def api_consultant_session_start_analysis():
 
     sig = compute_session_signature(sess["id"])
 
-    # ★转写未完成时别开分析（修"录完急着点、转写没跟上→分析没内容→显示失败"）：
-    #   检查接诊包里录音的 ASR 状态，只要还有在转写/没转写的，就不锁定/不入队/不标失败，
-    #   返回 asr_pending 让前端显示"转写中，请稍候"；并兜底触发漏启动(awaiting_intake)的转写。
+    # ★转写未完成时：顾问点了开始分析 = 已表达分析意图。不能还显示"待分析"让人以为没点上。
+    #   改为：锁定 + 标 queued("分析中…"前端就这么显示) + 记下"已请求分析,等转写"，
+    #   并兜底触发漏启动(awaiting_intake)的转写；run_asr 转完最后一段会自动开始真分析(见 _maybe_autostart_analysis_after_asr)。
     asr_wait = db_fetchall(
         "SELECT id, asr_status FROM recordings WHERE session_id=? "
         "AND asr_status IN ('pending','running','awaiting_intake')",
@@ -12037,9 +12066,19 @@ def api_consultant_session_start_analysis():
                     trigger_pipeline_for_recording(rec["id"])
                 except Exception:
                     pass
+        # 锁定 + 标 queued("已请求分析,等转写完自动跑")。analysis_signature 记下,自动跑时对比。
+        # analysis_started_at=NULL：转写期间还没真开始分析,清掉它防 task_health_check 把"等转写的queued"
+        #   按"卡running/queued超30分钟"误标 failed(它要求 analysis_started_at IS NOT NULL 才判超时)。
+        db_write(
+            """UPDATE sessions SET locked=1, analysis_status='queued',
+               analysis_progress=?, analysis_error=NULL, analysis_signature=?,
+               analysis_started_at=NULL
+               WHERE id=?""",
+            (f"⏳ 转写中（剩 {len(asr_wait)} 段），完成后自动开始分析", sig, sess["id"]),
+        )
         return jsonify({
-            "ok": False, "asr_pending": True, "pending_count": len(asr_wait),
-            "msg": f"录音还在转写中（剩 {len(asr_wait)} 段），稍等片刻、转写完成后再点开始分析 🕐",
+            "ok": True, "session_id": sess["id"], "asr_pending": True, "pending_count": len(asr_wait),
+            "msg": f"已开始 ✅ 录音还在转写中（剩 {len(asr_wait)} 段），转写完成后会自动开始分析，无需再点",
         })
 
     # ② 已锁定 + signature 没变 + 已完成 → 不允许重跑
@@ -12338,6 +12377,23 @@ def startup_kick():
         print(f"[startup_kick] 发现 {len(pending_ready)} 个 pending+ASR就绪 session，自动触发")
     for s in pending_ready:
         maybe_trigger_session_analysis(s["id"])
+
+    # ── 新增：0 录音却卡在 pending/queued（排队中…）的空会话 → 标记 failed「无录音」 ──
+    # 根因：录音被换绑/移走后老会话变空，却仍是 pending；worker 因「无 recordings」跳过它(见上 EXISTS 守卫)，
+    # 于是永远显示"排队中…"(如林春华/演练王群 session 100198)。这里一次性收口，给出可行动的明确原因。
+    empty_stuck = db_fetchall("""
+        SELECT id FROM sessions
+        WHERE analysis_status IN ('pending','queued')
+          AND NOT EXISTS (SELECT 1 FROM recordings r WHERE r.session_id = sessions.id)
+    """)
+    if empty_stuck:
+        db_write("""
+            UPDATE sessions SET analysis_status='failed', analysis_progress=NULL,
+                   analysis_error='该接诊暂无录音，无法分析（请补录音后重试，或删除该接诊）'
+            WHERE analysis_status IN ('pending','queued')
+              AND NOT EXISTS (SELECT 1 FROM recordings r WHERE r.session_id = sessions.id)
+        """)
+        print(f"[startup_kick] 收口 {len(empty_stuck)} 个无录音却卡 pending/queued 的空会话 → failed(无录音)")
 
 
 # gunicorn 启动时也触发
