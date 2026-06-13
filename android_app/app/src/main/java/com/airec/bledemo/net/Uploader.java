@@ -390,4 +390,43 @@ public final class Uploader {
             if (conn != null) conn.disconnect();
         }
     }
+
+    /** #4 连上空闲时问后端：这些机身文件里有几段是"未传"(new)的(已传uploaded/已删deleted 不算)。
+     *  返回未传数；出错返回 -1(调用方忽略，别打扰顾问)。items 每条 {name, ra}。 */
+    public static int syncPreviewNewCount(String cookie, String url, org.json.JSONArray items) {
+        if (url == null || url.isEmpty() || items == null || items.length() == 0) return -1;
+        HttpURLConnection conn = null;
+        try {
+            org.json.JSONObject body = new org.json.JSONObject();
+            body.put("items", items);
+            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn.setUseCaches(false);
+            conn.setDoOutput(true);
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            conn.setRequestProperty("Content-Type", "application/json");
+            if (cookie != null && !cookie.isEmpty()) conn.setRequestProperty("Cookie", cookie);
+            try (DataOutputStream out = new DataOutputStream(conn.getOutputStream())) {
+                out.write(body.toString().getBytes(StandardCharsets.UTF_8));
+                out.flush();
+            }
+            int code = conn.getResponseCode();
+            String resp = readBody(code < 400 ? conn.getInputStream() : conn.getErrorStream());
+            if (code < 200 || code >= 300) { Log.w(TAG, "syncPreview http " + code); return -1; }
+            org.json.JSONArray arr = new JSONObject(resp).optJSONArray("items");
+            if (arr == null) return -1;
+            int cnt = 0;
+            for (int i = 0; i < arr.length(); i++) {
+                org.json.JSONObject x = arr.optJSONObject(i);
+                if (x != null && "new".equals(x.optString("status", "new"))) cnt++;
+            }
+            return cnt;
+        } catch (Exception e) {
+            Log.w(TAG, "syncPreview failed: " + e.getMessage());
+            return -1;
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
+    }
 }

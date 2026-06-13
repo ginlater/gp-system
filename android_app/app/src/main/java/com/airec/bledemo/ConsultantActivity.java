@@ -123,6 +123,11 @@ public class ConsultantActivity extends Activity
         // ★电池白名单：所有顾问启动后都检查一次(原来只有手机麦录音才弹→用笔的人永远看不到)。
         //   不在白名单 → 弹系统"允许后台运行"框；已在白名单/点过 → 静默跳过。延迟几秒避开启动时的权限弹框扎堆。
         ui.postDelayed(this::maybeAskBatteryExemption, 8000);
+
+        // ★手机麦残留补传:启动后扫一遍上次没传成功的 m4a(上传失败/进程被杀/出错留下的)后台重传。
+        //   延迟到登录 cookie 就绪;内部有"正在录/传/无文件/登录失效"守卫,空跑无害。
+        ui.postDelayed(() -> com.airec.bledemo.recording.PhoneMicService.retryPendingUploads(
+                this, CookieManager.getInstance().getCookie(START_URL), uploadUrlFor(START_URL)), 12000);
     }
 
     // ============ WebView ============
@@ -458,6 +463,12 @@ public class ConsultantActivity extends Activity
     @Override
     public void onPenUploaded(long recordingId) {
         ui.post(() -> evalJs("if(window.__onPenUploaded){window.__onPenUploaded(" + recordingId + ");}"));
+    }
+
+    /** #4 连上空闲检测到笔上有 N 段未导入 → 推给网页提示去「取回小伙伴」(0=隐藏)。 */
+    @Override
+    public void onPenUnsynced(int count) {
+        ui.post(() -> evalJs("if(window.__onPenUnsynced){window.__onPenUnsynced(" + count + ");}"));
     }
 
     /** 已建占位片段 → 刷新未归档列表，让它带服务日期立刻显示("处理中")。 */

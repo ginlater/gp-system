@@ -709,6 +709,27 @@ window.__onPenUploaded = function(id){
   } catch(e) { console.warn(e); }
 };
 
+// #4 连上空闲检测到小伙伴里有"未导入"的录音(已传/已删不算) → 醒目提示去取回(点击打开取回小伙伴)。
+// 堵"录音中被杀的段/补传放弃的段 没人捞"的静默黑洞:不自动传(避免复活已删/时长bug),引导顾问手动确认取回。
+window.__onPenUnsynced = function(count){
+  try {
+    var el = document.getElementById('penUnsyncedTip');
+    if (!count || count <= 0) { if (el) el.style.display = 'none'; return; }
+    if (!el) {
+      var anchor = document.getElementById('recCard') || document.body;
+      el = document.createElement('div');
+      el.id = 'penUnsyncedTip';
+      el.style.cssText = 'margin:10px 0;padding:10px 14px;border-radius:10px;background:#fff3e0;'
+        + 'color:#7a4f00;font-size:13px;cursor:pointer;border:1px solid #ffe0b2';
+      el.onclick = function(){ if (typeof penSyncOpen === 'function') penSyncOpen(); };
+      if (anchor.parentNode) anchor.parentNode.insertBefore(el, anchor.nextSibling);
+      else anchor.appendChild(el);
+    }
+    el.style.display = 'block';
+    el.innerHTML = '💡 小伙伴里还有 <b>' + count + '</b> 段没导入(可能上次没传上来),点这里取回 →';
+  } catch(e) { console.warn(e); }
+};
+
 // 后台异步上传指示：显示"💾 N 段保存中…"+"⚠️ M 段没保存成功"，不阻塞当前录音。都为 0 时隐藏。
 window.__penPendCount = 0; window.__penFailed = 0; window.__penDlPct = -1;
 function __renderPendBadge(){

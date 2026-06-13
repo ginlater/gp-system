@@ -118,6 +118,11 @@ public class PhoneMicService extends Service {
             recorder.setAudioSamplingRate(44100);
             recorder.setAudioEncodingBitRate(96000);
             recorder.setOutputFile(currentFile.getAbsolutePath());
+            // ★来电/被其他App抢麦/底层编码出错 → 回调这里。不设监听的话会静默录废、UI 还一直"录音中"(瞎录)。
+            recorder.setOnErrorListener((mr, what, extra) -> {
+                Log.e(TAG, "MediaRecorder onError what=" + what + " extra=" + extra);
+                onRecorderError();
+            });
             recorder.prepare();
             recorder.start();
 
@@ -151,7 +156,11 @@ public class PhoneMicService extends Service {
             // stop() 在录音过短/异常时可能抛错，文件可能不可用
             Log.e(TAG, "recorder.stop failed", e);
             safeReleaseRecorder();
-            broadcast(STATE_ERROR, "录音过短或失败，请重试", 0, -1);
+            // ★文件若有内容仍留着待重传(下次启动 retryPendingUploads 补传)，别直接丢——长录音 stop 偶发失败也能救
+            File f = currentFile;
+            boolean kept = (f != null && f.exists() && f.length() > 1024);
+            broadcast(STATE_ERROR, kept ? "保存时出了点问题，录到的部分已保留，稍后会自动补传"
+                                        : "录音过短或失败，请重试", 0, -1);
             sUploading = false;
             releaseWakeLock();
             stopForeground(true);
@@ -212,6 +221,63 @@ public class PhoneMicService extends Service {
             try { recorder.release(); } catch (Exception ignored) {}
             recorder = null;
         }
+    }
+
+    /** MediaRecorder 运行中出错(被来电/其他App抢麦、底层编码错):停录、保留已录文件待重传、明确提示。
+     *  绝不静默——否则 sRecording 残留、UI 一直"录音中"实则没在录(=瞎录),且录到的部分会丢。 */
+    private void onRecorderError() {
+        if (!recording) return;
+        recording = false; sRecording = false;
+        final int durSec = elapsedSec();
+        safeReleaseRecorder();
+        File f = currentFile;
+        boolean kept = (f != null && f.exists() && f.length() > 1024);   // 已录到内容 → 留着待重传
+        sUploading = false;
+        broadcast(STATE_ERROR, kept
+                ? "录音被打断(可能来电或被其他应用占用麦克风)，录到的部分已保存，稍后会自动补传"
+                : "录音被打断(可能来电或被其他应用占用麦克风)，请重试", durSec, -1);
+        releaseWakeLock();
+        stopForeground(true);
+        stopSelf();
+    }
+
+    /** App 启动时调:扫手机麦残留的未传 m4a(上传失败/进程被杀/出错留下的)，后台逐个重传，成功即删。
+     *  跳过正在录/传;登录失效则留到下次。补"上传中被杀就不再传、无持久化重传队列"的洞。 */
+    public static void retryPendingUploads(Context ctx, String cookie, String uploadUrl) {
+        if (ctx == null || cookie == null || cookie.isEmpty() || uploadUrl == null || uploadUrl.isEmpty()) return;
+        if (sRecording || sUploading) return;   // 正在录/传 → 别插手(currentFile 还没写完)
+        final File dir = new File(ctx.getFilesDir(), "recordings");
+        final File[] files = dir.listFiles((d, n) -> n.endsWith(".m4a"));
+        if (files == null || files.length == 0) return;
+        final String ck = cookie, url = uploadUrl;
+        new Thread(() -> {
+            for (File f : files) {
+                if (f == null || !f.exists()) continue;
+                if (f.length() < 1024) { f.delete(); continue; }   // 太小=空/坏文件,清掉
+                if (sRecording || sUploading) break;   // 中途开始录音了 → 让路
+                int dur = readDurationSec(f);
+                try {
+                    Uploader.Result r = Uploader.upload(f, dur, ck, url);
+                    if (r.ok) { f.delete(); Log.d(TAG, "手机麦残留重传成功 " + f.getName()); }
+                    else if (r.needsReauth) { Log.w(TAG, "残留重传遇登录失效,留到下次"); break; }
+                    // 其他失败:留着下次再传
+                } catch (Exception e) { Log.w(TAG, "残留重传失败 " + e.getMessage()); }
+            }
+        }, "rec-retry").start();
+    }
+
+    /** 读 m4a 时长(秒);读不到返回 0(服务器 ffprobe 会校正)。 */
+    private static int readDurationSec(File f) {
+        android.media.MediaMetadataRetriever mmr = new android.media.MediaMetadataRetriever();
+        try {
+            mmr.setDataSource(f.getAbsolutePath());
+            String d = mmr.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+            if (d != null) return (int) (Long.parseLong(d) / 1000);
+        } catch (Exception ignored) {
+        } finally {
+            try { mmr.release(); } catch (Exception ignored) {}
+        }
+        return 0;
     }
 
     private void broadcast(String state, String message, int durSec, long recId) {

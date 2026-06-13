@@ -64,6 +64,8 @@ public class PenController {
         void onPenProgress(int percent);
         /** 手动"从录音笔同步"：拉到机身文件列表(JSON 数组)，交给网页渲染预览勾选。 */
         void onPenFileList(String filesJson);
+        /** #4 连上空闲检测到笔上有 N 段"未传"录音(已传/已删不算) → 提示顾问去「取回小伙伴」手动导入。0=隐藏提示。 */
+        void onPenUnsynced(int count);
         /** 检测到笔"开机自动录制"开着并已自动关闭 → 弹框提示顾问把笔关机重开(让设置生效、停掉本次开机自录)。 */
         void onPenPowerOnRecordDisabled();
         /** 之前提示过重启、本次连接读到"开机自动录制=关" → 用户已把笔关机重开生效 → 给个正反馈、消除焦虑。 */
@@ -1533,7 +1535,7 @@ public class PenController {
         public void onFileListUpdated(List<AIRECBleFile> files) {
             markPenResponded();
             if (pendingCleanup) { pendingCleanup = false; cleanupOldFiles(files); }
-            if (pendingSweep) { pendingSweep = false; sweepPenStorage(files); }
+            if (pendingSweep) { pendingSweep = false; sweepPenStorage(files); detectUnsynced(files); }
             if (pendingSyncList) { pendingSyncList = false; deliverPenFileList(files); }
             final UploadTask task = currentTask;
             if (!waitingForFile || task == null || files == null || files.isEmpty()) return;
@@ -2010,6 +2012,48 @@ public class PenController {
         if (uploadUrl == null) return null;
         if (uploadUrl.endsWith("/upload")) return uploadUrl.substring(0, uploadUrl.length() - 7) + "/placeholder";
         return uploadUrl.replace("/upload", "/placeholder");
+    }
+
+    /** 从上传地址推导同步预览接口：.../api/consultant/upload → .../api/consultant/pen/sync-preview。 */
+    private static String syncPreviewUrlFrom(String uploadUrl) {
+        if (uploadUrl == null) return null;
+        if (uploadUrl.endsWith("/upload")) return uploadUrl.substring(0, uploadUrl.length() - 7) + "/pen/sync-preview";
+        return uploadUrl.replace("/upload", "/pen/sync-preview");
+    }
+
+    /** #4 检测笔上"未传"段并提示(不自动传，避免复活已删/时长bug=v6关扫描补传的坑)：连上空闲拉到文件列表后，
+     *  收集候选(非已传/非正在录/非队列/2天内/非太新)，问后端 sync-preview 得准确未传数，推网页提示去手动取回。 */
+    private void detectUnsynced(List<AIRECBleFile> files) {
+        if (files == null || files.isEmpty()) return;
+        if (penRecording || sessionActive || appStartPending) return;
+        if (cookie == null || uploadUrl == null) return;
+        final long now = System.currentTimeMillis();
+        final org.json.JSONArray items = new org.json.JSONArray();
+        for (AIRECBleFile f : files) {
+            if (f == null) continue;
+            String name = f.getFileName();
+            if (name == null || name.isEmpty()) continue;
+            if (uploadedFileNames.contains(name)) continue;       // 已传
+            if (name.equals(sessionFileName)) continue;            // 正在录
+            if (isQueuedByName(name)) continue;                    // 已在补传队列(会自动传,不算"待手动")
+            long startMs = parsePenFileStartMs(name, f);
+            if (startMs <= 0) continue;
+            if ((now - startMs) > SWEEP_WINDOW_MS) continue;       // 太老(只看最近2天)
+            if ((now - startMs) < 60_000) continue;                // 太新(可能还在写)
+            try {
+                org.json.JSONObject it = new org.json.JSONObject();
+                it.put("name", name);
+                it.put("ra", fmtWall(startMs));
+                items.put(it);
+            } catch (Exception ignore) {}
+        }
+        if (items.length() == 0) { if (listener != null) main.post(() -> listener.onPenUnsynced(0)); return; }
+        final String spUrl = syncPreviewUrlFrom(uploadUrl);
+        final String ck = cookie;
+        worker.submit(() -> {
+            int n = Uploader.syncPreviewNewCount(ck, spUrl, items);   // 出错返回 -1
+            if (n >= 0 && listener != null) main.post(() -> listener.onPenUnsynced(n));
+        });
     }
 
     // ============ 录音笔SN绑定校验 ============
