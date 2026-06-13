@@ -1,0 +1,1406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>美丽陪伴 · 奶杏丝绒 Champagne Velvet</title>
+<style>
+/* ============ DESIGN TOKENS — 奶杏丝绒 Champagne Velvet ============ */
+:root{
+  --bg:#FEFBF6;            /* champagne cream page — brighter */
+  --bg-2:#FBF5EE;          /* deeper cream — lighter */
+  --surface:#FFFEFC;       /* card — near white */
+  --surface-2:#FCF6EF;     /* soft fill — lighter */
+  --surface-3:#F6EEE2;     /* deeper fill — lighter */
+  --primary:#C0856E;       /* terracotta rose */
+  --primary-dark:#B0735D;
+  --primary-deep:#9A604B;
+  --primary-soft:#F3E7DF;  /* tinted rose — airier */
+  --gold:#C9A86A;          /* hairline gold */
+  --gold-deep:#B8924E;
+  --gold-soft:#F6ECD9;
+  --ink:#4A4039;           /* warm near-black — lifted */
+  --ink-2:#7E7269;         /* secondary */
+  --ink-3:#B0A498;         /* muted */
+  --line:#F1E8DD;          /* hairline — lighter */
+  --line-gold:#E8DAC0;     /* gold hairline — lighter */
+  --green:#6E9C7E;
+  --green-soft:#E6EFE7;
+  --green-ink:#48705A;
+  --red:#C47763;
+  --red-soft:#F6E5DF;
+  --red-ink:#9A4A37;
+  --amber:#C99A5B;
+  --amber-soft:#F4E9D6;
+  --amber-ink:#8A6526;
+  --blue:#7C93A6;
+  --blue-soft:#E7EDF1;
+  --blue-ink:#4E6477;
+  /* radii */
+  --r-sm:14px; --r-md:20px; --r-lg:26px; --r-xl:32px; --r-pill:999px;
+  /* spacing */
+  --s1:6px; --s2:10px; --s3:14px; --s4:18px; --s5:24px; --s6:32px;
+  /* shadow — very light */
+  --sh-soft:0 4px 16px rgba(160,120,90,.07);
+  --sh-card:0 8px 30px rgba(160,120,90,.08);
+  --sh-glow:0 14px 38px rgba(192,133,110,.30);
+  --serif: "Songti SC", Georgia, "Times New Roman", "STSong", serif;
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:var(--font);
+  background:
+    radial-gradient(820px 460px at 50% -8%, #F8EEE1 0%, rgba(248,238,225,0) 62%),
+    #F5EDE2;
+  color:var(--ink);
+  display:flex; flex-direction:column; align-items:center;
+  min-height:100vh; padding:0 0 60px;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---- icon system ---- */
+.ic{width:22px;height:22px;display:inline-block;fill:none;stroke:currentColor;
+  stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;vertical-align:middle;}
+.ic-sm{width:18px;height:18px;}
+.ic-lg{width:26px;height:26px;}
+
+/* ---- top jump menu ---- */
+#jumpbar{
+  position:sticky; top:0; z-index:200; width:100%;
+  background:rgba(251,246,239,.9); backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line);
+  padding:11px 16px; display:flex; gap:10px; align-items:center;
+}
+#jumpbar .lbl{font-size:11px; color:var(--ink-2); font-weight:700; white-space:nowrap; letter-spacing:1px; display:flex;align-items:center;gap:6px;}
+#jumpbar select{
+  flex:1; font-family:var(--font); font-size:13px; color:var(--ink);
+  background:var(--surface); border:1px solid var(--line-gold);
+  border-radius:var(--r-pill); padding:9px 16px; appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%23C0856E' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat:no-repeat; background-position:right 15px center;
+  box-shadow:var(--sh-soft); font-weight:600;
+}
+
+/* ---- phone frame ---- */
+.phone{
+  width:390px; max-width:100vw; margin:18px auto 0;
+  background:var(--bg);
+  border-radius:46px;
+  box-shadow:0 30px 80px rgba(120,85,60,.18), 0 2px 0 #F4E9DA inset;
+  border:9px solid #F0E7DA;
+  outline:1px solid #E2D2BC;
+  overflow:hidden; position:relative; height:840px;
+}
+.notch{
+  position:absolute; top:0; left:50%; transform:translateX(-50%);
+  width:128px; height:26px; background:var(--bg);
+  border-radius:0 0 16px 16px; z-index:120;
+  display:flex;align-items:center;justify-content:center;gap:7px;
+}
+.notch:after{content:"";width:46px;height:5px;border-radius:3px;background:#E1D2BC;}
+.statusbar{
+  height:44px; display:flex; align-items:center; justify-content:space-between;
+  padding:0 26px 0 28px; font-size:13px; font-weight:700; color:var(--ink);
+  position:relative; z-index:110; letter-spacing:.3px;
+}
+.statusbar .right{display:flex; gap:7px; align-items:center;}
+.statusbar .right .ic{width:16px;height:16px;stroke-width:1.6;}
+
+/* ---- screen system ---- */
+.screen{display:none; height:calc(840px - 44px); position:relative;}
+.screen.active{display:flex; flex-direction:column;}
+.scroll{flex:1; overflow-y:auto; padding:0 18px 96px; -webkit-overflow-scrolling:touch;}
+.scroll::-webkit-scrollbar{width:0;}
+/* gentle swipe-in transition between tabs */
+.screen.swipe-in{animation:swipeIn .26s cubic-bezier(.2,.8,.2,1);}
+.screen.swipe-in-rev{animation:swipeInRev .26s cubic-bezier(.2,.8,.2,1);}
+@keyframes swipeIn{from{transform:translateX(26px);opacity:.55;}to{transform:translateX(0);opacity:1;}}
+@keyframes swipeInRev{from{transform:translateX(-26px);opacity:.55;}to{transform:translateX(0);opacity:1;}}
+
+/* ---- app header ---- */
+.appbar{ padding:10px 2px 16px; display:flex; align-items:flex-start; justify-content:space-between; }
+.appbar .h-left .hello{font-size:12px; color:var(--ink-2); font-weight:600; letter-spacing:.5px;}
+.appbar .h-left .title{font-family:var(--serif); font-size:30px; font-weight:600; letter-spacing:1px; margin-top:3px; color:var(--ink);}
+.appbar .h-left .title .em{color:var(--primary);}
+.appbar .h-left .sub{font-size:12px; color:var(--ink-3); margin-top:7px; display:flex; gap:7px; align-items:center;}
+.pagetitle{font-family:var(--serif);font-size:25px;font-weight:600;letter-spacing:.8px;color:var(--ink);}
+.rolechip{display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:700;
+  background:var(--gold-soft); color:var(--gold-deep); padding:3px 11px; border-radius:var(--r-pill);
+  border:1px solid var(--line-gold);}
+.rolechip .ic{width:13px;height:13px;stroke-width:1.6;}
+.h-right{display:flex; gap:9px; align-items:center;}
+.iconbtn{
+  width:42px; height:42px; border-radius:15px; background:var(--surface);
+  display:flex; align-items:center; justify-content:center; color:var(--ink-2);
+  box-shadow:var(--sh-soft); border:1px solid var(--line); position:relative; cursor:pointer;
+}
+.iconbtn:active{transform:scale(.95);}
+.iconbtn .ic{width:21px;height:21px;}
+.badge-dot{
+  position:absolute; top:-5px; right:-5px; min-width:18px; height:18px; padding:0 4px;
+  background:var(--primary); color:#fff; font-size:10px; font-weight:800;
+  border-radius:var(--r-pill); display:flex; align-items:center; justify-content:center;
+  border:2px solid var(--bg);
+}
+
+/* ---- cards ---- */
+.card{
+  background:var(--surface); border-radius:var(--r-lg); padding:20px;
+  box-shadow:var(--sh-card); border:1px solid var(--line); margin-bottom:15px;
+}
+.card.tight{padding:16px;}
+.card.gold-edge{border:1px solid var(--line-gold);}
+.card-title{font-size:15.5px; font-weight:700; display:flex; align-items:center; gap:9px; letter-spacing:.3px;}
+.card-title .ic{color:var(--primary);width:19px;height:19px;}
+.card-sub{font-size:12px; color:var(--ink-3); margin-top:4px; line-height:1.5;}
+.serif-h{font-family:var(--serif);font-weight:600;letter-spacing:.5px;}
+
+/* ---- banners ---- */
+.banner{font-size:12.5px; line-height:1.55; padding:12px 15px; border-radius:var(--r-md); margin-bottom:15px; font-weight:600; display:flex; gap:9px; align-items:flex-start;}
+.banner .ic{flex-shrink:0;width:17px;height:17px;margin-top:1px;}
+.banner.info{background:var(--surface-2); color:var(--primary-deep); border:1px solid var(--primary-soft);}
+.banner.warn{background:var(--amber-soft); color:var(--amber-ink); border:1px solid #E9D7B4;}
+.banner.danger{background:var(--red-soft); color:var(--red-ink); border:1px solid #EBCFC6;}
+.banner.gold{background:var(--gold-soft); color:var(--gold-deep); border:1px solid var(--line-gold);}
+
+/* ---- buttons ---- */
+.btn{
+  font-family:var(--font); border:none; cursor:pointer; font-weight:700; letter-spacing:.3px;
+  border-radius:var(--r-pill); padding:13px 22px; font-size:14.5px;
+  display:inline-flex; align-items:center; justify-content:center; gap:7px; transition:transform .08s, box-shadow .2s;
+}
+.btn:active{transform:scale(.97);}
+.btn .ic{width:18px;height:18px;}
+.btn-primary{background:linear-gradient(135deg,#C68D76,var(--primary-dark)); color:#fff; box-shadow:0 8px 22px rgba(176,115,93,.28);}
+.btn-gold{background:linear-gradient(135deg,#D2B477,var(--gold-deep)); color:#fff; box-shadow:0 8px 20px rgba(184,146,78,.28);}
+.btn-soft{background:var(--surface-2); color:var(--primary-deep); border:1px solid var(--line);}
+.btn-ghost{background:var(--surface); color:var(--ink-2); border:1px solid var(--line);}
+.btn-danger{background:linear-gradient(135deg,#CC8170,var(--red)); color:#fff;}
+.btn-green{background:linear-gradient(135deg,#7FAB8E,var(--green)); color:#fff;}
+.btn-block{width:100%;}
+.btn-sm{padding:10px 16px; font-size:13px;}
+.btn-sm .ic{width:16px;height:16px;}
+.btn-xs{padding:8px 14px; font-size:12.5px;}
+.btn-xs .ic{width:14px;height:14px;}
+.btn[disabled]{opacity:.5; pointer-events:none;}
+.btnrow{display:flex; gap:9px; flex-wrap:wrap;}
+
+/* ---- pills / tags ---- */
+.pill{display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:700; padding:5px 11px; border-radius:var(--r-pill);}
+.pill .ic{width:13px;height:13px;stroke-width:1.7;}
+.pill.ok{background:var(--green-soft); color:var(--green-ink);}
+.pill.wait{background:var(--gold-soft); color:var(--gold-deep);}
+.pill.run{background:var(--blue-soft); color:var(--blue-ink);}
+.pill.fail{background:var(--red-soft); color:var(--red-ink);}
+.pill.muted{background:var(--surface-3); color:var(--ink-2);}
+.pill.gold{background:var(--gold-soft); color:var(--gold-deep); border:1px solid var(--line-gold);}
+.dotg{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;box-shadow:0 0 0 3px var(--green-soft);}
+.dotgray{width:7px;height:7px;border-radius:50%;background:var(--ink-3);display:inline-block;}
+
+/* ---- segmented ---- */
+.seg{display:flex; background:var(--surface-3); border-radius:var(--r-pill); padding:4px; gap:4px;}
+.seg button{flex:1; border:none; background:transparent; padding:10px; border-radius:var(--r-pill); font-weight:700; font-size:13px; color:var(--ink-2); cursor:pointer; font-family:var(--font); letter-spacing:.3px;}
+.seg button.on{background:var(--surface); color:var(--primary-deep); box-shadow:var(--sh-soft);}
+
+/* ---- inputs ---- */
+.field{margin-bottom:15px;}
+.field label{display:block; font-size:12.5px; font-weight:700; color:var(--ink-2); margin-bottom:8px; letter-spacing:.3px;}
+.field .req{color:var(--primary);}
+.input, input[type=text], input[type=date], input[type=password], textarea{
+  width:100%; font-family:var(--font); font-size:14.5px; color:var(--ink);
+  background:var(--surface-2); border:1.5px solid var(--line); border-radius:var(--r-md);
+  padding:13px 16px; outline:none; transition:border-color .2s, background .2s;
+}
+.input:focus, input:focus, textarea:focus{border-color:var(--primary); background:#fff;}
+textarea{resize:none; min-height:76px;}
+.search-wrap{position:relative;}
+.search-wrap .ic{position:absolute;left:15px;top:50%;transform:translateY(-50%);color:var(--ink-3);width:18px;height:18px;pointer-events:none;}
+.search-wrap input{padding-left:44px;}
+.err-msg{color:var(--red); font-size:12px; font-weight:600; margin-top:6px;}
+
+/* ---- companion button ---- */
+.rec-stage{display:flex; flex-direction:column; align-items:center; padding:10px 0 4px;}
+.timer{font-family:var(--serif); font-size:48px; font-weight:600; letter-spacing:3px; font-variant-numeric:tabular-nums; color:var(--ink);}
+.rec-status{font-size:13.5px; color:var(--ink-2); font-weight:600; margin-top:4px; text-align:center; letter-spacing:.3px;}
+.rec-circle{
+  width:152px; height:152px; border-radius:50%; margin:22px 0 12px; cursor:pointer;
+  background:
+    radial-gradient(circle at 36% 30%, #E2B9A6, var(--primary) 56%, var(--primary-deep));
+  box-shadow:var(--sh-glow), 0 0 0 1px rgba(201,168,106,.4), 0 0 0 13px rgba(192,133,110,.08);
+  display:flex; align-items:center; justify-content:center; position:relative; transition:transform .14s;
+}
+.rec-circle:active{transform:scale(.96);}
+.rec-circle .ic{width:46px;height:46px;color:#fff;stroke-width:1.5;}
+.rec-circle.live{
+  background:radial-gradient(circle at 36% 30%, #E7C4B4, #C68066 56%, var(--primary-deep));
+  animation:breathe 2.4s ease-in-out infinite;
+}
+@keyframes breathe{
+  0%,100%{box-shadow:0 14px 38px rgba(192,133,110,.34),0 0 0 1px rgba(201,168,106,.5),0 0 0 13px rgba(192,133,110,.09);}
+  50%{box-shadow:0 14px 44px rgba(192,133,110,.42),0 0 0 1px rgba(201,168,106,.6),0 0 0 26px rgba(192,133,110,.03);}
+}
+.rec-square{width:34px;height:34px;border-radius:9px;background:#fff;}
+.blink{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--primary);animation:bl 1.4s ease-in-out infinite;margin-right:7px;vertical-align:middle;}
+@keyframes bl{50%{opacity:.25;}}
+
+/* source row */
+.src-row{display:flex; gap:11px; margin-top:8px;}
+.src{
+  flex:1; background:var(--surface-2); border:1.5px solid var(--line); border-radius:var(--r-md);
+  padding:13px 10px; text-align:center; cursor:pointer; position:relative;
+}
+.src.on{border-color:var(--primary); background:var(--surface); box-shadow:var(--sh-soft);}
+.src .si{color:var(--primary-deep);}
+.src .si .ic{width:23px;height:23px;}
+.src .t{font-size:13px; font-weight:700; margin-top:5px;}
+.src .s{font-size:11px; color:var(--ink-3); margin-top:4px; display:flex; align-items:center; justify-content:center; gap:5px;}
+
+/* list rows */
+.crow{display:flex; align-items:center; gap:13px; padding:15px 2px; border-bottom:1px solid var(--line);}
+.crow:last-child{border-bottom:none;}
+.avatar{width:46px; height:46px; border-radius:16px;
+  background:linear-gradient(140deg,var(--gold-soft),var(--primary-soft));
+  border:1px solid rgba(201,168,106,.3);
+  display:flex; align-items:center; justify-content:center; font-family:var(--serif); font-weight:600; color:var(--primary-deep); font-size:18px; flex-shrink:0;}
+.avatar .ic{width:21px;height:21px;stroke-width:1.6;}
+.crow .nm{font-size:15.5px; font-weight:700; letter-spacing:.3px;}
+.crow .meta{font-size:11.5px; color:var(--ink-3); margin-top:3px;}
+
+/* audio / playback player */
+.audio{
+  background:var(--surface-2); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:12px 14px; display:flex; align-items:center; gap:12px; margin:12px 0;
+}
+.playbtn{width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#C68D76,var(--primary-dark));color:#fff;display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;box-shadow:0 5px 14px rgba(176,115,93,.28);}
+.playbtn .ic{width:17px;height:17px;fill:#fff;stroke:none;}
+.track{flex:1;}
+.bar{height:6px;background:var(--surface-3);border-radius:var(--r-pill);overflow:hidden;}
+.bar .fill{height:100%;background:linear-gradient(90deg,var(--primary),var(--gold));border-radius:var(--r-pill);}
+.audio .tt{font-size:11px;color:var(--ink-3);margin-top:6px;display:flex;justify-content:space-between;}
+
+/* big entry tiles */
+.entry{border-radius:var(--r-lg); padding:18px; display:flex; align-items:center; gap:15px; margin-bottom:14px; cursor:pointer; box-shadow:var(--sh-card);}
+.entry.rose{background:linear-gradient(125deg,var(--primary-soft),#FBF4EF); border:1px solid var(--primary-soft);}
+.entry.gold{background:linear-gradient(125deg,var(--gold-soft),#FCF8EE); border:1px solid var(--line-gold);}
+.entry .ei{width:50px;height:50px;border-radius:17px;display:flex;align-items:center;justify-content:center;background:var(--surface);box-shadow:var(--sh-soft);color:var(--primary-deep);}
+.entry.gold .ei{color:var(--gold-deep);}
+.entry .ei .ic{width:25px;height:25px;}
+.entry .et{font-size:15px;font-weight:700;letter-spacing:.3px;}
+.entry .es{font-size:11.5px;color:var(--ink-2);margin-top:4px;}
+.entry .arr{margin-left:auto;color:var(--primary);}
+.entry .arr .ic{width:20px;height:20px;}
+
+/* date switch */
+.dateswitch{display:flex; align-items:center; gap:9px; margin-bottom:14px;}
+.dateswitch .nav{width:38px;height:38px;border-radius:13px;background:var(--surface);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:var(--sh-soft);color:var(--ink-2);}
+.dateswitch .nav .ic{width:18px;height:18px;}
+.dateswitch .dpick{flex:1;text-align:center;}
+.dateswitch input[type=date]{text-align:center; padding:11px;}
+.today-tag{font-size:11px;font-weight:700;background:var(--green-soft);color:var(--green-ink);padding:5px 12px;border-radius:var(--r-pill);}
+
+/* bottom nav */
+.botnav{
+  position:absolute; bottom:0; left:0; right:0; height:78px;
+  background:rgba(255,253,250,.92); backdrop-filter:blur(16px);
+  border-top:1px solid var(--line-gold); display:flex; align-items:center; justify-content:space-around;
+  padding:8px 10px 14px; z-index:90;
+}
+.nav-item{display:flex; flex-direction:column; align-items:center; gap:4px; font-size:10.5px; color:var(--ink-3); font-weight:700; cursor:pointer; padding:5px 9px; border-radius:var(--r-pill); letter-spacing:.5px; transition:color .2s;}
+.nav-item .ic{width:23px;height:23px;stroke-width:1.5;}
+.nav-item.on{color:var(--primary-dark);}
+.nav-item.on .ic{stroke-width:1.7;}
+
+/* modal */
+.modal-wrap{position:absolute; inset:0; z-index:150; display:none; align-items:flex-end; justify-content:center;}
+.modal-wrap.show{display:flex;}
+.modal-bg{position:absolute; inset:0; background:rgba(74,64,57,.30); backdrop-filter:blur(3px);}
+.sheet{
+  position:relative; width:100%; max-height:88%; background:var(--bg);
+  border-radius:var(--r-xl) var(--r-xl) 0 0; padding:8px 20px 26px; overflow-y:auto;
+  box-shadow:0 -12px 44px rgba(110,75,55,.2); animation:slideup .28s cubic-bezier(.2,.8,.2,1);
+  border-top:1px solid var(--line-gold);
+}
+.sheet::-webkit-scrollbar{width:0;}
+@keyframes slideup{from{transform:translateY(44px);opacity:.4;}to{transform:translateY(0);opacity:1;}}
+.grab{width:40px;height:5px;border-radius:3px;background:var(--line-gold);margin:8px auto 16px;}
+.sheet h3{font-family:var(--serif);font-size:20px;font-weight:600;margin:0 0 5px;letter-spacing:.5px;}
+.sheet .sheetsub{font-size:12px;color:var(--ink-3);margin-bottom:15px;line-height:1.6;}
+
+/* toast */
+.toast{position:absolute; bottom:94px; left:18px; right:18px; z-index:170;
+  background:#5A4E45; color:#fff; padding:14px 17px; border-radius:var(--r-md); font-size:13px; font-weight:600;
+  display:none; box-shadow:0 12px 34px rgba(0,0,0,.26); animation:slideup .2s; align-items:center; gap:9px; letter-spacing:.3px;}
+.toast .ic{width:17px;height:17px;flex-shrink:0;color:var(--gold);}
+.toast.danger{background:var(--red-ink);}
+.toast.danger .ic{color:#fff;}
+.toast.show{display:flex;}
+
+/* progress */
+.prog{height:9px;background:var(--surface-3);border-radius:var(--r-pill);overflow:hidden;margin:11px 0;}
+.prog .pf{height:100%;background:linear-gradient(90deg,var(--primary),var(--gold));border-radius:var(--r-pill);}
+.kv{display:flex;justify-content:space-between;font-size:12.5px;padding:7px 0;border-bottom:1px dashed var(--line);}
+.kv:last-child{border-bottom:none;}
+.kv .k{color:var(--ink-2);} .kv .v{font-weight:700;}
+
+/* report parts */
+.part{background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-card);border:1px solid var(--line);margin-bottom:13px;overflow:hidden;}
+.part-head{padding:16px 17px;display:flex;align-items:center;gap:11px;cursor:pointer;}
+.part-no{width:32px;height:32px;border-radius:11px;background:var(--primary-soft);color:var(--primary-deep);font-family:var(--serif);font-weight:600;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.part-head .pt{font-size:14.5px;font-weight:700;flex:1;letter-spacing:.3px;}
+.part-head .chev{color:var(--ink-3);transition:transform .25s;}
+.part-head .chev .ic{width:18px;height:18px;}
+.part.open .chev{transform:rotate(180deg);}
+.part-body{display:none;padding:0 17px 17px;}
+.part.open .part-body{display:block;}
+.tag-lbl{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;padding:4px 12px;border-radius:var(--r-pill);background:var(--gold-soft);color:var(--gold-deep);margin-bottom:9px;border:1px solid var(--line-gold);}
+.score-big{font-family:var(--serif);font-size:34px;font-weight:600;}
+.bullet{font-size:13px;line-height:1.65;color:var(--ink);padding:5px 0 5px 18px;position:relative;}
+.bullet:before{content:"";position:absolute;left:2px;top:11px;width:5px;height:5px;border-radius:50%;background:var(--primary);}
+.advice{background:var(--surface-2);border-left:2.5px solid var(--gold);border-radius:0 var(--r-sm) var(--r-sm) 0;padding:11px 13px;margin:8px 0;font-size:13px;line-height:1.6;}
+.advice b{color:var(--primary-deep);}
+.twocol{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin:11px 0;}
+.col-box{background:var(--surface-2);border-radius:var(--r-md);padding:13px;font-size:12.5px;line-height:1.6;}
+.col-box .ch{font-weight:700;font-size:12px;margin-bottom:7px;display:flex;align-items:center;gap:6px;}
+.col-box .ch .ic{width:15px;height:15px;}
+.bluebox{background:var(--blue-soft);border-radius:var(--r-md);padding:14px;font-size:13px;line-height:1.65;color:var(--blue-ink);}
+.tstamp{display:inline-flex;align-items:center;gap:7px;background:linear-gradient(135deg,#C68D76,var(--primary-dark));color:#fff;font-size:12px;font-weight:700;padding:7px 14px;border-radius:var(--r-pill);cursor:pointer;}
+.tstamp .ic{width:14px;height:14px;fill:#fff;stroke:none;}
+
+/* reminder */
+.rem{background:var(--surface);border-radius:var(--r-md);padding:14px 15px;margin-bottom:11px;box-shadow:var(--sh-soft);border:1px solid var(--line);}
+.rem .rt{font-size:13.5px;font-weight:600;line-height:1.55;}
+.rem .rmeta{font-size:11px;color:var(--ink-3);margin-top:8px;display:flex;align-items:center;gap:8px;}
+.rem .rlink{color:var(--primary);font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:3px;}
+.rem .rlink .ic{width:13px;height:13px;}
+
+/* login */
+.login-wrap{flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 30px;}
+.brandmark{width:90px;height:90px;border-radius:30px;margin:0 auto 20px;
+  background:linear-gradient(140deg,#E2B9A6,var(--primary) 60%,var(--primary-deep));
+  display:flex;align-items:center;justify-content:center;box-shadow:var(--sh-glow),0 0 0 1px rgba(201,168,106,.5);}
+.brandmark .ic{width:46px;height:46px;color:#fff;stroke-width:1.4;}
+
+.empty{text-align:center;padding:50px 22px;color:var(--ink-3);}
+.empty .ei{color:var(--primary-soft);}
+.empty .ei .ic{width:54px;height:54px;stroke-width:1.3;}
+.empty .et{font-size:14px;font-weight:700;margin-top:14px;color:var(--ink-2);}
+.empty .es{font-size:12px;margin-top:7px;}
+
+.hr{height:1px;background:var(--line);margin:15px 0;}
+.hr-gold{height:1px;background:linear-gradient(90deg,transparent,var(--line-gold),transparent);margin:16px 0;}
+.smallnote{font-size:11.5px;color:var(--ink-3);line-height:1.6;}
+.radio-row{display:flex;align-items:center;gap:12px;padding:14px;border:1.5px solid var(--line);border-radius:var(--r-md);margin-bottom:10px;background:var(--surface);cursor:pointer;}
+.radio-row.on{border-color:var(--primary);background:var(--surface-2);}
+.rd{width:20px;height:20px;border-radius:50%;border:2px solid var(--ink-3);flex-shrink:0;position:relative;}
+.radio-row.on .rd{border-color:var(--primary);}
+.radio-row.on .rd:after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--primary);}
+.daytag{font-size:10px;font-weight:700;background:var(--green-soft);color:var(--green-ink);padding:2px 8px;border-radius:var(--r-pill);}
+</style>
+</head>
+<body>
+
+<!-- ============ ICON SPRITE — unified 24-grid, 1.5 stroke, round ============ -->
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <!-- companion / home : two petals leaning together (并蒂柔合) -->
+  <symbol id="ic-companion" viewBox="0 0 24 24">
+    <path d="M12 21c-3.2-2.6-5-5-5-8a5 5 0 0 1 5-5"/>
+    <path d="M12 21c3.2-2.6 5-5 5-8a5 5 0 0 0-5-5"/>
+    <path d="M12 8V4"/>
+    <circle cx="12" cy="13.5" r="1.1"/>
+  </symbol>
+  <!-- reception / today : person within a soft frame -->
+  <symbol id="ic-reception" viewBox="0 0 24 24">
+    <rect x="4" y="4" width="16" height="16" rx="5"/>
+    <circle cx="12" cy="10.2" r="2.4"/>
+    <path d="M7.8 17c.7-2.2 2.3-3.4 4.2-3.4s3.5 1.2 4.2 3.4"/>
+  </symbol>
+  <!-- bell -->
+  <symbol id="ic-bell" viewBox="0 0 24 24">
+    <path d="M6.5 16V10.5a5.5 5.5 0 0 1 11 0V16l1.4 2.2H5.1L6.5 16Z"/>
+    <path d="M10 19.5a2 2 0 0 0 4 0"/>
+  </symbol>
+  <!-- inbox / to-organize : stacked trays -->
+  <symbol id="ic-inbox" viewBox="0 0 24 24">
+    <path d="M4 13.2 6 5.6A1.6 1.6 0 0 1 7.5 4.4h9A1.6 1.6 0 0 1 18 5.6l2 7.6"/>
+    <path d="M4 13.2h4l1 2.2h6l1-2.2h4v4.2A1.6 1.6 0 0 1 18.4 19H5.6A1.6 1.6 0 0 1 4 17.4Z"/>
+  </symbol>
+  <!-- person / profile -->
+  <symbol id="ic-person" viewBox="0 0 24 24">
+    <circle cx="12" cy="8" r="3.4"/>
+    <path d="M5.5 19.5c.6-3.5 3.2-5.6 6.5-5.6s5.9 2.1 6.5 5.6"/>
+  </symbol>
+  <!-- play (solid triangle) -->
+  <symbol id="ic-play" viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></symbol>
+  <!-- search -->
+  <symbol id="ic-search" viewBox="0 0 24 24">
+    <circle cx="10.5" cy="10.5" r="6"/>
+    <path d="M15 15l4.5 4.5"/>
+  </symbol>
+  <!-- plus -->
+  <symbol id="ic-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <!-- back -->
+  <symbol id="ic-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <!-- chevron right -->
+  <symbol id="ic-chev-r" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <!-- chevron left -->
+  <symbol id="ic-chev-l" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <!-- chevron down -->
+  <symbol id="ic-chev-d" viewBox="0 0 24 24"><path d="M5 9l7 7 7-7"/></symbol>
+  <!-- more (horizontal dots) -->
+  <symbol id="ic-more" viewBox="0 0 24 24"><circle cx="6" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18" cy="12" r="1.3"/></symbol>
+  <!-- check -->
+  <symbol id="ic-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <!-- link / bind (two linked rings) -->
+  <symbol id="ic-link" viewBox="0 0 24 24">
+    <path d="M10 14a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1 1"/>
+    <path d="M14 10a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1-1"/>
+  </symbol>
+  <!-- upload / sync -->
+  <symbol id="ic-upload" viewBox="0 0 24 24">
+    <path d="M12 16V6.5"/>
+    <path d="M8 10l4-4 4 4"/>
+    <path d="M5 18.5h14"/>
+  </symbol>
+  <!-- refresh -->
+  <symbol id="ic-refresh" viewBox="0 0 24 24">
+    <path d="M19 11a7 7 0 0 0-12-4.2L5 9"/>
+    <path d="M5 5v4h4"/>
+    <path d="M5 13a7 7 0 0 0 12 4.2L19 15"/>
+    <path d="M19 19v-4h-4"/>
+  </symbol>
+  <!-- pen / companion device -->
+  <symbol id="ic-pen" viewBox="0 0 24 24">
+    <rect x="9" y="3.5" width="6" height="13" rx="3"/>
+    <path d="M6.5 12.5a5.5 5.5 0 0 0 11 0"/>
+    <path d="M12 18v2.5M9.5 20.5h5"/>
+  </symbol>
+  <!-- phone mic -->
+  <symbol id="ic-phone" viewBox="0 0 24 24">
+    <rect x="7" y="3.5" width="10" height="17" rx="2.6"/>
+    <path d="M10.5 17.5h3"/>
+  </symbol>
+  <!-- sparkle / AI -->
+  <symbol id="ic-sparkle" viewBox="0 0 24 24">
+    <path d="M12 4c.7 3.6 1.7 4.6 5.3 5.3-3.6.7-4.6 1.7-5.3 5.3-.7-3.6-1.7-4.6-5.3-5.3C10.3 8.6 11.3 7.6 12 4Z"/>
+    <path d="M18 15c.3 1.6.8 2 2.4 2.4-1.6.3-2 .8-2.4 2.4-.3-1.6-.8-2-2.4-2.4C17.2 17 17.7 16.6 18 15Z"/>
+  </symbol>
+  <!-- headphones (original audio) -->
+  <symbol id="ic-headset" viewBox="0 0 24 24">
+    <path d="M5 14v-2a7 7 0 0 1 14 0v2"/>
+    <rect x="4" y="13.5" width="3.2" height="5.5" rx="1.4"/>
+    <rect x="16.8" y="13.5" width="3.2" height="5.5" rx="1.4"/>
+  </symbol>
+  <!-- trash -->
+  <symbol id="ic-trash" viewBox="0 0 24 24">
+    <path d="M5.5 7h13"/>
+    <path d="M9.5 7V5.5h5V7"/>
+    <path d="M7 7l.8 11A1.5 1.5 0 0 0 9.3 19.4h5.4A1.5 1.5 0 0 0 16.2 18L17 7"/>
+  </symbol>
+  <!-- alert (circle !) -->
+  <symbol id="ic-alert" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.5"/><circle cx="12" cy="16" r=".3"/></symbol>
+  <!-- info -->
+  <symbol id="ic-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 11v5"/><circle cx="12" cy="8" r=".3"/></symbol>
+  <!-- pin -->
+  <symbol id="ic-pin" viewBox="0 0 24 24"><path d="M12 21c4-4.5 6-7.6 6-11a6 6 0 0 0-12 0c0 3.4 2 6.5 6 11Z"/><circle cx="12" cy="10" r="2.2"/></symbol>
+  <!-- clock -->
+  <symbol id="ic-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 1.8"/></symbol>
+  <!-- calendar -->
+  <symbol id="ic-cal" viewBox="0 0 24 24"><rect x="4.5" y="6" width="15" height="13.5" rx="3"/><path d="M4.5 10h15M8.5 4v3.5M15.5 4v3.5"/></symbol>
+  <!-- gem / value -->
+  <symbol id="ic-gem" viewBox="0 0 24 24"><path d="M7 4h10l3.5 5L12 20.5 3.5 9 7 4Z"/><path d="M3.5 9h17M12 4 9 9l3 11.5L15 9 12 4Z"/></symbol>
+  <!-- target -->
+  <symbol id="ic-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".4"/></symbol>
+  <!-- clipboard / plan -->
+  <symbol id="ic-clipboard" viewBox="0 0 24 24"><rect x="5.5" y="5.5" width="13" height="14" rx="3"/><path d="M9 5.5a3 3 0 0 1 6 0M9 11h6M9 14.5h4"/></symbol>
+  <!-- chart up -->
+  <symbol id="ic-chart" viewBox="0 0 24 24"><path d="M5 19V5M5 19h14"/><path d="M8.5 15l3-3.5 2.5 2 3.5-4.5"/></symbol>
+  <!-- handshake / match -->
+  <symbol id="ic-handshake" viewBox="0 0 24 24"><path d="M3.5 9 7 6.5l3.5 2.5 1.5-1 1.5 1L17 6.5 20.5 9"/><path d="M12 8.5 9 11.5a1.4 1.4 0 0 0 2 2l1-1 2.5 2.5a1.3 1.3 0 0 0 2-1.8L13.5 10"/><path d="M3.5 9v4.5l3 2.5M20.5 9v4.5l-3 2.5"/></symbol>
+  <!-- chat / comment -->
+  <symbol id="ic-chat" viewBox="0 0 24 24"><path d="M5 6.5A2 2 0 0 1 7 5h10a2 2 0 0 1 2 1.5V15a2 2 0 0 1-2 1.6h-6l-4 3v-3H7A2 2 0 0 1 5 15Z"/></symbol>
+  <!-- crystal ball / forecast -->
+  <symbol id="ic-forecast" viewBox="0 0 24 24"><circle cx="12" cy="10" r="6.5"/><path d="M7 19h10M9 8.5a3 3 0 0 1 3-2.5"/></symbol>
+  <!-- shield / locked -->
+  <symbol id="ic-shield" viewBox="0 0 24 24"><path d="M12 3.5 19 6v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6Z"/><path d="M9.5 12l2 2 3.5-3.5"/></symbol>
+  <!-- theme / palette -->
+  <symbol id="ic-palette" viewBox="0 0 24 24"><path d="M12 4a8 8 0 0 0 0 16c1.3 0 1.8-1 1.4-1.8-.5-1 .2-2.2 1.5-2.2H17a3 3 0 0 0 3-3.4A8 8 0 0 0 12 4Z"/><circle cx="8.5" cy="11" r=".5"/><circle cx="12" cy="8.5" r=".5"/><circle cx="15.5" cy="11" r=".5"/></symbol>
+  <!-- wifi -->
+  <symbol id="ic-wifi" viewBox="0 0 24 24"><path d="M4 9a13 13 0 0 1 16 0M7 12.5a8 8 0 0 1 10 0M9.8 16a4 4 0 0 1 4.4 0"/><circle cx="12" cy="18.6" r=".4"/></symbol>
+  <!-- battery -->
+  <symbol id="ic-battery" viewBox="0 0 24 24"><rect x="3" y="8" width="16" height="8" rx="2.4"/><path d="M21 11v2"/><rect x="5" y="10" width="11" height="4" rx="1" fill="currentColor" stroke="none"/></symbol>
+  <!-- heart (companion sentiment) -->
+  <symbol id="ic-heart" viewBox="0 0 24 24"><path d="M12 19.5C6.5 15.5 4 12.5 4 9.3A3.8 3.8 0 0 1 12 7a3.8 3.8 0 0 1 8 2.3c0 3.2-2.5 6.2-8 10.2Z"/></symbol>
+  <!-- save / floppy-soft (background save) -->
+  <symbol id="ic-cloud" viewBox="0 0 24 24"><path d="M7.5 18a4 4 0 0 1-.4-7.96A5 5 0 0 1 17 9.5a3.5 3.5 0 0 1-.5 8.5Z"/><path d="M12 15v-3M10.5 13.5 12 12l1.5 1.5"/></symbol>
+</svg>
+
+<div id="jumpbar">
+  <span class="lbl"><svg class="ic ic-sm"><use href="#ic-companion"/></svg>屏幕</span>
+  <select id="jump" onchange="go(this.value)">
+    <option value="login">登录</option>
+    <option value="home" selected>陪伴首页（含状态切换）</option>
+    <option value="reception">今日接诊列表</option>
+    <option value="pending">待整理片段（未归档）</option>
+    <option value="needs">多说话人误录确认</option>
+    <option value="profile-search">客户档案搜索</option>
+    <option value="report">陪伴分析报告</option>
+    <option value="customer">顾客美丽档案</option>
+    <option value="reminders">提醒面板</option>
+  </select>
+</div>
+
+<div class="phone">
+  <div class="notch"></div>
+  <div class="statusbar">
+    <span>9:41</span>
+    <span class="right">
+      <svg class="ic"><use href="#ic-wifi"/></svg>
+      <svg class="ic"><use href="#ic-battery"/></svg>
+      <span style="font-size:12px;">92%</span>
+    </span>
+  </div>
+
+  <!-- ===================== LOGIN ===================== -->
+  <section class="screen" id="login">
+    <div class="login-wrap">
+      <div class="brandmark"><svg class="ic"><use href="#ic-companion"/></svg></div>
+      <div style="text-align:center;">
+        <div class="serif-h" style="font-size:30px;color:var(--ink);">美丽陪伴</div>
+        <div style="font-size:13px;color:var(--ink-2);margin-top:8px;letter-spacing:.5px;">温柔记录每一次相伴 · 让陪伴更专业</div>
+      </div>
+      <div class="card gold-edge" style="margin-top:30px;">
+        <div class="field">
+          <label>账号</label>
+          <input type="text" value="张敏" placeholder="工号 / 手机号">
+        </div>
+        <div class="field">
+          <label>密码</label>
+          <input type="password" value="••••••••" placeholder="请输入密码">
+        </div>
+        <button class="btn btn-primary btn-block" onclick="go('home')">登 录</button>
+        <div class="smallnote" style="text-align:center;margin-top:15px;">登录即代表同意《服务协议》与《隐私政策》</div>
+      </div>
+      <div class="smallnote" style="text-align:center;margin-top:12px;">朝阳旗舰店 · 陪伴师端 v5.0</div>
+    </div>
+  </section>
+
+  <!-- ===================== HOME / COMPANION ===================== -->
+  <section class="screen active" id="home">
+    <div class="scroll">
+      <div class="appbar">
+        <div class="h-left">
+          <div class="hello">下午好，</div>
+          <div class="title">美丽<span class="em">陪伴</span></div>
+          <div class="sub"><span class="rolechip"><svg class="ic"><use href="#ic-person"/></svg>陪伴师</span> 张敏 · 朝阳旗舰店</div>
+        </div>
+        <div class="h-right">
+          <div class="iconbtn" onclick="toast('已切换温柔皮肤文案')"><svg class="ic"><use href="#ic-palette"/></svg></div>
+          <div class="iconbtn" onclick="go('reminders')"><svg class="ic"><use href="#ic-bell"/></svg><span class="badge-dot">3</span></div>
+        </div>
+      </div>
+
+      <!-- companion card -->
+      <div class="card gold-edge" style="text-align:center;">
+        <div class="rec-stage">
+          <div class="timer" id="recTimer">00:00</div>
+          <div class="rec-status" id="recStatus">点击下方按钮开启陪伴</div>
+          <div class="rec-circle" id="recCircle" onclick="toggleRec()">
+            <svg class="ic" id="recIcon"><use href="#ic-companion"/></svg>
+          </div>
+          <div class="smallnote" id="recHint" style="max-width:270px;margin-top:6px;">陪伴结束后，请把这段陪伴绑定到今日接诊里的顾客。</div>
+        </div>
+
+        <div class="hr-gold"></div>
+
+        <!-- source row -->
+        <div style="text-align:left;">
+          <div style="font-size:12px;font-weight:700;color:var(--ink-2);margin-bottom:9px;letter-spacing:.3px;">陪伴方式</div>
+          <div class="src-row">
+            <div class="src on" id="srcPen" onclick="pickSrc('pen')">
+              <div class="si"><svg class="ic"><use href="#ic-pen"/></svg></div>
+              <div class="t">陪伴笔</div>
+              <div class="s"><span class="dotg"></span>已连接</div>
+            </div>
+            <div class="src" id="srcPhone" onclick="pickSrc('phone')">
+              <div class="si"><svg class="ic"><use href="#ic-phone"/></svg></div>
+              <div class="t">手机麦克风</div>
+              <div class="s">手机采集</div>
+            </div>
+          </div>
+          <div class="pill gold" style="margin-top:13px;"><svg class="ic"><use href="#ic-cloud"/></svg>2 段后台同步中… <span style="opacity:.8;">进度 60%</span></div>
+          <div class="pill fail" style="margin-top:9px;"><svg class="ic"><use href="#ic-alert"/></svg>1 段没保存成功，请重试</div>
+        </div>
+      </div>
+
+      <!-- state toggles for review -->
+      <div class="card tight">
+        <div class="card-sub" style="margin-bottom:9px;display:flex;align-items:center;gap:6px;"><svg class="ic ic-sm"><use href="#ic-info"/></svg>预览各陪伴状态（仅用于评审）</div>
+        <div class="btnrow">
+          <button class="btn btn-soft btn-xs" onclick="setState('idle')">空闲</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('rec')">陪伴进行中</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('upload')">同步中</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('done')">已同步</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('fail')">同步失败</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('penwait')">笔未连接</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('connecting')">连接中</button>
+          <button class="btn btn-soft btn-xs" onclick="netToast()">网络断开</button>
+        </div>
+      </div>
+
+      <!-- entries -->
+      <div class="entry rose" onclick="go('reception')">
+        <div class="ei"><svg class="ic"><use href="#ic-reception"/></svg></div>
+        <div><div class="et">看看今天的陪伴</div><div class="es">所有接诊记录、陪伴报告、点评</div></div>
+        <div class="arr"><svg class="ic"><use href="#ic-chev-r"/></svg></div>
+      </div>
+      <div class="entry gold" onclick="go('pending')">
+        <div class="ei"><svg class="ic"><use href="#ic-inbox"/></svg></div>
+        <div><div class="et">还没归位的陪伴片段</div><div class="es">试听后绑定到对应顾客 · 2 段待整理</div></div>
+        <div class="arr"><svg class="ic"><use href="#ic-chev-r"/></svg></div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-home"></div>
+  </section>
+
+  <!-- ===================== RECEPTION LIST ===================== -->
+  <section class="screen" id="reception">
+    <div class="scroll">
+      <div class="appbar">
+        <div class="h-left">
+          <div class="pagetitle">接诊列表</div>
+          <div class="sub">陪伴前后，请把今天要接诊的顾客加进来</div>
+        </div>
+        <div class="h-right">
+          <div class="iconbtn" onclick="toast('已刷新接诊列表')"><svg class="ic"><use href="#ic-refresh"/></svg></div>
+        </div>
+      </div>
+
+      <div class="dateswitch">
+        <div class="nav" onclick="toast('查看前一天')"><svg class="ic"><use href="#ic-chev-l"/></svg></div>
+        <div class="dpick"><input type="date" value="2026-06-08" max="2026-06-08"></div>
+        <div class="nav" onclick="toast('查看后一天')"><svg class="ic"><use href="#ic-chev-r"/></svg></div>
+        <span class="today-tag">今天</span>
+      </div>
+
+      <div class="banner info"><svg class="ic"><use href="#ic-pin"/></svg><span>陪伴结束后只能绑定到这个列表里的人。今日列表每 20 秒自动刷新。</span></div>
+
+      <div class="card tight">
+        <div class="crow">
+          <div class="avatar">李</div>
+          <div style="flex:1;">
+            <div class="nm">李雪</div>
+            <div class="meta">尾号8821 · VIP10086</div>
+            <div style="margin-top:7px;"><span class="pill wait">2 段陪伴待分析</span></div>
+          </div>
+          <button class="btn btn-primary btn-xs" onclick="openPackage()"><svg class="ic"><use href="#ic-sparkle"/></svg>开始分析</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">王</div>
+          <div style="flex:1;">
+            <div class="nm">王芳</div>
+            <div class="meta">尾号3302 · VIP20455</div>
+            <div style="margin-top:7px;"><span class="pill run"><svg class="ic"><use href="#ic-refresh"/></svg>分析中… 5/11</span></div>
+          </div>
+          <button class="btn btn-ghost btn-xs" onclick="openPackage()">查看进度</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">陈</div>
+          <div style="flex:1;">
+            <div class="nm">陈思琪</div>
+            <div class="meta">尾号7714 · VIP18820</div>
+            <div style="margin-top:7px;"><span class="pill ok"><svg class="ic"><use href="#ic-check"/></svg>已分析</span> <span class="pill gold"><svg class="ic"><use href="#ic-clock"/></svg>换绑审批中 (1)</span></div>
+          </div>
+          <button class="btn btn-gold btn-xs" onclick="go('report')">看报告</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">赵</div>
+          <div style="flex:1;">
+            <div class="nm">赵丽</div>
+            <div class="meta">尾号5560 · 新客</div>
+            <div style="margin-top:7px;"><span class="pill muted">尚未绑定陪伴</span></div>
+          </div>
+          <button class="btn btn-soft btn-xs" onclick="openPackage()">待绑定</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">孙</div>
+          <div style="flex:1;">
+            <div class="nm">孙倩</div>
+            <div class="meta">尾号9087 · VIP30021</div>
+            <div style="margin-top:7px;"><span class="pill fail"><svg class="ic"><use href="#ic-alert"/></svg>分析失败，点击重试</span></div>
+          </div>
+          <button class="btn btn-ghost btn-xs" onclick="openPackage()">重新分析</button>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-block" onclick="openAdd()"><svg class="ic"><use href="#ic-plus"/></svg>加入今日接诊</button>
+    </div>
+    <div class="botnav" id="nav-reception"></div>
+  </section>
+
+  <!-- ===================== PENDING SEGMENTS ===================== -->
+  <section class="screen" id="pending">
+    <div class="scroll">
+      <div class="appbar">
+        <div class="h-left">
+          <div class="pagetitle">待整理片段</div>
+          <div class="sub">未绑定顾客的陪伴不会进入分析</div>
+        </div>
+        <div class="h-right"><div class="iconbtn" onclick="toast('已刷新')"><svg class="ic"><use href="#ic-refresh"/></svg></div></div>
+      </div>
+
+      <div class="banner warn"><svg class="ic"><use href="#ic-alert"/></svg><span>有 2 段陪伴的日期与当前接诊（2026-06-08）不一致 ·
+        <span style="text-decoration:underline;cursor:pointer;" onclick="toast('已切到 2026-06-05')">切到 2026-06-05 ›</span></span></div>
+
+      <!-- normal segment -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div class="card-title"><svg class="ic"><use href="#ic-companion"/></svg>14:32 – 14:51</div>
+            <div class="card-sub">服务日期 2026-06-08 · 时长 18分23秒</div>
+          </div>
+          <span class="pill muted">未绑定</span>
+        </div>
+        <div class="audio">
+          <div class="playbtn" onclick="toast('试听播放中（最多60秒）')"><svg class="ic"><use href="#ic-play"/></svg></div>
+          <div class="track">
+            <div class="bar"><div class="fill" style="width:34%"></div></div>
+            <div class="tt"><span>00:21</span><span>试听上限 60s</span></div>
+          </div>
+        </div>
+        <div class="btnrow">
+          <button class="btn btn-primary btn-sm" style="flex:1;" onclick="openBind()"><svg class="ic"><use href="#ic-link"/></svg>绑定顾客</button>
+          <button class="btn btn-ghost btn-sm" onclick="toast('已提交删除申请，待审批')"><svg class="ic"><use href="#ic-trash"/></svg>申请删除</button>
+        </div>
+      </div>
+
+      <!-- processing placeholder -->
+      <div class="card" style="opacity:.62;">
+        <div class="card-title" style="color:var(--ink-2);"><svg class="ic" style="color:var(--ink-3)"><use href="#ic-upload"/></svg>同步中…</div>
+        <div class="card-sub">后台同步上传中，传完后补时段 / 时长</div>
+      </div>
+
+      <!-- cross-day red -->
+      <div class="card" style="border-color:#EBCFC6;background:linear-gradient(125deg,var(--red-soft),#FFF8F6);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div class="card-title" style="color:var(--red-ink);"><svg class="ic" style="color:var(--red)"><use href="#ic-companion"/></svg>09:12 – 09:40</div>
+            <div class="card-sub" style="color:var(--red-ink);">服务日期 2026-06-05（跨日）· 27分10秒</div>
+          </div>
+          <span class="pill fail">跨日</span>
+        </div>
+        <div class="banner warn" style="margin:11px 0 0;"><svg class="ic"><use href="#ic-alert"/></svg><span>上报时长远大于实测音频，可能曾断流截断，请试听确认。</span></div>
+        <div class="audio">
+          <div class="playbtn" onclick="toast('试听播放中')"><svg class="ic"><use href="#ic-play"/></svg></div>
+          <div class="track"><div class="bar"><div class="fill" style="width:12%"></div></div>
+          <div class="tt"><span>00:07</span><span>27:10</span></div></div>
+        </div>
+        <button class="btn btn-primary btn-block btn-sm" onclick="openBind()"><svg class="ic"><use href="#ic-link"/></svg>绑定顾客</button>
+      </div>
+
+      <!-- delete pending -->
+      <div class="card" style="opacity:.78;">
+        <div class="banner gold" style="margin:0;"><svg class="ic"><use href="#ic-clock"/></svg><span>删除审批中（需先撤回申请才能进行其他操作）</span></div>
+        <button class="btn btn-ghost btn-block btn-sm" style="margin-top:11px;" onclick="toast('已撤回删除申请')">撤回删除申请</button>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+        <button class="btn btn-ghost btn-xs"><svg class="ic"><use href="#ic-chev-l"/></svg>上一页</button>
+        <span class="smallnote">第 1 / 2 页 · 每页 5 段</span>
+        <button class="btn btn-ghost btn-xs">下一页<svg class="ic"><use href="#ic-chev-r"/></svg></button>
+      </div>
+    </div>
+    <div class="botnav" id="nav-pending"></div>
+  </section>
+
+  <!-- ===================== NEEDS CONFIRM (multi speaker) ===================== -->
+  <section class="screen" id="needs">
+    <div class="scroll">
+      <div class="appbar">
+        <div class="h-left"><div class="pagetitle">误录确认</div>
+          <div class="sub">ASR 检测到说话人 &gt; 2 的疑似误录</div></div>
+      </div>
+      <div class="card" style="border-color:#E9D7B4;background:linear-gradient(125deg,var(--amber-soft),#FFFCF6);">
+        <div class="card-title" style="color:var(--amber-ink);"><svg class="ic" style="color:var(--amber)"><use href="#ic-alert"/></svg>检测到可能误录（说话人 &gt; 2）</div>
+        <div class="smallnote" style="margin-top:9px;line-height:1.65;">以下陪伴在 ASR 后检测到超过 2 个说话人，可能一段混了多位顾客。可解绑后拆分重传，或确认本次按当前归属分析。</div>
+        <div class="hr"></div>
+        <div class="kv"><span class="k">时间</span><span class="v">2026-06-08 14:32</span></div>
+        <div class="kv"><span class="k">顾客</span><span class="v">李雪</span></div>
+        <div class="kv"><span class="k">说话人数</span><span class="v" style="color:var(--amber);font-weight:800;">3 人</span></div>
+        <div class="audio">
+          <div class="playbtn" onclick="toast('试听播放中')"><svg class="ic"><use href="#ic-play"/></svg></div>
+          <div class="track"><div class="bar"><div class="fill" style="width:28%"></div></div>
+          <div class="tt"><span>00:14</span><span>18:23</span></div></div>
+        </div>
+        <div class="btnrow" style="margin-top:4px;">
+          <button class="btn btn-soft btn-sm" style="flex:1;" onclick="toast('已确认照常分析')">仍然分析</button>
+          <button class="btn btn-danger btn-sm" style="flex:1;" onclick="confirm('确认解绑并拆分重传？')&&toast('已解绑，请重新拆分上传')">解绑（拆分重传）</button>
+        </div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-needs"></div>
+  </section>
+
+  <!-- ===================== PROFILE SEARCH ===================== -->
+  <section class="screen" id="profile-search">
+    <div class="scroll">
+      <div class="appbar"><div class="h-left"><div class="pagetitle">客户档案</div>
+        <div class="sub">搜索任意顾客查看价值预测</div></div></div>
+      <div class="card">
+        <div class="smallnote" style="margin-bottom:12px;">搜索任意顾客，点开查看其档案与价值预测。（陪伴只能听本人接待的）</div>
+        <div class="search-wrap"><svg class="ic"><use href="#ic-search"/></svg><input type="text" placeholder="输入姓名 / 会员卡号" value="李"></div>
+        <div class="hr"></div>
+        <div class="crow" onclick="go('customer')">
+          <div class="avatar">李</div>
+          <div style="flex:1;"><div class="nm">李雪</div><div class="meta">VIP10086 · 陪伴 3 次</div></div>
+          <span class="arr" style="color:var(--primary);"><svg class="ic"><use href="#ic-chev-r"/></svg></span>
+        </div>
+        <div class="crow" onclick="go('customer')">
+          <div class="avatar">李</div>
+          <div style="flex:1;"><div class="nm">李婷婷</div><div class="meta">VIP44120 · 陪伴 1 次</div></div>
+          <span class="arr" style="color:var(--primary);"><svg class="ic"><use href="#ic-chev-r"/></svg></span>
+        </div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-profile-search"></div>
+  </section>
+
+  <!-- ===================== ANALYSIS REPORT ===================== -->
+  <section class="screen" id="report">
+    <div class="scroll">
+      <div class="appbar" style="align-items:center;">
+        <div class="h-left" style="display:flex;align-items:center;gap:10px;">
+          <div class="iconbtn" onclick="go('reception')"><svg class="ic"><use href="#ic-back"/></svg></div>
+          <div><div class="serif-h" style="font-size:17px;">张陪伴师 × 刘佳佳</div>
+          <div class="sub" style="margin-top:3px;">本次陪伴全维度分析 · 2026-06-08</div></div>
+        </div>
+      </div>
+
+      <div class="card tight">
+        <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;">
+          <span class="pill" style="background:#5A4E45;color:#fff;"><svg class="ic"><use href="#ic-shield"/></svg>复盘 · 内部机密</span>
+          <span class="pill ok"><svg class="ic"><use href="#ic-check"/></svg>分析已完成 · deepseek-v4-pro</span>
+        </div>
+        <div class="btnrow" style="margin-top:13px;">
+          <button class="btn btn-ghost btn-xs" onclick="toast('正在重跑分析…')"><svg class="ic"><use href="#ic-refresh"/></svg>重跑</button>
+          <button class="btn btn-ghost btn-xs" onclick="toast('展开原始陪伴音面板')"><svg class="ic"><use href="#ic-headset"/></svg>原始陪伴音</button>
+          <button class="btn btn-ghost btn-xs" onclick="toast('已申请删除陪伴，待审批')"><svg class="ic"><use href="#ic-trash"/></svg>申请删除</button>
+        </div>
+      </div>
+
+      <!-- PART 01 -->
+      <div class="part open" id="p1">
+        <div class="part-head" onclick="togglePart('p1')">
+          <div class="part-no">01</div><div class="pt">全维度评估总览</div><div class="chev"><svg class="ic"><use href="#ic-chev-d"/></svg></div>
+        </div>
+        <div class="part-body">
+          <span class="tag-lbl"><svg class="ic"><use href="#ic-gem"/></svg>顾客价值评级</span>
+          <div style="font-size:15px;font-weight:700;color:var(--primary-deep);margin-bottom:5px;">A级高价值客户</div>
+          <div class="smallnote" style="margin-bottom:11px;">消费力强、有抗衰刚需，决策周期短，适合主推高客单套餐。</div>
+          <span class="tag-lbl" style="background:var(--red-soft);color:var(--red-ink);border-color:#EBCFC6;"><svg class="ic"><use href="#ic-target"/></svg>痛点识别</span>
+          <div class="bullet">法令纹明显，自述"显老气色差"</div>
+          <div class="bullet">眼周细纹，对镜头/社交照敏感</div>
+          <div class="bullet">关注下颌线松弛</div>
+          <div style="display:flex;align-items:center;gap:13px;margin:15px 0;">
+            <div><div class="score-big" style="color:var(--gold-deep);">7.5</div><div class="smallnote">陪伴质检 / 10</div></div>
+            <div class="advice" style="flex:1;margin:0;">陪伴诊断：<b>只推产品未讲问题</b>，未先共情顾客的"显老焦虑"。</div>
+          </div>
+          <div class="advice"><b>建议 1</b>　回店先复述顾客原话痛点，建立共情</div>
+          <div class="advice"><b>建议 2</b>　用法令纹方案做切入，绑定抗衰套餐</div>
+          <div class="advice"><b>建议 3</b>　提供项目后黄金窗口复购话术</div>
+          <button class="btn btn-soft btn-block btn-sm" style="margin-top:11px;" onclick="toast('展开详细评分')">查看详细评分 <svg class="ic"><use href="#ic-chev-d"/></svg></button>
+        </div>
+      </div>
+
+      <!-- PART 02 -->
+      <div class="part" id="p2"><div class="part-head" onclick="togglePart('p2')"><div class="part-no">02</div><div class="pt">顾客真实画像重建</div><div class="chev"><svg class="ic"><use href="#ic-chev-d"/></svg></div></div>
+        <div class="part-body">
+          <div class="advice" style="border-left-color:var(--primary);">顾客原话「我最近气色不太好」<br><span class="smallnote">→ 陪伴判断：表层是气色，深层是"怕显老"的社交焦虑。</span></div>
+          <div class="bluebox" style="margin-top:11px;">综合判断：典型抗衰刚需客，情感驱动强于价格敏感，应以"找回年轻状态"叙事推进。</div>
+        </div></div>
+
+      <!-- PART 03 -->
+      <div class="part" id="p3"><div class="part-head" onclick="togglePart('p3')"><div class="part-no">03</div><div class="pt">陪伴失分根因定位</div><div class="chev"><svg class="ic"><use href="#ic-chev-d"/></svg></div></div>
+        <div class="part-body">
+          <div class="banner danger" style="margin:0 0 11px;"><svg class="ic"><use href="#ic-alert"/></svg><span>核心失分：陪伴师全程在"讲产品"，顾客一直在"讲困扰"，两条线没接上。</span></div>
+          <div class="twocol">
+            <div class="col-box"><div class="ch" style="color:var(--blue-ink);">产品维度（陪伴师做的）</div>介绍仪器参数、套餐价格、活动折扣</div>
+            <div class="col-box"><div class="ch" style="color:var(--primary-deep);">问题维度（顾客要听的）</div>法令纹会不会改善、多久见效、会不会假</div>
+          </div>
+          <div class="advice" style="border-left-color:var(--amber);">差距的本质：缺少"把产品翻译成顾客问题解决方案"的一步。</div>
+        </div></div>
+
+      <!-- PART 06 case -->
+      <div class="part" id="p6"><div class="part-head" onclick="togglePart('p6')"><div class="part-no">06</div><div class="pt">关键 Case 复盘 · 三层分析</div><div class="chev"><svg class="ic"><use href="#ic-chev-d"/></svg></div></div>
+        <div class="part-body">
+          <div class="card-title" style="font-size:13px;">Case 1 <span class="pill fail" style="margin-left:6px;">可优化</span></div>
+          <div class="tstamp" style="margin:9px 0;" onclick="toast('跳转陪伴音 0:01:34 播放')"><svg class="ic"><use href="#ic-play"/></svg>0:01:34</div>
+          <div class="advice" style="border-left-color:var(--primary);">顾客原话「我朋友在别家做了感觉假假的」</div>
+          <div class="bullet">表层做法：直接说"我们的不会假"</div>
+          <div class="bullet">深层问题：没有追问她对"假"的具体担忧</div>
+          <div class="bullet">可优化方向：先共情，再用案例图打消顾虑</div>
+          <div class="bluebox" style="margin-top:11px;background:#5A4E45;color:#fff;">一句话总结：异议处理太急于辩解，错过了建立信任的机会。</div>
+        </div></div>
+
+      <!-- PART 11 -->
+      <div class="part" id="p11"><div class="part-head" onclick="togglePart('p11')"><div class="part-no">11</div><div class="pt">成交诊断 · 5 维度判断</div><div class="chev"><svg class="ic"><use href="#ic-chev-d"/></svg></div></div>
+        <div class="part-body">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:11px;flex-wrap:wrap;">
+            <span class="pill ok"><svg class="ic"><use href="#ic-check"/></svg>已成交</span><span class="pill gold">¥3980</span><span class="pill wait">留意</span>
+          </div>
+          <div class="kv"><span class="k">顾客被打动</span><span class="v" style="color:var(--green-ink);">到位</span></div>
+          <div class="kv"><span class="k">认可方案</span><span class="v" style="color:var(--amber-ink);">部分</span></div>
+          <div class="kv"><span class="k">效果感受到位</span><span class="v" style="color:var(--green-ink);">到位</span></div>
+          <div class="kv"><span class="k">价格被匹配</span><span class="v" style="color:var(--red-ink);">缺失</span></div>
+          <div class="kv"><span class="k">紧迫感建立</span><span class="v" style="color:var(--amber-ink);">部分</span></div>
+          <div class="banner warn" style="margin:13px 0 0;"><svg class="ic"><use href="#ic-alert"/></svg><span>价格锚点未建立，存在中等流失风险，建议 3 日内回访。</span></div>
+        </div></div>
+
+      <!-- boss comment -->
+      <div class="card">
+        <div class="card-title"><svg class="ic"><use href="#ic-chat"/></svg>老板点评 · 专家点评记录</div>
+        <div style="display:flex;gap:11px;margin-top:13px;">
+          <div class="avatar" style="border-radius:50%;">老</div>
+          <textarea placeholder="在这里输入新的点评……例如：刘佳佳这个顾客性格慢热，下次先聊生活再聊项目…"></textarea>
+        </div>
+        <button class="btn btn-primary btn-sm" style="margin-top:11px;float:right;" onclick="toast('点评已提交')">提交点评</button>
+        <div style="clear:both;"></div>
+        <div class="hr"></div>
+        <div class="rem" style="box-shadow:none;background:var(--surface-2);">
+          <div class="rt" style="font-weight:600;">慢热客户，建议先做小项目建立信任再谈套餐。</div>
+          <div class="rmeta">王店长 · 2026-06-08 16:10 <span style="color:var(--red);cursor:pointer;margin-left:auto;">删除</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-report"></div>
+  </section>
+
+  <!-- ===================== CUSTOMER PROFILE ===================== -->
+  <section class="screen" id="customer">
+    <div class="scroll">
+      <div class="appbar" style="align-items:center;">
+        <div class="h-left" style="display:flex;align-items:center;gap:10px;">
+          <div class="iconbtn" onclick="go('profile-search')"><svg class="ic"><use href="#ic-back"/></svg></div>
+          <div><div class="serif-h" style="font-size:18px;">刘佳佳</div>
+          <div class="sub" style="margin-top:3px;">顾客美丽档案</div></div>
+        </div>
+      </div>
+
+      <div class="card gold-edge">
+        <div style="display:flex;gap:15px;align-items:center;">
+          <div class="avatar" style="width:56px;height:56px;border-radius:19px;font-size:22px;">刘</div>
+          <div style="flex:1;">
+            <div class="serif-h" style="font-size:19px;">刘佳佳</div>
+            <div class="meta">会员号 M20260108 · 尾号 8866</div>
+          </div>
+          <div style="text-align:center;"><div class="serif-h" style="font-size:24px;color:var(--primary);">3</div><div class="smallnote">陪伴次</div></div>
+        </div>
+        <div class="hr-gold"></div>
+        <div style="font-size:12px;font-weight:700;color:var(--ink-2);margin-bottom:9px;letter-spacing:.3px;">累积标签 · 画像积累</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <span class="pill run">法令纹明显 ×3</span>
+          <span class="pill run" style="opacity:.85;">注重抗衰 ×2</span>
+          <span class="pill run" style="opacity:.7;">价格敏感</span>
+          <span class="pill run" style="opacity:.7;">关注下颌线</span>
+        </div>
+      </div>
+
+      <div class="card gold-edge" style="background:linear-gradient(135deg,#FBF4EE,var(--surface));">
+        <div class="card-title"><svg class="ic"><use href="#ic-forecast"/></svg>客户价值预测</div>
+        <div class="card-sub">生成于 2026-06-08 14:40 · deepseek-v4-pro <span style="color:var(--amber-ink);">（有新陪伴，建议刷新）</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;margin:15px 0;">
+          <div class="col-box"><div class="ch"><svg class="ic" style="color:var(--gold-deep)"><use href="#ic-gem"/></svg>客户价值评估</div>A级 · 高复购潜力</div>
+          <div class="col-box"><div class="ch"><svg class="ic" style="color:var(--primary)"><use href="#ic-target"/></svg>攻坚作战方案</div>抗衰套餐切入</div>
+          <div class="col-box"><div class="ch"><svg class="ic" style="color:var(--primary)"><use href="#ic-clipboard"/></svg>项目规划</div>水光+热玛吉</div>
+          <div class="col-box"><div class="ch"><svg class="ic" style="color:var(--green-ink)"><use href="#ic-chart"/></svg>经营规划</div>30 日内回店</div>
+        </div>
+        <div class="col-box" style="display:flex;align-items:center;gap:13px;background:var(--gold-soft);border:1px solid var(--line-gold);">
+          <div class="avatar" style="border-radius:50%;">张</div>
+          <div><div class="ch"><svg class="ic" style="color:var(--gold-deep)"><use href="#ic-handshake"/></svg>陪伴师匹配度</div><div class="smallnote">张陪伴师 · ★★★★☆ 性格契合，建议续接</div></div>
+        </div>
+        <button class="btn btn-gold btn-block btn-sm" style="margin-top:13px;" onclick="toast('AI 正在生成深度分析，首次约需 1–2 分钟…')"><svg class="ic"><use href="#ic-sparkle"/></svg>刷新预测</button>
+      </div>
+
+      <div class="card tight">
+        <div class="card-title">陪伴时间线 <span class="smallnote">（共 3 次）</span></div>
+        <div class="crow" onclick="go('report')">
+          <div class="avatar" style="background:var(--green-soft);color:var(--green-ink);"><svg class="ic"><use href="#ic-check"/></svg></div>
+          <div style="flex:1;"><div class="nm" style="font-size:14px;">2026-06-08</div>
+            <div class="meta">张陪伴师 · 朝阳店 · 已完成</div>
+            <div style="margin-top:6px;"><span class="pill run" style="font-size:10px;">法令纹明显</span> <span class="pill gold" style="font-size:10px;">命中主推：抗衰套餐</span></div></div>
+          <span class="arr" style="color:var(--primary);"><svg class="ic"><use href="#ic-chev-r"/></svg></span>
+        </div>
+        <div class="crow" onclick="go('report')">
+          <div class="avatar" style="background:var(--green-soft);color:var(--green-ink);"><svg class="ic"><use href="#ic-check"/></svg></div>
+          <div style="flex:1;"><div class="nm" style="font-size:14px;">2026-04-20</div>
+            <div class="meta">李陪伴师 · 朝阳店 · 已完成</div></div>
+          <span class="arr" style="color:var(--primary);"><svg class="ic"><use href="#ic-chev-r"/></svg></span>
+        </div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-customer"></div>
+  </section>
+
+  <!-- ===================== REMINDERS ===================== -->
+  <section class="screen" id="reminders">
+    <div class="scroll">
+      <div class="appbar" style="align-items:center;">
+        <div class="h-left" style="display:flex;align-items:center;gap:10px;">
+          <div class="iconbtn" onclick="go('home')"><svg class="ic"><use href="#ic-back"/></svg></div>
+          <div><div class="pagetitle" style="font-size:22px;">提醒</div></div>
+        </div>
+      </div>
+
+      <div class="card-sub" style="padding:0 2px 11px;font-weight:700;color:var(--ink-2);letter-spacing:.3px;">个人提醒</div>
+      <div class="rem">
+        <div style="margin-bottom:7px;"><span class="pill wait">未绑定 L1</span></div>
+        <div class="rt">您有一段 06-08 的陪伴还没绑定顾客，请尽快处理</div>
+        <div class="rmeta">2026-06-08 15:20 <span class="rlink" style="margin-left:auto;" onclick="go('pending')">去绑定 <svg class="ic"><use href="#ic-chev-r"/></svg></span></div>
+      </div>
+      <div class="rem">
+        <div style="margin-bottom:7px;"><span class="pill fail">未查看 L2</span></div>
+        <div class="rt">李雪 06-08 的陪伴报告已生成，请尽快查看</div>
+        <div class="rmeta">2026-06-08 15:20 <span class="rlink" style="margin-left:auto;" onclick="go('report')">查看报告 <svg class="ic"><use href="#ic-chev-r"/></svg></span></div>
+      </div>
+
+      <div class="card-sub" style="padding:16px 2px 11px;font-weight:700;color:var(--ink-2);letter-spacing:.3px;">本店待跟进升级项（2）<span class="smallnote">· 仅店长可见</span></div>
+      <div class="rem" style="border-left:3px solid var(--red);">
+        <div style="margin-bottom:7px;"><span class="pill fail">升级 L2</span> <span class="pill muted">陪伴师 张敏</span></div>
+        <div class="rt">该客户存在高流失风险，请及时跟进</div>
+        <div class="rmeta">2026-06-08 15:20
+          <button class="btn btn-green btn-xs" style="margin-left:auto;" onclick="this.outerHTML='<span class=&quot;pill ok&quot;><svg class=&quot;ic&quot;><use href=&quot;#ic-check&quot;/></svg>已跟进</span>'">已跟进</button>
+          <span class="rlink" onclick="go('report')">报告 <svg class="ic"><use href="#ic-chev-r"/></svg></span></div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-reminders"></div>
+  </section>
+
+  <!-- ===================== MODALS ===================== -->
+  <!-- ADD RECEPTION -->
+  <div class="modal-wrap" id="m-add">
+    <div class="modal-bg" onclick="closeM('m-add')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>加入今日接诊</h3>
+      <div class="sheetsub">把已有或新顾客加入今天的接诊列表。陪伴结束后只能绑定到这里的人。</div>
+      <div class="seg" id="addseg">
+        <button class="on" onclick="addTab(0)">搜索已有顾客</button>
+        <button onclick="addTab(1)">新增顾客</button>
+      </div>
+      <div id="addTab0" style="margin-top:15px;">
+        <div class="search-wrap"><svg class="ic"><use href="#ic-search"/></svg><input type="text" placeholder="输入姓名 / 手机尾号 / 卡号" value="李"></div>
+        <div class="hr"></div>
+        <div class="crow">
+          <div class="avatar">李</div>
+          <div style="flex:1;"><div class="nm">李雪</div><div class="meta">尾号8821 · VIP10086</div></div>
+          <button class="btn btn-primary btn-xs" onclick="closeM('m-add');toast('已加入今日接诊：李雪')">加入</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">李</div>
+          <div style="flex:1;"><div class="nm">李娜</div><div class="meta">尾号6677 · VIP55012</div></div>
+          <button class="btn btn-primary btn-xs" onclick="closeM('m-add');toast('已加入今日接诊：李娜')">加入</button>
+        </div>
+        <div class="smallnote" style="margin-top:11px;">无匹配？如新顾客请切到「新增顾客」。</div>
+      </div>
+      <div id="addTab1" style="display:none;margin-top:15px;">
+        <div class="field"><label>顾客姓名 <span class="req">*</span></label><input type="text" placeholder="如：李雪"></div>
+        <div class="field"><label>手机尾号（4位）<span class="req">*</span></label><input type="text" placeholder="如：8821" maxlength="4"></div>
+        <div class="field"><label>会员 / 卡号（可选）</label><input type="text" placeholder="如：VIP10086"></div>
+        <div class="btnrow">
+          <button class="btn btn-primary" style="flex:1;" onclick="closeM('m-add');toast('已新增并加入今日接诊')">确认新增并加入</button>
+          <button class="btn btn-ghost" onclick="closeM('m-add')">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BIND -->
+  <div class="modal-wrap" id="m-bind">
+    <div class="modal-bg" onclick="closeM('m-bind')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>绑定到接诊顾客</h3>
+      <div class="sheetsub">只能从下面列表里选；若没有要找的顾客，请先「加入今日接诊」。</div>
+      <div class="banner warn"><svg class="ic"><use href="#ic-alert"/></svg><span>这段陪伴是 2026-06-05 的，只能绑定到当天的接诊客人。
+        <span style="text-decoration:underline;cursor:pointer;" onclick="toast('切到 06-05 接诊列表')">切到 06-05 去加入 ›</span></span></div>
+      <div class="crow">
+        <div class="avatar">李</div>
+        <div style="flex:1;"><div class="nm">李雪</div><div class="meta">尾号8821 · 2 段陪伴</div></div>
+        <button class="btn btn-primary btn-xs" onclick="closeM('m-bind');toast('已绑定到李雪，正在刷新')">绑定到这里</button>
+      </div>
+      <div class="crow">
+        <div class="avatar">王</div>
+        <div style="flex:1;"><div class="nm">王芳</div><div class="meta">尾号3302 · 0 段陪伴</div></div>
+        <button class="btn btn-primary btn-xs" onclick="closeM('m-bind');toast('已绑定到王芳，正在刷新')">绑定到这里</button>
+      </div>
+      <div class="crow" style="opacity:.45;">
+        <div class="avatar">陈</div>
+        <div style="flex:1;"><div class="nm">陈思琪</div><div class="meta">已锁定（分析中）</div></div>
+        <span class="pill muted">已锁定</span>
+      </div>
+      <button class="btn btn-ghost btn-block btn-sm" style="margin-top:11px;" onclick="closeM('m-bind')">取消</button>
+    </div>
+  </div>
+
+  <!-- PACKAGE -->
+  <div class="modal-wrap" id="m-pkg">
+    <div class="modal-bg" onclick="closeM('m-pkg')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>接诊包 · 李雪</h3>
+      <div class="sheetsub">2026-06-08 · 核对顾客信息后开始分析，如绑错可以「换绑」或「退回待整理」。</div>
+
+      <div class="card tight" style="margin-bottom:13px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span class="pill wait"><svg class="ic"><use href="#ic-clock"/></svg>待开始分析</span>
+          <span class="smallnote">本次将分析 2 段陪伴</span>
+        </div>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;color:var(--ink-2);margin-bottom:9px;letter-spacing:.3px;">本次将分析的陪伴（已绑定）</div>
+      <div class="card tight">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><div style="font-size:13px;font-weight:700;">2026-06-08 14:32</div><div class="meta">时长 18分23秒</div></div>
+          <span class="pill ok"><svg class="ic"><use href="#ic-check"/></svg>ASR done</span>
+        </div>
+        <div class="audio">
+          <div class="playbtn" onclick="toast('试听播放中')"><svg class="ic"><use href="#ic-play"/></svg></div>
+          <div class="track"><div class="bar"><div class="fill" style="width:18%"></div></div>
+          <div class="tt"><span>00:11</span><span>18:23</span></div></div>
+        </div>
+        <div class="btnrow">
+          <button class="btn btn-soft btn-sm" onclick="closeM('m-pkg');openRebind()"><svg class="ic"><use href="#ic-link"/></svg>换绑</button>
+          <button class="btn btn-ghost btn-sm" onclick="closeM('m-pkg');openUnbind()">退回待整理</button>
+        </div>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;color:var(--ink-2);margin:6px 0 9px;letter-spacing:.3px;">本人 2026-06-08 未绑定陪伴（可加入本接诊包）</div>
+      <div class="card tight">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><div style="font-size:13px;font-weight:700;">2026-06-08 15:10</div><div class="meta">时长 09分44秒 · ASR pending</div></div>
+          <button class="btn btn-primary btn-xs" onclick="toast('已加入本接诊包')">加入</button>
+        </div>
+      </div>
+
+      <div class="banner gold"><svg class="ic"><use href="#ic-shield"/></svg><span>开始分析前接诊包将被锁定，普通陪伴师无法再修改。</span></div>
+      <div class="btnrow">
+        <button class="btn btn-primary" style="flex:1;" onclick="confirm('接诊包将被锁定，确认开始分析？')&&(closeM('m-pkg'),toast('已开始分析（session #128）'))"><svg class="ic"><use href="#ic-sparkle"/></svg>确认并开始分析</button>
+        <button class="btn btn-ghost" onclick="closeM('m-pkg')">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REBIND -->
+  <div class="modal-wrap" id="m-rebind">
+    <div class="modal-bg" onclick="closeM('m-rebind')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>换绑陪伴</h3>
+      <div class="sheetsub">只移动这一段陪伴，该顾客其他陪伴不受影响。换绑后新旧两份报告都会重新生成。直接生效、无需审批，所有操作管理员可见。</div>
+      <div class="card tight"><div style="font-size:13px;font-weight:700;">陪伴：2026-06-08 14:32 · 18分23秒</div></div>
+      <div class="seg"><button class="on">选已有顾客</button><button>＋ 新增当日顾客</button></div>
+      <div class="search-wrap" style="margin:15px 0 11px;"><svg class="ic"><use href="#ic-search"/></svg><input type="text" placeholder="搜索本人接待过的顾客：姓名 / 卡号 / 尾号" value="李"></div>
+      <div class="smallnote" style="margin-bottom:11px;">仅能换绑到您本人接待过的顾客。标「当日」的已在该陪伴当天接诊；其余选中后会自动补登当天接诊。</div>
+      <div class="radio-row on" onclick="pickRadio(this)">
+        <div class="rd"></div>
+        <div style="flex:1;"><div class="nm" style="font-size:14px;">李雪 <span class="daytag">当日</span></div><div class="meta">尾号8821 · VIP10086</div></div>
+      </div>
+      <div class="radio-row" onclick="pickRadio(this)">
+        <div class="rd"></div>
+        <div style="flex:1;"><div class="nm" style="font-size:14px;">李娜</div><div class="meta">选中后将补登当天接诊</div></div>
+      </div>
+      <div class="field" style="margin-top:9px;"><label>换绑理由（可选）</label><input type="text" placeholder="说明换绑原因，便于管理员复盘"></div>
+      <div class="btnrow">
+        <button class="btn btn-primary" style="flex:1;" onclick="confirm('只移动这一段陪伴，新旧报告将重新生成，确认换绑？')&&(closeM('m-rebind'),toast('已换绑（仅这段）'))"><svg class="ic"><use href="#ic-link"/></svg>确认换绑</button>
+        <button class="btn btn-ghost" onclick="closeM('m-rebind')">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- UNBIND -->
+  <div class="modal-wrap" id="m-unbind">
+    <div class="modal-bg" onclick="closeM('m-unbind')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>退回待整理</h3>
+      <div class="sheetsub">陪伴将从当前顾客解绑，回到「待整理片段」里，可在那里申请删除。若已分析将作废。所有操作会被管理员留痕。</div>
+      <div class="card tight"><div style="font-size:13px;font-weight:700;">陪伴：2026-06-08 14:32 · 18分23秒</div></div>
+      <div class="field"><label>退回理由 <span class="req">*</span></label><textarea placeholder="请简要说明（如：绑错顾客、想删除等）"></textarea></div>
+      <div class="btnrow">
+        <button class="btn btn-danger" style="flex:1;" onclick="confirm('确定将这段陪伴退回待整理？若已分析将作废。')&&(closeM('m-unbind'),toast('已退回待整理'))">确认退回待整理</button>
+        <button class="btn btn-ghost" onclick="closeM('m-unbind')">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+/* ---------- navigation ---------- */
+var SCREENS=["login","home","reception","pending","needs","profile-search","report","customer","reminders"];
+function go(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  var el=document.getElementById(id); if(el){el.classList.add('active'); var sc=el.querySelector('.scroll'); if(sc) sc.scrollTop=0;}
+  document.getElementById('jump').value=id;
+  buildNavs(id);
+}
+/* bottom nav definition — 陪伴 / 接诊 / 提醒 / 待整理 / 我的 */
+var NAV=[
+  {id:'home',ic:'ic-companion',t:'陪伴'},
+  {id:'reception',ic:'ic-reception',t:'接诊'},
+  {id:'reminders',ic:'ic-bell',t:'提醒'},
+  {id:'pending',ic:'ic-inbox',t:'待整理'},
+  {id:'profile-search',ic:'ic-person',t:'我的'}
+];
+function buildNavs(active){
+  document.querySelectorAll('.botnav').forEach(function(bar){
+    bar.innerHTML='';
+    NAV.forEach(function(n){
+      var d=document.createElement('div');
+      d.className='nav-item'+(n.id===active?' on':'');
+      d.innerHTML='<svg class="ic"><use href="#'+n.ic+'"/></svg><div>'+n.t+'</div>';
+      d.onclick=function(){go(n.id);};
+      bar.appendChild(d);
+    });
+  });
+}
+
+/* ---------- companion state machine ---------- */
+var recOn=false, recT=0, recTimer=null;
+function fmt(s){var m=Math.floor(s/60),x=s%60;return (m<10?'0':'')+m+':'+(x<10?'0':'')+x;}
+function setIcon(symbol){
+  var el=document.getElementById('recIcon');
+  if(!el) return;
+  var ns='http://www.w3.org/2000/svg';
+  var svg=document.createElementNS(ns,'svg');
+  svg.setAttribute('class','ic'); svg.id='recIcon';
+  var use=document.createElementNS(ns,'use');
+  use.setAttribute('href','#'+symbol);
+  svg.appendChild(use);
+  el.replaceWith(svg);
+}
+function toggleRec(){ recOn?stopRec():startRec(); }
+function startRec(){
+  recOn=true; recT=0;
+  var c=document.getElementById('recCircle'); c.classList.add('live');
+  var el=document.getElementById('recIcon');
+  el.replaceWith(Object.assign(document.createElement('div'),{className:'rec-square',id:'recIcon'}));
+  document.getElementById('recStatus').innerHTML='<span class="blink"></span>陪伴进行中…';
+  recTimer=setInterval(function(){recT++;document.getElementById('recTimer').textContent=fmt(recT);},1000);
+}
+function stopRec(){
+  recOn=false; clearInterval(recTimer);
+  document.getElementById('recCircle').classList.remove('live');
+  setState('upload');
+  setTimeout(function(){ setState('done'); openBind(); },1300);
+}
+function setState(s){
+  var c=document.getElementById('recCircle'), st=document.getElementById('recStatus'),
+      tm=document.getElementById('recTimer'), ic=document.getElementById('recIcon');
+  c.classList.remove('live'); clearInterval(recTimer); recOn=false;
+  if(ic && ic.classList.contains('rec-square')) setIcon('ic-companion');
+  if(s==='idle'){tm.textContent='00:00';st.textContent='点击下方按钮开启陪伴';setIcon('ic-companion');}
+  if(s==='rec'){startRec();return;}
+  if(s==='upload'){st.textContent='同步中…请稍候';}
+  if(s==='done'){tm.textContent=fmt(recT||203);st.innerHTML='陪伴已同步，请选择顾客';}
+  if(s==='fail'){st.innerHTML='<span style="color:var(--red);font-weight:700;">同步失败，请重试</span>';}
+  if(s==='penwait'){st.textContent='请先连接陪伴笔';}
+  if(s==='connecting'){st.textContent='正在连接陪伴笔…';}
+}
+
+/* source pick */
+function pickSrc(k){
+  document.getElementById('srcPen').classList.toggle('on',k==='pen');
+  document.getElementById('srcPhone').classList.toggle('on',k==='phone');
+  toast(k==='pen'?'已选陪伴笔（自动连上次那支笔）':'已选手机麦克风采集');
+}
+
+/* ---------- modals ---------- */
+function openM(id){document.getElementById(id).classList.add('show');}
+function closeM(id){document.getElementById(id).classList.remove('show');}
+function openAdd(){addTab(0);openM('m-add');}
+function openBind(){openM('m-bind');}
+function openPackage(){openM('m-pkg');}
+function openRebind(){openM('m-rebind');}
+function openUnbind(){openM('m-unbind');}
+function addTab(i){
+  document.querySelectorAll('#addseg button').forEach((b,x)=>b.classList.toggle('on',x===i));
+  document.getElementById('addTab0').style.display=i===0?'block':'none';
+  document.getElementById('addTab1').style.display=i===1?'block':'none';
+}
+function pickRadio(el){el.parentNode.querySelectorAll('.radio-row').forEach(r=>r.classList.remove('on'));el.classList.add('on');}
+function togglePart(id){document.getElementById(id).classList.toggle('open');}
+
+/* ---------- toast ---------- */
+var tT;
+function toast(msg,danger){
+  var t=document.getElementById('toast');
+  t.innerHTML='<svg class="ic"><use href="#'+(danger?'ic-alert':'ic-check')+'"/></svg><span>'+msg+'</span>';
+  t.className='toast show'+(danger?' danger':'');
+  clearTimeout(tT); tT=setTimeout(function(){t.className='toast';},2200);
+}
+function netToast(){toast('网络断开，请检查网络后重试',true);}
+
+/* ---------- swipe to switch bottom tabs ---------- */
+/* tabs that can be swiped between (cyclic): 陪伴 / 接诊 / 提醒 / 待整理 / 我的 */
+var SWIPE_IDS=NAV.map(function(n){return n.id;});
+function currentScreen(){
+  var el=document.querySelector('.screen.active');
+  return el?el.id:null;
+}
+/* navigate with a gentle directional transition; dir: 1 = forward(向左滑), -1 = back(向右滑) */
+function goSwipe(id,dir){
+  go(id);
+  var el=document.getElementById(id);
+  if(!el) return;
+  var cls=dir>0?'swipe-in':'swipe-in-rev';
+  el.classList.remove('swipe-in','swipe-in-rev');
+  void el.offsetWidth; /* restart animation */
+  el.classList.add(cls);
+  setTimeout(function(){el.classList.remove(cls);},320);
+}
+/* does the touch start inside a horizontally-scrollable element? (e.g. chip rows) */
+function inHScroll(node,root){
+  while(node && node!==root && node!==document.body){
+    if(node.scrollWidth-node.clientWidth>4){
+      var ov=getComputedStyle(node).overflowX;
+      if(ov==='auto'||ov==='scroll') return true;
+    }
+    node=node.parentNode;
+  }
+  return false;
+}
+(function bindSwipe(){
+  var sx=0, sy=0, tracking=false, blocked=false;
+  var TH=48;          /* min horizontal travel to trigger */
+  document.querySelectorAll('.scroll').forEach(function(area){
+    area.addEventListener('touchstart',function(e){
+      if(e.touches.length!==1){tracking=false;return;}
+      var t=e.touches[0];
+      sx=t.clientX; sy=t.clientY; tracking=true;
+      /* ignore swipes that begin inside a horizontally-scrollable row */
+      blocked=inHScroll(e.target,area);
+    },{passive:true});
+    area.addEventListener('touchend',function(e){
+      if(!tracking||blocked){tracking=false;return;}
+      tracking=false;
+      var t=(e.changedTouches&&e.changedTouches[0]); if(!t) return;
+      var dx=t.clientX-sx, dy=t.clientY-sy;
+      /* require: clearly horizontal (|dx| > 1.6*|dy|) and past threshold */
+      if(Math.abs(dx)<TH || Math.abs(dx)<Math.abs(dy)*1.6) return;
+      var idx=SWIPE_IDS.indexOf(currentScreen());
+      if(idx<0) return; /* not a bottom-tab screen → leave alone */
+      var dir=dx<0?1:-1; /* swipe left → next tab; swipe right → prev tab */
+      var next=(idx+dir+SWIPE_IDS.length)%SWIPE_IDS.length;
+      goSwipe(SWIPE_IDS[next],dir);
+    },{passive:true});
+  });
+})();
+
+/* init */
+buildNavs('home');
+</script>
+</body>
+</html>

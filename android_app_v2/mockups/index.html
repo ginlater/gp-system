@@ -1,0 +1,38 @@
+<!doctype html><html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>android_app_v2 风格选型</title>
+<style>
+:root{--bg:#faf6f1;--card:#fff;--ink:#2b2521;--sub:#9c9088;--line:#ece4da}
+*{box-sizing:border-box}body{margin:0;font:16px/1.5 -apple-system,system-ui,"PingFang SC",sans-serif;background:var(--bg);color:var(--ink);padding:22px 18px 44px}
+h1{font-size:20px;margin:6px 0 2px;letter-spacing:.3px}.sub{color:var(--sub);font-size:13px;margin-bottom:6px}
+.grp{font-size:12px;color:#b89a6a;font-weight:700;letter-spacing:1px;margin:22px 2px 10px;text-transform:uppercase}
+a.card{display:flex;align-items:center;gap:14px;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:12px;box-shadow:0 6px 18px -12px rgba(120,90,60,.35)}
+a.card:active{transform:scale(.99)}
+.badge{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;font-weight:700;font-size:15px;color:#fff;flex:none}
+.w1{background:linear-gradient(135deg,#caa07e,#b9806a)}.w2{background:linear-gradient(135deg,#c98a72,#9aa890)}.w3{background:linear-gradient(135deg,#b07a4e,#caa349)}
+.A{background:#0E7C7B}.B{background:#C0705C}.C{background:#2E5BFF}
+.t{font-weight:600}.d{color:var(--sub);font-size:12.5px;margin-top:2px}
+.arrow{margin-left:auto;color:#d8c6b2;font-size:22px}
+.note{color:var(--sub);font-size:12px;margin-top:16px;border-top:1px solid var(--line);padding-top:12px}
+.pending{opacity:.4;pointer-events:none}.pending .arrow::after{content:" 生成中…";font-size:11px}
+</style></head><body>
+<h1>美丽陪伴 · 风格选型</h1>
+<div class="sub">高端身体美容 AI · 全程"陪伴"无"录音"字样</div>
+
+<div class="grp">★ 高级暖色（你选的方向）</div>
+<a class="card" href="warm_1.html"><div class="badge w1">奶杏</div><div><div class="t">奶杏丝绒 Champagne Velvet</div><div class="d">香槟奶杏底 / 陶土玫瑰 / 衬线标题 / 描金细线 · 静奢spa感</div></div><div class="arrow">›</div></a>
+<a class="card" href="warm_2.html"><div class="badge w2">暖玉</div><div><div class="t">暖玉柔光 Warm Jade Glow</div><div class="d">暖灰米 / 陶土+柔雾鼠尾草 / 柔光卡片 / 圆润几何图标</div></div><div class="arrow">›</div></a>
+<a class="card" href="warm_3.html"><div class="badge w3">金棕</div><div><div class="t">金棕质感 Caramel Couture</div><div class="d">奶油底 / 焦糖摩卡 / 拉丝金 / 强排版 · 精品 couture 感</div></div><div class="arrow">›</div></a>
+
+<div class="grp">首轮三版（参考）</div>
+<a class="card" href="style_B.html"><div class="badge B">B</div><div><div class="t">温暖 · 美业（初版）</div><div class="d">你说图标太古老的那版，留作对比</div></div><div class="arrow">›</div></a>
+<a class="card" href="style_A.html"><div class="badge A">A</div><div><div class="t">信任 · 医疗级</div><div class="d">白底蓝绿 / 清爽专业</div></div><div class="arrow">›</div></a>
+<a class="card" href="style_C.html"><div class="badge C">C</div><div><div class="t">高效 · 工具</div><div class="d">大操作 / 单手快</div></div><div class="arrow">›</div></a>
+
+<div class="note">暖色三版「生成中…」=还在做；写好后下拉刷新本页即可点。</div>
+<script>
+['warm_1','warm_2','warm_3','style_A','style_B','style_C'].forEach(k=>{
+  fetch(k+'.html',{method:'HEAD'}).then(r=>{if(!r.ok){var el=document.querySelector('a[href="'+k+'.html"]');if(el)el.classList.add('pending')}}).catch(()=>{});
+});
+</script>
+</body></html>

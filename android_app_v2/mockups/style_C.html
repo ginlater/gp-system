@@ -1,0 +1,1577 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>高效·工具 — 接诊录音 原型 (Style C)</title>
+<style>
+/* =================== DESIGN TOKENS — "高效·工具 Efficient Tool" =================== */
+:root{
+  /* color */
+  --accent:#2E5BFF;          /* electric blue primary */
+  --accent-press:#244ad9;
+  --accent-soft:#E9EEFF;
+  --accent-line:#C9D6FF;
+  --rec:#16A34A;             /* record / active green */
+  --rec-soft:#E3F6EA;
+  --rec-line:#B6E5C7;
+  --danger:#E5484D;
+  --danger-soft:#FDECEC;
+  --warn:#D9820B;
+  --warn-soft:#FCF1DD;
+  --ink:#10131A;             /* primary text */
+  --ink-2:#3B414D;           /* secondary text */
+  --ink-3:#6B7280;           /* tertiary / meta */
+  --ink-4:#9AA1AC;           /* faint */
+  --line:#E6E8EC;            /* hairline */
+  --line-2:#EFF1F4;
+  --surface:#FFFFFF;
+  --surface-2:#F6F7F9;       /* page bg */
+  --surface-3:#F0F2F5;       /* inset / chip bg */
+  --chip:#EEF1F6;
+  /* dark surface for live recording */
+  --dark:#0E1117;
+  --dark-2:#161B24;
+  --dark-line:#252C38;
+  --dark-ink:#EAEDF2;
+  --dark-ink-2:#9AA4B2;
+  /* shape & space */
+  --r:8px;
+  --r-sm:6px;
+  --r-lg:12px;
+  --r-pill:999px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px;
+  --shadow:0 1px 2px rgba(16,19,26,.06), 0 4px 14px rgba(16,19,26,.06);
+  --shadow-sm:0 1px 2px rgba(16,19,26,.07);
+  --shadow-up:0 -4px 18px rgba(16,19,26,.10);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft Yahei",sans-serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:var(--font);
+  background:#DADDE3;
+  color:var(--ink);
+  font-size:14px;line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+  display:flex;flex-direction:column;align-items:center;
+  min-height:100vh;
+}
+/* ---- top screen jumper (reviewer tool, outside phone) ---- */
+#jumper{
+  position:sticky;top:0;z-index:9999;width:100%;
+  background:#0E1117;color:#fff;
+  padding:8px 10px;display:flex;gap:8px;align-items:center;
+  box-shadow:0 2px 10px rgba(0,0,0,.25);
+  flex-wrap:wrap;
+}
+#jumper b{font-size:12px;letter-spacing:.5px;color:#9AA4B2;margin-right:2px;}
+#jumper select{
+  font-family:var(--font);font-size:13px;font-weight:600;
+  background:#1B2230;color:#fff;border:1px solid #2A3342;
+  border-radius:6px;padding:6px 8px;outline:none;
+}
+#jumper .seg{display:flex;gap:4px;background:#1B2230;border-radius:6px;padding:3px;}
+#jumper .seg button{
+  font-family:var(--font);font-size:12px;font-weight:700;
+  background:transparent;color:#9AA4B2;border:0;border-radius:4px;
+  padding:4px 9px;cursor:pointer;
+}
+#jumper .seg button.on{background:var(--accent);color:#fff;}
+
+/* ---- phone frame ---- */
+#phone{
+  width:390px;max-width:100vw;height:844px;max-height:calc(100vh - 60px);
+  background:var(--surface-2);
+  position:relative;overflow:hidden;
+  margin:16px 0;
+  border-radius:34px;
+  box-shadow:0 0 0 10px #0E1117, 0 0 0 12px #2A2F3A, 0 24px 60px rgba(0,0,0,.4);
+}
+#phone .notch{position:absolute;top:0;left:50%;transform:translateX(-50%);width:150px;height:26px;background:#0E1117;border-radius:0 0 16px 16px;z-index:200;}
+.viewport{position:absolute;inset:0;overflow:hidden;}
+
+/* generic screen */
+.screen{position:absolute;inset:0;display:none;flex-direction:column;background:var(--surface-2);}
+.screen.active{display:flex;}
+.screen.dark{background:var(--dark);}
+
+/* scroll body */
+.body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:96px;}
+.body::-webkit-scrollbar{width:0;}
+
+/* ---------- app top bar ---------- */
+.topbar{
+  flex:0 0 auto;background:var(--surface);border-bottom:1px solid var(--line);
+  padding:calc(env(safe-area-inset-top) + 28px) var(--s4) 10px;
+  padding-top:34px;
+  display:flex;align-items:center;gap:10px;
+}
+.topbar .tt{flex:1;min-width:0;}
+.topbar h1{margin:0;font-size:17px;font-weight:800;letter-spacing:-.2px;}
+.topbar .sub{font-size:11px;color:var(--ink-3);margin-top:1px;display:flex;align-items:center;gap:6px;}
+.role{display:inline-flex;align-items:center;font-size:10px;font-weight:800;padding:2px 6px;border-radius:var(--r-sm);background:var(--accent-soft);color:var(--accent);}
+.role.mgr{background:#FFF1DC;color:var(--warn);}
+.iconbtn{
+  width:38px;height:38px;border-radius:var(--r);border:1px solid var(--line);
+  background:var(--surface);display:flex;align-items:center;justify-content:center;
+  font-size:18px;position:relative;cursor:pointer;flex:0 0 auto;color:var(--ink-2);
+}
+.iconbtn:active{background:var(--surface-3);}
+.badge-dot{
+  position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 4px;
+  background:var(--danger);color:#fff;font-size:10px;font-weight:800;
+  border-radius:var(--r-pill);display:flex;align-items:center;justify-content:center;
+  border:2px solid var(--surface);
+}
+
+/* ---------- cards ---------- */
+.wrap{padding:var(--s3) var(--s4);}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow-sm);}
+.card+.card{margin-top:var(--s3);}
+.card-pad{padding:var(--s4);}
+.sec-label{font-size:11px;font-weight:800;color:var(--ink-3);letter-spacing:.6px;text-transform:uppercase;margin:0 0 8px;}
+
+/* ---------- buttons ---------- */
+.btn{
+  font-family:var(--font);font-size:14px;font-weight:700;cursor:pointer;
+  border-radius:var(--r);border:1px solid transparent;padding:11px 14px;
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  background:var(--surface-3);color:var(--ink);line-height:1;
+}
+.btn:active{transform:translateY(1px);}
+.btn.primary{background:var(--accent);color:#fff;}
+.btn.primary:active{background:var(--accent-press);}
+.btn.green{background:var(--rec);color:#fff;}
+.btn.danger{background:var(--danger);color:#fff;}
+.btn.ghost{background:var(--surface);border-color:var(--line);color:var(--ink-2);}
+.btn.outline-accent{background:var(--accent-soft);color:var(--accent);border-color:var(--accent-line);}
+.btn.outline-green{background:var(--rec-soft);color:var(--rec);border-color:var(--rec-line);}
+.btn.sm{padding:7px 10px;font-size:12.5px;font-weight:700;}
+.btn.block{width:100%;}
+.btn[disabled]{opacity:.5;pointer-events:none;}
+.btn-row{display:flex;gap:8px;}
+.btn-row>.btn{flex:1;}
+
+/* quick action chips */
+.chips{display:flex;gap:8px;overflow-x:auto;padding:2px 0;}
+.chips::-webkit-scrollbar{height:0;}
+.chip{
+  flex:0 0 auto;font-size:12.5px;font-weight:700;color:var(--ink-2);
+  background:var(--chip);border:1px solid transparent;border-radius:var(--r-pill);
+  padding:7px 13px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center;gap:5px;
+}
+.chip.on{background:var(--accent);color:#fff;}
+.chip.acc{background:var(--accent-soft);color:var(--accent);}
+
+/* ---------- list rows (high density) ---------- */
+.row{display:flex;align-items:center;gap:12px;padding:12px var(--s4);border-bottom:1px solid var(--line-2);}
+.row:last-child{border-bottom:0;}
+.row .av{width:38px;height:38px;border-radius:var(--r);background:var(--accent-soft);color:var(--accent);font-weight:800;display:flex;align-items:center;justify-content:center;flex:0 0 auto;font-size:15px;}
+.row .main{flex:1;min-width:0;}
+.row .nm{font-size:14.5px;font-weight:700;color:var(--ink);}
+.row .meta{font-size:11.5px;color:var(--ink-3);margin-top:2px;}
+
+/* status badges */
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:800;padding:3px 8px;border-radius:var(--r-pill);white-space:nowrap;}
+.tag.grey{background:var(--surface-3);color:var(--ink-3);}
+.tag.blue{background:var(--accent-soft);color:var(--accent);}
+.tag.green{background:var(--rec-soft);color:var(--rec);}
+.tag.warn{background:var(--warn-soft);color:var(--warn);}
+.tag.red{background:var(--danger-soft);color:var(--danger);}
+.tag.live::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;animation:blink 1s infinite;}
+@keyframes blink{50%{opacity:.25;}}
+
+/* banners */
+.banner{font-size:12px;font-weight:600;padding:10px 12px;border-radius:var(--r);display:flex;gap:8px;align-items:flex-start;line-height:1.4;}
+.banner.info{background:var(--accent-soft);color:#2945b8;}
+.banner.warn{background:var(--warn-soft);color:#9a5a06;}
+.banner.green{background:var(--rec-soft);color:#0f7a37;}
+.banner.red{background:var(--danger-soft);color:#b3292d;}
+.banner b{font-weight:800;}
+
+/* mini audio player */
+.player{display:flex;align-items:center;gap:10px;background:var(--surface-3);border-radius:var(--r);padding:8px 10px;}
+.player .pp{width:32px;height:32px;border-radius:var(--r-pill);background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;flex:0 0 auto;cursor:pointer;}
+.player .pp.on{background:var(--rec);}
+.player .track{flex:1;height:6px;border-radius:3px;background:var(--accent-line);position:relative;cursor:pointer;}
+.player .track>i{position:absolute;left:0;top:0;bottom:0;width:38%;background:var(--accent);border-radius:3px;}
+.player .track>i::after{content:"";position:absolute;right:-5px;top:50%;transform:translateY(-50%);width:12px;height:12px;border-radius:50%;background:#fff;border:2px solid var(--accent);}
+.player .tm{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;flex:0 0 auto;}
+
+/* form */
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:12px;font-weight:800;color:var(--ink-2);margin-bottom:6px;}
+.field label .req{color:var(--danger);}
+.field input,.field select,.field textarea{
+  width:100%;font-family:var(--font);font-size:15px;color:var(--ink);
+  border:1px solid var(--line);border-radius:var(--r);padding:11px 12px;background:var(--surface);outline:none;
+}
+.field input:focus,.field textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);}
+.field .hint{font-size:11px;color:var(--ink-4);margin-top:5px;}
+.field .err{font-size:11.5px;color:var(--danger);margin-top:5px;font-weight:600;}
+
+/* segmented control */
+.seg2{display:flex;background:var(--surface-3);border-radius:var(--r);padding:3px;margin-bottom:14px;}
+.seg2 button{flex:1;font-family:var(--font);font-size:13px;font-weight:800;border:0;background:transparent;color:var(--ink-3);padding:9px;border-radius:6px;cursor:pointer;}
+.seg2 button.on{background:var(--surface);color:var(--accent);box-shadow:var(--shadow-sm);}
+
+/* ---------- bottom nav ---------- */
+.botnav{
+  position:absolute;left:0;right:0;bottom:0;z-index:120;
+  height:66px;background:var(--surface);border-top:1px solid var(--line);
+  display:flex;align-items:stretch;
+  box-shadow:var(--shadow-up);
+}
+.botnav .nav{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;color:var(--ink-4);font-size:10px;font-weight:700;}
+.botnav .nav .ic{font-size:20px;line-height:1;}
+.botnav .nav.on{color:var(--accent);}
+.botnav .spacer{flex:1.1;}
+/* center record FAB */
+.fab{
+  position:absolute;bottom:30px;left:50%;transform:translateX(-50%);z-index:130;
+  width:66px;height:66px;border-radius:var(--r-pill);
+  background:var(--rec);color:#fff;border:4px solid var(--surface);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  box-shadow:0 6px 20px rgba(22,163,74,.45);cursor:pointer;
+}
+.fab .ic{font-size:22px;line-height:1;}
+.fab .lb{font-size:9px;font-weight:800;margin-top:1px;}
+.fab.recording{background:var(--danger);box-shadow:0 6px 20px rgba(229,72,77,.5);}
+.fab.recording .ic{width:18px;height:18px;background:#fff;border-radius:3px;}
+
+/* ---------- modal (sheet) ---------- */
+.sheet-mask{position:absolute;inset:0;background:rgba(8,11,18,.45);z-index:300;display:none;align-items:flex-end;}
+.sheet-mask.show{display:flex;}
+.sheet{width:100%;max-height:90%;background:var(--surface);border-radius:18px 18px 0 0;display:flex;flex-direction:column;overflow:hidden;animation:up .22s ease;}
+@keyframes up{from{transform:translateY(40px);opacity:.6;}to{transform:translateY(0);opacity:1;}}
+.sheet .sh-head{flex:0 0 auto;padding:16px var(--s4) 12px;border-bottom:1px solid var(--line-2);}
+.sheet .grab{width:38px;height:4px;border-radius:2px;background:var(--line);margin:0 auto 12px;}
+.sheet h2{margin:0;font-size:16px;font-weight:800;}
+.sheet .sh-sub{font-size:11.5px;color:var(--ink-3);margin-top:3px;line-height:1.4;}
+.sheet .sh-body{flex:1;overflow-y:auto;padding:14px var(--s4);}
+.sheet .sh-foot{flex:0 0 auto;padding:12px var(--s4) calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--line-2);display:flex;gap:8px;background:var(--surface);}
+.sheet .sh-foot .btn{flex:1;}
+
+/* toast */
+#toast{position:absolute;left:16px;right:16px;bottom:150px;z-index:500;background:#10131A;color:#fff;font-size:13px;font-weight:600;padding:12px 14px;border-radius:var(--r);display:none;align-items:center;gap:8px;box-shadow:0 10px 30px rgba(0,0,0,.35);}
+#toast.err{background:var(--danger);}
+#toast.show{display:flex;animation:up .2s ease;}
+
+/* small helpers */
+.flex{display:flex;}.between{justify-content:space-between;}.center{align-items:center;}
+.gap6{gap:6px;}.gap8{gap:8px;}.gap10{gap:10px;}
+.mt8{margin-top:8px;}.mt12{margin-top:12px;}.mt4{margin-top:4px;}.mb8{margin-bottom:8px;}.mb12{margin-bottom:12px;}
+.muted{color:var(--ink-3);}.tiny{font-size:11px;}.small{font-size:12.5px;}
+.b{font-weight:800;}.tnum{font-variant-numeric:tabular-nums;}
+.hr{height:1px;background:var(--line-2);margin:12px 0;}
+.pill-conn{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:6px 11px;border-radius:var(--r-pill);border:1px solid var(--line);background:var(--surface);color:var(--ink-2);}
+.dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
+.dot.g{background:var(--rec);}.dot.x{background:var(--ink-4);}.dot.r{background:var(--danger);}
+
+/* ============ LOGIN ============ */
+#s-login{background:linear-gradient(165deg,#1c2c66 0%,#2E5BFF 55%,#3f6bff 100%);}
+#s-login .lg-wrap{flex:1;display:flex;flex-direction:column;justify-content:center;padding:32px 26px;color:#fff;}
+#s-login .logo{width:60px;height:60px;border-radius:16px;background:rgba(255,255,255,.16);display:flex;align-items:center;justify-content:center;font-size:30px;margin-bottom:20px;}
+#s-login h1{font-size:26px;font-weight:800;margin:0 0 6px;letter-spacing:-.5px;}
+#s-login .tagline{font-size:13px;opacity:.85;margin-bottom:30px;}
+#s-login .lcard{background:#fff;border-radius:16px;padding:20px 18px;box-shadow:0 20px 50px rgba(0,0,0,.25);}
+#s-login .lcard .field input{font-size:16px;}
+
+/* ============ DARK live recording ============ */
+.dark .live-body{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--dark-ink);padding:24px;}
+.dark .live-top{padding:40px 16px 8px;display:flex;align-items:center;justify-content:space-between;color:var(--dark-ink);}
+.dark .live-top .x{width:36px;height:36px;border-radius:8px;background:var(--dark-2);display:flex;align-items:center;justify-content:center;color:var(--dark-ink-2);border:1px solid var(--dark-line);cursor:pointer;}
+.timer-big{font-size:68px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:-2px;color:#fff;}
+.rec-dot{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:800;color:#ff6b6b;background:rgba(229,72,77,.14);padding:7px 14px;border-radius:var(--r-pill);margin-bottom:18px;}
+.rec-dot i{width:9px;height:9px;border-radius:50%;background:#ff5c5c;animation:blink .9s infinite;}
+.wave{display:flex;align-items:flex-end;gap:3px;height:46px;margin:22px 0 28px;}
+.wave span{width:3px;background:var(--rec);border-radius:2px;animation:wv 1s ease-in-out infinite;}
+@keyframes wv{0%,100%{height:8px;}50%{height:42px;}}
+.stop-btn{width:84px;height:84px;border-radius:var(--r-pill);background:var(--danger);border:5px solid #2a1416;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 8px 30px rgba(229,72,77,.4);}
+.stop-btn i{width:28px;height:28px;background:#fff;border-radius:5px;}
+.dark .src-chip{display:inline-flex;gap:8px;align-items:center;font-size:12.5px;font-weight:700;color:var(--dark-ink-2);background:var(--dark-2);border:1px solid var(--dark-line);padding:8px 14px;border-radius:var(--r-pill);margin-top:24px;}
+
+/* report */
+.report-nav{background:var(--surface);border-bottom:1px solid var(--line);padding:34px 14px 10px;position:sticky;top:0;z-index:20;}
+.part{margin:10px 14px;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--shadow-sm);}
+.part>.ph{padding:13px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;}
+.part>.ph .no{width:26px;height:26px;border-radius:7px;background:var(--accent);color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
+.part>.ph .pt{flex:1;font-size:14px;font-weight:800;}
+.part>.ph .cv{color:var(--ink-4);font-size:13px;transition:.2s;}
+.part.open>.ph .cv{transform:rotate(180deg);}
+.part .pb{display:none;padding:0 14px 14px;border-top:1px solid var(--line-2);}
+.part.open .pb{display:block;}
+.score-big{font-size:30px;font-weight:800;color:var(--rec);}
+.kv{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--line-2);font-size:13px;}
+.kv:last-child{border:0;}
+.kv .k{color:var(--ink-3);}
+.bullet{display:flex;gap:8px;font-size:13px;padding:5px 0;}
+.bullet::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);margin-top:7px;flex:0 0 auto;}
+.advcard{background:var(--accent-soft);border-radius:var(--r);padding:11px 12px;font-size:13px;margin-top:8px;display:flex;gap:9px;}
+.advcard .n{width:20px;height:20px;border-radius:6px;background:var(--accent);color:#fff;font-size:11px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:0 0 auto;}
+.quote{background:var(--surface-3);border-left:3px solid var(--accent);border-radius:0 6px 6px 0;padding:9px 11px;font-size:13px;color:var(--ink-2);font-style:italic;margin:8px 0;}
+
+.empty{padding:46px 24px;text-align:center;color:var(--ink-3);}
+.empty .ic{font-size:42px;margin-bottom:10px;opacity:.6;}
+.empty .t{font-size:14px;font-weight:700;color:var(--ink-2);}
+.empty .d{font-size:12.5px;margin-top:6px;}
+
+@media (max-width:430px){
+  #phone{border-radius:0;margin:0;box-shadow:none;height:calc(100vh - 52px);}
+  #phone .notch{display:none;}
+  body{background:var(--surface-2);}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ REVIEWER SCREEN JUMPER ============ -->
+<div id="jumper">
+  <b>屏幕</b>
+  <select id="jumpSel" onchange="go(this.value)">
+    <option value="s-login">登录</option>
+    <option value="s-home" selected>录音首页</option>
+    <option value="s-home-rec">录音首页·录音中</option>
+    <option value="s-home-uploading">录音首页·上传中</option>
+    <option value="s-home-fail">录音首页·失败/断网</option>
+    <option value="s-live">实时录音(深色)</option>
+    <option value="s-pending">待绑定录音</option>
+    <option value="s-pending-empty">待绑定·空态</option>
+    <option value="s-needconfirm">多说话人误录</option>
+    <option value="s-reception">今日接诊列表</option>
+    <option value="s-reception-empty">接诊列表·空态</option>
+    <option value="s-search">客户档案搜索</option>
+    <option value="s-profile">顾客美丽档案</option>
+    <option value="s-report">分析报告</option>
+    <option value="s-reminder">提醒面板</option>
+  </select>
+  <div class="seg">
+    <button id="skinPro" class="on" onclick="setSkin('pro')">💼 专业版</button>
+    <button id="skinCute" onclick="setSkin('cute')">🎀 可爱版</button>
+  </div>
+</div>
+
+<!-- ============ PHONE ============ -->
+<div id="phone">
+  <div class="notch"></div>
+  <div class="viewport">
+
+  <!-- =========================================================== LOGIN -->
+  <section id="s-login" class="screen">
+    <div class="lg-wrap">
+      <div class="logo">🎧</div>
+      <h1 data-skin-pro="接诊录音系统" data-skin-cute="美丽陪伴">接诊录音系统</h1>
+      <div class="tagline" data-skin-pro="一线顾问 · 高效接诊工具" data-skin-cute="陪伴每一次美丽时光">一线顾问 · 高效接诊工具</div>
+      <div class="lcard">
+        <div class="field">
+          <label>账号</label>
+          <input type="text" value="张敏" placeholder="工号 / 手机号">
+        </div>
+        <div class="field" style="margin-bottom:18px;">
+          <label>密码</label>
+          <input type="password" value="••••••" placeholder="请输入密码">
+        </div>
+        <button class="btn primary block" style="padding:13px;font-size:15px;" onclick="go('s-home')">登 录</button>
+        <div class="tiny muted" style="text-align:center;margin-top:14px;">朝阳旗舰店 · v5.0 · 顾问端</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =========================================================== HOME (idle) -->
+  <section id="s-home" class="screen active">
+    <div class="topbar">
+      <div class="tt">
+        <h1 data-skin-pro="接诊录音" data-skin-cute="美丽陪伴">接诊录音</h1>
+        <div class="sub">张敏 <span class="role">顾问</span> · 朝阳旗舰店</div>
+      </div>
+      <div class="iconbtn" onclick="go('s-reminder')">🔔<span class="badge-dot">3</span></div>
+      <div class="iconbtn" onclick="toast('已退出登录')">⤴</div>
+    </div>
+
+    <div class="body">
+      <!-- record card -->
+      <div class="wrap">
+        <div class="card card-pad" style="text-align:center;">
+          <div class="flex between center" style="margin-bottom:14px;">
+            <span class="tag grey">空闲</span>
+            <span class="tiny muted">今日已接诊 4 人</span>
+          </div>
+          <div class="timer-big" style="font-size:54px;color:var(--ink);">00:00</div>
+          <div class="small muted mt4" data-skin-pro="点击下方按钮开始录音" data-skin-cute="点击下方按钮开启陪伴">点击下方按钮开始录音</div>
+          <div class="banner info mt12" style="text-align:left;">
+            <span>💡</span><span data-skin-pro="录音结束后请把这段录音绑定到今日接诊里的顾客。" data-skin-cute="结束后请把这段陪伴对应到今日的姐妹。">录音结束后请把这段录音绑定到今日接诊里的顾客。</span>
+          </div>
+
+          <!-- App内录音方式选择 -->
+          <div class="hr"></div>
+          <div class="flex between center mb8">
+            <span class="sec-label" style="margin:0;">录音方式</span>
+            <span class="tag green" id="penBadge"><span class="dot g" style="width:6px;height:6px;"></span>已连接</span>
+          </div>
+          <div class="flex gap8">
+            <button class="btn outline-green sm" style="flex:1;" onclick="toast('已选择录音笔 · 自动连上次那支笔')">
+              <span class="dot g"></span>🖊 录音笔
+            </button>
+            <button class="btn ghost sm" style="flex:1;" onclick="toast('已切换到手机麦克风')">📱 手机麦克风</button>
+          </div>
+          <div class="banner green mt8" style="text-align:left;font-size:11.5px;">
+            <span>💾</span><span>2 段后台上传中…（下载 60%）</span>
+          </div>
+        </div>
+
+        <!-- quick chips -->
+        <div class="chips mt12">
+          <div class="chip acc" onclick="go('s-reception')">📋 今日接诊 · 6</div>
+          <div class="chip" onclick="go('s-pending')">🎵 待绑定 · 2</div>
+          <div class="chip" onclick="go('s-needconfirm')">⚠ 误录确认 · 1</div>
+          <div class="chip" onclick="go('s-search')">🔍 客户档案</div>
+        </div>
+
+        <!-- entries -->
+        <div class="card mt12" style="background:var(--accent);border:0;cursor:pointer;" onclick="go('s-reception')">
+          <div class="card-pad flex between center" style="color:#fff;">
+            <div>
+              <div class="b" style="font-size:15px;" data-skin-pro="📋 查看接诊列表" data-skin-cute="📋 查看美丽档案">📋 查看接诊列表</div>
+              <div class="tiny" style="opacity:.85;margin-top:2px;">所有接诊记录、分析报告、点评</div>
+            </div>
+            <div style="font-size:20px;opacity:.9;">→</div>
+          </div>
+        </div>
+        <div class="card mt12" style="background:var(--rec);border:0;cursor:pointer;" onclick="go('s-reception')">
+          <div class="card-pad flex between center" style="color:#fff;">
+            <div>
+              <div class="b" style="font-size:15px;">📊 前往接诊列表</div>
+              <div class="tiny" style="opacity:.9;margin-top:2px;">查看本次接诊的 ASR 与分析进度</div>
+            </div>
+            <div style="font-size:20px;opacity:.9;">→</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- bottom nav + FAB -->
+    <div class="fab" onclick="go('s-live')">
+      <span class="ic">●</span><span class="lb" data-skin-pro="开始录音" data-skin-cute="开启陪伴">开始</span>
+    </div>
+    <div class="botnav">
+      <div class="nav on"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+  </section>
+
+  <!-- =========================================================== HOME recording (in-page state, light) -->
+  <section id="s-home-rec" class="screen">
+    <div class="topbar">
+      <div class="tt"><h1>接诊录音</h1><div class="sub">张敏 <span class="role">顾问</span></div></div>
+      <div class="iconbtn" onclick="go('s-reminder')">🔔<span class="badge-dot">3</span></div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <div class="card card-pad" style="text-align:center;border-color:var(--danger-soft);box-shadow:0 0 0 3px var(--danger-soft);">
+          <div class="flex between center" style="margin-bottom:14px;">
+            <span class="tag red live">录音中</span>
+            <span class="pill-conn"><span class="dot g"></span>🖊 录音笔（已连接）</span>
+          </div>
+          <div class="timer-big" style="font-size:54px;color:var(--danger);">03:27</div>
+          <div class="small muted mt4">录音中…，请勿退出当前接诊</div>
+          <div class="wave" style="justify-content:center;">
+            <span style="height:14px;animation-delay:0s"></span><span style="height:30px;animation-delay:.1s"></span><span style="height:20px;animation-delay:.2s"></span><span style="height:38px;animation-delay:.3s"></span><span style="height:16px;animation-delay:.4s"></span><span style="height:28px;animation-delay:.15s"></span><span style="height:22px;animation-delay:.25s"></span><span style="height:34px;animation-delay:.35s"></span>
+          </div>
+          <button class="btn danger block" style="padding:14px;font-size:16px;" onclick="go('s-home-uploading')">■ 结束录音</button>
+          <div class="tiny muted mt8">提示：去深色全屏录音界面减少误触 → <a onclick="go('s-live')" style="color:var(--accent);font-weight:700;">打开</a></div>
+        </div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav on"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab recording" onclick="go('s-home-uploading')"><span class="ic"></span><span class="lb">结束</span></div>
+  </section>
+
+  <!-- =========================================================== HOME uploading -->
+  <section id="s-home-uploading" class="screen">
+    <div class="topbar">
+      <div class="tt"><h1>接诊录音</h1><div class="sub">张敏 <span class="role">顾问</span></div></div>
+      <div class="iconbtn" onclick="go('s-reminder')">🔔<span class="badge-dot">3</span></div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <div class="card card-pad" style="text-align:center;">
+          <span class="tag blue live" style="margin-bottom:14px;">上传中</span>
+          <div class="timer-big" style="font-size:46px;color:var(--ink-3);">18:23</div>
+          <div class="small b mt8">上传中…（保存中，请勿关闭 App）</div>
+          <div class="player mt12">
+            <div class="track" style="background:var(--accent-soft);"><i style="width:72%;"></i></div>
+            <div class="tm">72%</div>
+          </div>
+          <button class="btn block mt12" disabled>处理中…</button>
+        </div>
+        <!-- once done auto-popup bind -->
+        <div class="banner green mt12">
+          <span>✅</span><span><b>已上传，请选择顾客。</b>系统将自动弹出绑定窗口。</span>
+        </div>
+        <button class="btn primary block mt12" onclick="openBind()">立即绑定顾客 →</button>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav on"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- =========================================================== HOME fail / offline -->
+  <section id="s-home-fail" class="screen">
+    <div class="topbar">
+      <div class="tt"><h1>接诊录音</h1><div class="sub">张敏 <span class="role">顾问</span></div></div>
+      <div class="iconbtn" onclick="go('s-reminder')">🔔<span class="badge-dot">3</span></div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <div class="card card-pad" style="text-align:center;border-color:var(--danger-soft);">
+          <span class="tag red" style="margin-bottom:14px;">上传失败</span>
+          <div class="timer-big" style="font-size:46px;color:var(--danger);">00:00</div>
+          <div class="banner red mt12" style="text-align:left;">
+            <span>✗</span><span><b>上传失败。</b>请检查网络后重试，本段录音已暂存本地不会丢失。</span>
+          </div>
+          <div class="btn-row mt12">
+            <button class="btn ghost" onclick="toast('正在重试上传…')">重试上传</button>
+            <button class="btn primary" onclick="go('s-home')">重新录音</button>
+          </div>
+        </div>
+
+        <div class="card card-pad mt12">
+          <div class="sec-label">其它异常状态（演示）</div>
+          <div class="banner warn mb8"><span>🖊</span><span>录音笔已断开，请重新连接。</span></div>
+          <div class="banner warn mb8"><span>⏳</span><span>正在连接录音笔…</span></div>
+          <div class="banner red mb8"><span>⚠</span><span>出错了（笔休眠无响应），请重试。已复位。</span></div>
+          <div class="banner warn"><span>💾</span><span>⚠ 1 段没保存成功，请重录。</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav on"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+    <!-- offline toast hint baked -->
+    <div style="position:absolute;left:16px;right:16px;bottom:150px;z-index:80;background:var(--danger);color:#fff;font-size:13px;font-weight:700;padding:12px 14px;border-radius:8px;display:flex;gap:8px;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.3);">⚠ 网络断开，请检查网络后重试</div>
+  </section>
+
+  <!-- =========================================================== LIVE recording (dark) -->
+  <section id="s-live" class="screen dark">
+    <div class="live-top">
+      <div class="x" onclick="go('s-home')">←</div>
+      <div style="text-align:center;">
+        <div style="font-size:13px;font-weight:800;color:#fff;" data-skin-pro="录音中" data-skin-cute="陪伴中">录音中</div>
+        <div style="font-size:11px;color:var(--dark-ink-2);">朝阳旗舰店 · 张敏</div>
+      </div>
+      <div class="x" style="color:var(--rec);"><span class="dot g"></span></div>
+    </div>
+    <div class="live-body">
+      <div class="rec-dot"><i></i> REC · 录音笔（已连接）</div>
+      <div class="timer-big">05:42</div>
+      <div class="wave">
+        <span style="height:12px;animation-delay:0s"></span><span style="height:30px;animation-delay:.1s"></span><span style="height:18px;animation-delay:.2s"></span><span style="height:40px;animation-delay:.3s"></span><span style="height:22px;animation-delay:.4s"></span><span style="height:34px;animation-delay:.5s"></span><span style="height:14px;animation-delay:.15s"></span><span style="height:38px;animation-delay:.25s"></span><span style="height:24px;animation-delay:.35s"></span><span style="height:30px;animation-delay:.45s"></span><span style="height:16px;animation-delay:.05s"></span>
+      </div>
+      <div class="stop-btn" onclick="go('s-home-uploading')"><i></i></div>
+      <div style="color:var(--dark-ink-2);font-size:12px;margin-top:16px;" data-skin-pro="点击结束录音" data-skin-cute="点击结束陪伴">点击结束录音</div>
+      <div class="src-chip"><span class="dot g"></span>🖊 录音笔 · 电量 78% · 信号稳定</div>
+    </div>
+  </section>
+
+  <!-- =========================================================== PENDING recordings -->
+  <section id="s-pending" class="screen">
+    <div class="topbar">
+      <div class="tt"><h1 data-skin-pro="待绑定录音" data-skin-cute="待对应的陪伴">待绑定录音</h1><div class="sub">未归档片段 · 共 3 段</div></div>
+      <div class="iconbtn" onclick="toast('已刷新')">⟳</div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <div class="banner info mb12"><span>ℹ️</span><span>未绑定顾客的录音不会进入分析。请试听后绑定到对应日期接诊列表里的顾客。</span></div>
+        <!-- cross-day warning -->
+        <div class="banner warn mb12"><span>⚠</span><span>有 <b>2 段</b>录音的日期与当前接诊（2026-06-08）不一致：<a onclick="toast('已切到 2026-06-05')" style="color:#9a5a06;text-decoration:underline;font-weight:800;">切到 2026-06-05</a></span></div>
+
+        <!-- normal segment -->
+        <div class="card mb12">
+          <div class="card-pad">
+            <div class="flex between center mb8">
+              <div class="b" style="font-size:14px;">🎵 服务日期 2026-06-08</div>
+              <span class="tag grey">14:32 – 14:51</span>
+            </div>
+            <div class="small muted mb8">时长 <b class="tnum" style="color:var(--ink-2);">18分23秒</b> · 试听最多 60 秒</div>
+            <div class="player mb12">
+              <div class="pp" onclick="togglePlay(this)">▶</div>
+              <div class="track" onclick="seek(this)"><i></i></div>
+              <div class="tm">06:58 / 18:23</div>
+            </div>
+            <div class="btn-row">
+              <button class="btn primary" onclick="openBind()">绑定顾客</button>
+              <button class="btn ghost" onclick="toast('已提交删除申请，待管理员审批')">申请删除</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- processing placeholder -->
+        <div class="card mb12" style="opacity:.6;">
+          <div class="card-pad flex center gap10">
+            <span style="font-size:20px;">⏳</span>
+            <div><div class="b small">上传中…</div><div class="tiny muted">传完 OSS 再补时段 / 时长</div></div>
+          </div>
+        </div>
+
+        <!-- cross-day red segment -->
+        <div class="card mb12" style="background:var(--danger-soft);border-color:#f3c6c7;">
+          <div class="card-pad">
+            <div class="flex between center mb8">
+              <div class="b" style="font-size:14px;color:#b3292d;">🎵 服务日期 2026-06-05</div>
+              <span class="tag red">跨日</span>
+            </div>
+            <div class="banner warn mb8" style="background:#fff;"><span>⚠</span><span>上报时长远大于实测音频，可能断流截断，请核对。</span></div>
+            <div class="small muted mb8">时段 09:11 – 09:40 · 时长 28分10秒</div>
+            <div class="player mb12" style="background:#fff;">
+              <div class="pp" onclick="togglePlay(this)">▶</div>
+              <div class="track" onclick="seek(this)"><i style="width:20%;"></i></div>
+              <div class="tm">05:38 / 28:10</div>
+            </div>
+            <div class="btn-row">
+              <button class="btn primary" onclick="toast('请先切到 2026-06-05 接诊列表')">绑定顾客</button>
+              <button class="btn ghost" onclick="toast('已提交删除申请')">申请删除</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- delete pending -->
+        <div class="card mb12" style="opacity:.7;">
+          <div class="card-pad">
+            <div class="banner warn mb8"><span>⏳</span><span>删除审批中（需先撤回申请才能进行其他操作）</span></div>
+            <div class="small muted mb8">服务日期 2026-06-07 · 时段 16:02 – 16:21 · 时长 19分02秒</div>
+            <button class="btn ghost block" onclick="toast('已撤回删除申请')">撤回删除申请</button>
+          </div>
+        </div>
+
+        <!-- delete rejected -->
+        <div class="card mb12">
+          <div class="card-pad">
+            <div class="banner red mb8"><span>✗</span><span>删除申请被拒：该录音已进入分析队列，请联系店长。</span></div>
+            <div class="small muted mb8">服务日期 2026-06-06 · 时段 11:20 – 11:38</div>
+            <button class="btn ghost block sm" onclick="toast('已关闭提示')">知道了</button>
+          </div>
+        </div>
+
+        <!-- pagination -->
+        <div class="flex between center mt8">
+          <button class="btn ghost sm" disabled>‹ 上一页</button>
+          <span class="tiny muted">第 1 / 2 页 · 每页 5 段</span>
+          <button class="btn ghost sm" onclick="toast('第 2 页')">下一页 ›</button>
+        </div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav" onclick="go('s-home')"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav on"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- =========================================================== PENDING empty -->
+  <section id="s-pending-empty" class="screen">
+    <div class="topbar">
+      <div class="tt"><h1>待绑定录音</h1><div class="sub">未归档片段</div></div>
+      <div class="iconbtn" onclick="toast('已刷新')">⟳</div>
+    </div>
+    <div class="body">
+      <div class="empty">
+        <div class="ic">🎵</div>
+        <div class="t">没有未绑定的录音</div>
+        <div class="d">录音结束并上传成功后会出现在这里，<br>试听后绑定到对应顾客即可。</div>
+        <button class="btn primary mt12" onclick="go('s-home')">去录音</button>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav" onclick="go('s-home')"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav on"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- =========================================================== NEEDS CONFIRM (multi-speaker) -->
+  <section id="s-needconfirm" class="screen">
+    <div class="topbar">
+      <div class="tt"><h1>误录确认</h1><div class="sub">多说话人疑似误录</div></div>
+      <div class="iconbtn" onclick="go('s-home')">←</div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <div class="banner warn mb12"><span>⚠</span><span><b>检测到可能误录（说话人 &gt; 2）</b><br>以下录音 ASR 后检测到超过 2 个说话人，可能一段混了多位顾客。可解绑后拆分重传，或确认本次按当前归属分析。</span></div>
+
+        <div class="card mb12" style="border-color:var(--warn-soft);">
+          <div class="card-pad">
+            <div class="flex between center mb8">
+              <div class="b">⚠ 疑似误录片段</div>
+              <span class="tag warn">说话人 3 人</span>
+            </div>
+            <div class="kv"><span class="k">时间</span><span class="b">2026-06-08 14:32</span></div>
+            <div class="kv"><span class="k">顾客</span><span class="b">李雪（尾号8821）</span></div>
+            <div class="player mt12 mb12">
+              <div class="pp" onclick="togglePlay(this)">▶</div>
+              <div class="track" onclick="seek(this)"><i style="width:30%;"></i></div>
+              <div class="tm">02:14 / 18:23</div>
+            </div>
+            <div class="btn-row">
+              <button class="btn ghost" onclick="toast('已确认按当前归属分析')">仍然分析</button>
+              <button class="btn danger" onclick="confirmUnbind()">解绑（拆分重传）</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb12" style="border-color:var(--warn-soft);">
+          <div class="card-pad">
+            <div class="flex between center mb8">
+              <div class="b">⚠ 疑似误录片段</div>
+              <span class="tag warn">说话人 4 人</span>
+            </div>
+            <div class="kv"><span class="k">时间</span><span class="b">2026-06-08 16:05</span></div>
+            <div class="kv"><span class="k">顾客</span><span class="b">王芳（尾号3302）</span></div>
+            <div class="player mt12 mb12">
+              <div class="pp" onclick="togglePlay(this)">▶</div>
+              <div class="track" onclick="seek(this)"><i style="width:10%;"></i></div>
+              <div class="tm">00:48 / 22:09</div>
+            </div>
+            <div class="btn-row">
+              <button class="btn ghost" onclick="toast('已确认按当前归属分析')">仍然分析</button>
+              <button class="btn danger" onclick="confirmUnbind()">解绑（拆分重传）</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav" onclick="go('s-home')"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- =========================================================== RECEPTION LIST -->
+  <section id="s-reception" class="screen">
+    <div class="topbar">
+      <div class="tt"><h1 data-skin-pro="接诊列表" data-skin-cute="姐妹们的接诊">接诊列表</h1><div class="sub">张敏 <span class="role">顾问</span> · 每20秒自动刷新</div></div>
+      <div class="iconbtn" onclick="toast('已刷新')">⟳</div>
+      <div class="iconbtn" onclick="openAdd()" style="background:var(--accent);color:#fff;border-color:var(--accent);">＋</div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <!-- date switcher -->
+        <div class="card card-pad mb12">
+          <div class="flex between center mb8">
+            <button class="btn ghost sm" onclick="toast('前一天 06-07')">◀ 前一天</button>
+            <div style="text-align:center;">
+              <div class="b" style="font-size:15px;">2026-06-08</div>
+              <div class="tag green" style="margin-top:2px;">今天</div>
+            </div>
+            <button class="btn ghost sm" onclick="toast('后一天')">后一天 ▶</button>
+          </div>
+          <button class="btn outline-accent block sm" onclick="toast('已回到今天')">回到今天</button>
+        </div>
+
+        <div class="banner info mb12"><span>📌</span><span>录音前/后请把今天要接诊的顾客加进来。录音结束后只能绑定到这个列表里的人。</span></div>
+
+        <!-- customer rows -->
+        <div class="card">
+          <!-- not bound -->
+          <div class="row" onclick="openPackage()">
+            <div class="av">李</div>
+            <div class="main">
+              <div class="nm">李雪 <span class="tiny muted">尾号8821 · VIP10086</span></div>
+              <div class="meta"><span class="tag grey">尚未绑定录音</span></div>
+            </div>
+            <span style="color:var(--ink-4);">›</span>
+          </div>
+          <!-- pending analysis -->
+          <div class="row" onclick="openPackage()">
+            <div class="av">王</div>
+            <div class="main">
+              <div class="nm">王芳 <span class="tiny muted">尾号3302 · VIP20451</span></div>
+              <div class="meta"><span class="tag blue">2 段录音待分析</span></div>
+            </div>
+            <span style="color:var(--ink-4);">›</span>
+          </div>
+          <!-- analyzing -->
+          <div class="row" onclick="openPackage()">
+            <div class="av" style="background:var(--rec-soft);color:var(--rec);">刘</div>
+            <div class="main">
+              <div class="nm">刘佳佳 <span class="tiny muted">尾号8866 · M20260108</span></div>
+              <div class="meta"><span class="tag green live">分析中… 5 / 11</span></div>
+            </div>
+            <button class="btn ghost sm" onclick="event.stopPropagation();toast('已取消分析')">取消</button>
+          </div>
+          <!-- done -->
+          <div class="row" onclick="go('s-report')">
+            <div class="av" style="background:var(--rec-soft);color:var(--rec);">陈</div>
+            <div class="main">
+              <div class="nm">陈美玲 <span class="tiny muted">尾号5590 · VIP10920</span></div>
+              <div class="meta"><span class="tag green">✓ 已分析</span></div>
+            </div>
+            <button class="btn outline-accent sm" onclick="event.stopPropagation();go('s-report')">看报告</button>
+          </div>
+          <!-- failed -->
+          <div class="row">
+            <div class="av" style="background:var(--danger-soft);color:var(--danger);">赵</div>
+            <div class="main">
+              <div class="nm">赵静 <span class="tiny muted">尾号1147 · VIP30887</span></div>
+              <div class="meta"><span class="tag red">✗ 分析失败，点击重试</span></div>
+            </div>
+            <button class="btn ghost sm" onclick="toast('已重新提交分析')">重新分析</button>
+          </div>
+          <!-- rebind approval -->
+          <div class="row">
+            <div class="av" style="background:var(--warn-soft);color:var(--warn);">孙</div>
+            <div class="main">
+              <div class="nm">孙莉 <span class="tiny muted">尾号6624 · VIP41200</span></div>
+              <div class="meta"><span class="tag warn">⏳ 换绑审批中 (1)</span></div>
+            </div>
+            <span style="color:var(--ink-4);">›</span>
+          </div>
+        </div>
+
+        <div class="tiny muted mt12" style="text-align:center;">长按行可「📅 改接诊日期 / 移除」（仅未绑定且最近7天可编辑）</div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav" onclick="go('s-home')"><span class="ic">🎧</span>录音</div>
+      <div class="nav on"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- =========================================================== RECEPTION empty / history -->
+  <section id="s-reception-empty" class="screen">
+    <div class="topbar">
+      <div class="tt"><h1>接诊列表</h1><div class="sub">正在查看 2026-06-05</div></div>
+      <div class="iconbtn" onclick="toast('已刷新')">⟳</div>
+      <div class="iconbtn" onclick="openAdd()" style="background:var(--accent);color:#fff;border-color:var(--accent);">＋</div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <div class="banner warn mb12"><span>📅</span><span>正在查看 <b>2026-06-05</b> 的接诊列表（最近7天，可补登 / 改日期）。超过 7 天将只读。</span></div>
+        <div class="empty">
+          <div class="ic">📋</div>
+          <div class="t">这一天还没有接诊顾客</div>
+          <div class="d">点右上角「+ 加入」补登当天客人</div>
+          <button class="btn primary mt12" onclick="openAdd()">+ 加入 06-05 的客人</button>
+        </div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav" onclick="go('s-home')"><span class="ic">🎧</span>录音</div>
+      <div class="nav on"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- =========================================================== CUSTOMER SEARCH -->
+  <section id="s-search" class="screen">
+    <div class="topbar">
+      <div class="tt"><h1 data-skin-pro="客户档案" data-skin-cute="美丽档案">客户档案</h1><div class="sub">搜索任意顾客查看价值预测</div></div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <div class="banner info mb12"><span>🔍</span><span data-skin-pro="搜索任意顾客，点开查看其档案与价值预测。（录音只能听本人接待的）" data-skin-cute="搜索任意姐妹，点开看她的档案与价值预测。">搜索任意顾客，点开查看其档案与价值预测。（录音只能听本人接待的）</span></div>
+        <div class="field">
+          <input type="text" value="刘" placeholder="输入姓名 / 会员卡号" oninput="">
+        </div>
+        <div class="card">
+          <div class="row" onclick="go('s-profile')">
+            <div class="av" style="background:var(--rec-soft);color:var(--rec);">刘</div>
+            <div class="main"><div class="nm">刘佳佳</div><div class="meta">VIP · M20260108 · 接诊 3 次</div></div>
+            <button class="btn outline-accent sm" onclick="event.stopPropagation();go('s-profile')" data-skin-pro="查看档案" data-skin-cute="看档案 →">查看档案</button>
+          </div>
+          <div class="row" onclick="go('s-profile')">
+            <div class="av">刘</div>
+            <div class="main"><div class="nm">刘梦</div><div class="meta">VIP10086 · 接诊 1 次</div></div>
+            <button class="btn outline-accent sm" onclick="event.stopPropagation();go('s-profile')">查看档案</button>
+          </div>
+        </div>
+        <div class="tiny muted mt12" style="text-align:center;">无匹配时显示：无匹配顾客 / 没有找到这位姐妹 🤔</div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav" onclick="go('s-home')"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav on"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- =========================================================== CUSTOMER PROFILE -->
+  <section id="s-profile" class="screen">
+    <div class="topbar">
+      <div class="iconbtn" onclick="go('s-search')">←</div>
+      <div class="tt"><h1>刘佳佳</h1><div class="sub">张管理 <span class="role mgr">admin</span></div></div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <!-- basic -->
+        <div class="card card-pad mb12">
+          <div class="flex gap10 center mb12">
+            <div class="av" style="width:48px;height:48px;background:var(--rec-soft);color:var(--rec);font-size:18px;">刘</div>
+            <div><div class="b" style="font-size:18px;">刘佳佳</div><div class="tiny muted">会员号 M20260108 · 手机尾号 8866</div></div>
+          </div>
+          <div class="flex between" style="text-align:center;">
+            <div style="flex:1;"><div class="b" style="font-size:20px;color:var(--accent);">3</div><div class="tiny muted">接诊次数</div></div>
+            <div style="flex:1;border-left:1px solid var(--line-2);"><div class="b" style="font-size:20px;color:var(--rec);">A级</div><div class="tiny muted">价值评级</div></div>
+            <div style="flex:1;border-left:1px solid var(--line-2);"><div class="b" style="font-size:20px;color:var(--warn);">🟡</div><div class="tiny muted">风险等级</div></div>
+          </div>
+        </div>
+
+        <!-- tags -->
+        <div class="card card-pad mb12">
+          <div class="flex between center mb8">
+            <span class="sec-label" style="margin:0;">累积标签 · 画像积累</span>
+            <select style="font-size:11px;border:1px solid var(--line);border-radius:6px;padding:3px 6px;">
+              <option>至今</option><option>近30天</option><option>近90天</option><option>近180天</option><option>近1年</option>
+            </select>
+          </div>
+          <div class="chips" style="flex-wrap:wrap;">
+            <span class="chip acc">法令纹明显 ×3</span>
+            <span class="chip acc" style="opacity:.8;">注重抗衰 ×2</span>
+            <span class="chip">怕痛</span>
+            <span class="chip">预算充足</span>
+            <span class="chip" style="opacity:.7;">朋友介绍</span>
+          </div>
+        </div>
+
+        <!-- value prediction -->
+        <div class="card card-pad mb12">
+          <div class="flex between center mb8">
+            <span class="b">🔮 客户价值预测</span>
+            <button class="btn primary sm" onclick="toast('AI 正在综合历史接待生成…首次约 1–2 分钟')">✨ 刷新</button>
+          </div>
+          <div class="tiny muted mb8">生成于 2026-06-08 14:40 · deepseek-v4-pro <span style="color:var(--warn);">（有新接诊，建议刷新）</span></div>
+          <div class="flex gap8 mb8" style="flex-wrap:wrap;">
+            <div class="card" style="flex:1;min-width:46%;padding:11px;background:var(--accent-soft);border:0;"><div class="tiny b" style="color:var(--accent);">💎 客户价值评估</div><div class="tiny muted mt4">A级高价值 · 复购意愿强</div></div>
+            <div class="card" style="flex:1;min-width:46%;padding:11px;background:var(--rec-soft);border:0;"><div class="tiny b" style="color:var(--rec);">🎯 攻坚作战方案</div><div class="tiny muted mt4">主推抗衰套餐 ¥1.2w</div></div>
+            <div class="card" style="flex:1;min-width:46%;padding:11px;background:var(--warn-soft);border:0;"><div class="tiny b" style="color:var(--warn);">📋 项目规划</div><div class="tiny muted mt4">竞品/可做项目/售后</div></div>
+            <div class="card" style="flex:1;min-width:46%;padding:11px;background:var(--surface-3);border:0;"><div class="tiny b">📈 经营规划</div><div class="tiny muted mt4">下一步 / 回店切入</div></div>
+          </div>
+          <div class="card" style="padding:11px;background:var(--surface-3);border:0;display:flex;gap:10px;align-items:center;">
+            <div class="av" style="width:34px;height:34px;font-size:13px;">张</div>
+            <div><div class="tiny b">🤝 顾问匹配度 · 张顾问</div><div class="tiny muted">★★★★☆ 慢热型，适合稳健讲解</div></div>
+          </div>
+        </div>
+
+        <!-- timeline -->
+        <div class="card card-pad">
+          <div class="sec-label">服务时间线（共 3 次）</div>
+          <div style="border-left:2px solid var(--line);padding-left:14px;margin-left:4px;">
+            <div style="position:relative;padding-bottom:14px;">
+              <div style="position:absolute;left:-21px;top:3px;width:10px;height:10px;border-radius:50%;background:var(--rec);border:2px solid #fff;"></div>
+              <div class="flex between"><div class="b small">2026-06-08</div><a class="tiny b" style="color:var(--accent);" onclick="go('s-report')">查看报告 →</a></div>
+              <div class="tiny muted">张顾问 · 朝阳店 · done</div>
+              <div class="chips mt4"><span class="chip" style="font-size:10px;padding:3px 8px;">法令纹明显</span><span class="chip acc" style="font-size:10px;padding:3px 8px;">命中主推：抗衰套餐</span></div>
+            </div>
+            <div style="position:relative;padding-bottom:14px;">
+              <div style="position:absolute;left:-21px;top:3px;width:10px;height:10px;border-radius:50%;background:var(--ink-4);border:2px solid #fff;"></div>
+              <div class="flex between"><div class="b small">2026-05-20</div><a class="tiny b" style="color:var(--accent);" onclick="go('s-report')">查看报告 →</a></div>
+              <div class="tiny muted">张顾问 · 朝阳店 · done</div>
+            </div>
+            <div style="position:relative;">
+              <div style="position:absolute;left:-21px;top:3px;width:10px;height:10px;border-radius:50%;background:var(--ink-4);border:2px solid #fff;"></div>
+              <div class="flex between"><div class="b small">2026-04-12</div><a class="tiny b" style="color:var(--accent);" onclick="go('s-report')">查看报告 →</a></div>
+              <div class="tiny muted">李顾问 · 朝阳店 · done</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav" onclick="go('s-home')"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav on" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- =========================================================== ANALYSIS REPORT -->
+  <section id="s-report" class="screen">
+    <div class="report-nav">
+      <div class="flex between center mb8">
+        <a class="tiny b" style="color:var(--accent);" onclick="go('s-reception')">← 接诊列表</a>
+        <div class="flex gap6">
+          <button class="btn ghost sm" onclick="toast('强制重跑分析')">⟳ 重跑</button>
+          <button class="btn outline-accent sm" onclick="openRec()">原始录音</button>
+        </div>
+      </div>
+      <h1 style="font-size:16px;margin:0 0 4px;">张顾问 × 刘佳佳 · 接诊全维度分析报告</h1>
+      <div class="flex gap6" style="flex-wrap:wrap;">
+        <span class="tag grey">2026-06-08</span>
+        <span class="tag warn">销售复盘 · 内部机密</span>
+        <span class="tag green">分析: 已完成 · deepseek-v4-pro</span>
+      </div>
+    </div>
+    <div class="body" style="padding-bottom:96px;">
+      <!-- task panel -->
+      <div class="part" style="margin-top:10px;">
+        <div class="ph" onclick="togglePart(this)">
+          <div class="no" style="background:var(--ink-3);">📋</div>
+          <div class="pt">任务执行状态（8/8 完成）</div>
+          <div class="cv">▾</div>
+        </div>
+        <div class="pb">
+          <div class="kv"><span class="k">✅ T1 顾客画像重建 · done</span><span class="tiny muted">14:31</span></div>
+          <div class="kv"><span class="k">✅ T2 失分根因定位 · done</span><span class="tiny muted">14:32</span></div>
+          <div class="kv"><span class="k">✅ T3 痛点作战方案 · done</span><span class="tiny muted">14:33</span></div>
+          <div class="kv"><span class="k">✅ T4 成交诊断 · done</span><span class="tiny muted">14:34</span></div>
+        </div>
+      </div>
+
+      <!-- PART 01 -->
+      <div class="part open">
+        <div class="ph" onclick="togglePart(this)"><div class="no">01</div><div class="pt">全维度评估总览</div><div class="cv">▾</div></div>
+        <div class="pb">
+          <div class="flex between center mt12 mb8">
+            <span class="tag green">A级高价值客户</span>
+            <div style="text-align:right;"><span class="score-big">7.5</span><span class="muted">/ 10</span><div class="tiny muted">质检评分</div></div>
+          </div>
+          <div class="sec-label mt12">痛点识别</div>
+          <div class="bullet">法令纹明显，担心显老</div>
+          <div class="bullet">熬夜导致气色暗沉</div>
+          <div class="bullet">在意性价比，需要被说服</div>
+          <div class="sec-label mt12">销售问题诊断</div>
+          <div class="banner red mb8"><span>⚠</span><span><b>只推产品未讲问题</b> — 顾问直接报价，未先建立顾客对自身问题的认知。</span></div>
+          <div class="sec-label mt12">可操作建议</div>
+          <div class="advcard"><div class="n">1</div><div>先做面诊讲解，让顾客"看见"法令纹成因再谈方案。</div></div>
+          <div class="advcard"><div class="n">2</div><div>用对比照建立紧迫感，再切入抗衰套餐。</div></div>
+          <div class="advcard"><div class="n">3</div><div>价格分层呈现，从单项到套餐给台阶。</div></div>
+          <button class="btn ghost block sm mt12" onclick="toast('展开按阶段/子项评分条')">查看详细评分 ▾</button>
+        </div>
+      </div>
+
+      <!-- PART 02 -->
+      <div class="part">
+        <div class="ph" onclick="togglePart(this)"><div class="no">02</div><div class="pt">顾客真实画像重建</div><div class="cv">▾</div></div>
+        <div class="pb">
+          <div class="small muted mt12 mb8">从对话中提取的关键信号：</div>
+          <div class="quote">"我最近气色不太好，朋友说我显老。"</div>
+          <div class="small"><b>销售判断：</b>顾客有明确的抗衰焦虑，被外部评价触发，决策受社交影响大。</div>
+          <div class="banner info mt12"><span>🧩</span><span><b>综合判断：</b>高意向 + 情感驱动型，适合"先共情后方案"的稳健打法。</span></div>
+        </div>
+      </div>
+
+      <!-- PART 06 case -->
+      <div class="part">
+        <div class="ph" onclick="togglePart(this)"><div class="no">06</div><div class="pt">关键 Case 复盘 · 三层分析</div><div class="cv">▾</div></div>
+        <div class="pb">
+          <div class="card mt12" style="background:var(--surface-3);border:0;padding:12px;">
+            <div class="flex between center mb8"><span class="b small">Case 1 · 报价时机</span><span class="tag red">做错</span></div>
+            <button class="btn outline-accent sm mb8" onclick="openRec()">▶ 0:01:34</button>
+            <div class="quote">"这个套餐多少钱？" / 顾问："2 万 8。"</div>
+            <div class="small"><b>表层做法：</b>直接报价。<br><b>深层问题：</b>未铺垫价值，价格成了唯一锚点。<br><b>正确做法：</b>先讲清问题与方案价值，再谈投入。</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PART 11 deal -->
+      <div class="part">
+        <div class="ph" onclick="togglePart(this)"><div class="no">11</div><div class="pt">成交诊断 · 5 维度判断</div><div class="cv">▾</div></div>
+        <div class="pb">
+          <div class="flex between center mt12 mb8">
+            <span class="tag green">✅ 已成交</span>
+            <div><span class="b" style="font-size:18px;color:var(--rec);">¥3980</span></div>
+            <span class="tag warn">🟡 留意</span>
+          </div>
+          <div class="kv"><span class="k">顾客被打动</span><span class="tag green">到位</span></div>
+          <div class="kv"><span class="k">认可方案</span><span class="tag green">到位</span></div>
+          <div class="kv"><span class="k">效果感受到位</span><span class="tag warn">部分</span></div>
+          <div class="kv"><span class="k">价格被匹配</span><span class="tag red">缺失</span></div>
+          <div class="kv"><span class="k">紧迫感建立</span><span class="tag warn">部分</span></div>
+          <div class="banner warn mt12"><span>⚠</span><span>价格未被充分匹配，存在后续比价流失风险，建议回店巩固。</span></div>
+        </div>
+      </div>
+
+      <!-- 老板点评 -->
+      <div class="part open">
+        <div class="ph" onclick="togglePart(this)"><div class="no" style="background:var(--warn);">老</div><div class="pt">老板点评 · 专家点评记录</div><div class="cv">▾</div></div>
+        <div class="pb">
+          <div class="field mt12" style="margin-bottom:8px;">
+            <textarea rows="3" placeholder="在这里输入新的点评……例如：刘佳佳这个顾客性格慢热，下次先聊家常再切入。"></textarea>
+          </div>
+          <button class="btn primary block sm mb12" onclick="toast('点评已提交')">提交点评</button>
+          <div class="card" style="background:var(--surface-3);border:0;padding:11px;">
+            <div class="flex between"><div class="b tiny">王店长</div><div class="tiny muted">2026-06-08 16:10</div></div>
+            <div class="small mt4">这单价格没守住，下次先讲价值再报价。整体接待态度不错。</div>
+            <a class="tiny" style="color:var(--danger);" onclick="toast('已删除点评')">删除</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav" onclick="go('s-home')"><span class="ic">🎧</span>录音</div>
+      <div class="nav on" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- =========================================================== REMINDER -->
+  <section id="s-reminder" class="screen">
+    <div class="topbar">
+      <div class="iconbtn" onclick="go('s-home')">←</div>
+      <div class="tt"><h1>提醒</h1><div class="sub">王姐 <span class="role mgr">店长</span> · 共 5 条未处理</div></div>
+      <div class="iconbtn" onclick="toast('已全部标记已读')">✓</div>
+    </div>
+    <div class="body">
+      <div class="wrap">
+        <!-- store manager section -->
+        <div class="sec-label">本店待跟进升级项（2）· 仅店长</div>
+        <div class="card mb12">
+          <div class="card-pad">
+            <div class="flex between center mb8"><span class="tag red">升级 L2</span><span class="tiny muted">2026-06-08 15:20</span></div>
+            <div class="small"><b>顾问 张敏</b> · 该客户存在高流失风险，请及时跟进。</div>
+            <div class="btn-row mt12">
+              <button class="btn green sm" onclick="toast('已标记跟进 ✓')">已跟进</button>
+              <button class="btn outline-accent sm" onclick="go('s-report')">查看报告 →</button>
+            </div>
+          </div>
+        </div>
+        <div class="card mb12" style="opacity:.7;">
+          <div class="card-pad">
+            <div class="flex between center mb8"><span class="tag green">已跟进 ✓</span><span class="tiny muted">2026-06-08 11:02</span></div>
+            <div class="small"><b>顾问 李娜</b> · 客户对价格敏感，建议二次回访。</div>
+          </div>
+        </div>
+
+        <!-- personal -->
+        <div class="sec-label mt12">个人提醒（3）</div>
+        <div class="card">
+          <div class="row">
+            <span class="tag red" style="flex:0 0 auto;">未查看 L2</span>
+            <div class="main"><div class="small b">李雪 06-08 的报告已生成，请尽快查看</div><div class="tiny muted">2026-06-08 15:20</div></div>
+            <a class="tiny b" style="color:var(--accent);" onclick="go('s-report')">查看 →</a>
+          </div>
+          <div class="row">
+            <span class="tag warn" style="flex:0 0 auto;">未绑定 L1</span>
+            <div class="main"><div class="small b">有 2 段录音尚未绑定顾客</div><div class="tiny muted">2026-06-08 14:51</div></div>
+            <a class="tiny b" style="color:var(--accent);" onclick="go('s-pending')">去绑定 →</a>
+          </div>
+          <div class="row">
+            <span class="tag warn" style="flex:0 0 auto;">未查看 L1</span>
+            <div class="main"><div class="small b">王芳 06-08 的报告已生成</div><div class="tiny muted">2026-06-08 13:40</div></div>
+            <a class="tiny b" style="color:var(--accent);" onclick="go('s-report')">查看 →</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="botnav">
+      <div class="nav on" onclick="go('s-home')"><span class="ic">🎧</span>录音</div>
+      <div class="nav" onclick="go('s-reception')"><span class="ic">📋</span>接诊</div>
+      <div class="spacer"></div>
+      <div class="nav" onclick="go('s-pending')"><span class="ic">🎵</span>待绑定</div>
+      <div class="nav" onclick="go('s-search')"><span class="ic">👤</span>档案</div>
+    </div>
+    <div class="fab" onclick="go('s-live')"><span class="ic">●</span><span class="lb">开始</span></div>
+  </section>
+
+  <!-- ====================================================== SHEETS / MODALS ====================================================== -->
+
+  <!-- BIND modal -->
+  <div class="sheet-mask" id="m-bind">
+    <div class="sheet">
+      <div class="sh-head">
+        <div class="grab"></div>
+        <h2>绑定到接诊顾客</h2>
+        <div class="sh-sub">只能从下面列表里选；若没有要找的顾客，请先「加入今日接诊」。</div>
+      </div>
+      <div class="sh-body">
+        <div class="banner warn mb12"><span>📅</span><span>这段录音是 <b>2026-06-08</b> 的，只能绑定到当天的接诊客人。</span></div>
+        <div class="card">
+          <div class="row">
+            <div class="av">李</div>
+            <div class="main"><div class="nm">李雪</div><div class="meta">尾号8821 · 2 段录音</div></div>
+            <button class="btn primary sm" onclick="closeSheet('m-bind');toast('已绑定到李雪，正在刷新列表…')">绑定到这里</button>
+          </div>
+          <div class="row">
+            <div class="av">王</div>
+            <div class="main"><div class="nm">王芳</div><div class="meta">尾号3302 · 尚未绑定</div></div>
+            <button class="btn primary sm" onclick="closeSheet('m-bind');toast('已绑定到王芳')">绑定到这里</button>
+          </div>
+          <div class="row" style="opacity:.5;">
+            <div class="av">陈</div>
+            <div class="main"><div class="nm">陈美玲</div><div class="meta">已锁定（分析中）</div></div>
+            <span class="tag grey">已锁定</span>
+          </div>
+        </div>
+      </div>
+      <div class="sh-foot">
+        <button class="btn ghost" onclick="closeSheet('m-bind')">取消</button>
+        <button class="btn outline-accent" onclick="closeSheet('m-bind');openAdd()">+ 加入今日接诊</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ADD reception modal -->
+  <div class="sheet-mask" id="m-add">
+    <div class="sheet">
+      <div class="sh-head">
+        <div class="grab"></div>
+        <h2>加入今日接诊</h2>
+        <div class="sh-sub">把已有或新顾客加入 2026-06-08 的接诊列表。</div>
+      </div>
+      <div class="sh-body">
+        <div class="seg2">
+          <button class="on" id="addSeg1" onclick="addSeg(1)">搜索已有顾客</button>
+          <button id="addSeg2" onclick="addSeg(2)">新增顾客</button>
+        </div>
+        <!-- search -->
+        <div id="addPane1">
+          <div class="field"><input type="text" value="李" placeholder="输入姓名 / 手机尾号 / 卡号"></div>
+          <div class="card">
+            <div class="row">
+              <div class="av">李</div>
+              <div class="main"><div class="nm">李雪</div><div class="meta">尾号8821 · VIP10086</div></div>
+              <button class="btn green sm" onclick="closeSheet('m-add');toast('已加入李雪')">加入</button>
+            </div>
+            <div class="row">
+              <div class="av">李</div>
+              <div class="main"><div class="nm">李娜</div><div class="meta">尾号9032 · VIP55120</div></div>
+              <button class="btn green sm" onclick="closeSheet('m-add');toast('已加入李娜')">加入</button>
+            </div>
+          </div>
+          <div class="tiny muted mt12" style="text-align:center;">无匹配。如新顾客请切到「新增顾客」。</div>
+        </div>
+        <!-- new -->
+        <div id="addPane2" style="display:none;">
+          <div class="field"><label>顾客姓名 <span class="req">*</span></label><input type="text" value="李雪"></div>
+          <div class="field"><label>手机尾号（4位）<span class="req">*</span></label><input type="text" value="8821" maxlength="4"><div class="hint">手机尾号必须是 4 位数字</div></div>
+          <div class="field"><label>会员/卡号（可选）</label><input type="text" placeholder="VIP10086"></div>
+        </div>
+      </div>
+      <div class="sh-foot">
+        <button class="btn ghost" onclick="closeSheet('m-add')">取消</button>
+        <button class="btn primary" id="addSubmit" onclick="closeSheet('m-add');toast('已加入今日接诊')">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PACKAGE modal -->
+  <div class="sheet-mask" id="m-pkg">
+    <div class="sheet">
+      <div class="sh-head">
+        <div class="grab"></div>
+        <h2>接诊包 · 李雪</h2>
+        <div class="sh-sub">2026-06-08 · 核对顾客信息后开始分析，如绑错可「换绑」或「退回未归档」。</div>
+      </div>
+      <div class="sh-body">
+        <!-- progress -->
+        <div class="banner info mb12"><span>🔄</span><span><b>分析中 · 5 / 11</b> · 已等待 2 分 30 秒 · 正在分析：摘要、价值预测 <a onclick="toast('已取消分析')" style="color:var(--danger);font-weight:800;text-decoration:underline;">取消分析</a></span></div>
+        <div class="banner red mb12"><span>✗</span><span>失败：情绪分析（重新分析可重试）</span></div>
+
+        <div class="sec-label">本次将分析的录音（已绑定）</div>
+        <div class="card mb12">
+          <div class="card-pad">
+            <div class="flex between center mb8"><div class="b small">2026-06-08 14:32 · 18分23秒</div><span class="tag green">ASR done</span></div>
+            <div class="player mb12">
+              <div class="pp" onclick="togglePlay(this)">▶</div>
+              <div class="track" onclick="seek(this)"><i style="width:25%;"></i></div>
+              <div class="tm">04:36 / 18:23</div>
+            </div>
+            <div class="btn-row">
+              <button class="btn outline-accent sm" onclick="closeSheet('m-pkg');openRebind()">⇄ 换绑</button>
+              <button class="btn ghost sm" onclick="closeSheet('m-pkg');openUnbind()">退回未归档</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="sec-label">本人 2026-06-08 未绑定录音（可加入本接诊包）</div>
+        <div class="card mb12">
+          <div class="card-pad">
+            <div class="flex between center mb8"><div class="b small">2026-06-08 15:10 · 12分08秒</div><span class="tag grey">ASR pending</span></div>
+            <div class="player mb12">
+              <div class="pp" onclick="togglePlay(this)">▶</div>
+              <div class="track" onclick="seek(this)"><i style="width:8%;"></i></div>
+              <div class="tm">00:48 / 12:08</div>
+            </div>
+            <button class="btn green block sm" onclick="toast('已加入本接诊包')">加入本接诊包</button>
+          </div>
+        </div>
+        <div class="banner green"><span>✅</span><span>已开始分析（session #128），可去接诊列表查看进度。</span></div>
+      </div>
+      <div class="sh-foot">
+        <button class="btn ghost" onclick="closeSheet('m-pkg')">关闭</button>
+        <button class="btn primary" onclick="closeSheet('m-pkg');toast('接诊包将被锁定，开始分析…')">确认并开始分析</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REBIND modal -->
+  <div class="sheet-mask" id="m-rebind">
+    <div class="sheet">
+      <div class="sh-head">
+        <div class="grab"></div>
+        <h2>换绑录音（仅这段）</h2>
+        <div class="sh-sub">只移动这一段录音，该顾客其他录音不受影响。换绑后新旧两份报告都会重新生成。直接生效、无需审批，管理员可见。</div>
+      </div>
+      <div class="sh-body">
+        <div class="banner info mb12"><span>🎵</span><span>录音：2026-06-08 14:32 · 18分23秒</span></div>
+        <div class="seg2">
+          <button class="on" id="rbSeg1" onclick="rbSeg(1)">选已有顾客</button>
+          <button id="rbSeg2" onclick="rbSeg(2)">＋ 新增当日顾客</button>
+        </div>
+        <div id="rbPane1">
+          <div class="field"><input type="text" placeholder="搜索本人接待过的顾客：姓名 / 卡号 / 手机尾号"></div>
+          <div class="tiny muted mb12">仅能换绑到您本人接待过的顾客。标「当日」的已在该录音当天接诊；其余选中后会自动补登当天接诊。</div>
+          <div class="card">
+            <label class="row" style="cursor:pointer;">
+              <input type="radio" name="rb" checked style="width:18px;height:18px;">
+              <div class="main"><div class="nm">李雪 <span class="tag green" style="font-size:9px;padding:2px 6px;">当日</span></div><div class="meta">尾号8821 · VIP10086</div></div>
+            </label>
+            <label class="row" style="cursor:pointer;">
+              <input type="radio" name="rb" style="width:18px;height:18px;">
+              <div class="main"><div class="nm">王芳</div><div class="meta">尾号3302 · 选中后将补登当天接诊</div></div>
+            </label>
+          </div>
+        </div>
+        <div id="rbPane2" style="display:none;">
+          <div class="field"><label>顾客姓名 <span class="req">*</span></label><input type="text" value="李雪"></div>
+          <div class="field"><label>手机尾号（4位，可选）</label><input type="text" value="8821" maxlength="4"></div>
+          <div class="hint mb12">新增的顾客会自动发会员号，并补登进该录音当天的接诊（算一次接诊）。</div>
+          <button class="btn green block sm" onclick="rbSeg(1);toast('已新增并选中')">新增并选中</button>
+        </div>
+        <div class="field mt12"><label>换绑理由（可选）</label><textarea rows="2" placeholder="说明换绑原因，便于管理员复盘"></textarea></div>
+      </div>
+      <div class="sh-foot">
+        <button class="btn ghost" onclick="closeSheet('m-rebind')">取消</button>
+        <button class="btn primary" onclick="closeSheet('m-rebind');toast('换绑成功，新旧报告将重新生成')">确认换绑（仅这段）</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- UNBIND modal -->
+  <div class="sheet-mask" id="m-unbind">
+    <div class="sheet">
+      <div class="sh-head">
+        <div class="grab"></div>
+        <h2>退回未归档</h2>
+        <div class="sh-sub">录音将从当前顾客解绑，回到「未归档片段」，可在那里申请删除。若已分析将作废。所有操作管理员留痕。</div>
+      </div>
+      <div class="sh-body">
+        <div class="banner info mb12"><span>🎵</span><span>录音：2026-06-08 14:32 · 18分23秒</span></div>
+        <div class="field"><label>退回理由 <span class="req">*</span></label><textarea rows="3" placeholder="请简要说明（如：录错顾客、想删除等）"></textarea></div>
+        <div class="banner warn"><span>⚠</span><span>确定将这段录音退回未归档片段？若已分析将作废。</span></div>
+      </div>
+      <div class="sh-foot">
+        <button class="btn ghost" onclick="closeSheet('m-unbind')">取消</button>
+        <button class="btn danger" onclick="closeSheet('m-unbind');toast('已退回未归档片段')">确认退回未归档</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EDIT DATE modal -->
+  <div class="sheet-mask" id="m-editdate">
+    <div class="sheet">
+      <div class="sh-head">
+        <div class="grab"></div>
+        <h2>修改接诊日期</h2>
+        <div class="sh-sub">只能在原日期前后 7 天内修改，且不超过今天。挂在该接诊下的录音会自动解绑（录音真实日期不动）。</div>
+      </div>
+      <div class="sh-body">
+        <div class="kv"><span class="k">顾客</span><span class="b">李雪</span></div>
+        <div class="kv"><span class="k">原日期</span><span class="b">2026-06-08</span></div>
+        <div class="banner warn mt8 mb12"><span>⚠</span><span>已绑定 <b>2 段</b>录音，确认后会自动解绑。</span></div>
+        <div class="field"><label>新日期</label><input type="date" value="2026-06-06"></div>
+      </div>
+      <div class="sh-foot">
+        <button class="btn ghost" onclick="closeSheet('m-editdate')">取消</button>
+        <button class="btn primary" onclick="closeSheet('m-editdate');toast('将解绑 2 段录音并改日期到 2026-06-06')">确认修改</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REC panel (report) -->
+  <div class="sheet-mask" id="m-rec">
+    <div class="sheet">
+      <div class="sh-head">
+        <div class="grab"></div>
+        <div class="flex between center">
+          <h2>原始录音</h2>
+          <div class="iconbtn sm" style="width:30px;height:30px;font-size:14px;" onclick="closeSheet('m-rec')">✕</div>
+        </div>
+      </div>
+      <div class="sh-body">
+        <div class="field"><label>录音段落</label>
+          <select><option>第1段（2026-06-08 14:23 · 约12分08秒）</option><option>第2段（2026-06-08 14:36 · 约06分20秒）</option></select>
+        </div>
+        <div class="player mb12">
+          <div class="pp on" onclick="togglePlay(this)">▶</div>
+          <div class="track" onclick="seek(this)"><i style="width:45%;background:var(--rec);"></i></div>
+          <div class="tm">05:28 / 12:08</div>
+        </div>
+        <div class="banner warn mb12"><span>⚠</span><span>ASR 检测到 3 个说话人（&gt;2），分析已暂停。</span>
+        </div>
+        <div class="btn-row mb12">
+          <button class="btn outline-green sm" onclick="closeSheet('m-rec');toast('已确认照常分析')">✓ 确认照常分析</button>
+          <button class="btn ghost sm" onclick="closeSheet('m-rec');openUnbind()">解绑此录音</button>
+        </div>
+        <button class="btn ghost block sm mb8" onclick="toast('展开文字转录')">▶ 查看文字转录（含说话人标记）</button>
+        <div class="card" style="background:var(--surface-3);border:0;padding:11px;font-size:12px;line-height:1.7;color:var(--ink-2);">
+          [0.00s - 3.20s] 顾问：您好，欢迎光临，今天想了解哪方面？<br>
+          [3.20s - 7.80s] 顾客：我最近气色不太好，朋友说我显老。<br>
+          [7.80s - 12.4s] 顾问：我帮您面诊一下，主要是法令纹这块…
+        </div>
+      </div>
+      <div class="sh-foot">
+        <button class="btn ghost" onclick="toast('⬇ 下载原始录音')">⬇ 下载</button>
+        <button class="btn outline-accent" onclick="toast('✂ 在当前播放位置切两段')">✂ 分割</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- generic confirm -->
+  <div class="sheet-mask" id="m-confirm">
+    <div class="sheet">
+      <div class="sh-head">
+        <div class="grab"></div>
+        <h2 id="cfTitle">确认操作</h2>
+        <div class="sh-sub" id="cfBody">确定要继续吗？</div>
+      </div>
+      <div class="sh-foot">
+        <button class="btn ghost" onclick="closeSheet('m-confirm')">取消</button>
+        <button class="btn danger" id="cfOk" onclick="closeSheet('m-confirm')">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div id="toast"></div>
+
+  </div><!-- /viewport -->
+</div><!-- /phone -->
+
+<script>
+/* ---------- navigation ---------- */
+function go(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  var el=document.getElementById(id);
+  if(el){el.classList.add('active'); el.querySelector('.body')&&(el.querySelector('.body').scrollTop=0);}
+  var sel=document.getElementById('jumpSel');
+  if(sel && [...sel.options].some(o=>o.value===id)) sel.value=id;
+  closeAllSheets();
+}
+/* ---------- sheets ---------- */
+function openSheet(id){document.getElementById(id).classList.add('show');}
+function closeSheet(id){document.getElementById(id).classList.remove('show');}
+function closeAllSheets(){document.querySelectorAll('.sheet-mask').forEach(m=>m.classList.remove('show'));}
+document.querySelectorAll('.sheet-mask').forEach(m=>{m.addEventListener('click',function(e){if(e.target===m)m.classList.remove('show');});});
+
+function openBind(){openSheet('m-bind');}
+function openAdd(){openSheet('m-add');}
+function openPackage(){openSheet('m-pkg');}
+function openRebind(){openSheet('m-rebind');}
+function openUnbind(){openSheet('m-unbind');}
+function openEditDate(){openSheet('m-editdate');}
+function openRec(){openSheet('m-rec');}
+function confirmUnbind(){
+  document.getElementById('cfTitle').textContent='解绑（拆分重传）';
+  document.getElementById('cfBody').textContent='将这段录音从当前顾客解绑并退回未归档，便于拆分后重新上传？';
+  document.getElementById('cfOk').onclick=function(){closeSheet('m-confirm');toast('已解绑，请在未归档里拆分重传');};
+  openSheet('m-confirm');
+}
+
+/* ---------- segmented panes ---------- */
+function addSeg(n){
+  document.getElementById('addSeg1').classList.toggle('on',n===1);
+  document.getElementById('addSeg2').classList.toggle('on',n===2);
+  document.getElementById('addPane1').style.display=n===1?'block':'none';
+  document.getElementById('addPane2').style.display=n===2?'block':'none';
+  document.getElementById('addSubmit').textContent=n===1?'确认':'确认新增并加入';
+}
+function rbSeg(n){
+  document.getElementById('rbSeg1').classList.toggle('on',n===1);
+  document.getElementById('rbSeg2').classList.toggle('on',n===2);
+  document.getElementById('rbPane1').style.display=n===1?'block':'none';
+  document.getElementById('rbPane2').style.display=n===2?'block':'none';
+}
+
+/* ---------- report accordion ---------- */
+function togglePart(h){h.parentElement.classList.toggle('open');}
+
+/* ---------- audio player fake ---------- */
+function togglePlay(el){
+  var on=el.textContent.trim()==='❚❚';
+  document.querySelectorAll('.player .pp').forEach(p=>{p.textContent='▶';p.classList.remove('on');});
+  if(!on){el.textContent='❚❚';el.classList.add('on');toast('试听中…（最多 60 秒）');}
+  else{el.textContent='▶';el.classList.remove('on');}
+}
+function seek(track){
+  var r=track.getBoundingClientRect();
+  var ev=window.event;
+  var x=(ev.touches?ev.touches[0].clientX:ev.clientX)-r.left;
+  var pct=Math.max(4,Math.min(100,Math.round(x/r.width*100)));
+  track.querySelector('i').style.width=pct+'%';
+}
+
+/* ---------- toast ---------- */
+var toastT;
+function toast(msg,err){
+  var t=document.getElementById('toast');
+  t.textContent=msg; t.className='show'+(err?' err':'');
+  clearTimeout(toastT); toastT=setTimeout(()=>{t.className='';},1900);
+}
+
+/* ---------- skin (专业 / 可爱) ---------- */
+function setSkin(s){
+  document.getElementById('skinPro').classList.toggle('on',s==='pro');
+  document.getElementById('skinCute').classList.toggle('on',s==='cute');
+  document.querySelectorAll('[data-skin-pro]').forEach(el=>{
+    el.textContent = s==='cute' ? el.getAttribute('data-skin-cute') : el.getAttribute('data-skin-pro');
+  });
+  toast(s==='cute'?'🎀 已切换到可爱皮肤「美丽陪伴」':'💼 已切回专业版');
+}
+
+/* long-press on reception rows -> edit date / remove demo */
+document.querySelectorAll('#s-reception .row').forEach(r=>{
+  var timer;
+  r.addEventListener('touchstart',()=>{timer=setTimeout(()=>{openEditDate();},550);});
+  r.addEventListener('touchend',()=>clearTimeout(timer));
+  r.addEventListener('mousedown',()=>{timer=setTimeout(()=>{openEditDate();},550);});
+  r.addEventListener('mouseup',()=>clearTimeout(timer));
+});
+</script>
+</body>
+</html>

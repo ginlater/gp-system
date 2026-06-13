@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>美丽陪伴 · 温暖美业 (Style B)</title>
+<style>
+/* ============ DESIGN TOKENS — 温暖·美业 Warm Beauty ============ */
+:root{
+  --bg:#FBF7F2;            /* warm cream page */
+  --surface:#FFFFFF;       /* cards */
+  --surface-2:#FCF4EE;     /* soft warm fill */
+  --surface-3:#F6ECE3;     /* deeper warm fill */
+  --primary:#C0705C;       /* warm rose/terracotta */
+  --primary-dark:#A85844;
+  --primary-soft:#F3DED6;  /* tinted */
+  --gold:#D9B26A;          /* soft gold accent */
+  --gold-soft:#F6EAD0;
+  --ink:#3A322E;           /* warm near-black text */
+  --ink-2:#6E625B;         /* secondary text */
+  --ink-3:#A89B92;         /* muted */
+  --line:#EFE5DC;          /* hairline */
+  --green:#5BA877;
+  --green-soft:#E2F1E8;
+  --red:#D26A5A;
+  --red-soft:#FBE6E1;
+  --orange:#D9883E;
+  --orange-soft:#FBEEDC;
+  --blue:#5B86A8;
+  --blue-soft:#E3EEF4;
+  /* radii */
+  --r-sm:12px; --r-md:18px; --r-lg:24px; --r-xl:30px; --r-pill:999px;
+  /* spacing */
+  --s1:6px; --s2:10px; --s3:14px; --s4:18px; --s5:24px; --s6:32px;
+  /* shadow */
+  --sh-soft:0 6px 20px rgba(160,110,80,.10);
+  --sh-card:0 8px 28px rgba(160,110,80,.08);
+  --sh-glow:0 10px 34px rgba(192,112,92,.40);
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:var(--font);
+  background:
+    radial-gradient(900px 500px at 50% -10%, #F4E3DA 0%, rgba(244,227,218,0) 60%),
+    #F0E7DE;
+  color:var(--ink);
+  display:flex; flex-direction:column; align-items:center;
+  min-height:100vh; padding:0 0 60px;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---- top jump menu ---- */
+#jumpbar{
+  position:sticky; top:0; z-index:200; width:100%;
+  background:rgba(250,247,242,.92); backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);
+  padding:10px 14px; display:flex; gap:10px; align-items:center;
+  box-shadow:0 2px 12px rgba(160,110,80,.05);
+}
+#jumpbar .lbl{font-size:12px; color:var(--ink-2); font-weight:700; white-space:nowrap;}
+#jumpbar select{
+  flex:1; font-family:var(--font); font-size:13px; color:var(--ink);
+  background:var(--surface); border:1px solid var(--line);
+  border-radius:var(--r-pill); padding:9px 14px; appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%23C0705C' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat:no-repeat; background-position:right 14px center;
+  box-shadow:var(--sh-soft); font-weight:600;
+}
+
+/* ---- phone frame ---- */
+.phone{
+  width:390px; max-width:100vw; margin:18px auto 0;
+  background:var(--bg);
+  border-radius:42px;
+  box-shadow:0 24px 70px rgba(110,70,50,.28), 0 4px 0 #E6D8CC inset;
+  border:10px solid #2C2723;
+  overflow:hidden; position:relative; height:840px;
+}
+.notch{
+  position:absolute; top:0; left:50%; transform:translateX(-50%);
+  width:150px; height:26px; background:#2C2723;
+  border-radius:0 0 18px 18px; z-index:120;
+}
+.statusbar{
+  height:42px; display:flex; align-items:center; justify-content:space-between;
+  padding:0 22px; font-size:13px; font-weight:700; color:var(--ink);
+  position:relative; z-index:110;
+}
+.statusbar .right{display:flex; gap:6px; align-items:center; font-size:12px;}
+
+/* ---- screen system ---- */
+.screen{display:none; height:calc(840px - 42px); position:relative;}
+.screen.active{display:flex; flex-direction:column;}
+.scroll{flex:1; overflow-y:auto; padding:0 16px 92px; -webkit-overflow-scrolling:touch;}
+.scroll::-webkit-scrollbar{width:0;}
+
+/* ---- app header ---- */
+.appbar{
+  padding:8px 16px 14px; display:flex; align-items:flex-start; justify-content:space-between;
+}
+.appbar .h-left .hello{font-size:13px; color:var(--ink-2); font-weight:600;}
+.appbar .h-left .title{font-size:23px; font-weight:800; letter-spacing:.5px; margin-top:2px;
+  background:linear-gradient(90deg,var(--primary),var(--gold)); -webkit-background-clip:text; background-clip:text; color:transparent;}
+.appbar .h-left .sub{font-size:12px; color:var(--ink-3); margin-top:4px; display:flex; gap:6px; align-items:center;}
+.rolechip{display:inline-flex; align-items:center; gap:4px; font-size:11px; font-weight:700;
+  background:var(--gold-soft); color:#9A7A35; padding:3px 10px; border-radius:var(--r-pill);}
+.h-right{display:flex; gap:8px; align-items:center;}
+.iconbtn{
+  width:42px; height:42px; border-radius:var(--r-md); background:var(--surface);
+  display:flex; align-items:center; justify-content:center; font-size:19px;
+  box-shadow:var(--sh-soft); border:1px solid var(--line); position:relative; cursor:pointer;
+}
+.badge-dot{
+  position:absolute; top:-4px; right:-4px; min-width:18px; height:18px; padding:0 4px;
+  background:var(--red); color:#fff; font-size:10px; font-weight:800;
+  border-radius:var(--r-pill); display:flex; align-items:center; justify-content:center;
+  border:2px solid var(--bg);
+}
+
+/* ---- cards ---- */
+.card{
+  background:var(--surface); border-radius:var(--r-lg); padding:18px;
+  box-shadow:var(--sh-card); border:1px solid var(--line); margin-bottom:14px;
+}
+.card.tight{padding:14px;}
+.card-title{font-size:15px; font-weight:800; display:flex; align-items:center; gap:8px;}
+.card-sub{font-size:12px; color:var(--ink-3); margin-top:3px;}
+
+/* ---- banners ---- */
+.banner{font-size:12.5px; line-height:1.5; padding:12px 14px; border-radius:var(--r-md); margin-bottom:14px; font-weight:600;}
+.banner.info{background:var(--surface-2); color:var(--primary-dark); border:1px solid var(--primary-soft);}
+.banner.warn{background:var(--orange-soft); color:#9A5E1F; border:1px solid #F0D6AE;}
+.banner.danger{background:var(--red-soft); color:#A23B2C; border:1px solid #F3C9C1;}
+.banner.gold{background:var(--gold-soft); color:#8A6B26; border:1px solid #ECD9AC;}
+
+/* ---- buttons ---- */
+.btn{
+  font-family:var(--font); border:none; cursor:pointer; font-weight:700;
+  border-radius:var(--r-pill); padding:13px 20px; font-size:14.5px;
+  display:inline-flex; align-items:center; justify-content:center; gap:7px; transition:transform .08s;
+}
+.btn:active{transform:scale(.97);}
+.btn-primary{background:linear-gradient(135deg,var(--primary),var(--primary-dark)); color:#fff; box-shadow:0 8px 20px rgba(192,112,92,.32);}
+.btn-gold{background:linear-gradient(135deg,var(--gold),#C79A4E); color:#fff; box-shadow:0 8px 18px rgba(217,178,106,.35);}
+.btn-soft{background:var(--surface-3); color:var(--primary-dark);}
+.btn-ghost{background:var(--surface); color:var(--ink-2); border:1px solid var(--line);}
+.btn-danger{background:var(--red); color:#fff;}
+.btn-green{background:var(--green); color:#fff;}
+.btn-block{width:100%;}
+.btn-sm{padding:9px 15px; font-size:13px;}
+.btn-xs{padding:7px 12px; font-size:12px; border-radius:var(--r-pill);}
+.btn[disabled]{opacity:.5; pointer-events:none;}
+.btnrow{display:flex; gap:8px; flex-wrap:wrap;}
+
+/* ---- pills / tags ---- */
+.pill{display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:700; padding:5px 11px; border-radius:var(--r-pill);}
+.pill.ok{background:var(--green-soft); color:#2E7A4F;}
+.pill.wait{background:var(--gold-soft); color:#9A7A35;}
+.pill.run{background:var(--blue-soft); color:#3C6688;}
+.pill.fail{background:var(--red-soft); color:#A23B2C;}
+.pill.muted{background:var(--surface-3); color:var(--ink-2);}
+.pill.gold{background:var(--gold-soft); color:#8A6B26;}
+.dotg{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;box-shadow:0 0 0 3px var(--green-soft);}
+.dotgray{width:8px;height:8px;border-radius:50%;background:var(--ink-3);display:inline-block;}
+
+/* ---- segmented ---- */
+.seg{display:flex; background:var(--surface-3); border-radius:var(--r-pill); padding:4px; gap:4px;}
+.seg button{flex:1; border:none; background:transparent; padding:9px; border-radius:var(--r-pill); font-weight:700; font-size:13px; color:var(--ink-2); cursor:pointer; font-family:var(--font);}
+.seg button.on{background:var(--surface); color:var(--primary-dark); box-shadow:var(--sh-soft);}
+
+/* ---- inputs ---- */
+.field{margin-bottom:14px;}
+.field label{display:block; font-size:12.5px; font-weight:700; color:var(--ink-2); margin-bottom:7px;}
+.field .req{color:var(--red);}
+.input, input[type=text], input[type=date], input[type=password], textarea{
+  width:100%; font-family:var(--font); font-size:14.5px; color:var(--ink);
+  background:var(--surface-2); border:1.5px solid var(--line); border-radius:var(--r-md);
+  padding:13px 15px; outline:none;
+}
+.input:focus, input:focus, textarea:focus{border-color:var(--primary); background:#fff;}
+textarea{resize:none; min-height:74px;}
+.err-msg{color:var(--red); font-size:12px; font-weight:600; margin-top:6px;}
+
+/* ---- record button ---- */
+.rec-stage{display:flex; flex-direction:column; align-items:center; padding:8px 0 6px;}
+.timer{font-size:46px; font-weight:800; letter-spacing:2px; font-variant-numeric:tabular-nums; color:var(--ink);}
+.rec-status{font-size:13.5px; color:var(--ink-2); font-weight:600; margin-top:2px; text-align:center;}
+.rec-circle{
+  width:148px; height:148px; border-radius:50%; margin:18px 0 10px; cursor:pointer;
+  background:radial-gradient(circle at 35% 30%, #E89A85, var(--primary) 55%, var(--primary-dark));
+  box-shadow:var(--sh-glow), 0 0 0 12px rgba(192,112,92,.10);
+  display:flex; align-items:center; justify-content:center; position:relative; transition:transform .12s;
+}
+.rec-circle:active{transform:scale(.96);}
+.rec-circle .ic{font-size:40px; color:#fff;}
+.rec-circle.live{
+  background:radial-gradient(circle at 35% 30%, #E78A78, var(--red) 55%, #B84334);
+  animation:pulse 1.6s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{box-shadow:0 10px 34px rgba(210,90,70,.45),0 0 0 12px rgba(210,90,70,.10);}50%{box-shadow:0 10px 40px rgba(210,90,70,.55),0 0 0 22px rgba(210,90,70,.04);}}
+.rec-square{width:40px;height:40px;border-radius:10px;background:#fff;}
+.blink{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--red);animation:bl 1s steps(2,start) infinite;margin-right:6px;vertical-align:middle;}
+@keyframes bl{50%{opacity:.2;}}
+
+/* source row */
+.src-row{display:flex; gap:10px; margin-top:6px;}
+.src{
+  flex:1; background:var(--surface-2); border:1.5px solid var(--line); border-radius:var(--r-md);
+  padding:12px 10px; text-align:center; cursor:pointer; position:relative;
+}
+.src.on{border-color:var(--primary); background:var(--surface);}
+.src .t{font-size:13px; font-weight:800; margin-top:2px;}
+.src .s{font-size:11px; color:var(--ink-3); margin-top:3px; display:flex; align-items:center; justify-content:center; gap:5px;}
+
+/* list rows */
+.crow{display:flex; align-items:center; gap:12px; padding:14px 4px; border-bottom:1px solid var(--line);}
+.crow:last-child{border-bottom:none;}
+.avatar{width:44px; height:44px; border-radius:14px; background:linear-gradient(135deg,var(--gold-soft),var(--primary-soft));
+  display:flex; align-items:center; justify-content:center; font-weight:800; color:var(--primary-dark); font-size:16px; flex-shrink:0;}
+.crow .nm{font-size:15px; font-weight:800;}
+.crow .meta{font-size:11.5px; color:var(--ink-3); margin-top:2px;}
+
+/* audio player */
+.audio{
+  background:var(--surface-2); border:1px solid var(--line); border-radius:var(--r-md);
+  padding:11px 13px; display:flex; align-items:center; gap:11px; margin:10px 0;
+}
+.playbtn{width:38px;height:38px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;cursor:pointer;box-shadow:0 4px 12px rgba(192,112,92,.3);}
+.track{flex:1;}
+.bar{height:7px;background:var(--surface-3);border-radius:var(--r-pill);overflow:hidden;}
+.bar .fill{height:100%;background:linear-gradient(90deg,var(--primary),var(--gold));border-radius:var(--r-pill);}
+.audio .tt{font-size:11px;color:var(--ink-3);margin-top:5px;display:flex;justify-content:space-between;}
+
+/* big entry tiles */
+.entry{border-radius:var(--r-lg); padding:18px; display:flex; align-items:center; gap:14px; margin-bottom:14px; cursor:pointer; box-shadow:var(--sh-card);}
+.entry.rose{background:linear-gradient(120deg,#F3DED6,#FBF1EC); border:1px solid var(--primary-soft);}
+.entry.gold{background:linear-gradient(120deg,var(--gold-soft),#FCF6E9); border:1px solid #ECD9AC;}
+.entry .ei{width:48px;height:48px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:24px;background:#fff;box-shadow:var(--sh-soft);}
+.entry .et{font-size:15px;font-weight:800;}
+.entry .es{font-size:11.5px;color:var(--ink-2);margin-top:3px;}
+.entry .arr{margin-left:auto;color:var(--primary);font-size:18px;font-weight:800;}
+
+/* date switch */
+.dateswitch{display:flex; align-items:center; gap:8px; margin-bottom:12px;}
+.dateswitch .nav{width:36px;height:36px;border-radius:12px;background:var(--surface);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:15px;cursor:pointer;box-shadow:var(--sh-soft);}
+.dateswitch .dpick{flex:1;text-align:center;}
+.dateswitch input[type=date]{text-align:center; padding:10px;}
+.today-tag{font-size:11px;font-weight:800;background:var(--green-soft);color:#2E7A4F;padding:4px 10px;border-radius:var(--r-pill);}
+
+/* bottom nav */
+.botnav{
+  position:absolute; bottom:0; left:0; right:0; height:74px;
+  background:rgba(255,255,255,.94); backdrop-filter:blur(14px);
+  border-top:1px solid var(--line); display:flex; align-items:center; justify-content:space-around;
+  padding:6px 12px 12px; z-index:90; box-shadow:0 -6px 22px rgba(160,110,80,.07);
+}
+.nav-item{display:flex; flex-direction:column; align-items:center; gap:3px; font-size:10.5px; color:var(--ink-3); font-weight:700; cursor:pointer; padding:6px 12px; border-radius:var(--r-pill);}
+.nav-item .ni{font-size:20px;}
+.nav-item.on{color:var(--primary-dark); background:var(--primary-soft);}
+.nav-item.on .ni{transform:scale(1.05);}
+.nav-fab{position:relative; top:-12px;}
+.nav-fab .ni{width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--primary-dark));color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;box-shadow:var(--sh-glow);}
+
+/* modal */
+.modal-wrap{position:absolute; inset:0; z-index:150; display:none; align-items:flex-end; justify-content:center;}
+.modal-wrap.show{display:flex;}
+.modal-bg{position:absolute; inset:0; background:rgba(58,50,46,.42); backdrop-filter:blur(2px);}
+.sheet{
+  position:relative; width:100%; max-height:86%; background:var(--bg);
+  border-radius:var(--r-xl) var(--r-xl) 0 0; padding:8px 18px 24px; overflow-y:auto;
+  box-shadow:0 -10px 40px rgba(110,70,50,.25); animation:slideup .26s cubic-bezier(.2,.8,.2,1);
+}
+@keyframes slideup{from{transform:translateY(40px);opacity:.4;}to{transform:translateY(0);opacity:1;}}
+.grab{width:42px;height:5px;border-radius:3px;background:var(--line);margin:6px auto 14px;}
+.sheet h3{font-size:18px;font-weight:800;margin:0 0 4px;}
+.sheet .sheetsub{font-size:12px;color:var(--ink-3);margin-bottom:14px;line-height:1.5;}
+
+/* toast */
+.toast{position:absolute; bottom:90px; left:16px; right:16px; z-index:170;
+  background:#3A322E; color:#fff; padding:13px 16px; border-radius:var(--r-md); font-size:13px; font-weight:600;
+  display:none; box-shadow:0 10px 30px rgba(0,0,0,.3); animation:slideup .2s;}
+.toast.danger{background:var(--red);}
+.toast.show{display:block;}
+
+/* progress */
+.prog{height:10px;background:var(--surface-3);border-radius:var(--r-pill);overflow:hidden;margin:10px 0;}
+.prog .pf{height:100%;background:linear-gradient(90deg,var(--primary),var(--gold));border-radius:var(--r-pill);}
+.kv{display:flex;justify-content:space-between;font-size:12.5px;padding:6px 0;border-bottom:1px dashed var(--line);}
+.kv:last-child{border-bottom:none;}
+.kv .k{color:var(--ink-2);} .kv .v{font-weight:700;}
+
+/* report parts */
+.part{background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-card);border:1px solid var(--line);margin-bottom:12px;overflow:hidden;}
+.part-head{padding:15px 16px;display:flex;align-items:center;gap:10px;cursor:pointer;}
+.part-no{width:30px;height:30px;border-radius:10px;background:var(--primary-soft);color:var(--primary-dark);font-weight:800;font-size:13px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.part-head .pt{font-size:14px;font-weight:800;flex:1;}
+.part-head .chev{color:var(--ink-3);font-size:13px;transition:transform .2s;}
+.part.open .chev{transform:rotate(180deg);}
+.part-body{display:none;padding:0 16px 16px;}
+.part.open .part-body{display:block;}
+.tag-lbl{display:inline-block;font-size:11px;font-weight:800;padding:4px 11px;border-radius:var(--r-pill);background:var(--gold-soft);color:#8A6B26;margin-bottom:8px;}
+.score-big{font-size:30px;font-weight:800;}
+.bullet{font-size:13px;line-height:1.6;color:var(--ink);padding:5px 0 5px 16px;position:relative;}
+.bullet:before{content:"●";position:absolute;left:0;color:var(--primary);font-size:9px;top:9px;}
+.advice{background:var(--surface-2);border-left:3px solid var(--gold);border-radius:0 var(--r-sm) var(--r-sm) 0;padding:10px 12px;margin:8px 0;font-size:13px;line-height:1.55;}
+.advice b{color:var(--primary-dark);}
+.twocol{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0;}
+.col-box{background:var(--surface-2);border-radius:var(--r-md);padding:12px;font-size:12.5px;line-height:1.55;}
+.col-box .ch{font-weight:800;font-size:12px;margin-bottom:6px;}
+.bluebox{background:var(--blue-soft);border-radius:var(--r-md);padding:13px;font-size:13px;line-height:1.6;color:#34556E;}
+.tstamp{display:inline-flex;align-items:center;gap:6px;background:var(--primary);color:#fff;font-size:12px;font-weight:700;padding:6px 12px;border-radius:var(--r-pill);cursor:pointer;}
+
+/* reminder */
+.rem{background:var(--surface);border-radius:var(--r-md);padding:13px 14px;margin-bottom:10px;box-shadow:var(--sh-soft);border:1px solid var(--line);}
+.rem .rt{font-size:13.5px;font-weight:700;line-height:1.5;}
+.rem .rmeta{font-size:11px;color:var(--ink-3);margin-top:6px;display:flex;align-items:center;gap:8px;}
+
+/* login */
+.login-wrap{flex:1;display:flex;flex-direction:column;justify-content:center;padding:0 28px;}
+.brandmark{width:84px;height:84px;border-radius:28px;margin:0 auto 18px;background:linear-gradient(135deg,var(--primary),var(--gold));display:flex;align-items:center;justify-content:center;font-size:40px;box-shadow:var(--sh-glow);}
+
+.empty{text-align:center;padding:46px 20px;color:var(--ink-3);}
+.empty .ei{font-size:46px;}
+.empty .et{font-size:14px;font-weight:700;margin-top:10px;color:var(--ink-2);}
+.empty .es{font-size:12px;margin-top:6px;}
+
+.hr{height:1px;background:var(--line);margin:14px 0;}
+.smallnote{font-size:11.5px;color:var(--ink-3);line-height:1.5;}
+.radio-row{display:flex;align-items:center;gap:11px;padding:13px;border:1.5px solid var(--line);border-radius:var(--r-md);margin-bottom:10px;background:var(--surface);cursor:pointer;}
+.radio-row.on{border-color:var(--primary);background:var(--surface-2);}
+.rd{width:20px;height:20px;border-radius:50%;border:2px solid var(--ink-3);flex-shrink:0;position:relative;}
+.radio-row.on .rd{border-color:var(--primary);}
+.radio-row.on .rd:after{content:"";position:absolute;inset:3px;border-radius:50%;background:var(--primary);}
+.daytag{font-size:10px;font-weight:800;background:var(--green-soft);color:#2E7A4F;padding:2px 7px;border-radius:var(--r-pill);}
+</style>
+</head>
+<body>
+
+<div id="jumpbar">
+  <span class="lbl">屏幕 ▸</span>
+  <select id="jump" onchange="go(this.value)">
+    <option value="login">登录</option>
+    <option value="home" selected>录音首页（含状态切换）</option>
+    <option value="reception">今日接诊列表</option>
+    <option value="pending">待绑定录音（未归档）</option>
+    <option value="needs">多说话人误录确认</option>
+    <option value="profile-search">客户档案搜索</option>
+    <option value="report">分析报告</option>
+    <option value="customer">顾客美丽档案</option>
+    <option value="reminders">提醒面板</option>
+  </select>
+</div>
+
+<div class="phone">
+  <div class="notch"></div>
+  <div class="statusbar">
+    <span>9:41</span>
+    <span class="right">📶 &nbsp;🔋 92%</span>
+  </div>
+
+  <!-- ===================== LOGIN ===================== -->
+  <section class="screen" id="login">
+    <div class="login-wrap">
+      <div class="brandmark">🌸</div>
+      <div style="text-align:center;">
+        <div style="font-size:26px;font-weight:800;background:linear-gradient(90deg,var(--primary),var(--gold));-webkit-background-clip:text;background-clip:text;color:transparent;">美丽陪伴</div>
+        <div style="font-size:13px;color:var(--ink-2);margin-top:6px;">温暖记录每一次接诊 · 让陪伴更专业</div>
+      </div>
+      <div class="card" style="margin-top:28px;">
+        <div class="field">
+          <label>账号</label>
+          <input type="text" value="张敏" placeholder="工号 / 手机号">
+        </div>
+        <div class="field">
+          <label>密码</label>
+          <input type="password" value="••••••••" placeholder="请输入密码">
+        </div>
+        <button class="btn btn-primary btn-block" onclick="go('home')">登 录</button>
+        <div class="smallnote" style="text-align:center;margin-top:14px;">登录即代表同意《服务协议》与《隐私政策》</div>
+      </div>
+      <div class="smallnote" style="text-align:center;margin-top:10px;">朝阳旗舰店 · 顾问端 v5.0</div>
+    </div>
+  </section>
+
+  <!-- ===================== HOME / RECORD ===================== -->
+  <section class="screen active" id="home">
+    <div class="scroll">
+      <div class="appbar">
+        <div class="h-left">
+          <div class="hello">下午好，</div>
+          <div class="title">美丽陪伴</div>
+          <div class="sub"><span class="rolechip">👩 顾问</span> 张敏 · 朝阳旗舰店</div>
+        </div>
+        <div class="h-right">
+          <div class="iconbtn" onclick="toast('🎀 已切换可爱皮肤文案')">🎀</div>
+          <div class="iconbtn" onclick="go('reminders')">🔔<span class="badge-dot">3</span></div>
+        </div>
+      </div>
+
+      <!-- record card -->
+      <div class="card" style="text-align:center;">
+        <div class="rec-stage">
+          <div class="timer" id="recTimer">00:00</div>
+          <div class="rec-status" id="recStatus">点击下方按钮开始录音</div>
+          <div class="rec-circle" id="recCircle" onclick="toggleRec()">
+            <div class="ic" id="recIcon">●</div>
+          </div>
+          <div class="smallnote" id="recHint" style="max-width:260px;margin-top:4px;">录音结束后请把这段录音绑定到今日接诊里的顾客。</div>
+        </div>
+
+        <div class="hr"></div>
+
+        <!-- source row (App / WebView only) -->
+        <div style="text-align:left;">
+          <div style="font-size:12px;font-weight:700;color:var(--ink-2);margin-bottom:8px;">录音方式</div>
+          <div class="src-row">
+            <div class="src on" id="srcPen" onclick="pickSrc('pen')">
+              <div style="font-size:20px;">🖊</div>
+              <div class="t">录音笔</div>
+              <div class="s"><span class="dotg"></span>已连接</div>
+            </div>
+            <div class="src" id="srcPhone" onclick="pickSrc('phone')">
+              <div style="font-size:20px;">📱</div>
+              <div class="t">手机麦克风</div>
+              <div class="s">手机录音</div>
+            </div>
+          </div>
+          <div class="pill gold" style="margin-top:12px;">💾 2 段后台上传中… <span style="opacity:.8;">下载 60%</span></div>
+          <div class="pill fail" style="margin-top:8px;">⚠️ 1 段没保存成功，请重录</div>
+        </div>
+      </div>
+
+      <!-- state toggles for review -->
+      <div class="card tight">
+        <div class="card-sub" style="margin-bottom:8px;">▸ 预览各录音状态（仅用于评审）</div>
+        <div class="btnrow">
+          <button class="btn btn-soft btn-xs" onclick="setState('idle')">空闲</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('rec')">录音中</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('upload')">上传中</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('done')">已上传</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('fail')">上传失败</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('penwait')">笔未连接</button>
+          <button class="btn btn-soft btn-xs" onclick="setState('connecting')">连接中</button>
+          <button class="btn btn-soft btn-xs" onclick="netToast()">网络断开</button>
+        </div>
+      </div>
+
+      <!-- entries -->
+      <div class="entry rose" onclick="go('reception')">
+        <div class="ei">📋</div>
+        <div><div class="et">查看接诊列表</div><div class="es">所有接诊记录、分析报告、点评</div></div>
+        <div class="arr">›</div>
+      </div>
+      <div class="entry gold" onclick="go('pending')">
+        <div class="ei">🎙</div>
+        <div><div class="et">未选择顾客的录音</div><div class="es">试听后绑定到对应顾客 · 2 段待处理</div></div>
+        <div class="arr">›</div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-home"></div>
+  </section>
+
+  <!-- ===================== RECEPTION LIST ===================== -->
+  <section class="screen" id="reception">
+    <div class="scroll">
+      <div class="appbar">
+        <div class="h-left">
+          <div class="title" style="font-size:21px;">接诊列表</div>
+          <div class="sub">录音前后请把今天要接诊的顾客加进来</div>
+        </div>
+        <div class="h-right">
+          <div class="iconbtn" onclick="toast('已刷新接诊列表')">↻</div>
+        </div>
+      </div>
+
+      <div class="dateswitch">
+        <div class="nav" onclick="toast('查看前一天')">◀</div>
+        <div class="dpick"><input type="date" value="2026-06-08" max="2026-06-08"></div>
+        <div class="nav" onclick="toast('查看后一天')">▶</div>
+        <span class="today-tag">今天</span>
+      </div>
+
+      <div class="banner info">📌 录音结束后只能绑定到这个列表里的人。今日列表每 20 秒自动刷新。</div>
+
+      <div class="card tight">
+        <!-- customer rows -->
+        <div class="crow">
+          <div class="avatar">李</div>
+          <div style="flex:1;">
+            <div class="nm">李雪</div>
+            <div class="meta">尾号8821 · VIP10086</div>
+            <div style="margin-top:6px;"><span class="pill wait">2 段录音待分析</span></div>
+          </div>
+          <button class="btn btn-primary btn-xs" onclick="openPackage()">开始分析</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">王</div>
+          <div style="flex:1;">
+            <div class="nm">王芳</div>
+            <div class="meta">尾号3302 · VIP20455</div>
+            <div style="margin-top:6px;"><span class="pill run">🔄 分析中… 5/11</span></div>
+          </div>
+          <button class="btn btn-ghost btn-xs" onclick="openPackage()">查看进度</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">陈</div>
+          <div style="flex:1;">
+            <div class="nm">陈思琪</div>
+            <div class="meta">尾号7714 · VIP18820</div>
+            <div style="margin-top:6px;"><span class="pill ok">✓ 已分析</span> <span class="pill gold">⏳ 换绑审批中 (1)</span></div>
+          </div>
+          <button class="btn btn-gold btn-xs" onclick="go('report')">看报告</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">赵</div>
+          <div style="flex:1;">
+            <div class="nm">赵丽</div>
+            <div class="meta">尾号5560 · 新客</div>
+            <div style="margin-top:6px;"><span class="pill muted">尚未绑定录音</span></div>
+          </div>
+          <button class="btn btn-soft btn-xs" onclick="openPackage()">待绑定</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">孙</div>
+          <div style="flex:1;">
+            <div class="nm">孙倩</div>
+            <div class="meta">尾号9087 · VIP30021</div>
+            <div style="margin-top:6px;"><span class="pill fail">✗ 分析失败，点击重试</span></div>
+          </div>
+          <button class="btn btn-ghost btn-xs" onclick="openPackage()">重新分析</button>
+        </div>
+      </div>
+
+      <button class="btn btn-primary btn-block" onclick="openAdd()">＋ 加入今日接诊</button>
+    </div>
+    <div class="botnav" id="nav-reception"></div>
+  </section>
+
+  <!-- ===================== PENDING RECORDINGS ===================== -->
+  <section class="screen" id="pending">
+    <div class="scroll">
+      <div class="appbar">
+        <div class="h-left">
+          <div class="title" style="font-size:21px;">未归档录音</div>
+          <div class="sub">未绑定顾客的录音不会进入分析</div>
+        </div>
+        <div class="h-right"><div class="iconbtn" onclick="toast('已刷新')">↻</div></div>
+      </div>
+
+      <div class="banner warn">⚠ 有 2 段录音的日期与当前接诊（2026-06-08）不一致 ·
+        <span style="text-decoration:underline;cursor:pointer;" onclick="toast('已切到 2026-06-05')">切到 2026-06-05 ›</span></div>
+
+      <!-- normal segment -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div class="card-title">🎙 14:32 – 14:51</div>
+            <div class="card-sub">服务日期 2026-06-08 · 时长 18分23秒</div>
+          </div>
+          <span class="pill muted">未绑定</span>
+        </div>
+        <div class="audio">
+          <div class="playbtn" onclick="toast('试听播放中（最多60秒）')">▶</div>
+          <div class="track">
+            <div class="bar"><div class="fill" style="width:34%"></div></div>
+            <div class="tt"><span>00:21</span><span>试听上限 60s</span></div>
+          </div>
+        </div>
+        <div class="btnrow">
+          <button class="btn btn-primary btn-sm" style="flex:1;" onclick="openBind()">绑定顾客</button>
+          <button class="btn btn-ghost btn-sm" onclick="toast('已提交删除申请，待审批')">申请删除</button>
+        </div>
+      </div>
+
+      <!-- processing placeholder -->
+      <div class="card" style="opacity:.6;">
+        <div class="card-title" style="color:var(--ink-2);">⏳ 上传中…</div>
+        <div class="card-sub">后台下载上传中，传完后补时段 / 时长</div>
+      </div>
+
+      <!-- cross-day red -->
+      <div class="card" style="border-color:#F3C9C1;background:linear-gradient(120deg,#FBE6E1,#FFF6F4);">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div class="card-title" style="color:#A23B2C;">🎙 09:12 – 09:40</div>
+            <div class="card-sub" style="color:#A23B2C;">服务日期 2026-06-05（跨日）· 27分10秒</div>
+          </div>
+          <span class="pill fail">跨日</span>
+        </div>
+        <div class="banner warn" style="margin:10px 0 0;">⚠ 上报时长远大于实测音频，可能曾断流截断，请试听确认。</div>
+        <div class="audio">
+          <div class="playbtn" onclick="toast('试听播放中')">▶</div>
+          <div class="track"><div class="bar"><div class="fill" style="width:12%"></div></div>
+          <div class="tt"><span>00:07</span><span>27:10</span></div></div>
+        </div>
+        <button class="btn btn-primary btn-block btn-sm" onclick="openBind()">绑定顾客</button>
+      </div>
+
+      <!-- delete pending -->
+      <div class="card" style="opacity:.7;">
+        <div class="banner gold" style="margin:0;">⏳ 删除审批中（需先撤回申请才能进行其他操作）</div>
+        <button class="btn btn-ghost btn-block btn-sm" style="margin-top:10px;" onclick="toast('已撤回删除申请')">撤回删除申请</button>
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">
+        <button class="btn btn-ghost btn-xs">‹ 上一页</button>
+        <span class="smallnote">第 1 / 2 页 · 每页 5 段</span>
+        <button class="btn btn-ghost btn-xs">下一页 ›</button>
+      </div>
+    </div>
+    <div class="botnav" id="nav-pending"></div>
+  </section>
+
+  <!-- ===================== NEEDS CONFIRM (multi speaker) ===================== -->
+  <section class="screen" id="needs">
+    <div class="scroll">
+      <div class="appbar">
+        <div class="h-left"><div class="title" style="font-size:21px;">误录确认</div>
+          <div class="sub">ASR 检测到说话人 &gt; 2 的疑似误录</div></div>
+      </div>
+      <div class="card" style="border-color:#F0D6AE;background:linear-gradient(120deg,var(--orange-soft),#FFFBF4);">
+        <div class="card-title" style="color:#9A5E1F;">⚠ 检测到可能误录（说话人 &gt; 2）</div>
+        <div class="smallnote" style="margin-top:8px;line-height:1.6;">以下录音 ASR 后检测到超过 2 个说话人，可能一段混了多位顾客。可解绑后拆分重传，或确认本次按当前归属分析。</div>
+        <div class="hr"></div>
+        <div class="kv"><span class="k">时间</span><span class="v">2026-06-08 14:32</span></div>
+        <div class="kv"><span class="k">顾客</span><span class="v">李雪</span></div>
+        <div class="kv"><span class="k">说话人数</span><span class="v" style="color:var(--orange);font-weight:800;">3 人</span></div>
+        <div class="audio">
+          <div class="playbtn" onclick="toast('试听播放中')">▶</div>
+          <div class="track"><div class="bar"><div class="fill" style="width:28%"></div></div>
+          <div class="tt"><span>00:14</span><span>18:23</span></div></div>
+        </div>
+        <div class="btnrow" style="margin-top:4px;">
+          <button class="btn btn-soft btn-sm" style="flex:1;" onclick="toast('已确认照常分析')">仍然分析</button>
+          <button class="btn btn-danger btn-sm" style="flex:1;" onclick="confirm('确认解绑并拆分重传？')&&toast('已解绑，请重新拆分上传')">解绑（拆分重传）</button>
+        </div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-needs"></div>
+  </section>
+
+  <!-- ===================== PROFILE SEARCH ===================== -->
+  <section class="screen" id="profile-search">
+    <div class="scroll">
+      <div class="appbar"><div class="h-left"><div class="title" style="font-size:21px;">客户档案</div>
+        <div class="sub">搜索任意顾客查看价值预测</div></div></div>
+      <div class="card">
+        <div class="smallnote" style="margin-bottom:10px;">搜索任意顾客，点开查看其档案与价值预测。（录音只能听本人接待的）</div>
+        <input type="text" placeholder="🔍 输入姓名 / 会员卡号" value="李">
+        <div class="hr"></div>
+        <div class="crow" onclick="go('customer')">
+          <div class="avatar">李</div>
+          <div style="flex:1;"><div class="nm">李雪</div><div class="meta">VIP10086 · 接诊 3 次</div></div>
+          <span class="arr" style="color:var(--primary);font-size:18px;">›</span>
+        </div>
+        <div class="crow" onclick="go('customer')">
+          <div class="avatar">李</div>
+          <div style="flex:1;"><div class="nm">李婷婷</div><div class="meta">VIP44120 · 接诊 1 次</div></div>
+          <span class="arr" style="color:var(--primary);font-size:18px;">›</span>
+        </div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-profile-search"></div>
+  </section>
+
+  <!-- ===================== ANALYSIS REPORT ===================== -->
+  <section class="screen" id="report">
+    <div class="scroll">
+      <div class="appbar" style="align-items:center;">
+        <div class="h-left" style="display:flex;align-items:center;gap:8px;">
+          <div class="iconbtn" onclick="go('reception')" style="width:38px;height:38px;font-size:17px;">←</div>
+          <div><div style="font-size:15px;font-weight:800;">张顾问 × 刘佳佳</div>
+          <div class="sub" style="margin-top:2px;">接诊全维度分析报告 · 2026-06-08</div></div>
+        </div>
+      </div>
+
+      <div class="card tight">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <span class="pill fail" style="background:#3A322E;color:#fff;">销售复盘 · 内部机密</span>
+          <span class="pill ok">分析：已完成 · deepseek-v4-pro</span>
+        </div>
+        <div class="btnrow" style="margin-top:12px;">
+          <button class="btn btn-ghost btn-xs" onclick="toast('正在重跑分析…')">⟳ 重跑</button>
+          <button class="btn btn-ghost btn-xs" onclick="toast('展开原始录音面板')">🎧 原始录音</button>
+          <button class="btn btn-ghost btn-xs" onclick="toast('已申请删除录音，待审批')">申请删录音</button>
+        </div>
+      </div>
+
+      <!-- PART 01 -->
+      <div class="part open" id="p1">
+        <div class="part-head" onclick="togglePart('p1')">
+          <div class="part-no">01</div><div class="pt">全维度评估总览</div><div class="chev">▾</div>
+        </div>
+        <div class="part-body">
+          <span class="tag-lbl">顾客价值评级</span>
+          <div style="font-size:15px;font-weight:800;color:var(--primary-dark);margin-bottom:4px;">A级高价值客户</div>
+          <div class="smallnote" style="margin-bottom:10px;">消费力强、有抗衰刚需，决策周期短，适合主推高客单套餐。</div>
+          <span class="tag-lbl" style="background:var(--red-soft);color:#A23B2C;">痛点识别</span>
+          <div class="bullet">法令纹明显，自述"显老气色差"</div>
+          <div class="bullet">眼周细纹，对镜头/社交照敏感</div>
+          <div class="bullet">关注下颌线松弛</div>
+          <div style="display:flex;align-items:center;gap:12px;margin:14px 0;">
+            <div><div class="score-big" style="color:var(--gold);">7.5</div><div class="smallnote">质检评分 / 10</div></div>
+            <div class="advice" style="flex:1;margin:0;">销售问题诊断：<b>只推产品未讲问题</b>，未先共情顾客的"显老焦虑"。</div>
+          </div>
+          <div class="advice"><b>建议 1</b>　回店先复述顾客原话痛点，建立共情</div>
+          <div class="advice"><b>建议 2</b>　用法令纹方案做切入，绑定抗衰套餐</div>
+          <div class="advice"><b>建议 3</b>　提供项目后黄金窗口复购话术</div>
+          <button class="btn btn-soft btn-block btn-sm" style="margin-top:10px;" onclick="toast('展开详细评分')">查看详细评分 ▾</button>
+        </div>
+      </div>
+
+      <!-- PART 02 -->
+      <div class="part" id="p2"><div class="part-head" onclick="togglePart('p2')"><div class="part-no">02</div><div class="pt">顾客真实画像重建</div><div class="chev">▾</div></div>
+        <div class="part-body">
+          <div class="advice" style="border-left-color:var(--primary);">顾客原话「我最近气色不太好」<br><span class="smallnote">→ 销售判断：表层是气色，深层是"怕显老"的社交焦虑。</span></div>
+          <div class="bluebox" style="margin-top:10px;">综合判断：典型抗衰刚需客，情感驱动强于价格敏感，应以"找回年轻状态"叙事推进。</div>
+        </div></div>
+
+      <!-- PART 03 -->
+      <div class="part" id="p3"><div class="part-head" onclick="togglePart('p3')"><div class="part-no">03</div><div class="pt">接诊失分根因定位</div><div class="chev">▾</div></div>
+        <div class="part-body">
+          <div class="banner danger" style="margin:0 0 10px;">核心失分：顾问全程在"讲产品"，顾客一直在"讲困扰"，两条线没接上。</div>
+          <div class="twocol">
+            <div class="col-box"><div class="ch" style="color:var(--blue);">产品维度（顾问做的）</div>介绍仪器参数、套餐价格、活动折扣</div>
+            <div class="col-box"><div class="ch" style="color:var(--primary);">问题维度（顾客要听的）</div>法令纹会不会改善、多久见效、会不会假</div>
+          </div>
+          <div class="advice" style="border-left-color:var(--orange);">差距的本质：缺少"把产品翻译成顾客问题解决方案"的一步。</div>
+        </div></div>
+
+      <!-- PART 06 case -->
+      <div class="part" id="p6"><div class="part-head" onclick="togglePart('p6')"><div class="part-no">06</div><div class="pt">关键 Case 复盘 · 三层分析</div><div class="chev">▾</div></div>
+        <div class="part-body">
+          <div class="card-title" style="font-size:13px;">Case 1 <span class="pill fail" style="margin-left:6px;">做错</span></div>
+          <div class="tstamp" style="margin:8px 0;" onclick="toast('跳转录音 0:01:34 播放')">▶ 0:01:34</div>
+          <div class="advice" style="border-left-color:var(--primary);">顾客原话「我朋友在别家做了感觉假假的」</div>
+          <div class="bullet">表层做法：直接说"我们的不会假"</div>
+          <div class="bullet">深层问题：没有追问她对"假"的具体担忧</div>
+          <div class="bullet">可优化方向：先共情，再用案例图打消顾虑</div>
+          <div class="bluebox" style="margin-top:10px;background:#3A322E;color:#fff;">一句话总结：异议处理太急于辩解，错过了建立信任的机会。</div>
+        </div></div>
+
+      <!-- PART 11 -->
+      <div class="part" id="p11"><div class="part-head" onclick="togglePart('p11')"><div class="part-no">11</div><div class="pt">成交诊断 · 5 维度判断</div><div class="chev">▾</div></div>
+        <div class="part-body">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+            <span class="pill ok">✅ 已成交</span><span class="pill gold">¥3980</span><span class="pill wait">🟡 留意</span>
+          </div>
+          <div class="kv"><span class="k">顾客被打动</span><span class="v" style="color:var(--green);">到位</span></div>
+          <div class="kv"><span class="k">认可方案</span><span class="v" style="color:var(--orange);">部分</span></div>
+          <div class="kv"><span class="k">效果感受到位</span><span class="v" style="color:var(--green);">到位</span></div>
+          <div class="kv"><span class="k">价格被匹配</span><span class="v" style="color:var(--red);">缺失</span></div>
+          <div class="kv"><span class="k">紧迫感建立</span><span class="v" style="color:var(--orange);">部分</span></div>
+          <div class="banner warn" style="margin:12px 0 0;">⚠ 价格锚点未建立，存在中等流失风险，建议 3 日内回访。</div>
+        </div></div>
+
+      <!-- boss comment -->
+      <div class="card">
+        <div class="card-title">💬 老板点评 · 专家点评记录</div>
+        <div style="display:flex;gap:10px;margin-top:12px;">
+          <div class="avatar" style="border-radius:50%;">老</div>
+          <textarea placeholder="在这里输入新的点评……例如：刘佳佳这个顾客性格慢热，下次先聊生活再聊项目…"></textarea>
+        </div>
+        <button class="btn btn-primary btn-sm" style="margin-top:10px;float:right;" onclick="toast('点评已提交')">提交点评</button>
+        <div style="clear:both;"></div>
+        <div class="hr"></div>
+        <div class="rem" style="box-shadow:none;background:var(--surface-2);">
+          <div class="rt" style="font-weight:600;">慢热客户，建议先做小项目建立信任再谈套餐。</div>
+          <div class="rmeta">王店长 · 2026-06-08 16:10 <span style="color:var(--red);cursor:pointer;margin-left:auto;">删除</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-report"></div>
+  </section>
+
+  <!-- ===================== CUSTOMER PROFILE ===================== -->
+  <section class="screen" id="customer">
+    <div class="scroll">
+      <div class="appbar" style="align-items:center;">
+        <div class="h-left" style="display:flex;align-items:center;gap:8px;">
+          <div class="iconbtn" onclick="go('profile-search')" style="width:38px;height:38px;font-size:17px;">←</div>
+          <div><div style="font-size:16px;font-weight:800;">刘佳佳</div>
+          <div class="sub" style="margin-top:2px;">顾客美丽档案</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex;gap:14px;align-items:center;">
+          <div class="avatar" style="width:54px;height:54px;border-radius:18px;font-size:20px;">刘</div>
+          <div style="flex:1;">
+            <div style="font-size:18px;font-weight:800;">刘佳佳</div>
+            <div class="meta">会员号 M20260108 · 尾号 8866</div>
+          </div>
+          <div style="text-align:center;"><div style="font-size:22px;font-weight:800;color:var(--primary);">3</div><div class="smallnote">接诊次</div></div>
+        </div>
+        <div class="hr"></div>
+        <div style="font-size:12px;font-weight:700;color:var(--ink-2);margin-bottom:8px;">累积标签 · 画像积累</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <span class="pill run">法令纹明显 ×3</span>
+          <span class="pill run" style="opacity:.85;">注重抗衰 ×2</span>
+          <span class="pill run" style="opacity:.7;">价格敏感</span>
+          <span class="pill run" style="opacity:.7;">关注下颌线</span>
+        </div>
+      </div>
+
+      <div class="card" style="background:linear-gradient(135deg,#FCF4EE,#FFF);">
+        <div class="card-title">🔮 客户价值预测</div>
+        <div class="card-sub">生成于 2026-06-08 14:40 · deepseek-v4-pro <span style="color:var(--orange);">（有新接诊，建议刷新）</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;">
+          <div class="col-box"><div class="ch">💎 客户价值评估</div>A级 · 高复购潜力</div>
+          <div class="col-box"><div class="ch">🎯 攻坚作战方案</div>抗衰套餐切入</div>
+          <div class="col-box"><div class="ch">📋 项目规划</div>水光+热玛吉</div>
+          <div class="col-box"><div class="ch">📈 经营规划</div>30 日内回店</div>
+        </div>
+        <div class="col-box" style="display:flex;align-items:center;gap:12px;background:var(--gold-soft);">
+          <div class="avatar" style="border-radius:50%;">张</div>
+          <div><div class="ch">🤝 顾问匹配度</div><div class="smallnote">张顾问 · ★★★★☆ 性格契合，建议续接</div></div>
+        </div>
+        <button class="btn btn-gold btn-block btn-sm" style="margin-top:12px;" onclick="toast('AI 正在生成深度分析，首次约需 1–2 分钟…')">✨ 刷新预测</button>
+      </div>
+
+      <div class="card tight">
+        <div class="card-title">服务时间线 <span class="smallnote">（共 3 次）</span></div>
+        <div class="crow" onclick="go('report')">
+          <div class="avatar" style="background:var(--green-soft);color:#2E7A4F;">✓</div>
+          <div style="flex:1;"><div class="nm" style="font-size:14px;">2026-06-08</div>
+            <div class="meta">张顾问 · 朝阳店 · done</div>
+            <div style="margin-top:5px;"><span class="pill run" style="font-size:10px;">法令纹明显</span> <span class="pill gold" style="font-size:10px;">命中主推：抗衰套餐</span></div></div>
+          <span class="arr" style="color:var(--primary);">›</span>
+        </div>
+        <div class="crow" onclick="go('report')">
+          <div class="avatar" style="background:var(--green-soft);color:#2E7A4F;">✓</div>
+          <div style="flex:1;"><div class="nm" style="font-size:14px;">2026-04-20</div>
+            <div class="meta">李顾问 · 朝阳店 · done</div></div>
+          <span class="arr" style="color:var(--primary);">›</span>
+        </div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-customer"></div>
+  </section>
+
+  <!-- ===================== REMINDERS ===================== -->
+  <section class="screen" id="reminders">
+    <div class="scroll">
+      <div class="appbar" style="align-items:center;">
+        <div class="h-left" style="display:flex;align-items:center;gap:8px;">
+          <div class="iconbtn" onclick="go('home')" style="width:38px;height:38px;font-size:17px;">←</div>
+          <div><div class="title" style="font-size:20px;">提醒</div></div>
+        </div>
+      </div>
+
+      <div class="card-sub" style="padding:0 4px 10px;font-weight:700;color:var(--ink-2);">个人提醒</div>
+      <div class="rem">
+        <div style="margin-bottom:6px;"><span class="pill wait">未绑定 L1</span></div>
+        <div class="rt">您有一段 06-08 的录音还没绑定顾客，请尽快处理</div>
+        <div class="rmeta">2026-06-08 15:20 <span style="color:var(--primary);font-weight:700;cursor:pointer;margin-left:auto;" onclick="go('pending')">去绑定 →</span></div>
+      </div>
+      <div class="rem">
+        <div style="margin-bottom:6px;"><span class="pill fail">未查看 L2</span></div>
+        <div class="rt">李雪 06-08 的报告已生成，请尽快查看</div>
+        <div class="rmeta">2026-06-08 15:20 <span style="color:var(--primary);font-weight:700;cursor:pointer;margin-left:auto;" onclick="go('report')">查看报告 →</span></div>
+      </div>
+
+      <div class="card-sub" style="padding:14px 4px 10px;font-weight:700;color:var(--ink-2);">本店待跟进升级项（2）<span class="smallnote">· 仅店长可见</span></div>
+      <div class="rem" style="border-left:3px solid var(--red);">
+        <div style="margin-bottom:6px;"><span class="pill fail">升级 L2</span> <span class="pill muted">顾问 张敏</span></div>
+        <div class="rt">该客户存在高流失风险，请及时跟进</div>
+        <div class="rmeta">2026-06-08 15:20
+          <button class="btn btn-green btn-xs" style="margin-left:auto;" onclick="this.outerHTML='<span class=&quot;pill ok&quot;>已跟进 ✓</span>'">已跟进</button>
+          <span style="color:var(--primary);font-weight:700;cursor:pointer;" onclick="go('report')">报告 →</span></div>
+      </div>
+    </div>
+    <div class="botnav" id="nav-reminders"></div>
+  </section>
+
+  <!-- ===================== MODALS ===================== -->
+  <!-- ADD RECEPTION -->
+  <div class="modal-wrap" id="m-add">
+    <div class="modal-bg" onclick="closeM('m-add')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>加入今日接诊</h3>
+      <div class="sheetsub">把已有或新顾客加入今天的接诊列表。录音结束后只能绑定到这里的人。</div>
+      <div class="seg" id="addseg">
+        <button class="on" onclick="addTab(0)">搜索已有顾客</button>
+        <button onclick="addTab(1)">新增顾客</button>
+      </div>
+      <div id="addTab0" style="margin-top:14px;">
+        <input type="text" placeholder="🔍 输入姓名 / 手机尾号 / 卡号" value="李">
+        <div class="hr"></div>
+        <div class="crow">
+          <div class="avatar">李</div>
+          <div style="flex:1;"><div class="nm">李雪</div><div class="meta">尾号8821 · VIP10086</div></div>
+          <button class="btn btn-primary btn-xs" onclick="closeM('m-add');toast('已加入今日接诊：李雪')">加入</button>
+        </div>
+        <div class="crow">
+          <div class="avatar">李</div>
+          <div style="flex:1;"><div class="nm">李娜</div><div class="meta">尾号6677 · VIP55012</div></div>
+          <button class="btn btn-primary btn-xs" onclick="closeM('m-add');toast('已加入今日接诊：李娜')">加入</button>
+        </div>
+        <div class="smallnote" style="margin-top:10px;">无匹配？如新顾客请切到「新增顾客」。</div>
+      </div>
+      <div id="addTab1" style="display:none;margin-top:14px;">
+        <div class="field"><label>顾客姓名 <span class="req">*</span></label><input type="text" placeholder="如：李雪"></div>
+        <div class="field"><label>手机尾号（4位）<span class="req">*</span></label><input type="text" placeholder="如：8821" maxlength="4"></div>
+        <div class="field"><label>会员 / 卡号（可选）</label><input type="text" placeholder="如：VIP10086"></div>
+        <div class="btnrow">
+          <button class="btn btn-primary" style="flex:1;" onclick="closeM('m-add');toast('已新增并加入今日接诊')">确认新增并加入</button>
+          <button class="btn btn-ghost" onclick="closeM('m-add')">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BIND -->
+  <div class="modal-wrap" id="m-bind">
+    <div class="modal-bg" onclick="closeM('m-bind')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>绑定到接诊顾客</h3>
+      <div class="sheetsub">只能从下面列表里选；若没有要找的顾客，请先「加入今日接诊」。</div>
+      <div class="banner warn">这段录音是 2026-06-05 的，只能绑定到当天的接诊客人。
+        <span style="text-decoration:underline;cursor:pointer;" onclick="toast('切到 06-05 接诊列表')">切到 06-05 去加入 ›</span></div>
+      <div class="crow">
+        <div class="avatar">李</div>
+        <div style="flex:1;"><div class="nm">李雪</div><div class="meta">尾号8821 · 2 段录音</div></div>
+        <button class="btn btn-primary btn-xs" onclick="closeM('m-bind');toast('✓ 已绑定到李雪，正在刷新')">绑定到这里</button>
+      </div>
+      <div class="crow">
+        <div class="avatar">王</div>
+        <div style="flex:1;"><div class="nm">王芳</div><div class="meta">尾号3302 · 0 段录音</div></div>
+        <button class="btn btn-primary btn-xs" onclick="closeM('m-bind');toast('✓ 已绑定到王芳，正在刷新')">绑定到这里</button>
+      </div>
+      <div class="crow" style="opacity:.45;">
+        <div class="avatar">陈</div>
+        <div style="flex:1;"><div class="nm">陈思琪</div><div class="meta">已锁定（分析中）</div></div>
+        <span class="pill muted">已锁定</span>
+      </div>
+      <button class="btn btn-ghost btn-block btn-sm" style="margin-top:10px;" onclick="closeM('m-bind')">取消</button>
+    </div>
+  </div>
+
+  <!-- PACKAGE -->
+  <div class="modal-wrap" id="m-pkg">
+    <div class="modal-bg" onclick="closeM('m-pkg')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>接诊包 · 李雪</h3>
+      <div class="sheetsub">2026-06-08 · 核对顾客信息后开始分析，如绑错可以「换绑」或「退回未归档」。</div>
+
+      <div class="card tight" style="margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <span class="pill wait">⏳ 待开始分析</span>
+          <span class="smallnote">本次将分析 2 段录音</span>
+        </div>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;color:var(--ink-2);margin-bottom:8px;">本次将分析的录音（已绑定）</div>
+      <div class="card tight">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><div style="font-size:13px;font-weight:700;">2026-06-08 14:32</div><div class="meta">时长 18分23秒</div></div>
+          <span class="pill ok">ASR done</span>
+        </div>
+        <div class="audio">
+          <div class="playbtn" onclick="toast('试听播放中')">▶</div>
+          <div class="track"><div class="bar"><div class="fill" style="width:18%"></div></div>
+          <div class="tt"><span>00:11</span><span>18:23</span></div></div>
+        </div>
+        <div class="btnrow">
+          <button class="btn btn-soft btn-sm" onclick="closeM('m-pkg');openRebind()">换绑</button>
+          <button class="btn btn-ghost btn-sm" onclick="closeM('m-pkg');openUnbind()">退回未归档</button>
+        </div>
+      </div>
+
+      <div style="font-size:12px;font-weight:700;color:var(--ink-2);margin:6px 0 8px;">本人 2026-06-08 未绑定录音（可加入本接诊包）</div>
+      <div class="card tight">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div><div style="font-size:13px;font-weight:700;">2026-06-08 15:10</div><div class="meta">时长 09分44秒 · ASR pending</div></div>
+          <button class="btn btn-primary btn-xs" onclick="toast('已加入本接诊包')">加入</button>
+        </div>
+      </div>
+
+      <div class="banner gold">开始分析前接诊包将被锁定，普通顾问无法再修改。</div>
+      <div class="btnrow">
+        <button class="btn btn-primary" style="flex:1;" onclick="confirm('接诊包将被锁定，确认开始分析？')&&(closeM('m-pkg'),toast('已开始分析（session #128）'))">确认并开始分析</button>
+        <button class="btn btn-ghost" onclick="closeM('m-pkg')">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REBIND -->
+  <div class="modal-wrap" id="m-rebind">
+    <div class="modal-bg" onclick="closeM('m-rebind')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>换绑录音</h3>
+      <div class="sheetsub">只移动这一段录音，该顾客其他录音不受影响。换绑后新旧两份报告都会重新生成。直接生效、无需审批，所有操作管理员可见。</div>
+      <div class="card tight"><div style="font-size:13px;font-weight:700;">录音：2026-06-08 14:32 · 18分23秒</div></div>
+      <div class="seg"><button class="on">选已有顾客</button><button>＋ 新增当日顾客</button></div>
+      <input type="text" style="margin:14px 0 10px;" placeholder="🔍 搜索本人接待过的顾客：姓名 / 卡号 / 尾号" value="李">
+      <div class="smallnote" style="margin-bottom:10px;">仅能换绑到您本人接待过的顾客。标「当日」的已在该录音当天接诊；其余选中后会自动补登当天接诊。</div>
+      <div class="radio-row on" onclick="pickRadio(this)">
+        <div class="rd"></div>
+        <div style="flex:1;"><div class="nm" style="font-size:14px;">李雪 <span class="daytag">当日</span></div><div class="meta">尾号8821 · VIP10086</div></div>
+      </div>
+      <div class="radio-row" onclick="pickRadio(this)">
+        <div class="rd"></div>
+        <div style="flex:1;"><div class="nm" style="font-size:14px;">李娜</div><div class="meta">选中后将补登当天接诊</div></div>
+      </div>
+      <div class="field" style="margin-top:8px;"><label>换绑理由（可选）</label><input type="text" placeholder="说明换绑原因，便于管理员复盘"></div>
+      <div class="btnrow">
+        <button class="btn btn-primary" style="flex:1;" onclick="confirm('只移动这一段录音，新旧报告将重新生成，确认换绑？')&&(closeM('m-rebind'),toast('✓ 已换绑（仅这段）'))">确认换绑</button>
+        <button class="btn btn-ghost" onclick="closeM('m-rebind')">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- UNBIND -->
+  <div class="modal-wrap" id="m-unbind">
+    <div class="modal-bg" onclick="closeM('m-unbind')"></div>
+    <div class="sheet">
+      <div class="grab"></div>
+      <h3>退回未归档</h3>
+      <div class="sheetsub">录音将从当前顾客解绑，回到「未归档片段」里，可在那里申请删除。若已分析将作废。所有操作会被管理员留痕。</div>
+      <div class="card tight"><div style="font-size:13px;font-weight:700;">录音：2026-06-08 14:32 · 18分23秒</div></div>
+      <div class="field"><label>退回理由 <span class="req">*</span></label><textarea placeholder="请简要说明（如：录错顾客、想删除等）"></textarea></div>
+      <div class="btnrow">
+        <button class="btn btn-danger" style="flex:1;" onclick="confirm('确定将这段录音退回未归档？若已分析将作废。')&&(closeM('m-unbind'),toast('已退回未归档'))">确认退回未归档</button>
+        <button class="btn btn-ghost" onclick="closeM('m-unbind')">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+/* ---------- navigation ---------- */
+var SCREENS=["login","home","reception","pending","needs","profile-search","report","customer","reminders"];
+function go(id){
+  document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+  var el=document.getElementById(id); if(el){el.classList.add('active'); el.querySelector('.scroll').scrollTop=0;}
+  document.getElementById('jump').value=id;
+  buildNavs(id);
+}
+/* bottom nav definition */
+var NAV=[
+  {id:'home',ic:'🏠',t:'录音'},
+  {id:'reception',ic:'📋',t:'接诊'},
+  {id:'__rec',ic:'●',t:'',fab:true},
+  {id:'pending',ic:'🎙',t:'未归档'},
+  {id:'reminders',ic:'🔔',t:'提醒'}
+];
+function buildNavs(active){
+  document.querySelectorAll('.botnav').forEach(function(bar){
+    bar.innerHTML='';
+    NAV.forEach(function(n){
+      var d=document.createElement('div');
+      if(n.fab){
+        d.className='nav-item nav-fab';
+        d.innerHTML='<div class="ni">'+n.ic+'</div>';
+        d.onclick=function(){go('home');setTimeout(function(){toggleRec();},120);};
+      }else{
+        d.className='nav-item'+(n.id===active?' on':'');
+        d.innerHTML='<div class="ni">'+n.ic+'</div><div>'+n.t+'</div>';
+        d.onclick=function(){go(n.id);};
+      }
+      bar.appendChild(d);
+    });
+  });
+}
+
+/* ---------- record state machine ---------- */
+var recOn=false, recT=0, recTimer=null;
+function fmt(s){var m=Math.floor(s/60),x=s%60;return (m<10?'0':'')+m+':'+(x<10?'0':'')+x;}
+function toggleRec(){ recOn?stopRec():startRec(); }
+function startRec(){
+  recOn=true; recT=0;
+  var c=document.getElementById('recCircle'); c.classList.add('live');
+  document.getElementById('recIcon').outerHTML='<div class="rec-square" id="recIcon"></div>';
+  document.getElementById('recStatus').innerHTML='<span class="blink"></span>录音中…';
+  recTimer=setInterval(function(){recT++;document.getElementById('recTimer').textContent=fmt(recT);},1000);
+}
+function stopRec(){
+  recOn=false; clearInterval(recTimer);
+  document.getElementById('recCircle').classList.remove('live');
+  setState('upload');
+  setTimeout(function(){ setState('done'); openBind(); },1300);
+}
+function setState(s){
+  var c=document.getElementById('recCircle'), st=document.getElementById('recStatus'),
+      tm=document.getElementById('recTimer'), ic=document.getElementById('recIcon');
+  c.classList.remove('live'); clearInterval(recTimer); recOn=false;
+  if(ic && ic.classList.contains('rec-square')) ic.outerHTML='<div class="ic" id="recIcon">●</div>';
+  if(s==='idle'){tm.textContent='00:00';st.textContent='点击下方按钮开始录音';}
+  if(s==='rec'){startRec();return;}
+  if(s==='upload'){st.textContent='上传中…请稍候';}
+  if(s==='done'){tm.textContent=fmt(recT||203);st.innerHTML='✓ 已上传，请选择顾客';}
+  if(s==='fail'){st.innerHTML='<span style="color:var(--red);font-weight:700;">✗ 上传失败，请重试</span>';}
+  if(s==='penwait'){st.textContent='请先连接录音笔';}
+  if(s==='connecting'){st.textContent='正在连接录音笔…';document.getElementById('recIcon').textContent='⋯';}
+}
+
+/* source pick */
+function pickSrc(k){
+  document.getElementById('srcPen').classList.toggle('on',k==='pen');
+  document.getElementById('srcPhone').classList.toggle('on',k==='phone');
+  toast(k==='pen'?'已选录音笔（自动连上次那支笔）':'已选手机麦克风录音');
+}
+
+/* ---------- modals ---------- */
+function openM(id){document.getElementById(id).classList.add('show');}
+function closeM(id){document.getElementById(id).classList.remove('show');}
+function openAdd(){addTab(0);openM('m-add');}
+function openBind(){openM('m-bind');}
+function openPackage(){openM('m-pkg');}
+function openRebind(){openM('m-rebind');}
+function openUnbind(){openM('m-unbind');}
+function addTab(i){
+  document.querySelectorAll('#addseg button').forEach((b,x)=>b.classList.toggle('on',x===i));
+  document.getElementById('addTab0').style.display=i===0?'block':'none';
+  document.getElementById('addTab1').style.display=i===1?'block':'none';
+}
+function pickRadio(el){el.parentNode.querySelectorAll('.radio-row').forEach(r=>r.classList.remove('on'));el.classList.add('on');}
+function togglePart(id){document.getElementById(id).classList.toggle('open');}
+
+/* ---------- toast ---------- */
+var tT;
+function toast(msg,danger){
+  var t=document.getElementById('toast');
+  t.textContent=msg; t.className='toast show'+(danger?' danger':'');
+  clearTimeout(tT); tT=setTimeout(function(){t.className='toast';},2200);
+}
+function netToast(){toast('⚠ 网络断开，请检查网络后重试',true);}
+
+/* init */
+buildNavs('home');
+</script>
+</body>
+</html>

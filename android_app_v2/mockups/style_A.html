@@ -1,0 +1,1242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>接诊录音 · 信任·医疗级 (Clinical Trust)</title>
+<style>
+/* ============================================================
+   DESIGN TOKENS — 信任·医疗级 (Clinical Trust)
+   ============================================================ */
+:root{
+  /* palette */
+  --bg:#FFFFFF;
+  --page:#EEF1F3;            /* neutral page behind phone frame */
+  --ink:#1A1A1A;
+  --ink-2:#46535A;           /* secondary text */
+  --ink-3:#7C8A92;           /* tertiary / captions */
+  --teal:#0E7C7B;            /* single primary accent */
+  --teal-dark:#0A615F;
+  --teal-soft:#E3F1F0;       /* teal tint surfaces */
+  --teal-line:#BCDFDD;
+  --line:#ECEFF1;            /* light gray dividers */
+  --line-2:#DDE3E6;
+  --surface:#FFFFFF;
+  --surface-2:#F7F9FA;       /* subtle raised / inset */
+  --danger:#C0392B;
+  --danger-soft:#FCEDEC;
+  --warn:#B7791F;
+  --warn-soft:#FBF3E2;
+  --ok:#2E7D52;
+  --ok-soft:#E7F3EC;
+  /* shape */
+  --r:12px;
+  --r-lg:16px;
+  --r-sm:8px;
+  --r-pill:999px;
+  /* elevation */
+  --sh-1:0 1px 2px rgba(20,40,45,.06), 0 1px 1px rgba(20,40,45,.04);
+  --sh-2:0 4px 14px rgba(20,40,45,.08);
+  --sh-3:0 10px 30px rgba(20,40,45,.14);
+  /* spacing */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+}
+
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:var(--font);
+  background:var(--page);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column; align-items:center;
+  min-height:100vh;
+  padding-bottom:40px;
+}
+
+/* ---------- top jump menu (reviewer aid) ---------- */
+#jumpbar{
+  position:fixed; top:0; left:0; right:0; z-index:200;
+  background:rgba(26,26,26,.94); backdrop-filter:blur(6px);
+  color:#fff; padding:7px 10px;
+  display:flex; align-items:center; gap:8px;
+  font-size:12px;
+}
+#jumpbar b{font-weight:600; letter-spacing:.4px; white-space:nowrap;}
+#jumpSelect{
+  flex:1; min-width:0;
+  background:#2b2b2b; color:#fff; border:1px solid #444;
+  border-radius:8px; padding:6px 8px; font-size:12px; font-family:var(--font);
+}
+#jumpbar .tag{font-size:10px; color:#9fb6b5; border:1px solid #3a4a49; padding:2px 6px; border-radius:999px;}
+
+/* ---------- phone frame ---------- */
+.phone{
+  position:relative;
+  width:390px; max-width:100vw;
+  height:844px;
+  margin-top:52px;
+  background:var(--bg);
+  border-radius:30px;
+  box-shadow:var(--sh-3), 0 0 0 9px #11181b, 0 0 0 11px #222d31;
+  overflow:hidden;
+  display:flex; flex-direction:column;
+}
+.notch{
+  position:absolute; top:0; left:50%; transform:translateX(-50%);
+  width:150px; height:26px; background:#11181b;
+  border-bottom-left-radius:14px; border-bottom-right-radius:14px;
+  z-index:60;
+}
+.statusbar{
+  height:38px; flex:0 0 38px;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 18px 0 22px; font-size:12.5px; font-weight:600; color:var(--ink);
+  background:var(--bg); z-index:50;
+}
+.statusbar .right{display:flex; gap:5px; align-items:center; font-size:11px;}
+
+/* ---------- screen scroller ---------- */
+.scroll{
+  flex:1; overflow-y:auto; overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;
+  background:var(--surface-2);
+  scrollbar-width:thin;
+}
+.scroll::-webkit-scrollbar{width:0;}
+section.screen{display:none; min-height:100%; padding-bottom:96px;}
+section.screen.active{display:block; animation:fade .22s ease;}
+@keyframes fade{from{opacity:0; transform:translateY(4px);}to{opacity:1; transform:none;}}
+
+/* ---------- app top bar ---------- */
+.appbar{
+  background:var(--surface);
+  padding:12px 16px 12px;
+  border-bottom:1px solid var(--line);
+  position:sticky; top:0; z-index:30;
+}
+.appbar .row1{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+.appbar h1{font-size:18px; font-weight:700; margin:0; letter-spacing:.2px; display:flex; align-items:center; gap:8px;}
+.appbar .sub{font-size:12px; color:var(--ink-3); margin-top:3px; display:flex; align-items:center; gap:6px; flex-wrap:wrap;}
+.role-chip{font-size:11px; font-weight:600; color:var(--teal); background:var(--teal-soft); border:1px solid var(--teal-line); padding:2px 8px; border-radius:var(--r-pill);}
+.bar-actions{display:flex; align-items:center; gap:6px;}
+.icon-btn{
+  width:36px; height:36px; border-radius:10px; border:1px solid var(--line-2);
+  background:var(--surface); display:flex; align-items:center; justify-content:center;
+  font-size:16px; position:relative; cursor:pointer; color:var(--ink-2);
+}
+.icon-btn:active{background:var(--surface-2);}
+.badge-dot{
+  position:absolute; top:-5px; right:-5px; min-width:17px; height:17px; padding:0 4px;
+  background:var(--danger); color:#fff; font-size:10px; font-weight:700;
+  border-radius:var(--r-pill); display:flex; align-items:center; justify-content:center;
+  border:2px solid var(--surface);
+}
+.back-link{font-size:14px; color:var(--teal); font-weight:600; display:inline-flex; align-items:center; gap:5px; cursor:pointer;}
+
+/* ---------- generic content ---------- */
+.pad{padding:16px;}
+.card{
+  background:var(--surface); border:1px solid var(--line);
+  border-radius:var(--r); box-shadow:var(--sh-1);
+  padding:16px; margin-bottom:14px;
+}
+.card.tight{padding:12px;}
+.card-h{font-size:13px; font-weight:700; color:var(--ink); display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;}
+.card-h .muted{font-weight:500; color:var(--ink-3); font-size:12px;}
+
+.divider{height:1px; background:var(--line); margin:12px 0;}
+
+/* buttons */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  font-family:var(--font); font-size:14px; font-weight:600;
+  border-radius:10px; border:1px solid transparent; padding:11px 16px;
+  cursor:pointer; background:var(--teal); color:#fff; transition:.12s;
+}
+.btn:active{transform:translateY(1px);}
+.btn.block{width:100%;}
+.btn.ghost{background:var(--surface); color:var(--teal); border-color:var(--teal-line);}
+.btn.neutral{background:var(--surface); color:var(--ink-2); border-color:var(--line-2);}
+.btn.danger{background:var(--danger); color:#fff;}
+.btn.danger-ghost{background:var(--surface); color:var(--danger); border-color:#E8C4BF;}
+.btn.warn-ghost{background:var(--surface); color:var(--warn); border-color:#E6D3A8;}
+.btn.sm{padding:8px 12px; font-size:13px; border-radius:9px;}
+.btn.xs{padding:6px 10px; font-size:12px; border-radius:8px;}
+.btn[disabled]{opacity:.5; pointer-events:none;}
+
+.hint{font-size:12px; color:var(--ink-3); line-height:1.6;}
+.lbl{font-size:12px; font-weight:600; color:var(--ink-2); margin-bottom:6px; display:block;}
+.req{color:var(--danger);}
+
+/* inputs */
+.field{margin-bottom:14px;}
+.input, select.input{
+  width:100%; font-family:var(--font); font-size:14px; color:var(--ink);
+  background:var(--surface); border:1px solid var(--line-2); border-radius:10px;
+  padding:11px 12px; outline:none;
+}
+.input:focus{border-color:var(--teal); box-shadow:0 0 0 3px var(--teal-soft);}
+.input::placeholder{color:#A9B5BB;}
+textarea.input{resize:none; line-height:1.5;}
+
+/* banners */
+.banner{border-radius:10px; padding:11px 12px; font-size:12.5px; line-height:1.55; margin-bottom:12px; display:flex; gap:8px; align-items:flex-start;}
+.banner .ico{flex:0 0 auto; margin-top:1px;}
+.banner.info{background:var(--teal-soft); border:1px solid var(--teal-line); color:#0A5957;}
+.banner.warn{background:var(--warn-soft); border:1px solid #EAD9AE; color:#8A5A12;}
+.banner.danger{background:var(--danger-soft); border:1px solid #EFCAC4; color:#8E2A1E;}
+.banner.muted{background:var(--surface-2); border:1px solid var(--line); color:var(--ink-2);}
+.banner a, .banner .link{color:var(--teal); font-weight:700; text-decoration:underline; cursor:pointer;}
+
+/* status pills */
+.pill{display:inline-flex; align-items:center; gap:5px; font-size:11.5px; font-weight:600; padding:3px 9px; border-radius:var(--r-pill); border:1px solid transparent; white-space:nowrap;}
+.pill.gray{background:var(--surface-2); color:var(--ink-2); border-color:var(--line-2);}
+.pill.teal{background:var(--teal-soft); color:var(--teal-dark); border-color:var(--teal-line);}
+.pill.ok{background:var(--ok-soft); color:var(--ok); border-color:#BFE0CB;}
+.pill.warn{background:var(--warn-soft); color:var(--warn); border-color:#E6D3A8;}
+.pill.danger{background:var(--danger-soft); color:var(--danger); border-color:#EFCAC4;}
+.dotled{width:7px; height:7px; border-radius:50%; display:inline-block;}
+.dotled.green{background:#27AE60;} .dotled.gray{background:#B0BBC0;} .dotled.red{background:var(--danger);}
+
+/* bottom nav */
+.bottomnav{
+  position:absolute; bottom:0; left:0; right:0; height:62px;
+  background:rgba(255,255,255,.96); backdrop-filter:blur(8px);
+  border-top:1px solid var(--line);
+  display:flex; z-index:40;
+  padding-bottom:env(safe-area-inset-bottom);
+}
+.navitem{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; font-size:10.5px; color:var(--ink-3); cursor:pointer; padding-top:6px;}
+.navitem .ni{font-size:19px; line-height:1; opacity:.7;}
+.navitem.on{color:var(--teal);}
+.navitem.on .ni{opacity:1;}
+.navitem .nb{position:absolute;}
+
+/* ======= LOGIN ======= */
+.login-wrap{height:100%; display:flex; flex-direction:column; padding:0;}
+.login-hero{background:linear-gradient(160deg,#0E7C7B 0%, #0A615F 100%); color:#fff; padding:56px 28px 40px; border-bottom-left-radius:26px; border-bottom-right-radius:26px;}
+.login-logo{width:54px; height:54px; border-radius:15px; background:rgba(255,255,255,.16); display:flex; align-items:center; justify-content:center; font-size:26px; margin-bottom:18px; border:1px solid rgba(255,255,255,.25);}
+.login-hero h2{margin:0 0 6px; font-size:24px; font-weight:700; letter-spacing:.5px;}
+.login-hero p{margin:0; font-size:13px; opacity:.85; line-height:1.6;}
+.login-form{padding:28px 24px;}
+
+/* ======= RECORD HOME ======= */
+.rec-card{
+  background:var(--surface); border:1px solid var(--line);
+  border-radius:var(--r-lg); box-shadow:var(--sh-2);
+  padding:26px 20px 22px; margin-bottom:14px; text-align:center;
+}
+.rec-timer{font-size:46px; font-weight:700; letter-spacing:1px; font-variant-numeric:tabular-nums; color:var(--ink); margin:2px 0 4px;}
+.rec-status{font-size:14px; font-weight:600; color:var(--ink-2); margin-bottom:4px;}
+.rec-msg{font-size:12px; color:var(--ink-3); line-height:1.6; margin-bottom:20px;}
+.rec-btn{
+  width:104px; height:104px; border-radius:50%; margin:6px auto 0;
+  background:var(--teal); color:#fff; border:none; cursor:pointer;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+  box-shadow:0 8px 22px rgba(14,124,123,.36), inset 0 0 0 6px rgba(255,255,255,.12);
+  transition:.15s;
+}
+.rec-btn:active{transform:scale(.96);}
+.rec-btn .glyph{font-size:30px; line-height:1;}
+.rec-btn .lab{font-size:12px; font-weight:600; letter-spacing:1px;}
+.rec-btn.recording{background:var(--danger); box-shadow:0 8px 22px rgba(192,57,43,.36), inset 0 0 0 6px rgba(255,255,255,.12); animation:pulse 1.4s infinite;}
+.rec-btn.busy{background:#7C8A92; box-shadow:none;}
+@keyframes pulse{0%{box-shadow:0 8px 22px rgba(192,57,43,.4), 0 0 0 0 rgba(192,57,43,.4);}70%{box-shadow:0 8px 22px rgba(192,57,43,.32), 0 0 0 16px rgba(192,57,43,0);}100%{box-shadow:0 8px 22px rgba(192,57,43,.4), 0 0 0 0 rgba(192,57,43,0);}}
+.rec-square{width:26px; height:26px; border-radius:6px; background:#fff;}
+.rec-livedot{display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--danger); margin-right:6px; animation:blink 1s infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.25;}}
+
+/* source selector */
+.src-row{display:flex; gap:8px; margin-top:4px;}
+.src-opt{
+  flex:1; border:1.5px solid var(--line-2); border-radius:12px; padding:12px 10px; cursor:pointer;
+  display:flex; flex-direction:column; gap:5px; background:var(--surface); transition:.12s;
+}
+.src-opt.on{border-color:var(--teal); background:var(--teal-soft);}
+.src-opt .t{font-size:13px; font-weight:600; color:var(--ink); display:flex; align-items:center; gap:6px;}
+.src-opt .s{font-size:11px; color:var(--ink-3); display:flex; align-items:center; gap:5px;}
+
+.upload-badge{margin-top:10px; font-size:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+
+/* entry tiles */
+.entry-tile{display:flex; align-items:center; gap:12px; padding:14px; border-radius:var(--r); cursor:pointer; margin-bottom:12px; border:1px solid transparent;}
+.entry-tile.teal{background:var(--teal-soft); border-color:var(--teal-line);}
+.entry-tile.ok{background:var(--ok-soft); border-color:#BFE0CB;}
+.entry-tile .ei{width:42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center; font-size:20px; flex:0 0 auto;}
+.entry-tile.teal .ei{background:#fff; color:var(--teal);}
+.entry-tile.ok .ei{background:#fff; color:var(--ok);}
+.entry-tile .et{font-size:14px; font-weight:700; color:var(--ink);}
+.entry-tile .es{font-size:11.5px; color:var(--ink-3); margin-top:2px;}
+.entry-tile .arr{margin-left:auto; color:var(--ink-3); font-size:18px;}
+
+/* customer list rows */
+.cust-row{
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--r);
+  padding:13px 14px; margin-bottom:11px; box-shadow:var(--sh-1);
+}
+.cust-row .top{display:flex; align-items:flex-start; justify-content:space-between; gap:10px;}
+.cust-name{font-size:15px; font-weight:700; color:var(--ink);}
+.cust-meta{font-size:11.5px; color:var(--ink-3); margin-top:2px;}
+.cust-actions{display:flex; gap:7px; margin-top:11px; flex-wrap:wrap;}
+
+/* audio player (custom, looks native-clean) */
+.player{display:flex; align-items:center; gap:10px; background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:9px 11px; margin:9px 0;}
+.player .pp{width:32px; height:32px; border-radius:50%; background:var(--teal); color:#fff; display:flex; align-items:center; justify-content:center; font-size:13px; flex:0 0 auto; cursor:pointer;}
+.player .track{flex:1; height:5px; background:var(--line-2); border-radius:3px; position:relative; cursor:pointer;}
+.player .track .fill{position:absolute; left:0; top:0; bottom:0; width:34%; background:var(--teal); border-radius:3px;}
+.player .track .knob{position:absolute; left:34%; top:50%; transform:translate(-50%,-50%); width:13px; height:13px; border-radius:50%; background:#fff; border:2px solid var(--teal); box-shadow:var(--sh-1);}
+.player .tt{font-size:11px; color:var(--ink-3); font-variant-numeric:tabular-nums; flex:0 0 auto;}
+
+/* segmented control */
+.seg{display:flex; background:var(--surface-2); border:1px solid var(--line-2); border-radius:11px; padding:3px; margin-bottom:14px;}
+.seg button{flex:1; border:none; background:transparent; font-family:var(--font); font-size:13px; font-weight:600; color:var(--ink-3); padding:8px; border-radius:8px; cursor:pointer;}
+.seg button.on{background:var(--surface); color:var(--teal); box-shadow:var(--sh-1);}
+
+/* search result row */
+.sresult{display:flex; align-items:center; justify-content:space-between; padding:12px; border:1px solid var(--line); border-radius:10px; margin-bottom:9px; background:var(--surface);}
+.sresult .info{font-size:14px; font-weight:600;}
+.sresult .info small{display:block; font-size:11.5px; color:var(--ink-3); font-weight:500; margin-top:2px;}
+
+/* date strip */
+.datestrip{display:flex; align-items:center; gap:8px; margin-bottom:10px;}
+.datestrip .nav{width:34px; height:34px; border-radius:9px; border:1px solid var(--line-2); background:var(--surface); display:flex; align-items:center; justify-content:center; font-size:14px; color:var(--ink-2); cursor:pointer;}
+.datestrip .cur{flex:1; text-align:center; font-size:14px; font-weight:700;}
+.datestrip .cur small{display:block; font-size:11px; color:var(--teal); font-weight:600; margin-top:1px;}
+
+/* radio rows */
+.radio-row{display:flex; align-items:center; gap:11px; padding:12px; border:1.5px solid var(--line-2); border-radius:11px; margin-bottom:9px; cursor:pointer; background:var(--surface);}
+.radio-row.on{border-color:var(--teal); background:var(--teal-soft);}
+.radio-row .rk{width:19px; height:19px; border-radius:50%; border:2px solid var(--line-2); flex:0 0 auto; position:relative;}
+.radio-row.on .rk{border-color:var(--teal);}
+.radio-row.on .rk:after{content:""; position:absolute; inset:3px; border-radius:50%; background:var(--teal);}
+
+/* progress */
+.prog-track{height:8px; background:var(--line-2); border-radius:5px; overflow:hidden; margin:8px 0;}
+.prog-track .pf{height:100%; background:var(--teal); border-radius:5px;}
+.steps{display:flex; flex-direction:column; gap:8px; margin-top:6px;}
+.step{display:flex; gap:9px; align-items:center; font-size:12.5px; color:var(--ink-2);}
+.step .sd{width:18px; height:18px; border-radius:50%; flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700;}
+.step.done .sd{background:var(--ok-soft); color:var(--ok);}
+.step.run .sd{background:var(--teal-soft); color:var(--teal);}
+.step.wait .sd{background:var(--surface-2); color:var(--ink-3); border:1px solid var(--line-2);}
+
+/* ======= MODAL (sheet) ======= */
+.sheet-mask{position:absolute; inset:0; background:rgba(20,30,33,.42); z-index:90; display:none; align-items:flex-end;}
+.sheet-mask.show{display:flex; animation:fade .2s ease;}
+.sheet{background:var(--surface); width:100%; max-height:90%; border-top-left-radius:20px; border-top-right-radius:20px; display:flex; flex-direction:column; overflow:hidden; animation:slideup .26s cubic-bezier(.2,.8,.2,1);}
+@keyframes slideup{from{transform:translateY(100%);}to{transform:translateY(0);}}
+.sheet-h{padding:16px 18px 12px; border-bottom:1px solid var(--line); position:relative;}
+.sheet-h .grab{width:38px; height:4px; background:var(--line-2); border-radius:3px; margin:0 auto 12px;}
+.sheet-h h3{margin:0; font-size:16px; font-weight:700;}
+.sheet-h .sh-sub{font-size:12px; color:var(--ink-3); margin-top:4px; line-height:1.5;}
+.sheet-h .x{position:absolute; top:14px; right:16px; font-size:20px; color:var(--ink-3); cursor:pointer;}
+.sheet-b{padding:16px 18px; overflow-y:auto;}
+.sheet-f{padding:12px 18px 18px; border-top:1px solid var(--line); display:flex; gap:10px;}
+.sheet-f .btn{flex:1;}
+
+/* confirm dialog */
+.confirm-mask{position:absolute; inset:0; background:rgba(20,30,33,.5); z-index:120; display:none; align-items:center; justify-content:center; padding:28px;}
+.confirm-mask.show{display:flex; animation:fade .18s;}
+.confirm{background:#fff; border-radius:16px; padding:20px; width:100%; box-shadow:var(--sh-3); animation:pop .2s;}
+@keyframes pop{from{transform:scale(.94); opacity:0;}to{transform:scale(1); opacity:1;}}
+.confirm h4{margin:0 0 8px; font-size:16px;}
+.confirm p{margin:0 0 16px; font-size:13px; color:var(--ink-2); line-height:1.6;}
+.confirm .row{display:flex; gap:10px;} .confirm .row .btn{flex:1;}
+
+/* toast */
+.toast{position:absolute; left:16px; right:16px; bottom:78px; z-index:150; background:#2A1614; color:#fff; border-radius:11px; padding:12px 14px; font-size:13px; display:none; align-items:center; gap:8px; box-shadow:var(--sh-3);}
+.toast.show{display:flex; animation:fade .2s;}
+.toast.danger{background:#7A241A;}
+.toast.ok{background:#1E5B3D;}
+
+/* report */
+.report-nav{background:var(--ink); color:#fff; padding:12px 16px;}
+.report-nav .t{font-size:15px; font-weight:700; margin:4px 0 6px; line-height:1.4;}
+.report-nav .tags{display:flex; gap:6px; flex-wrap:wrap;}
+.rtag{font-size:10.5px; font-weight:600; padding:2px 8px; border-radius:var(--r-pill); background:rgba(255,255,255,.12); color:#cfe7e6; border:1px solid rgba(255,255,255,.16);}
+.rtag.live{background:rgba(14,124,123,.4); color:#9ff0ee; border-color:rgba(255,255,255,.3);}
+.rtag.mech{background:rgba(192,57,43,.25); color:#f3b8b0;}
+.report-acts{display:flex; gap:7px; overflow-x:auto; padding:10px 16px; background:var(--surface); border-bottom:1px solid var(--line);}
+.report-acts .btn{flex:0 0 auto;}
+
+.part{background:var(--surface); border:1px solid var(--line); border-radius:var(--r); margin:0 16px 12px; overflow:hidden;}
+.part-h{padding:13px 14px; display:flex; align-items:center; justify-content:space-between; cursor:pointer;}
+.part-h .pn{font-size:10px; font-weight:700; color:#fff; background:var(--teal); border-radius:6px; padding:2px 6px;}
+.part-h .pt{font-size:13.5px; font-weight:700; flex:1; margin-left:9px;}
+.part-h .caret{color:var(--ink-3); transition:.2s; font-size:12px;}
+.part.open .caret{transform:rotate(180deg);}
+.part-b{display:none; padding:0 14px 15px; border-top:1px solid var(--line);}
+.part.open .part-b{display:block; animation:fade .2s;}
+
+.metric{display:flex; align-items:center; gap:10px; padding:11px 0; border-bottom:1px solid var(--line);}
+.metric:last-child{border-bottom:none;}
+.metric .ml{font-size:12px; color:var(--ink-3); width:78px; flex:0 0 auto;}
+.score-big{font-size:26px; font-weight:800; font-variant-numeric:tabular-nums;}
+.score-big.green{color:var(--ok);} .score-big.yellow{color:var(--warn);} .score-big.red{color:var(--danger);}
+.bullet{display:flex; gap:8px; font-size:13px; color:var(--ink); line-height:1.6; padding:4px 0;}
+.bullet .bd{color:var(--teal); font-weight:700;}
+.advice{background:var(--surface-2); border:1px solid var(--line); border-left:3px solid var(--teal); border-radius:8px; padding:10px 12px; margin:8px 0; font-size:13px; line-height:1.6;}
+.advice b{color:var(--teal);}
+.qbox{background:var(--teal-soft); border:1px solid var(--teal-line); border-radius:9px; padding:11px 12px; font-size:13px; line-height:1.65; margin:8px 0; color:#0A5957;}
+.cmp{display:flex; gap:10px; margin:10px 0;}
+.cmp > div{flex:1; border:1px solid var(--line); border-radius:9px; padding:10px; font-size:12.5px; line-height:1.6;}
+.cmp .bad{background:var(--danger-soft); border-color:#EFCAC4;}
+.cmp .good{background:var(--ok-soft); border-color:#BFE0CB;}
+.case-card{border:1px solid var(--line); border-radius:10px; padding:11px; margin:9px 0; background:var(--surface);}
+.ts-btn{display:inline-flex; align-items:center; gap:5px; background:var(--ink); color:#fff; font-size:11.5px; font-weight:600; padding:4px 9px; border-radius:7px; cursor:pointer; margin-bottom:6px;}
+table.rt{width:100%; border-collapse:collapse; font-size:12px; margin:8px 0;}
+table.rt th{background:var(--surface-2); text-align:left; padding:7px 8px; color:var(--ink-2); font-weight:600; border:1px solid var(--line);}
+table.rt td{padding:7px 8px; border:1px solid var(--line); color:var(--ink); line-height:1.5; vertical-align:top;}
+
+/* boss review */
+.review-input{display:flex; gap:9px; align-items:flex-start; margin-bottom:12px;}
+.avatar{width:34px; height:34px; border-radius:50%; background:var(--teal); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px; flex:0 0 auto;}
+.review-item{display:flex; gap:9px; padding:11px 0; border-bottom:1px solid var(--line);}
+.review-item .rc{flex:1;}
+.review-item .rmeta{font-size:11px; color:var(--ink-3); margin-bottom:3px; display:flex; justify-content:space-between;}
+.review-item .rbody{font-size:13px; line-height:1.6;}
+
+/* reminders */
+.rem-item{display:flex; gap:11px; padding:13px 0; border-bottom:1px solid var(--line);}
+.rem-item .ri{width:34px; height:34px; border-radius:9px; flex:0 0 auto; display:flex; align-items:center; justify-content:center; font-size:15px;}
+.rem-item .rt{font-size:13px; line-height:1.55; color:var(--ink);}
+.rem-item .rtime{font-size:11px; color:var(--ink-3); margin-top:3px;}
+.rem-item .rlink{font-size:12.5px; color:var(--teal); font-weight:600; margin-top:5px; display:inline-block; cursor:pointer;}
+
+/* empty state */
+.empty{text-align:center; padding:46px 24px; color:var(--ink-3);}
+.empty .ee{font-size:38px; margin-bottom:12px; opacity:.5;}
+.empty .et{font-size:14px; font-weight:600; color:var(--ink-2); margin-bottom:4px;}
+.empty .es{font-size:12.5px; line-height:1.6;}
+
+.flex-between{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+.mt8{margin-top:8px;} .mt12{margin-top:12px;} .mb0{margin-bottom:0;}
+.sec-title{font-size:12px; font-weight:700; color:var(--ink-3); text-transform:none; margin:18px 0 9px; letter-spacing:.3px;}
+
+/* state toggles row inside record */
+.statetabs{display:flex; gap:6px; overflow-x:auto; padding:0 0 4px;}
+.statetabs button{flex:0 0 auto; font-size:11.5px; padding:6px 11px; border-radius:var(--r-pill); border:1px solid var(--line-2); background:var(--surface); color:var(--ink-2); cursor:pointer; font-family:var(--font); font-weight:600;}
+.statetabs button.on{background:var(--ink); color:#fff; border-color:var(--ink);}
+</style>
+</head>
+<body>
+
+<!-- ====== reviewer jump bar ====== -->
+<div id="jumpbar">
+  <b>屏幕</b>
+  <select id="jumpSelect" onchange="goto(this.value)">
+    <option value="login">登录</option>
+    <option value="home" selected>录音首页</option>
+    <option value="reception">今日接诊列表</option>
+    <option value="pending">待绑定录音（未归档）</option>
+    <option value="needsconfirm">多说话人误录确认</option>
+    <option value="profilesearch">客户档案搜索</option>
+    <option value="report">分析报告</option>
+    <option value="profile">客户美丽档案</option>
+    <option value="reminder">提醒面板</option>
+  </select>
+  <span class="tag">信任·医疗级</span>
+</div>
+
+<!-- ====== phone ====== -->
+<div class="phone">
+  <div class="notch"></div>
+  <div class="statusbar">
+    <span>9:41</span>
+    <span class="right">●●●● 5G ▮▮▮ 84%</span>
+  </div>
+
+  <div class="scroll" id="scroll">
+
+  <!-- ================= LOGIN ================= -->
+  <section class="screen" id="screen-login">
+    <div class="login-wrap">
+      <div class="login-hero">
+        <div class="login-logo">⚕</div>
+        <h2>接诊录音</h2>
+        <p>销售复盘 · 内部机密<br>请使用门店分配的顾问账号登录</p>
+      </div>
+      <div class="login-form">
+        <div class="field">
+          <label class="lbl">账号 / 手机号</label>
+          <input class="input" type="text" value="13800008821" placeholder="请输入手机号">
+        </div>
+        <div class="field">
+          <label class="lbl">密码</label>
+          <input class="input" type="password" value="········" placeholder="请输入密码">
+        </div>
+        <div class="field">
+          <label class="lbl">门店</label>
+          <select class="input">
+            <option>朝阳旗舰店</option>
+            <option>国贸店</option>
+            <option>望京店</option>
+          </select>
+        </div>
+        <button class="btn block" style="margin-top:6px;" onclick="goto('home')">登录</button>
+        <p class="hint" style="text-align:center; margin-top:16px;">登录即代表同意《数据保密与录音使用规范》</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECORD HOME ================= -->
+  <section class="screen active" id="screen-home">
+    <div class="appbar">
+      <div class="row1">
+        <div>
+          <h1>接诊录音</h1>
+          <div class="sub">张敏 <span class="role-chip">顾问</span> · 朝阳旗舰店</div>
+        </div>
+        <div class="bar-actions">
+          <div class="icon-btn" onclick="goto('reminder')">🔔<span class="badge-dot">3</span></div>
+          <div class="icon-btn" title="切换皮肤">🎀</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="pad">
+      <!-- state simulator (reviewer aid) -->
+      <div class="statetabs" style="margin-bottom:12px;">
+        <button class="on" onclick="setRecState('idle',this)">空闲</button>
+        <button onclick="setRecState('recording',this)">录音中</button>
+        <button onclick="setRecState('uploading',this)">上传中</button>
+        <button onclick="setRecState('done',this)">已上传</button>
+        <button onclick="setRecState('failed',this)">上传失败</button>
+        <button onclick="setRecState('penconn',this)">笔已连接</button>
+        <button onclick="setRecState('pennone',this)">笔未连接</button>
+      </div>
+
+      <!-- main record card -->
+      <div class="rec-card">
+        <div class="rec-timer" id="recTimer">00:00</div>
+        <div class="rec-status" id="recStatus">点击开始录音</div>
+        <div class="rec-msg" id="recMsg">请把这段录音绑定到今日接诊里的顾客。</div>
+        <button class="rec-btn" id="recBtn" onclick="toggleRec()">
+          <span class="glyph" id="recGlyph">●</span>
+          <span class="lab" id="recLab">开始录音</span>
+        </button>
+      </div>
+
+      <!-- source selector (App WebView only) -->
+      <div class="card tight">
+        <div class="card-h">录音方式 <span class="muted">仅 App 内显示</span></div>
+        <div class="src-row">
+          <div class="src-opt on" id="srcPen" onclick="pickSrc('pen')">
+            <div class="t">🖊 录音笔</div>
+            <div class="s"><span class="dotled green" id="penDot"></span><span id="penTxt">已连接 · 笔SN ····8821</span></div>
+          </div>
+          <div class="src-opt" id="srcMic" onclick="pickSrc('mic')">
+            <div class="t">📱 手机麦克风</div>
+            <div class="s">手机内置麦克风录音</div>
+          </div>
+        </div>
+        <div class="upload-badge">
+          <span class="pill teal">💾 2 段后台上传中… 下载 60%</span>
+          <span class="pill danger">⚠ 1 段没保存成功，请重录</span>
+        </div>
+      </div>
+
+      <!-- entry tiles -->
+      <div class="sec-title">接诊操作</div>
+      <div class="entry-tile teal" onclick="goto('reception')">
+        <div class="ei">📋</div>
+        <div><div class="et">查看接诊列表</div><div class="es">所有接诊记录、分析报告、点评</div></div>
+        <div class="arr">›</div>
+      </div>
+      <div class="entry-tile ok" onclick="goto('pending')">
+        <div class="ei">🎧</div>
+        <div><div class="et">待绑定录音</div><div class="es">试听未归档片段并绑定到顾客 · 4 段待处理</div></div>
+        <div class="arr">›</div>
+      </div>
+      <div class="entry-tile teal" onclick="goto('profilesearch')">
+        <div class="ei">🔍</div>
+        <div><div class="et">客户档案搜索</div><div class="es">查看顾客档案与价值预测</div></div>
+        <div class="arr">›</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= RECEPTION LIST ================= -->
+  <section class="screen" id="screen-reception">
+    <div class="appbar">
+      <div class="row1">
+        <div><h1>接诊列表</h1><div class="sub">录音结束后只能绑定到列表里的人</div></div>
+        <div class="bar-actions">
+          <div class="icon-btn" title="刷新" onclick="toast('已刷新','ok')">⟳</div>
+          <button class="btn sm" onclick="openSheet('addReception')">＋ 加入</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="pad">
+      <div class="datestrip">
+        <div class="nav" onclick="toast('◀ 前一天')">◀</div>
+        <div class="cur">2026-06-08 <small>今天</small></div>
+        <div class="nav" onclick="toast('后一天 ▶')">▶</div>
+      </div>
+      <div class="banner info">
+        <span class="ico">ℹ</span>
+        <span>录音前/后请把今天要接诊的顾客加进来。录音结束后只能绑定到这个列表里的人。今日列表每 20 秒自动刷新。</span>
+      </div>
+
+      <!-- rows w/ various states -->
+      <div class="cust-row">
+        <div class="top">
+          <div><div class="cust-name">李雪</div><div class="cust-meta">尾号 8821 · VIP10086</div></div>
+          <span class="pill ok">✓ 已分析</span>
+        </div>
+        <div class="cust-actions">
+          <button class="btn xs" onclick="goto('report')">查看分析报告</button>
+          <button class="btn xs ghost" onclick="openSheet('package')">查看录音</button>
+        </div>
+      </div>
+
+      <div class="cust-row">
+        <div class="top">
+          <div><div class="cust-name">王芳</div><div class="cust-meta">尾号 6633 · VIP20451</div></div>
+          <span class="pill teal">2 段录音待分析</span>
+        </div>
+        <div class="cust-actions">
+          <button class="btn xs" onclick="openSheet('package')">开始分析</button>
+          <button class="btn xs ghost" onclick="openSheet('package')">查看录音</button>
+          <button class="btn xs neutral" onclick="openSheet('editDate')">📅 改日期</button>
+        </div>
+      </div>
+
+      <div class="cust-row">
+        <div class="top">
+          <div><div class="cust-name">刘佳佳</div><div class="cust-meta">尾号 8866 · M20260108</div></div>
+          <span class="pill warn">分析中…</span>
+        </div>
+        <div class="cust-actions">
+          <button class="btn xs ghost" onclick="openSheet('package')">查看进度</button>
+          <button class="btn xs neutral" onclick="confirmBox('取消分析？','正在分析的任务会被中断，可稍后重新分析。','取消分析')">取消分析</button>
+        </div>
+      </div>
+
+      <div class="cust-row" style="border-color:#E8C4BF;">
+        <div class="top">
+          <div><div class="cust-name">赵丽</div><div class="cust-meta">尾号 1204 · 散客</div></div>
+          <span class="pill gray">尚未绑定录音</span>
+        </div>
+        <div class="cust-actions">
+          <button class="btn xs" onclick="openSheet('package')">等待绑定录音</button>
+          <button class="btn xs neutral" onclick="confirmBox('移除该接诊顾客？','仅未绑定录音时可移除。','移除')">移除</button>
+        </div>
+      </div>
+
+      <div class="cust-row">
+        <div class="top">
+          <div><div class="cust-name">孙倩</div><div class="cust-meta">尾号 5570 · VIP30122</div></div>
+          <span class="pill danger">✗ 分析失败，点击重试</span>
+        </div>
+        <div class="cust-actions">
+          <button class="btn xs" onclick="openSheet('package')">重新分析</button>
+          <span class="pill warn" style="margin-top:2px;">⏳ 换绑审批中 (1)</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= PENDING RECORDINGS ================= -->
+  <section class="screen" id="screen-pending">
+    <div class="appbar">
+      <div class="row1">
+        <div><h1>待绑定录音</h1><div class="sub">未归档片段 · 试听后绑定</div></div>
+        <div class="icon-btn" onclick="toast('已刷新','ok')">⟳</div>
+      </div>
+    </div>
+
+    <div class="pad">
+      <div class="banner muted">
+        <span class="ico">📄</span>
+        <span>未绑定顾客的录音不会进入分析。请试听后绑定到对应日期接诊列表里的顾客。每 5 秒自动刷新（试听中跳过）。</span>
+      </div>
+      <div class="banner warn">
+        <span class="ico">⚠</span>
+        <span>有 2 段录音的日期与当前接诊（2026-06-08）不一致：<span class="link" onclick="toast('切到 2026-06-05')">切到 2026-06-05 ›</span></span>
+      </div>
+
+      <!-- normal segment -->
+      <div class="cust-row">
+        <div class="flex-between">
+          <div>
+            <div class="cust-name" style="font-size:13px;">服务日期 2026-06-08</div>
+            <div class="cust-meta">时间段 14:32 – 14:51 · 时长 18分23秒</div>
+          </div>
+          <span class="pill teal">未归档</span>
+        </div>
+        <div class="player">
+          <div class="pp" onclick="this.textContent=this.textContent==='▶'?'⏸':'▶'">▶</div>
+          <div class="track"><div class="fill"></div><div class="knob"></div></div>
+          <span class="tt">06:14 / 18:23</span>
+        </div>
+        <div class="hint" style="margin:-2px 0 8px;">最多试听 60 秒</div>
+        <div class="cust-actions">
+          <button class="btn xs" onclick="openSheet('bind')">绑定顾客</button>
+          <button class="btn xs danger-ghost" onclick="confirmBox('申请删除该录音？','删除需店长/管理员审批通过后生效。','申请删除')">申请删除</button>
+        </div>
+      </div>
+
+      <!-- processing placeholder -->
+      <div class="cust-row" style="opacity:.6;">
+        <div class="flex-between">
+          <div><div class="cust-name" style="font-size:13px;">⏳ 上传中…</div><div class="cust-meta">传完 OSS 后补时段 / 时长</div></div>
+          <span class="pill gray">处理中</span>
+        </div>
+      </div>
+
+      <!-- cross-day row (red bg) -->
+      <div class="cust-row" style="background:var(--danger-soft); border-color:#EFCAC4;">
+        <div class="flex-between">
+          <div><div class="cust-name" style="font-size:13px;">服务日期 2026-06-05</div><div class="cust-meta">时间段 10:11 – 10:29 · 时长 17分58秒</div></div>
+          <span class="pill danger">跨日</span>
+        </div>
+        <div class="banner warn" style="margin:9px 0 8px;">
+          <span class="ico">⚠</span><span>上报时长远大于实测音频，可能存在断流截断，请核对后再绑定。</span>
+        </div>
+        <div class="cust-actions">
+          <button class="btn xs" onclick="openSheet('bind')">绑定顾客</button>
+          <button class="btn xs danger-ghost">申请删除</button>
+        </div>
+      </div>
+
+      <!-- delete pending -->
+      <div class="cust-row" style="opacity:.7;">
+        <div class="banner muted" style="margin:0 0 9px;">
+          <span class="ico">⏳</span><span>删除审批中（需先撤回申请才能进行其他操作）</span>
+        </div>
+        <div class="cust-meta">14:02 – 14:20 · 时长 18分04秒</div>
+        <div class="cust-actions"><button class="btn xs neutral">撤回删除申请</button></div>
+      </div>
+
+      <!-- delete rejected -->
+      <div class="cust-row">
+        <div class="banner danger" style="margin:0 0 9px;">
+          <span class="ico">✗</span><span>删除申请被拒：该录音已进入质检抽样，暂不可删除。 <span class="link" onclick="this.closest('.banner').parentElement.style.display='none'">知道了</span></span>
+        </div>
+        <div class="cust-meta">13:40 – 13:59 · 时长 18分12秒</div>
+        <div class="cust-actions"><button class="btn xs" onclick="openSheet('bind')">绑定顾客</button></div>
+      </div>
+
+      <div class="flex-between" style="justify-content:center; gap:14px; padding:8px 0;">
+        <button class="btn xs neutral">‹ 上一页</button>
+        <span class="hint">第 1 / 2 页（每页 5 段）</span>
+        <button class="btn xs neutral">下一页 ›</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= NEEDS CONFIRM (multi-speaker) ================= -->
+  <section class="screen" id="screen-needsconfirm">
+    <div class="appbar">
+      <div class="row1"><div><span class="back-link" onclick="goto('pending')">‹ 返回</span><h1 style="margin-top:6px;">误录确认</h1></div></div>
+    </div>
+    <div class="pad">
+      <div class="card" style="border-color:#E6D3A8;">
+        <div class="banner warn" style="margin:0 0 12px;">
+          <span class="ico">⚠</span><span><b>检测到可能误录（说话人 &gt; 2）</b><br>以下录音 ASR 后检测到超过 2 个说话人，可能一段混了多位顾客。可解绑后拆分重传，或确认本次按当前归属分析。</span>
+        </div>
+        <div class="metric" style="border:none; padding:6px 0;">
+          <span class="ml">时间</span><span style="font-size:13px;">2026-06-08 14:32</span>
+        </div>
+        <div class="metric" style="border:none; padding:6px 0;">
+          <span class="ml">顾客</span><span style="font-size:13px; font-weight:600;">李雪 · 尾号 8821</span>
+        </div>
+        <div class="metric" style="border:none; padding:6px 0;">
+          <span class="ml">说话人数</span><span style="font-size:15px; font-weight:800; color:var(--warn);">3 人</span>
+        </div>
+        <div class="player">
+          <div class="pp">▶</div>
+          <div class="track"><div class="fill" style="width:20%;"></div><div class="knob" style="left:20%;"></div></div>
+          <span class="tt">03:31 / 18:23</span>
+        </div>
+        <div class="cust-actions">
+          <button class="btn sm" onclick="confirmBox('仍然按当前归属分析？','系统检测到多位说话人，确认无误后继续分析。','仍然分析')">仍然分析</button>
+          <button class="btn sm danger-ghost" onclick="confirmBox('解绑并拆分重传？','录音将退回未归档，需重新拆分上传后再绑定。','确认解绑')">解绑（拆分重传）</button>
+        </div>
+      </div>
+      <div class="hint" style="text-align:center;">绑定后系统会在 8 秒自动检测一次说话人数。</div>
+    </div>
+  </section>
+
+  <!-- ================= CUSTOMER PROFILE SEARCH ================= -->
+  <section class="screen" id="screen-profilesearch">
+    <div class="appbar"><div class="row1"><div><h1>客户档案搜索</h1><div class="sub">查看档案与价值预测</div></div></div></div>
+    <div class="pad">
+      <div class="card">
+        <div class="hint" style="margin-bottom:12px;">搜索任意顾客，点开查看其档案与价值预测。（录音只能听本人接待的）</div>
+        <input class="input" placeholder="输入姓名 / 会员卡号" value="刘">
+      </div>
+      <div class="sresult" onclick="goto('profile')">
+        <div class="info">刘佳佳 <small>VIP10086 · 尾号 8866</small></div>
+        <button class="btn xs ghost">查看档案 ›</button>
+      </div>
+      <div class="sresult" onclick="goto('profile')">
+        <div class="info">刘敏 <small>VIP44512 · 尾号 3301</small></div>
+        <button class="btn xs ghost">查看档案 ›</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= ANALYSIS REPORT ================= -->
+  <section class="screen" id="screen-report">
+    <div class="report-nav">
+      <span class="back-link" style="color:#9ff0ee;" onclick="goto('reception')">‹ 接诊列表</span>
+      <div class="t">张顾问 × 刘佳佳 · 接诊全维度分析报告</div>
+      <div class="tags">
+        <span class="rtag">2026-06-08</span>
+        <span class="rtag mech">销售复盘 · 内部机密</span>
+        <span class="rtag live">分析: 已完成 · deepseek-v4-pro</span>
+      </div>
+    </div>
+    <div class="report-acts">
+      <button class="btn xs neutral">⟳ 重跑</button>
+      <button class="btn xs ghost" onclick="document.getElementById('recPanel').style.display='block'">原始录音</button>
+      <button class="btn xs warn-ghost">申请删除录音</button>
+    </div>
+
+    <!-- recording panel -->
+    <div id="recPanel" style="display:none;">
+      <div class="part open" style="margin-top:12px;">
+        <div class="part-h"><span class="pt">原始录音面板</span><span class="x" onclick="document.getElementById('recPanel').style.display='none'" style="color:var(--ink-3); cursor:pointer;">✕ 关闭</span></div>
+        <div class="part-b" style="display:block;">
+          <select class="input" style="margin-bottom:10px;"><option>第1段（2026-06-08 14:23 · 约12分08秒）</option></select>
+          <div class="player">
+            <div class="pp">▶</div>
+            <div class="track"><div class="fill"></div><div class="knob"></div></div>
+            <span class="tt">04:08 / 12:08</span>
+          </div>
+          <div class="banner warn" style="margin:8px 0;">
+            <span class="ico">⚠</span><span>ASR 检测到 3 个说话人（&gt;2），分析已暂停。
+              <div style="margin-top:8px; display:flex; gap:8px;"><button class="btn xs">✓ 确认照常分析</button><button class="btn xs danger-ghost">解绑此录音</button></div>
+            </span>
+          </div>
+          <div class="advice" style="font-size:12px;"><b>▶ 文字转录（含说话人标记）</b><br>[0.00s - 3.20s] 顾问：您好，今天想先看看哪方面？<br>[3.20s - 7.60s] 顾客：我最近气色不太好，法令纹也明显了。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PART 01 -->
+    <div class="part open" style="margin-top:12px;">
+      <div class="part-h" onclick="togPart(this)">
+        <span class="pn">PART 01</span><span class="pt">全维度评估总览</span><span class="caret">▾</span>
+      </div>
+      <div class="part-b">
+        <div class="metric"><span class="ml">顾客价值</span><div><span class="pill ok">A 级高价值客户</span><div class="hint mt8">消费能力强、复购意愿明确，建议优先维护。</div></div></div>
+        <div class="metric"><span class="ml">痛点识别</span><div>
+          <div class="bullet"><span class="bd">●</span>法令纹明显</div>
+          <div class="bullet"><span class="bd">●</span>整体气色暗沉</div>
+          <div class="bullet"><span class="bd">●</span>对抗衰有长期诉求</div>
+        </div></div>
+        <div class="metric"><span class="ml">销售诊断</span><div><span class="pill warn">只推产品未讲问题</span><div class="hint mt8">未先放大问题就报价，转化阻力大。</div></div></div>
+        <div class="metric"><span class="ml">质检评分</span><div><span class="score-big yellow">7.5</span><span style="color:var(--ink-3); font-size:13px;"> / 10</span><div class="hint">沟通到位但价值塑造不足。</div></div></div>
+        <div class="sec-title">可操作建议</div>
+        <div class="advice"><b>1</b> 先用对比图放大法令纹问题，再谈方案。</div>
+        <div class="advice"><b>2</b> 强调抗衰是长期工程，引导套餐而非单次。</div>
+        <div class="advice"><b>3</b> 项目后 7 天黄金窗口主动回访收割价值。</div>
+        <div class="advice"><b>4</b> 针对"朋友在别家做"建立专业竞品话术。</div>
+        <button class="btn sm neutral block mt8" onclick="this.textContent=this.textContent.includes('查看')?'收起详细评分 ▴':'查看详细评分 ▾'">查看详细评分 ▾</button>
+      </div>
+    </div>
+
+    <!-- PART 02 -->
+    <div class="part">
+      <div class="part-h" onclick="togPart(this)"><span class="pn">PART 02</span><span class="pt">顾客真实画像重建</span><span class="caret">▾</span></div>
+      <div class="part-b">
+        <div class="hint" style="margin:10px 0;">从对话信号还原顾客真实诉求与决策心理。</div>
+        <div class="qbox">顾客原话「我最近气色不太好」<br><span style="color:var(--ink-2);">→ 销售判断：表层在说气色，实质对衰老焦虑，价格敏感度中等。</span></div>
+        <div class="advice"><b>综合判断</b>：高价值抗衰客户，认可效果但需被"看见问题"，宜走方案式而非报价式销售。</div>
+      </div>
+    </div>
+
+    <!-- PART 03 -->
+    <div class="part">
+      <div class="part-h" onclick="togPart(this)"><span class="pn">PART 03</span><span class="pt">接诊失分根因定位</span><span class="caret">▾</span></div>
+      <div class="part-b">
+        <div class="banner danger" style="margin:10px 0;"><span class="ico">●</span><span>核心失分：全程在讲产品，未讲顾客的问题。</span></div>
+        <div class="cmp">
+          <div class="bad"><b>产品维度（顾问做的）</b><br>报项目、讲仪器、报价格</div>
+          <div class="good"><b>问题维度（顾客要听的）</b><br>我的法令纹能改善吗？多久见效？</div>
+        </div>
+        <div class="advice" style="border-left-color:var(--warn);"><b style="color:var(--warn);">差距本质</b>：顾客买的是"问题被解决"，不是"产品参数"。</div>
+      </div>
+    </div>
+
+    <!-- PART 06 case -->
+    <div class="part">
+      <div class="part-h" onclick="togPart(this)"><span class="pn">PART 06</span><span class="pt">关键 Case 复盘 · 三层分析</span><span class="caret">▾</span></div>
+      <div class="part-b">
+        <div class="case-card">
+          <div class="flex-between"><b style="font-size:13px;">Case ① 报价时机过早</b><span class="pill danger">做错</span></div>
+          <div class="ts-btn" onclick="toast('▶ 跳转录音 0:01:34')">▶ 0:01:34</div>
+          <div class="qbox" style="margin:6px 0;">顾客原话「这个大概多少钱呀」</div>
+          <table class="rt">
+            <tr><th>表层做法</th><td>顾客一问价就直接报 ¥3980</td></tr>
+            <tr><th>深层问题</th><td>未先确认价值，价格成了唯一锚点</td></tr>
+            <tr><th>正确做法</th><td>先讲改善预期再谈投入，弱化单价</td></tr>
+          </table>
+          <div class="advice" style="background:var(--ink); color:#fff; border-left-color:var(--teal);">一句话总结：先种价值，再谈价格。</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PART 11 deal diagnosis -->
+    <div class="part">
+      <div class="part-h" onclick="togPart(this)"><span class="pn">PART 11</span><span class="pt">成交诊断 · 5 维度判断</span><span class="caret">▾</span></div>
+      <div class="part-b">
+        <div class="flex-between" style="margin:10px 0;">
+          <span class="pill ok">✅ 已成交</span>
+          <span style="font-size:18px; font-weight:800;">¥3980</span>
+          <span class="pill warn">🟡 留意</span>
+        </div>
+        <table class="rt">
+          <tr><th>维度</th><th>判断</th></tr>
+          <tr><td>顾客被打动</td><td>到位</td></tr>
+          <tr><td>认可方案</td><td>部分</td></tr>
+          <tr><td>效果感受到位</td><td>缺失</td></tr>
+          <tr><td>价格被匹配</td><td>部分</td></tr>
+          <tr><td>紧迫感建立</td><td>缺失</td></tr>
+        </table>
+        <div class="banner danger" style="margin-top:10px;"><span class="ico">⚠</span><span>未建立紧迫感 + 效果感受不足，存在二次到店流失风险，建议 7 日内回访。</span></div>
+      </div>
+    </div>
+
+    <!-- boss review -->
+    <div class="part open">
+      <div class="part-h" onclick="togPart(this)"><span class="pt">老板点评 · 专家点评记录</span><span class="caret">▾</span></div>
+      <div class="part-b">
+        <div class="review-input" style="margin-top:10px;">
+          <div class="avatar">老</div>
+          <textarea class="input" rows="3" placeholder="在这里输入新的点评……例如：刘佳佳这个顾客性格慢热，下次先聊家常再切入。"></textarea>
+        </div>
+        <button class="btn sm block" onclick="toast('点评已提交','ok')">提交点评</button>
+        <div class="review-item">
+          <div class="avatar">老</div>
+          <div class="rc">
+            <div class="rmeta"><span>店长 王姐</span><span class="link" style="color:var(--danger); cursor:pointer;">删除</span></div>
+            <div class="rbody">价值塑造不够，下次先用对比图放大问题再报价。整体接待态度可以。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div style="height:8px;"></div>
+  </section>
+
+  <!-- ================= CUSTOMER PROFILE ================= -->
+  <section class="screen" id="screen-profile">
+    <div class="appbar">
+      <div class="row1"><div><span class="back-link" onclick="goto('profilesearch')">‹ 返回</span><h1 style="margin-top:6px;">刘佳佳</h1><div class="sub">顾客美丽档案 · 张管理（admin）</div></div></div>
+    </div>
+    <div class="pad">
+      <div class="card">
+        <div class="card-h">基本信息</div>
+        <div class="flex-between" style="text-align:center;">
+          <div><div style="font-size:11px; color:var(--ink-3);">会员号</div><div style="font-weight:700; font-size:13px;">M20260108</div></div>
+          <div><div style="font-size:11px; color:var(--ink-3);">手机尾号</div><div style="font-weight:700; font-size:13px;">8866</div></div>
+          <div><div style="font-size:11px; color:var(--ink-3);">接诊次数</div><div style="font-weight:700; font-size:13px;">3</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">累积标签 · 画像积累 <select class="input" style="width:auto; padding:5px 8px; font-size:12px;"><option>至今</option><option>近30天</option><option>近90天</option></select></div>
+        <div style="display:flex; gap:7px; flex-wrap:wrap;">
+          <span class="pill teal">法令纹明显 ×3</span>
+          <span class="pill teal">注重抗衰</span>
+          <span class="pill teal">价格敏感 ×2</span>
+          <span class="pill gray">气色暗沉</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">🔮 客户价值预测</div>
+        <div class="hint" style="margin-bottom:10px;">生成于 2026-06-08 14:40 · deepseek-v4-pro <span style="color:var(--warn);">（有新接诊，建议刷新）</span></div>
+        <div class="seg" style="margin-bottom:12px;">
+          <button>极速版</button><button class="on">进阶版</button><button>专家版</button>
+        </div>
+        <div class="advice"><b>💎 客户价值评估</b><br>A 级高价值客户，年消费潜力 ¥3–5 万，复购意愿强。</div>
+        <div class="advice"><b>🎯 攻坚作战方案</b><br>以"法令纹改善"为突破口，套餐式承接抗衰长期需求。</div>
+        <div class="advice"><b>🤝 顾问匹配度</b><br>张顾问 · ★★★★☆ 沟通节奏匹配，建议固定承接。</div>
+        <button class="btn sm block mt8" onclick="toast('✨ 正在综合历史接待生成…')">✨ 刷新预测</button>
+      </div>
+
+      <div class="card">
+        <div class="card-h">服务时间线 <span class="muted">（共 3 次）</span></div>
+        <div class="cust-row" style="box-shadow:none; margin-bottom:9px;">
+          <div class="flex-between"><div><b style="font-size:13px;">2026-06-08</b><div class="cust-meta">张顾问 · 朝阳店 · done</div></div><span class="link" style="color:var(--teal); font-weight:700; font-size:12.5px; cursor:pointer;" onclick="goto('report')">查看报告 ›</span></div>
+          <div style="margin-top:7px;"><span class="pill teal">法令纹明显</span> <span class="pill gray">命中主推：抗衰套餐</span></div>
+        </div>
+        <div class="cust-row" style="box-shadow:none; margin-bottom:0;">
+          <div class="flex-between"><div><b style="font-size:13px;">2026-04-20</b><div class="cust-meta">李顾问 · 朝阳店 · done</div></div><span class="link" style="color:var(--teal); font-weight:700; font-size:12.5px; cursor:pointer;" onclick="goto('report')">查看报告 ›</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= REMINDER PANEL ================= -->
+  <section class="screen" id="screen-reminder">
+    <div class="appbar"><div class="row1"><div><span class="back-link" onclick="goto('home')">‹ 返回</span><h1 style="margin-top:6px;">提醒 🔔</h1><div class="sub">王姐 <span class="role-chip">店长</span></div></div></div></div>
+    <div class="pad">
+      <div class="card">
+        <div class="card-h">本店待跟进升级项 <span class="muted">（2）</span></div>
+        <div class="rem-item">
+          <div class="ri" style="background:var(--danger-soft); color:var(--danger);">⬆</div>
+          <div style="flex:1;">
+            <div class="flex-between"><span class="pill danger">升级 L2</span><span style="font-size:11px; color:var(--ink-3);">2026-06-08 15:20</span></div>
+            <div class="rt mt8">顾问 张敏 · 该客户存在高流失风险，请及时跟进。</div>
+            <div style="display:flex; gap:9px; margin-top:7px;">
+              <button class="btn xs" onclick="goto('report')">查看报告 ›</button>
+              <button class="btn xs ghost" onclick="confirmBox('标记已跟进？','标记后该升级项将从待办移除。','已跟进')">已跟进</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h">个人提醒</div>
+        <div class="rem-item">
+          <div class="ri" style="background:var(--danger-soft); color:var(--danger);">📄</div>
+          <div style="flex:1;">
+            <div class="flex-between"><span class="pill danger">未查看 L2</span><span style="font-size:11px; color:var(--ink-3);">15:20</span></div>
+            <div class="rt mt8">李雪 06-08 的报告已生成，请尽快查看。</div>
+            <span class="rlink" onclick="goto('report')">查看报告 ›</span>
+          </div>
+        </div>
+        <div class="rem-item" style="border-bottom:none;">
+          <div class="ri" style="background:var(--warn-soft); color:var(--warn);">🔗</div>
+          <div style="flex:1;">
+            <div class="flex-between"><span class="pill warn">未绑定 L1</span><span style="font-size:11px; color:var(--ink-3);">14:48</span></div>
+            <div class="rt mt8">有 1 段 06-08 的录音还没绑定顾客。</div>
+            <span class="rlink" onclick="goto('pending')">去绑定 ›</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  </div><!-- /scroll -->
+
+  <!-- ====== bottom nav ====== -->
+  <div class="bottomnav">
+    <div class="navitem on" id="nav-home" onclick="goto('home')"><span class="ni">⏺</span>录音</div>
+    <div class="navitem" id="nav-reception" onclick="goto('reception')"><span class="ni">📋</span>接诊</div>
+    <div class="navitem" id="nav-pending" onclick="goto('pending')"><span class="ni">🎧</span>待绑定</div>
+    <div class="navitem" id="nav-profilesearch" onclick="goto('profilesearch')"><span class="ni">👤</span>档案</div>
+    <div class="navitem" id="nav-reminder" onclick="goto('reminder')"><span class="ni">🔔</span>提醒</div>
+  </div>
+
+  <!-- ====== SHEET (bottom modal) host ====== -->
+  <div class="sheet-mask" id="sheetMask" onclick="if(event.target===this)closeSheet()">
+
+    <!-- ADD RECEPTION -->
+    <div class="sheet" data-sheet="addReception">
+      <div class="sheet-h"><div class="grab"></div><span class="x" onclick="closeSheet()">✕</span><h3>加入今日接诊</h3><div class="sh-sub">把已有或新顾客加入 2026-06-08 的接诊列表</div></div>
+      <div class="sheet-b">
+        <div class="seg"><button class="on" onclick="segSwitch(this,'sExist')">搜索已有顾客</button><button onclick="segSwitch(this,'sNew')">新增顾客</button></div>
+        <div data-pane="sExist">
+          <input class="input" placeholder="输入姓名 / 手机尾号 / 卡号" value="李">
+          <div style="margin-top:10px;">
+            <div class="sresult"><div class="info">李雪 <small>尾号 8821 · VIP10086</small></div><button class="btn xs" onclick="closeSheet();toast('已加入 李雪','ok')">加入</button></div>
+            <div class="sresult"><div class="info">李娜 <small>尾号 3092 · VIP55120</small></div><button class="btn xs" onclick="closeSheet();toast('已加入 李娜','ok')">加入</button></div>
+          </div>
+          <div class="hint" style="margin-top:10px;">无匹配？如新顾客请切到「新增顾客」。</div>
+        </div>
+        <div data-pane="sNew" style="display:none;">
+          <div class="field"><label class="lbl">顾客姓名 <span class="req">*</span></label><input class="input" placeholder="如 李雪"></div>
+          <div class="field"><label class="lbl">手机尾号（4 位）<span class="req">*</span></label><input class="input" placeholder="如 8821" maxlength="4"></div>
+          <div class="field"><label class="lbl">会员/卡号（可选）</label><input class="input" placeholder="如 VIP10086"></div>
+        </div>
+      </div>
+      <div class="sheet-f"><button class="btn neutral" onclick="closeSheet()">取消</button><button class="btn" onclick="closeSheet();toast('已加入接诊列表','ok')">确认新增并加入</button></div>
+    </div>
+
+    <!-- BIND -->
+    <div class="sheet" data-sheet="bind">
+      <div class="sheet-h"><div class="grab"></div><span class="x" onclick="closeSheet()">✕</span><h3>绑定到接诊顾客</h3><div class="sh-sub">只能从下面列表里选；没有要找的顾客请先「加入今日接诊」。</div></div>
+      <div class="sheet-b">
+        <div class="banner warn"><span class="ico">⚠</span><span>这段录音是 2026-06-05 的，只能绑定到当天的接诊客人。 <span class="link" onclick="closeSheet();goto('reception')">切到 06-05 ＋加入 ›</span></span></div>
+        <div class="sresult"><div class="info">李雪 <small>尾号 8821 · 2 段录音</small></div><button class="btn xs" onclick="closeSheet();toast('已绑定到 李雪','ok')">绑定到这里</button></div>
+        <div class="sresult"><div class="info">王芳 <small>尾号 6633 · 0 段录音</small></div><button class="btn xs" onclick="closeSheet();toast('已绑定到 王芳','ok')">绑定到这里</button></div>
+        <div class="sresult"><div class="info">刘佳佳 <small>尾号 8866 · 1 段录音</small></div><button class="btn xs" onclick="closeSheet();toast('已绑定到 刘佳佳','ok')">绑定到这里</button></div>
+      </div>
+      <div class="sheet-f"><button class="btn neutral block" onclick="closeSheet()">取消</button></div>
+    </div>
+
+    <!-- PACKAGE -->
+    <div class="sheet" data-sheet="package">
+      <div class="sheet-h"><div class="grab"></div><span class="x" onclick="closeSheet()">✕</span><h3>接诊包 · 李雪</h3><div class="sh-sub">2026-06-08 · 核对顾客信息后开始分析，如绑错可「换绑」或「退回未归档」。</div></div>
+      <div class="sheet-b">
+        <div class="card tight" style="margin-bottom:14px;">
+          <div class="flex-between"><span class="pill teal">🔄 分析中</span><span class="hint">进度 5 / 11 · 已等待 2 分 30 秒</span></div>
+          <div class="prog-track"><div class="pf" style="width:45%;"></div></div>
+          <div class="steps">
+            <div class="step done"><span class="sd">✓</span>录音 ASR 完成</div>
+            <div class="step done"><span class="sd">✓</span>拼接转录、加载知识库</div>
+            <div class="step run"><span class="sd">●</span>正在分析：摘要、价值预测</div>
+            <div class="step wait"><span class="sd">○</span>解析结构化报告</div>
+          </div>
+          <div class="banner danger" style="margin:10px 0 0;"><span class="ico">✗</span><span>失败：情绪分析（重新分析可重试）</span></div>
+          <button class="btn sm neutral block mt12" onclick="confirmBox('取消分析？','正在进行的任务将被中断。','取消分析')">取消分析</button>
+        </div>
+
+        <div class="sec-title">本次将分析的录音（已绑定）</div>
+        <div class="cust-row" style="box-shadow:none;">
+          <div class="flex-between"><div><b style="font-size:13px;">2026-06-08 14:32</b><div class="cust-meta">时长 18分23秒</div></div><span class="pill ok">ASR done</span></div>
+          <div class="player"><div class="pp">▶</div><div class="track"><div class="fill" style="width:25%;"></div><div class="knob" style="left:25%;"></div></div><span class="tt">04:35 / 18:23</span></div>
+          <div class="cust-actions"><button class="btn xs ghost" onclick="openSheet('rebind')">换绑</button><button class="btn xs danger-ghost" onclick="openSheet('unbind')">退回未归档</button></div>
+        </div>
+
+        <div class="sec-title">本人 2026-06-08 未绑定录音（可加入本接诊包）</div>
+        <div class="cust-row" style="box-shadow:none;">
+          <div class="flex-between"><div><b style="font-size:13px;">2026-06-08 15:10</b><div class="cust-meta">时长 12分47秒 · 最多试听 60 秒</div></div><span class="pill gray">ASR pending</span></div>
+          <div class="player"><div class="pp">▶</div><div class="track"><div class="fill" style="width:10%;"></div><div class="knob" style="left:10%;"></div></div><span class="tt">00:42 / 12:47</span></div>
+          <div class="cust-actions"><button class="btn xs" onclick="toast('已加入本接诊包','ok')">加入本接诊包</button></div>
+        </div>
+        <div class="hint" style="margin-top:10px;">✓ 已开始分析后，未绑定录音不可再加入（接诊包已锁定）。</div>
+      </div>
+      <div class="sheet-f"><button class="btn neutral" onclick="closeSheet()">关闭</button><button class="btn" onclick="confirmBox('开始分析？','接诊包将被锁定，普通顾问无法再修改。','确认并开始分析')">确认并开始分析</button></div>
+    </div>
+
+    <!-- REBIND -->
+    <div class="sheet" data-sheet="rebind">
+      <div class="sheet-h"><div class="grab"></div><span class="x" onclick="closeSheet()">✕</span><h3>换绑录音</h3><div class="sh-sub">只移动这一段录音，该顾客其他录音不受影响。换绑后新旧两份报告都会重新生成。直接生效、无需审批，管理员可见。</div></div>
+      <div class="sheet-b">
+        <div class="banner muted"><span class="ico">🎙</span><span>录音：2026-06-08 14:32 · 18分23秒</span></div>
+        <div class="seg"><button class="on" onclick="segSwitch(this,'rExist')">选已有顾客</button><button onclick="segSwitch(this,'rNew')">＋ 新增当日顾客</button></div>
+        <div data-pane="rExist">
+          <input class="input" placeholder="搜索本人接待过的顾客：姓名 / 卡号 / 手机尾号" value="">
+          <div class="hint" style="margin:8px 0;">仅能换绑到您本人接待过的顾客。标「当日」的已在该录音当天接诊；其余选中后会自动补登当天接诊。</div>
+          <div class="radio-row on" onclick="pickRadio(this)"><div class="rk"></div><div style="flex:1;"><b style="font-size:14px;">李雪</b> <span class="pill teal" style="margin-left:4px;">当日</span><div class="cust-meta">尾号 8821 · VIP10086</div></div></div>
+          <div class="radio-row" onclick="pickRadio(this)"><div class="rk"></div><div style="flex:1;"><b style="font-size:14px;">王芳</b><div class="cust-meta">尾号 6633 · 选中后将补登当天接诊</div></div></div>
+        </div>
+        <div data-pane="rNew" style="display:none;">
+          <div class="field"><label class="lbl">顾客姓名 <span class="req">*</span></label><input class="input"></div>
+          <div class="field"><label class="lbl">手机尾号（4 位，可选）</label><input class="input" maxlength="4"></div>
+          <div class="hint">新增的顾客会自动发会员号，并补登进该录音当天的接诊（算一次接诊）。</div>
+          <button class="btn sm block mt12" onclick="toast('已新增并选中','ok')">新增并选中</button>
+        </div>
+        <div class="field mt12"><label class="lbl">换绑理由（可选）</label><textarea class="input" rows="2" placeholder="说明换绑原因，便于管理员复盘"></textarea></div>
+      </div>
+      <div class="sheet-f"><button class="btn neutral" onclick="closeSheet()">取消</button><button class="btn" onclick="confirmBox('确认换绑（仅这段）？','只移动这一段录音，新旧报告将重新生成。','确认换绑')">确认换绑</button></div>
+    </div>
+
+    <!-- UNBIND -->
+    <div class="sheet" data-sheet="unbind">
+      <div class="sheet-h"><div class="grab"></div><span class="x" onclick="closeSheet()">✕</span><h3>退回未归档</h3><div class="sh-sub">录音将从当前顾客解绑，回到「未归档片段」，可在那里申请删除。若已分析将作废。所有操作管理员留痕。</div></div>
+      <div class="sheet-b">
+        <div class="banner muted"><span class="ico">🎙</span><span>录音：2026-06-08 14:32 · 18分23秒</span></div>
+        <div class="field"><label class="lbl">退回理由 <span class="req">*</span></label><textarea class="input" rows="3" placeholder="请简要说明（如：录错顾客、想删除等）"></textarea></div>
+      </div>
+      <div class="sheet-f"><button class="btn neutral" onclick="closeSheet()">取消</button><button class="btn danger" onclick="confirmBox('确定退回未归档？','若已分析将作废。','确认退回')">确认退回未归档</button></div>
+    </div>
+
+    <!-- EDIT DATE -->
+    <div class="sheet" data-sheet="editDate">
+      <div class="sheet-h"><div class="grab"></div><span class="x" onclick="closeSheet()">✕</span><h3>修改接诊日期</h3><div class="sh-sub">只能在原日期前后 7 天内修改，且不超过今天。挂在该接诊下的录音会自动解绑（录音真实日期不动）。</div></div>
+      <div class="sheet-b">
+        <div class="banner warn"><span class="ico">⚠</span><span>顾客：王芳 · 原日期 2026-06-08<br>已绑定 2 段录音，确认后会自动解绑。</span></div>
+        <div class="field"><label class="lbl">新日期</label><input class="input" type="date" value="2026-06-06" max="2026-06-08"></div>
+      </div>
+      <div class="sheet-f"><button class="btn neutral" onclick="closeSheet()">取消</button><button class="btn" onclick="confirmBox('改日期？','将解绑 2 段录音并改日期到 2026-06-06。','确认修改')">确认修改</button></div>
+    </div>
+
+  </div><!-- /sheetMask -->
+
+  <!-- confirm dialog -->
+  <div class="confirm-mask" id="confirmMask">
+    <div class="confirm">
+      <h4 id="cfTitle">确认</h4>
+      <p id="cfBody"></p>
+      <div class="row"><button class="btn neutral" onclick="closeConfirm()">取消</button><button class="btn" id="cfOk">确定</button></div>
+    </div>
+  </div>
+
+  <!-- toast -->
+  <div class="toast" id="toast"><span id="toastIco">✓</span><span id="toastTxt"></span></div>
+
+</div><!-- /phone -->
+
+<script>
+/* ---------- navigation ---------- */
+var SCREENS=['login','home','reception','pending','needsconfirm','profilesearch','report','profile','reminder'];
+var NAVABLE={home:1,reception:1,pending:1,profilesearch:1,reminder:1};
+function goto(id){
+  closeSheet();
+  SCREENS.forEach(function(s){var el=document.getElementById('screen-'+s); if(el)el.classList.toggle('active', s===id);});
+  document.querySelectorAll('.navitem').forEach(function(n){n.classList.remove('on');});
+  var navId = NAVABLE[id]?id:({report:'reception',profile:'profilesearch',needsconfirm:'pending'}[id]||null);
+  if(navId){var nv=document.getElementById('nav-'+navId); if(nv)nv.classList.add('on');}
+  var sel=document.getElementById('jumpSelect'); if(sel)sel.value=id;
+  document.getElementById('scroll').scrollTop=0;
+}
+
+/* ---------- record state machine ---------- */
+var recTimer=null, recSec=0;
+function fmt(s){var m=Math.floor(s/60),x=s%60;return (m<10?'0':'')+m+':'+(x<10?'0':'')+x;}
+function setRecState(state,btn){
+  if(btn){document.querySelectorAll('.statetabs button').forEach(function(b){b.classList.remove('on');});btn.classList.add('on');}
+  var t=document.getElementById('recTimer'),st=document.getElementById('recStatus'),ms=document.getElementById('recMsg'),
+      b=document.getElementById('recBtn'),g=document.getElementById('recGlyph'),l=document.getElementById('recLab');
+  clearInterval(recTimer); recTimer=null;
+  b.classList.remove('recording','busy');
+  if(state==='idle'){recSec=0;t.textContent='00:00';st.textContent='点击开始录音';ms.textContent='请把这段录音绑定到今日接诊里的顾客。';g.textContent='●';l.textContent='开始录音';b.onclick=toggleRec;}
+  else if(state==='recording'){st.innerHTML='<span class="rec-livedot"></span>录音中…';ms.textContent='正在记录本次接诊，请保持环境安静。';g.textContent='■';l.textContent='结束录音';b.classList.add('recording');b.onclick=toggleRec;runTimer();}
+  else if(state==='uploading'){st.textContent='上传中… 保存中…';ms.textContent='录音已结束，正在上传到云端，请勿退出。';g.textContent='⟳';l.textContent='上传中';b.classList.add('busy');b.onclick=null;}
+  else if(state==='done'){t.textContent=fmt(recSec||223);st.textContent='已上传，请选择顾客';ms.textContent='上传成功，请把这段录音绑定到接诊顾客。';g.textContent='●';l.textContent='开始录音';b.onclick=toggleRec;setTimeout(function(){openSheet('bind');},350);}
+  else if(state==='failed'){st.innerHTML='<span style="color:var(--danger);">上传失败</span>';ms.innerHTML='<span style="color:var(--danger);">网络异常，请检查网络后点按钮重试。</span>';g.textContent='↻';l.textContent='重试';b.classList.add('busy');b.onclick=toggleRec;toast('⚠ 网络断开，请检查网络后重试','danger');}
+  else if(state==='penconn'){document.getElementById('penDot').className='dotled green';document.getElementById('penTxt').textContent='已连接 · 笔SN ····8821';pickSrc('pen');st.textContent='录音笔已就绪，点击开始录音';ms.textContent='将使用录音笔录制，请确保已贴近接待位。';}
+  else if(state==='pennone'){document.getElementById('penDot').className='dotled gray';document.getElementById('penTxt').textContent='未连接';pickSrc('pen');st.textContent='请先连接录音笔';ms.textContent='点击「🖊 录音笔」将自动连上上次那支笔。';}
+}
+function runTimer(){clearInterval(recTimer);recTimer=setInterval(function(){recSec++;document.getElementById('recTimer').textContent=fmt(recSec);},1000);}
+function toggleRec(){
+  var st=document.getElementById('recStatus').textContent;
+  if(st.indexOf('录音中')>=0){setRecState('uploading');setTimeout(function(){setRecState('done');},1400);}
+  else{recSec=0;setRecState('recording');}
+}
+function pickSrc(s){
+  document.getElementById('srcPen').classList.toggle('on',s==='pen');
+  document.getElementById('srcMic').classList.toggle('on',s==='mic');
+}
+
+/* ---------- sheets ---------- */
+function openSheet(name){
+  var mask=document.getElementById('sheetMask');
+  mask.querySelectorAll('.sheet').forEach(function(s){s.style.display=(s.dataset.sheet===name)?'flex':'none';});
+  mask.classList.add('show');
+}
+function closeSheet(){document.getElementById('sheetMask').classList.remove('show');}
+function segSwitch(btn,pane){
+  var seg=btn.parentElement; seg.querySelectorAll('button').forEach(function(b){b.classList.remove('on');}); btn.classList.add('on');
+  var sheet=btn.closest('.sheet'); sheet.querySelectorAll('[data-pane]').forEach(function(p){p.style.display='none';});
+  sheet.querySelector('[data-pane="'+pane+'"]').style.display='block';
+}
+function pickRadio(row){row.parentElement.querySelectorAll('.radio-row').forEach(function(r){r.classList.remove('on');});row.classList.add('on');}
+
+/* ---------- report parts ---------- */
+function togPart(h){h.parentElement.classList.toggle('open');}
+
+/* ---------- confirm ---------- */
+function confirmBox(title,body,okLabel){
+  document.getElementById('cfTitle').textContent=title;
+  document.getElementById('cfBody').textContent=body;
+  document.getElementById('cfOk').textContent=okLabel||'确定';
+  document.getElementById('cfOk').onclick=function(){closeConfirm();closeSheet();toast('已'+(okLabel||'确认'),'ok');};
+  document.getElementById('confirmMask').classList.add('show');
+}
+function closeConfirm(){document.getElementById('confirmMask').classList.remove('show');}
+document.getElementById('confirmMask').addEventListener('click',function(e){if(e.target===this)closeConfirm();});
+
+/* ---------- toast ---------- */
+var toastT=null;
+function toast(msg,kind){
+  var el=document.getElementById('toast');
+  document.getElementById('toastTxt').textContent=msg;
+  document.getElementById('toastIco').textContent=kind==='danger'?'⚠':(kind==='ok'?'✓':'•');
+  el.className='toast show'+(kind?(' '+kind):'');
+  clearTimeout(toastT); toastT=setTimeout(function(){el.classList.remove('show');},1900);
+}
+</script>
+</body>
+</html>

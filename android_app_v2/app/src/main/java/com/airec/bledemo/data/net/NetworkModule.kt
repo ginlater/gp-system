@@ -1,0 +1,86 @@
+package com.airec.bledemo.data.net
+
+import android.content.Context
+import com.airec.bledemo.data.api.AdminApi
+import com.airec.bledemo.data.api.ConsultantApi
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import okhttp3.OkHttpClient
+import okhttp3.logging.HttpLoggingInterceptor
+import retrofit2.Retrofit
+import retrofit2.converter.moshi.MoshiConverterFactory
+import java.util.concurrent.TimeUnit
+
+/**
+ * 网络单例：OkHttpClient(含 PrefsCookieJar + logging-interceptor) + Moshi(反射) + Retrofit。
+ *
+ * - base = https://gp.aibeautyfulwomen.com（SPEC §7，不改后端）。
+ * - Moshi 用 KotlinJsonAdapterFactory 反射（不接 KSP/codegen）。
+ * - Cookie 会话由 PrefsCookieJar 持久化；登录后自动带。
+ * - 必须先 init(context) 一次（Application.onCreate 里调），再取 api / cookieJar。
+ */
+object NetworkModule {
+
+    const val BASE_URL = "https://gp.aibeautyfulwomen.com/"
+
+    @Volatile
+    private var initialized = false
+
+    lateinit var cookieJar: PrefsCookieJar
+        private set
+
+    lateinit var moshi: Moshi
+        private set
+
+    lateinit var okHttpClient: OkHttpClient
+        private set
+
+    lateinit var retrofit: Retrofit
+        private set
+
+    lateinit var api: ConsultantApi
+        private set
+
+    /** 管理台端点（运营看板等）。同一 retrofit/cookie，会话 Cookie 自动带。 */
+    lateinit var adminApi: AdminApi
+        private set
+
+    @Synchronized
+    fun init(context: Context) {
+        if (initialized) return
+
+        cookieJar = PrefsCookieJar(context.applicationContext)
+
+        val logging = HttpLoggingInterceptor().apply {
+            // 仅记录请求行 + 头；不打 body（音频/转写体积大、含隐私）。
+            level = HttpLoggingInterceptor.Level.HEADERS
+        }
+
+        okHttpClient = OkHttpClient.Builder()
+            .cookieJar(cookieJar)
+            .addInterceptor(logging)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS)   // 上传音频留足时间
+            .followRedirects(true)                 // /login 成功是 302，跟随后能拿 Set-Cookie
+            .followSslRedirects(true)
+            .retryOnConnectionFailure(true)
+            .build()
+
+        moshi = Moshi.Builder()
+            .add(KotlinJsonAdapterFactory())       // Kotlin data class 反射适配
+            .build()
+
+        retrofit = Retrofit.Builder()
+            .baseUrl(BASE_URL)
+            .client(okHttpClient)
+            .addConverterFactory(MoshiConverterFactory.create(moshi).asLenient())
+            .build()
+
+        api = retrofit.create(ConsultantApi::class.java)
+        adminApi = retrofit.create(AdminApi::class.java)
+        initialized = true
+    }
+
+    fun isInitialized(): Boolean = initialized
+}
