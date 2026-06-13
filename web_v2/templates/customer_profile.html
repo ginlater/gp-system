@@ -258,7 +258,7 @@ function loadValue() {
         renderValue(d.content, meta);
       } else {
         document.getElementById('valContent').innerHTML =
-          `<span class="muted">${d.done_count? '尚未生成，点上方按钮生成。' : '该客人还没有已完成的接诊分析。'}</span>`;
+          `<span class="muted">${d.done_count? '预测正在后台自动生成，稍后刷新本页即可查看；管理员/店长也可点上方按钮立即生成。' : '该客人还没有已完成的接诊分析。'}</span>`;
       }
     });
 }

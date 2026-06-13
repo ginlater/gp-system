@@ -4557,6 +4557,10 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        # 画像-5：接诊分析完成即给该客人重算价值预测（异步、不阻塞本次分析收尾）
+        if final_status == "done" and result_col == "analysis_result":
+            _trigger_value_after_analysis(session_id)
+
     except Exception as e:
         stop_heartbeat.set()
         db_write(
@@ -8954,6 +8958,17 @@ VALUE_TOOL = {
     },
 }
 
+# 手动生成 / 自动生成 共用同一段 system prompt，保证两条路输出一致
+_VALUE_GEN_SYS_PROMPT = (
+    "你是高端医美/美容院的客户经营顾问。基于该客人历次接待的分析记录，"
+    "综合产出对这个客人的价值评估与经营规划。要具体、可执行，不要空话套话。"
+    "按顾问分别评估匹配度时，只评估实际接待过的顾问。\n"
+    "【输出格式要求】内容给不懂技术的老板看，每个字段都用以下轻量 markdown，保持简洁、重点突出：\n"
+    "- 用 `## 小标题` 分小节（每字段 2-4 个小节即可，不要长篇大论）；\n"
+    "- 关键结论用 `**加粗**`；要点用 `- ` 列表，步骤用 `1. ` 编号；\n"
+    "- 涉及评级/程度时用 ★ 星级（如 消费力 ★★★★☆）；\n"
+    "- 每个要点一句话讲透，避免大段文字堆砌。")
+
 
 def _value_signature(sess_rows):
     """历史已分析 session 的指纹：id+完成时间。变了则缓存过期。"""
@@ -9033,10 +9048,36 @@ def api_customer_value_get():
     })
 
 
+def _value_generate_and_store(cust, done, model):
+    """核心：调一次 LLM 生成价值预测并 upsert 缓存。手动按钮与自动路径共用。
+    返回 (result_dict, generated_at)；LLM 结果异常返回 (None, None)。不做并发去重/成本闸（由调用方决定）。"""
+    name = cust["name"]
+    company_id = cust["company_id"]
+    customer_id = cust["id"]
+    user_prompt = (
+        f"客人：{name}（历史接待 {len(done)} 次）\n\n"
+        f"以下是历次接待的关键分析：\n\n{_gather_value_input(done)}")
+    result = _call_llm_with_retry(model, _VALUE_GEN_SYS_PROMPT, user_prompt, tool=VALUE_TOOL,
+                                  max_tokens=6000, stage_label="客户价值预测")
+    if not isinstance(result, dict):
+        return None, None
+    sig = _value_signature(done)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    db_write(
+        """INSERT INTO customer_value_cache (company_id, customer_id, customer_name, content, source_signature, model, generated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(company_id, customer_id, customer_name)
+           DO UPDATE SET content=excluded.content, source_signature=excluded.source_signature,
+                         model=excluded.model, generated_at=excluded.generated_at""",
+        (company_id, customer_id, name, json.dumps(result, ensure_ascii=False),
+         sig, model, now))
+    return result, now
+
+
 @app.route("/api/admin/customer_value", methods=["POST"])
-@manager_required  # P1.7：生成(触发 LLM)仍限 admin/super/store_manager，避免顾问乱触发烧钱；GET 才对所有人开
+@manager_required  # P1.7：手动"刷新"仍限 admin/super/store_manager；自动生成在后台跑，所有人都能在 GET 看到结果
 def api_customer_value_generate():
-    """按需生成客户价值预测并缓存。一次 LLM 调用，结果存表。"""
+    """手动生成/刷新客户价值预测（强制重算）。日常已由后台自动生成，这里供管理员立即刷新。"""
     data = request.get_json(silent=True) or {}
     cid = session.get("company_id")
     is_super = session.get("role") == "super"
@@ -9056,37 +9097,165 @@ def api_customer_value_generate():
     model = (data.get("model") or DEFAULT_MODEL)
     if model not in MODEL_PROVIDER:
         model = DEFAULT_MODEL
-    sys_prompt = (
-        "你是高端医美/美容院的客户经营顾问。基于该客人历次接待的分析记录，"
-        "综合产出对这个客人的价值评估与经营规划。要具体、可执行，不要空话套话。"
-        "按顾问分别评估匹配度时，只评估实际接待过的顾问。\n"
-        "【输出格式要求】内容给不懂技术的老板看，每个字段都用以下轻量 markdown，保持简洁、重点突出：\n"
-        "- 用 `## 小标题` 分小节（每字段 2-4 个小节即可，不要长篇大论）；\n"
-        "- 关键结论用 `**加粗**`；要点用 `- ` 列表，步骤用 `1. ` 编号；\n"
-        "- 涉及评级/程度时用 ★ 星级（如 消费力 ★★★★☆）；\n"
-        "- 每个要点一句话讲透，避免大段文字堆砌。")
-    user_prompt = (
-        f"客人：{cust['name']}（历史接待 {len(done)} 次）\n\n"
-        f"以下是历次接待的关键分析：\n\n{_gather_value_input(done)}")
     try:
-        result = _call_llm_with_retry(model, sys_prompt, user_prompt, tool=VALUE_TOOL,
-                                      max_tokens=6000, stage_label="客户价值预测")
+        result, now = _value_generate_and_store(dict(cust), done, model)
     except Exception as e:
         return jsonify({"error": f"生成失败：{str(e)[:200]}"}), 502
     if not isinstance(result, dict):
         return jsonify({"error": "生成结果异常"}), 502
-
-    sig = _value_signature(done)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    db_write(
-        """INSERT INTO customer_value_cache (company_id, customer_id, customer_name, content, source_signature, model, generated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(company_id, customer_id, customer_name)
-           DO UPDATE SET content=excluded.content, source_signature=excluded.source_signature,
-                         model=excluded.model, generated_at=excluded.generated_at""",
-        (cust["company_id"], customer_id, cust["name"], json.dumps(result, ensure_ascii=False),
-         sig, model, now))
     return jsonify({"content": result, "generated_at": now, "model": model, "stale": False})
+
+
+# ─── 画像-5 自动生成：即时触发（接诊完成）+ 后台扫描兜底 ───────────────────
+# 用户选定：不设每日上限、即时+扫描兜底。成本闸保留为可调环境变量（默认 0=不限）。
+VALUE_AUTOGEN_ENABLED = os.environ.get("VALUE_AUTOGEN_ENABLED", "1") != "0"
+VALUE_AUTOGEN_CONCURRENCY = max(1, int(os.environ.get("VALUE_AUTOGEN_CONCURRENCY", "3")))
+VALUE_AUTOGEN_INTERVAL = max(60, int(os.environ.get("VALUE_AUTOGEN_INTERVAL", "600")))  # 扫描周期(秒)
+VALUE_AUTOGEN_DAILY_CAP = int(os.environ.get("VALUE_AUTOGEN_DAILY_CAP", "0"))  # 0=不限
+_value_inflight_lock = threading.Lock()
+_value_inflight = set()  # {(company_id, customer_id)} 正在生成，避免即时触发与扫描重复
+_value_gen_semaphore = threading.Semaphore(VALUE_AUTOGEN_CONCURRENCY)  # 自动路径全局并发上限
+_value_cap_lock = threading.Lock()
+_value_cap_state = {"date": "", "count": 0}
+
+
+def _value_daily_cap_ok():
+    if VALUE_AUTOGEN_DAILY_CAP <= 0:
+        return True
+    today = datetime.now().strftime("%Y-%m-%d")
+    with _value_cap_lock:
+        if _value_cap_state["date"] != today:
+            _value_cap_state["date"], _value_cap_state["count"] = today, 0
+        return _value_cap_state["count"] < VALUE_AUTOGEN_DAILY_CAP
+
+
+def _value_daily_cap_inc():
+    if VALUE_AUTOGEN_DAILY_CAP <= 0:
+        return
+    today = datetime.now().strftime("%Y-%m-%d")
+    with _value_cap_lock:
+        if _value_cap_state["date"] != today:
+            _value_cap_state["date"], _value_cap_state["count"] = today, 0
+        _value_cap_state["count"] += 1
+
+
+def _value_autogen_one(cust, model=None):
+    """自动生成一个客人的价值预测：并发去重 + 仅在缓存缺失/过期时生成 + 成本闸 + 并发上限。
+    cust: dict(id, company_id, name)。返回 result 或 None（跳过/失败）。"""
+    if not VALUE_AUTOGEN_ENABLED:
+        return None
+    customer_id, company_id, name = cust["id"], cust["company_id"], cust["name"]
+    key = (company_id, customer_id)
+    with _value_inflight_lock:
+        if key in _value_inflight:
+            return None
+        _value_inflight.add(key)
+    try:
+        done = _load_customer_done_sessions(customer_id, name, company_id)
+        if not done:
+            return None
+        sig = _value_signature(done)
+        cache = db_fetchone(
+            "SELECT source_signature FROM customer_value_cache WHERE company_id=? AND customer_id=?",
+            (company_id, customer_id))
+        if cache and cache["source_signature"] == sig:
+            return None  # 已是最新，免烧
+        if not _value_daily_cap_ok():
+            print(f"[value_autogen] 达每日上限({VALUE_AUTOGEN_DAILY_CAP})，跳过 customer={customer_id}")
+            return None
+        mdl = model or DEFAULT_MODEL
+        if mdl not in MODEL_PROVIDER:
+            mdl = DEFAULT_MODEL
+        with _value_gen_semaphore:
+            result, _now = _value_generate_and_store(cust, done, mdl)
+        if isinstance(result, dict):
+            _value_daily_cap_inc()
+            print(f"[value_autogen] 已生成 customer={customer_id}（{name}）")
+            return result
+        return None
+    except Exception as e:
+        print(f"[value_autogen] customer={customer_id} 生成失败: {e}")
+        return None
+    finally:
+        with _value_inflight_lock:
+            _value_inflight.discard(key)
+
+
+def _trigger_value_after_analysis(session_id):
+    """接诊分析完成后，异步给该客人重算价值预测（散客/无档案则跳过）。"""
+    if not VALUE_AUTOGEN_ENABLED:
+        return
+    try:
+        s = db_fetchone("SELECT customer_id, customer, company_id FROM sessions WHERE id=?", (session_id,))
+        if not s:
+            return
+        company_id = s["company_id"] or 1
+        cust = None
+        if s["customer_id"]:
+            cust = db_fetchone(
+                "SELECT id, company_id, name FROM company_customers WHERE id=? AND merged_into IS NULL",
+                (s["customer_id"],))
+        if not cust and s["customer"]:
+            cust = db_fetchone(
+                "SELECT id, company_id, name FROM company_customers WHERE name=? AND company_id=? AND merged_into IS NULL",
+                (s["customer"], company_id))
+        if not cust:
+            return
+        threading.Thread(target=_value_autogen_one, args=(dict(cust),), daemon=True,
+                         name=f"value-gen-s{session_id}").start()
+    except Exception as e:
+        print(f"[value_autogen] 触发失败 session={session_id}: {e}")
+
+
+def _value_autogen_candidates():
+    """扫描"有 done 接诊、但价值缓存缺失或已过期(signature 变了)"的客人。"""
+    rows = db_fetchall(
+        """SELECT id, company_id, name FROM company_customers cc
+           WHERE merged_into IS NULL AND EXISTS (
+             SELECT 1 FROM sessions s
+             WHERE s.analysis_status='done' AND s.analysis_result IS NOT NULL
+               AND ((s.customer_id IS NOT NULL AND s.customer_id=cc.id)
+                 OR (s.customer_id IS NULL AND s.customer=cc.name
+                     AND (s.company_id IS NULL OR s.company_id=cc.company_id))))""")
+    if not rows:
+        return []
+    cache_sigs = {cr["customer_id"]: cr["source_signature"]
+                  for cr in db_fetchall("SELECT customer_id, source_signature FROM customer_value_cache")}
+    out = []
+    for r in rows:
+        sclause, sparams = _customer_session_clause(r["id"], r["name"], r["company_id"])
+        done_lite = db_fetchall(
+            f"""SELECT s.id, s.analysis_finished_at FROM sessions s
+                WHERE {sclause} AND s.analysis_status='done' AND s.analysis_result IS NOT NULL
+                ORDER BY s.service_date DESC, s.id DESC""", tuple(sparams))
+        if not done_lite:
+            continue
+        if cache_sigs.get(r["id"]) != _value_signature(done_lite):
+            out.append({"id": r["id"], "company_id": r["company_id"], "name": r["name"]})
+    return out
+
+
+def _value_autogen_loop():
+    """后台扫描兜底：周期性补齐缺失/过期的价值预测。即时触发漏掉的、历史存量都在这里补。"""
+    import time as _t
+    import concurrent.futures as _cf
+    _t.sleep(60)  # 启动后等服务稳了再开扫，避免和 startup_kick/接诊分析抢资源
+    while True:
+        try:
+            cands = _value_autogen_candidates()
+            if cands:
+                print(f"[value_autogen] 扫描发现 {len(cands)} 个待生成/过期客人，开始补齐…")
+                with _cf.ThreadPoolExecutor(max_workers=VALUE_AUTOGEN_CONCURRENCY,
+                                            thread_name_prefix="value-sweep") as ex:
+                    list(ex.map(_value_autogen_one, cands))
+                print("[value_autogen] 本轮扫描补齐完成")
+        except Exception as e:
+            print(f"[value_autogen] 扫描循环出错: {e}")
+        _t.sleep(VALUE_AUTOGEN_INTERVAL)
+
+
+if VALUE_AUTOGEN_ENABLED:
+    threading.Thread(target=_value_autogen_loop, daemon=True, name="value-autogen").start()
 
 
 # ============ 顾客下拉搜索（顾问/管理员通用） ============
