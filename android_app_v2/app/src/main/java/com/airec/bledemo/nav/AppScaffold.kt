@@ -237,7 +237,14 @@ private fun AppNavHost(
             BindCustomerScreen(
                 recordingId = rid,
                 onBack = { navController.popBackStack() },
-                onBound = { sid -> navController.navigate(Routes.SessionPreview.build(sid)) },
+                // 绑定成功 → 跳会话预览，并把「绑定页」从返回栈移除：
+                // 否则预览页点返回会落回绑定页，而绑定页的 LaunchedEffect(boundSessionId) 仍持有
+                // 旧 sessionId → 立刻又把你弹回预览，表现为「返回不了」。inclusive 移除后返回直达待整理。
+                onBound = { sid ->
+                    navController.navigate(Routes.SessionPreview.build(sid)) {
+                        popUpTo(Routes.BindCustomer.routePattern) { inclusive = true }
+                    }
+                },
             )
         }
         composable(
