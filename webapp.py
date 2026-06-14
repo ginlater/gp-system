@@ -12988,6 +12988,20 @@ def _emit_escalation(company_id, store_id, advisor_user_id, advisor_name,
     )
 
 
+def _fmt_rec_dt(ts_str):
+    """录音时间 '2026-06-14 21:29:08' → '6月14日 21:29'（供提醒文案具体到哪天几点）。解析失败回退原串。"""
+    if not ts_str:
+        return ""
+    s = str(ts_str)[:26]
+    for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y%m%d%H%M%S"):
+        try:
+            dt = datetime.strptime(s[:len(fmt) + 6] if "%f" in fmt else s[:19], fmt)
+            return f"{dt.month}月{dt.day}日 {dt.hour:02d}:{dt.minute:02d}"
+        except ValueError:
+            continue
+    return str(ts_str)[:16]
+
+
 def _hours_since(ts_str, now):
     """ts_str（localtime 字符串）距 now 的小时数；无法解析返回 None。"""
     if not ts_str:
@@ -13061,13 +13075,14 @@ def run_reminder_scan(now=None):
             cfg = get_reminder_config(cid, store_id)
             H = int(cfg.get("remind_after_hours") or 2)
 
+            _rec_when = _fmt_rec_dt(r["recorded_at"] or r["created_at"])
             # L1：>H 小时未绑定 → 站内提醒顾问（一对象一行，未处理即不重复）
             if hrs >= H and tu_id:
                 if not _already_reminded("unbound", "recording", r["id"], 1, "inapp", today,
                                          target_user_id=tu_id):
                     _emit_reminder(cid, store_id, tu_id, tu_name, "unbound", 1, "inapp",
                                    "recording", r["id"],
-                                   f"有一条录音已超过 {H} 小时未绑定客人，请尽快归档。")
+                                   f"{_rec_when}的一条陪伴录音已超过 {H} 小时未绑定客人，请尽快去绑定归档。")
                     stats["unbound_l1"] += 1
 
             # L2：当日结束仍未绑定（录音不是今天产生的 → 已跨过当日）→ 电话提醒(stub)
@@ -13087,7 +13102,7 @@ def run_reminder_scan(now=None):
                 if not _already_reminded("unbound", "recording", r["id"], 3, "board", today):
                     _emit_reminder(cid, store_id, tu_id, tu_name, "unbound", 3, "board",
                                    "recording", r["id"],
-                                   f"录音超过 24 小时未绑定（顾问：{tu_name}），看板标红。")
+                                   f"{_rec_when}的录音超过 24 小时未绑定（顾问：{tu_name}），看板标红。")
                     stats["unbound_l3"] += 1
 
         # 闭环：已绑定/已消失的录音 → 关掉旧的未处理 inapp/phone 未绑定提醒
@@ -13097,7 +13112,7 @@ def run_reminder_scan(now=None):
         # ---------- 2) 报告未查看 ----------
         # done 且无 report_view_events(enter) = 完成未查看
         unviewed = db_fetchall(
-            """SELECT s.id, s.advisor, s.store_id, s.analysis_finished_at
+            """SELECT s.id, s.advisor, s.customer, s.store_id, s.analysis_finished_at
                FROM sessions s
                WHERE s.company_id=? AND s.analysis_status='done'
                  AND NOT EXISTS (
@@ -13115,6 +13130,7 @@ def run_reminder_scan(now=None):
             u = _user_for_advisor(cid, s["advisor"])
             tu_id = u["id"] if u else None
             tu_name = (u["advisor_name"] if u else None) or (s["advisor"] or "未知顾问")
+            cust = (s["customer"] or "").strip() or "某位顾客"
             store_id = s["store_id"] or (u["store_id"] if u else None)
             cfg = get_reminder_config(cid, store_id)
             H = int(cfg.get("remind_after_hours") or 2)
@@ -13133,7 +13149,7 @@ def run_reminder_scan(now=None):
                                          target_user_id=tu_id):
                     _emit_reminder(cid, store_id, tu_id, tu_name, "unviewed", 1, "inapp",
                                    "session", s["id"],
-                                   f"您有一份分析报告已生成超过 {H} 小时尚未查看，请及时复盘。")
+                                   f"{cust} 的分析报告已生成超过 {H} 小时尚未查看，请及时复盘。")
                     stats["unviewed_l1"] += 1
 
             # 升级：报告生成的"第二天"自然日仍未查看 → 写 1 条 channel='escalation'
@@ -13143,11 +13159,11 @@ def run_reminder_scan(now=None):
                 if not _already_reminded("unviewed", "session", s["id"], None, "escalation", today):
                     if owner_is_manager:
                         _emit_escalation(cid, store_id, tu_id, tu_name, s["id"],
-                                         f"店长（{tu_name}）本人的报告隔日仍未查看，请管理员关注。",
+                                         f"店长（{tu_name}）{cust} 的报告隔日仍未查看，请管理员关注。",
                                          manager_own=True)
                     else:
                         _emit_escalation(cid, store_id, tu_id, tu_name, s["id"],
-                                         f"报告隔日仍未查看（顾问：{tu_name}），请店长跟进。",
+                                         f"{cust} 的报告隔日仍未查看（顾问：{tu_name}），请店长跟进。",
                                          manager_own=False)
                     stats["unviewed_l2"] += 1
 
