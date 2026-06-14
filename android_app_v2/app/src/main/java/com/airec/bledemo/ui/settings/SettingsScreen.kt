@@ -142,6 +142,7 @@ fun SettingsScreen(
             AboutCard(
                 state = state,
                 onUpdate = openUpdate,
+                onCheck = { viewModel.checkVersion() },
             )
             Spacer(Modifier.height(Dimens.S6))
 
@@ -425,14 +426,57 @@ private fun SkinRow(skin: ThemeManager.Skin, selected: Boolean, last: Boolean, o
 private fun AboutCard(
     state: SettingsUiState,
     onUpdate: () -> Unit,
+    onCheck: () -> Unit,
 ) {
-    // v2 独立版本系列：只显示本机自己的版本，不拉 v1 的「最新版本/更新」（两个包不互通）。
+    val hasUpdate = state.updateAvailable || state.mustUpgrade
     MeiliCard {
         KvRow(
             key = "当前版本",
             value = state.installedVersionName,
-            divider = false,
+            divider = true,
         )
+        // 检查更新行：左侧标题 + 状态文案；右侧「检查 / 去更新」
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "检查更新",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.5f.sp),
+                    color = MeiliPalette.Ink,
+                )
+                Text(
+                    text = when {
+                        state.versionLoading -> "正在为你查看最新版…"
+                        hasUpdate -> "发现新版本" + (state.latestVersionName?.let { " · $it" } ?: "")
+                        state.versionCheckDone -> "已是最新版本，无需更新"
+                        else -> "看看有没有更顺手的新版本"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5f.sp),
+                    color = if (hasUpdate) MeiliPalette.ClayDeep else MeiliPalette.Ink3,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            if (hasUpdate) {
+                PrimaryButton(
+                    text = "去更新",
+                    onClick = onUpdate,
+                    icon = MeiliIcons.Upload,
+                    size = MeiliButtonSize.Xs,
+                )
+            } else {
+                GhostButton(
+                    text = if (state.versionLoading) "检查中" else "检查",
+                    onClick = onCheck,
+                    enabled = !state.versionLoading,
+                    size = MeiliButtonSize.Xs,
+                )
+            }
+        }
     }
 }
 
@@ -661,7 +705,7 @@ private fun SettingsPreviewBody(state: SettingsUiState) {
             Spacer(Modifier.height(Dimens.CardGap))
             SectionLabel("关于美丽陪伴", icon = MeiliIcons.Info)
             Spacer(Modifier.height(9.dp))
-            AboutCard(state = state, onUpdate = {})
+            AboutCard(state = state, onUpdate = {}, onCheck = {})
             Spacer(Modifier.height(Dimens.S6))
             GhostButton("退出登录", {}, icon = MeiliIcons.Lock, modifier = Modifier.fillMaxWidth())
         }

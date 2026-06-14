@@ -45,10 +45,8 @@ class SettingsViewModel(
     fun setInstalledVersion(versionName: String, versionCode: Long) {
         _state.update { it.copy(installedVersionName = versionName, installedVersionCode = versionCode) }
         if (!meLoaded) { meLoaded = true; loadMe() }
-        // v2 是独立版本系列、独立分发：绝不查 /api/app/version（那是 v1 WebView 杰理包的端点，
-        // 返回的是 v1 的 2.1.14/code25）。否则 v2(code9) 会被判「需强制升级到 v1 的 APK」、把两个包搅在一起。
-        // v2 只显示本机自己的版本，与 v1 不互通；v2 的新版靠 /download/v2 单独分发。
-        versionChecked = true   // 占位，确保不再触发任何 v1 版本检查
+        // 进设置自动查一次 v2 独立版本接口（/api/app/v2/version，与 v1 的 /api/app/version 分开）。
+        if (!versionChecked) { versionChecked = true; checkVersion() }
     }
 
     /** 拉陪伴师信息（顶部账号卡）。失败不阻断，留空展示即可。 */
@@ -62,11 +60,11 @@ class SettingsViewModel(
         }
     }
 
-    /** 拉后端版本并比对：installed < min → 需要强制升级。fail-open：失败一律不挡。 */
+    /** 查 v2 独立版本接口并比对：installed < min → 强制；< latest → 可选更新。fail-open：失败一律不挡。 */
     fun checkVersion() {
         _state.update { it.copy(versionLoading = true, versionError = null) }
         viewModelScope.launch {
-            when (val r = repo.appVersion()) {
+            when (val r = repo.appVersionV2()) {
                 is ApiResult.Success -> {
                     val v = r.data
                     val installed = _state.value.installedVersionCode
@@ -82,12 +80,13 @@ class SettingsViewModel(
                             updateAvailable = hasOptional,
                             versionLoading = false,
                             versionError = null,
+                            versionCheckDone = true,
                         )
                     }
                 }
                 is ApiResult.Failure -> _state.update {
                     // fail-open：拿不到后端版本就当作"无需升级"，不弹强升卡
-                    it.copy(versionLoading = false, versionError = r.message, mustUpgrade = false, updateAvailable = false)
+                    it.copy(versionLoading = false, versionError = r.message, mustUpgrade = false, updateAvailable = false, versionCheckDone = true)
                 }
             }
         }
@@ -124,6 +123,7 @@ data class SettingsUiState(
     val appVersion: AppVersion? = null,
     val versionLoading: Boolean = false,
     val versionError: String? = null,
+    val versionCheckDone: Boolean = false,
     val mustUpgrade: Boolean = false,
     val updateAvailable: Boolean = false,
     val loggingOut: Boolean = false,
@@ -154,8 +154,13 @@ data class SettingsUiState(
     val updateNote: String?
         get() = appVersion?.updateNote?.takeIf { it.isNotBlank() }
 
-    /** 升级下载地址（优先 apkUrl，退回 pageUrl）。 */
+    /** 升级地址：优先下载页（带安装引导、对微信更友好），转成绝对 URL 供浏览器打开。 */
     val updateUrl: String?
-        get() = appVersion?.apkUrl?.takeIf { it.isNotBlank() }
-            ?: appVersion?.pageUrl?.takeIf { it.isNotBlank() }
+        get() {
+            val path = appVersion?.pageUrl?.takeIf { it.isNotBlank() }
+                ?: appVersion?.apkUrl?.takeIf { it.isNotBlank() }
+                ?: return null
+            return if (path.startsWith("http")) path
+            else com.airec.bledemo.data.net.NetworkModule.BASE_URL.trimEnd('/') + path
+        }
 }
