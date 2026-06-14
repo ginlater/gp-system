@@ -43,12 +43,15 @@ android {
 
     buildTypes {
         release {
+            // v2 正式包独立身份 com.aibeautyfulwomen.gongpai.v2：与 v1(.gongpai) 同机并存，
+            // 走独立下载链路(/download/v2)，不抢 v1 的强更/版本接口。
+            applicationIdSuffix ".v2"
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             if (keystorePropsFile.exists()) signingConfig signingConfigs.release
         }
         debug {
-            // v2 开发期独立包：与线上 release 包 com.aibeautyfulwomen.gongpai 共存、不撞签名。
+            // 开发包同样 .v2（与 release 同 applicationId，单机二选一）；都与 v1 .gongpai 并存、不撞签名。
             applicationIdSuffix ".v2"
             versionNameSuffix "-v2dev"
         }
