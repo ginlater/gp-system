@@ -33,6 +33,7 @@ object MeiliPalette {
     val ClayTint: Color get() = ThemeManager.current.clayTint
     val ClayLight: Color get() = ThemeManager.clayLight   // 主按钮渐变起点（按当前皮肤派生）
     val ClayGlow: Color get() = ThemeManager.clayGlow      // 圆钮高光起点（按当前皮肤派生）
+    val ClayBright: Color get() = ThemeManager.clayBright  // 录音呼吸态核心高光（最亮，按当前皮肤派生）
 
     // ---- sage 雾感鼠尾草辅色（sageSoft 随主题，其余固定） ----
     val Sage = Color(0xFF93A38E)
@@ -97,9 +98,10 @@ object MeiliPalette {
     val CompanionGradient: Brush
         get() = Brush.radialGradient(listOf(ClayGlow, Clay, ClayDeep))
 
-    /** 陪伴圆钮（进行中）：偏玫瑰的呼吸态高光 */
+    /** 陪伴圆钮（进行中/录音中）：随主题的呼吸态——比空闲态更亮的同主色高光核心，
+     *  配合缩放呼吸 + 白色停止方块表达「正在陪伴」。各皮肤都跟着主色变（黑金=金色呼吸等）。 */
     val CompanionLiveGradient: Brush
-        get() = Brush.radialGradient(listOf(Color(0xFFDD9883), Rose, Color(0xFFA8503C)))
+        get() = Brush.radialGradient(listOf(ClayBright, Clay, ClayDeep))
 
     /** 头像默认底：linear-gradient(135deg,clay-soft,sage-soft) */
     val AvatarGradient: Brush

@@ -116,9 +116,10 @@ object ThemeManager {
     val current: Skin get() = skins.firstOrNull { it.id == idState } ?: skins[0]
     fun skinOf(id: String): Skin = skins.firstOrNull { it.id == id } ?: skins[0]
 
-    /** 主按钮渐变起点（略亮）/ 圆钮高光（更亮）：按当前主色朝白插值，任何皮肤都协调。 */
+    /** 主按钮渐变起点（略亮）/ 圆钮高光（更亮）/ 录音呼吸态核心（最亮）：按当前主色朝白插值，任何皮肤都协调。 */
     val clayLight: Color get() = lerp(current.clay, Color.White, 0.13f)
     val clayGlow: Color get() = lerp(current.clay, Color.White, 0.32f)
+    val clayBright: Color get() = lerp(current.clay, Color.White, 0.50f)
 
     /** 夜间时段：18:00–次日 06:00（含 18 点起、到 6 点前）。 */
     fun isNightNow(): Boolean {
