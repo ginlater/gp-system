@@ -5031,7 +5031,14 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.18"
+APP_V2_VERSION_NAME = "2.0.19"
+# v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
+#   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
+#   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
+#   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
+APP_V2_LATEST_VERSION_CODE = 20   # = build.gradle versionCode（2.0.19）
+APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
+APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
 #   每个版本同名("刁姐陪伴.apk")时，上次强更留在手机下载目录里的旧包会顶包——浏览器弹"该文件已下载"
 #   或存成"(1)"副本，顾问点开装的还是旧版 → 版本仍 < MIN → 又弹强更，"点了立即更新还要更新"死循环。
@@ -5153,6 +5160,20 @@ def app_version():
         "apkUrl": f"/download/app.apk?v={APP_LATEST_VERSION_CODE}",
         "pageUrl": "/download",
         "updateNote": APP_UPDATE_NOTE,
+    })
+
+
+@app.route("/api/app/v2/version")
+def app_version_v2():
+    """v2 原生包（MeiliActivity）独立的版本检查。无需登录。
+    客户端拿 installedVersionCode 比：< minVersionCode → 强制更新；< latest → 可关提示。"""
+    return jsonify({
+        "latestVersionCode": APP_V2_LATEST_VERSION_CODE,
+        "latestVersionName": APP_V2_VERSION_NAME,
+        "minVersionCode": APP_V2_MIN_VERSION_CODE,
+        "apkUrl": f"/download/v2.apk?v={APP_V2_LATEST_VERSION_CODE}",
+        "pageUrl": "/download/v2",
+        "updateNote": APP_V2_UPDATE_NOTE,
     })
 
 

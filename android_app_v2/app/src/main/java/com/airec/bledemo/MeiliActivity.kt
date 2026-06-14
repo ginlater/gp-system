@@ -21,6 +21,8 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.airec.bledemo.data.auth.AuthManager
@@ -187,5 +189,64 @@ private fun MeiliApp(startDestination: String) {
                     .windowInsetsPadding(WindowInsets.systemBars),
             )
         }
+        // 启动检查 v2 新版本 → 弹「去更新」提示（低于 min 则强制）。
+        UpdateGate()
     }
+}
+
+/** v2 原生包更新闸：启动查 /api/app/v2/version，装的版本低于最新就弹提示；低于 min 则不可关。 */
+@Composable
+private fun UpdateGate() {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    var info by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<com.airec.bledemo.data.model.AppVersion?>(null)
+    }
+    var installed by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(0L) }
+    var later by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        installed = runCatching {
+            val pi = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong()
+        }.getOrDefault(0L)
+        when (val r = com.airec.bledemo.data.repo.ConsultantRepository().appVersionV2()) {
+            is com.airec.bledemo.data.repo.ApiResult.Success -> info = r.data
+            else -> Unit
+        }
+    }
+
+    val v = info ?: return
+    val latest = (v.latestVersionCode ?: 0).toLong()
+    val min = (v.minVersionCode ?: 0).toLong()
+    if (installed <= 0L || installed >= latest || later) return
+    val force = installed < min
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { if (!force) later = true },
+        containerColor = MeiliPalette.Surface,
+        titleContentColor = MeiliPalette.Ink,
+        textContentColor = MeiliPalette.Ink2,
+        title = { androidx.compose.material3.Text("发现新版本" + (v.latestVersionName?.let { " $it" } ?: "")) },
+        text = { androidx.compose.material3.Text(v.updateNote ?: "建议更新到最新版本。") },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = {
+                val page = v.pageUrl ?: "/download/v2"
+                val url = if (page.startsWith("http")) page else "https://gp.aibeautyfulwomen.com$page"
+                runCatching {
+                    ctx.startActivity(
+                        android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                    )
+                }
+            }) {
+                androidx.compose.material3.Text("去更新", color = MeiliPalette.ClayDeep, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            if (!force) {
+                androidx.compose.material3.TextButton(onClick = { later = true }) {
+                    androidx.compose.material3.Text("稍后", color = MeiliPalette.Ink3)
+                }
+            }
+        },
+    )
 }

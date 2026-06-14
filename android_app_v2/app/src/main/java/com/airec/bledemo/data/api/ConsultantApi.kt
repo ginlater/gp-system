@@ -39,6 +39,10 @@ interface ConsultantApi {
     @GET("api/app/version")
     suspend fun appVersion(): Response<AppVersion>
 
+    /** v2 原生包独立版本检查（启动提示更新）。无需登录。 */
+    @GET("api/app/v2/version")
+    suspend fun appVersionV2(): Response<AppVersion>
+
     // ───────────── 陪伴上传 / 占位 ─────────────
 
     /**

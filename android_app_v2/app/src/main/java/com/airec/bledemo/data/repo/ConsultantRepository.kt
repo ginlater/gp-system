@@ -31,6 +31,8 @@ class ConsultantRepository(
 
     suspend fun appVersion(): ApiResult<AppVersion> = call { api.appVersion() }
 
+    suspend fun appVersionV2(): ApiResult<AppVersion> = call { api.appVersionV2() }
+
     // ───────────── 上传 / 占位 ─────────────
 
     /**
