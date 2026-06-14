@@ -2486,7 +2486,7 @@ TOOL_CALL2 = {
                             "required": ["title"],
                             "properties": {
                                 "title": {"type": "string",
-                                          "description": "步骤标题，如 '引导顾客说出效果' / '解释今天效果的原理' / '埋下下次的钩子' / '自然过渡到方案'"},
+                                          "description": "步骤名 ≤8 字、动宾短语，如'引导说出效果'/'埋下下次钩子'，不带引号、不写话术"},
                             },
                         },
                     },
@@ -2604,7 +2604,7 @@ TOOL_CALL3 = {
                             "required": ["title"],
                             "properties": {
                                 "title": {"type": "string",
-                                          "description": "回店切入角度的标题（只写大标题，不写话术正文）"},
+                                          "description": "回店切入角度短标题，≤10 字（如'从干眼症切入'），不写话术、不带引号"},
                             },
                         },
                     },
@@ -2628,7 +2628,7 @@ TOOL_CALL3 = {
                             "required": ["pain_name"],
                             "properties": {
                                 "pain_name": {"type": "string",
-                                              "description": "痛点名称（只写标题，不写 entry/principle/direction/sales_link 话术）"},
+                                              "description": "痛点名，≤8 字（如'肩颈僵硬'），不写描述句、不带引号"},
                             },
                         },
                     },
@@ -3023,7 +3023,7 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
 
 ⚠ harvest 字段：
 - intro：导语一句，强调黄金窗口为什么重要
-- steps：3-5 步，每步**只写 title（步骤名）**，不要写 body 话术/操作说明
+- steps：3-5 步，每步**只写 title 步骤名，≤8 字、动宾短语**（如"引导说出效果""埋下下次钩子"），不写 body、不写完整话术、不带引号
 
 注意：harvest 是给顾问的"下次怎么做"指引，不是复盘本次。只列步骤标题即可，不展开话术。
 """,
@@ -3068,9 +3068,9 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
         "depends_on": ["T1", "T2", "T4"],
         "prompt_snippet": """【任务11】下一步动作 · 回店规划
 ⚠ next_steps 对象 4 个字段必填：
-- return_scripts：至少 2 条回店切入角度，**每条只写 title 大标题，不写话术正文（body）**
+- return_scripts：至少 2 条回店切入角度，**每条只写 title 短标题：≤10 字的切入角度名**（如"从干眼症切入""借换季理由"），不写话术正文、不写完整句子、不带引号
 - priority_projects：按成交难度从低到高 2-3 条（name + desc）
-- pain_entry_scripts：列出针对的每个痛点，**每条只写 pain_name 痛点名称，不写 entry/principle/direction/sales_link 话术**
+- pain_entry_scripts：列出针对的每个痛点，**每条只写 pain_name：≤8 字的痛点名**（如"肩颈僵硬""睡眠差""产后修复"），不写描述句、不写 entry/principle/direction/sales_link 话术、不带引号
 - medical_objections：至少 3 条泛医疗异议应答，60-100 字，严格遵循 ①承认医院 → ②分工边界 → ③我们位置 → ④互补不冲突
 """,
     },
