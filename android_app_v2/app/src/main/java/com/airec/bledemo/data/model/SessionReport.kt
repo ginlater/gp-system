@@ -40,6 +40,7 @@ data class SessionDetail(
     @Json(name = "analysis_progress") val analysisProgress: String? = null,
     @Json(name = "analysis_error") val analysisError: String? = null,
     @Json(name = "display_status") val displayStatus: String? = null,   // running|queued|done|failed|stuck|idle
+    @Json(name = "delete_request_pending") val deleteRequestPending: Boolean = false,  // 有待审批的删除申请→可撤销
     @Json(name = "recordings") val recordings: List<SessionRecording>? = null,
     @Json(name = "evaluations") val evaluations: List<Evaluation>? = null,
     @Json(name = "report") val report: SessionReport? = null,

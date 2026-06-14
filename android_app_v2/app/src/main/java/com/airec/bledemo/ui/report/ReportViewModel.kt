@@ -66,10 +66,28 @@ data class ReportUiState(
     val reanalyzing: Boolean = false,
     val confirming: Boolean = false,
     val toast: ReportToast? = null,
+    val sessionDeleted: Boolean = false,
 ) {
     /** 全部音频段落（多段陪伴；可能 0/1/n 段）。 */
     val recordings: List<SessionRecording>
         get() = detail?.recordings ?: emptyList()
+
+    /**
+     * 免审批删除资格：本接诊所有录音时长都能解析、且总时长 < 5 分钟。
+     * 与后端 FREE_DELETE_MAX_SEC=300 同口径；算不出时长的（'未知时长'等）一律不免审批（保守走审批）。
+     * 仅用于 UI 文案；最终是否免审批由后端裁决。
+     */
+    val freeDeleteEligible: Boolean
+        get() {
+            val recs = recordings
+            if (recs.isEmpty()) return false
+            var total = 0
+            for (r in recs) {
+                val s = parseDurationSeconds(r.durationLabel) ?: return false
+                total += s
+            }
+            return total < 300
+        }
 
     /** 当前选中段（越界则退回第一段）。 */
     val currentRecording: SessionRecording?
@@ -430,12 +448,36 @@ class ReportViewModel(
         }
     }
 
-    /** 申请删除本次接诊的所有录音（按 session，走管理员审批）。 */
+    /**
+     * 删除本次接诊。后端裁决：总时长<5分钟→免审批直接删（deleted=true，接诊已不存在→上层退出报告页）；
+     * 否则进入管理员审批流程（刷新→「删除审批中」可撤销态）。
+     */
     fun requestDelete() {
         viewModelScope.launch {
             when (val r = repo.sessionDeleteRequest(sessionId)) {
-                is ApiResult.Success ->
-                    _state.update { it.copy(toast = ReportToast("已申请删除本次接诊录音，待审批")) }
+                is ApiResult.Success -> {
+                    if (r.data.deleted == true) {
+                        // 免审批已直接删掉，接诊不存在了——不要再 load()，标记让 Screen 退回上一页
+                        _state.update { it.copy(toast = ReportToast("已删除这次接诊"), sessionDeleted = true) }
+                    } else {
+                        _state.update { it.copy(toast = ReportToast("已申请删除本次接诊录音，待审批")) }
+                        load()
+                    }
+                }
+                is ApiResult.Failure ->
+                    _state.update { it.copy(toast = ReportToast(r.message, danger = true)) }
+            }
+        }
+    }
+
+    /** 撤销本次接诊的删除申请（删除审批中→撤回）。成功后刷新详情→回到可再申请态。 */
+    fun withdrawDelete() {
+        viewModelScope.launch {
+            when (val r = repo.sessionDeleteRequestWithdraw(sessionId)) {
+                is ApiResult.Success -> {
+                    _state.update { it.copy(toast = ReportToast("已撤销删除申请")) }
+                    load()
+                }
                 is ApiResult.Failure ->
                     _state.update { it.copy(toast = ReportToast(r.message, danger = true)) }
             }
@@ -446,4 +488,13 @@ class ReportViewModel(
     fun onToastShown() {
         _state.update { it.copy(toast = null) }
     }
+}
+
+/** 解析录音时长标签 'MM分SS秒'(MM 可>59) → 秒；解析不出返回 null。与后端 _duration_label_seconds 同口径。 */
+private fun parseDurationSeconds(label: String?): Int? {
+    if (label.isNullOrBlank()) return null
+    val m = Regex("""^\s*(\d+)\s*分\s*(\d+)\s*秒""").find(label) ?: return null
+    val min = m.groupValues[1].toIntOrNull() ?: return null
+    val sec = m.groupValues[2].toIntOrNull() ?: return null
+    return min * 60 + sec
 }

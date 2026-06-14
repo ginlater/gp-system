@@ -55,6 +55,7 @@ import com.airec.bledemo.designsystem.components.PillKind
 import com.airec.bledemo.designsystem.components.PrimaryButton
 import com.airec.bledemo.designsystem.components.SoftButton
 import com.airec.bledemo.designsystem.components.StatusPill
+import com.airec.bledemo.designsystem.components.TopBarIconButton
 
 /**
  * 分析报告（SPEC §6 / warm_2 #report）。最重要、最复杂的一屏。
@@ -98,10 +99,22 @@ fun ReportScreen(
         }
     }
 
-    // 原始音频折叠 / 详细评分弹层 / 重新分析确认，均为屏内本地开关。
+    // 免审批删除：接诊已被直接删掉 → 退回上一页（报告已不存在）。
+    // 先等删除确认弹层收完动画再 pop，否则 popBackStack 会被正在消失的 ModalBottomSheet 吞掉、退不出去。
+    LaunchedEffect(state.sessionDeleted) {
+        if (state.sessionDeleted) {
+            kotlinx.coroutines.delay(350)
+            onBack()
+        }
+    }
+
+    // 原始音频折叠 / 详细评分弹层 / 重新分析确认 / 任务执行状态弹层，均为屏内本地开关。
     var audioOpen by remember { mutableStateOf(false) }
     var scoringOpen by remember { mutableStateOf(false) }
     var reanalyzeConfirm by remember { mutableStateOf(false) }
+    var taskSheetOpen by remember { mutableStateOf(false) }
+    var deleteConfirm by remember { mutableStateOf(false) }
+    var withdrawConfirm by remember { mutableStateOf(false) }
 
     // 任务执行状态：进报告后每 15s 静默轮询刷新（对齐 report.html setInterval(loadTaskStatus,15000)）。
     LaunchedEffect(Unit) {
@@ -123,11 +136,21 @@ fun ReportScreen(
                 .padding(horizontal = Dimens.ScreenH)
                 .padding(bottom = Dimens.BottomNavInset),
         ) {
-            // ---- 顶栏：张陪伴师 × 刘佳佳 / 副标题 ----
+            // ---- 顶栏：张陪伴师 × 刘佳佳 / 副标题 + 右上角「任务执行状态」chip ----
             MeiliTopBar(
                 title = state.headerTitle,
                 subtitle = state.headerSubtitle,
                 onBack = onBack,
+                actions = {
+                    if (state.detail != null) {
+                        TaskStatusChip(
+                            done = state.tasksDone,
+                            total = if (state.tasks.isNotEmpty()) state.tasks.size else 11,
+                            loading = state.tasksLoading && state.tasks.isEmpty(),
+                            onClick = { taskSheetOpen = true },
+                        )
+                    }
+                },
             )
 
             when {
@@ -157,7 +180,8 @@ fun ReportScreen(
                     onSplitAt = viewModel::splitCurrent,
                     onSubmitEvaluation = { text -> viewModel.addEvaluation(text) },
                     onDeleteEvaluation = viewModel::deleteEvaluation,
-                    onRequestDelete = viewModel::requestDelete,
+                    onRequestDelete = { deleteConfirm = true },
+                    onWithdrawDelete = { withdrawConfirm = true },
                 )
             }
         }
@@ -167,6 +191,17 @@ fun ReportScreen(
             visible = scoringOpen,
             scoring = state.detail?.report?.scoring,
             onDismiss = { scoringOpen = false },
+        )
+
+        // ---- 任务执行状态弹层（右上角 chip 点开；平铺 11 任务 + 单独重跑 + 补齐缺失）----
+        TaskSheet(
+            visible = taskSheetOpen,
+            tasks = state.tasks,
+            loading = state.tasksLoading,
+            submitting = state.rerunSubmitting,
+            onRerunTask = { id -> viewModel.rerunTasks(listOf(id)) {} },
+            onFillMissing = { viewModel.fillMissing {} },
+            onDismiss = { taskSheetOpen = false },
         )
 
         // ---- 重新分析确认（对齐 report.html reanalyze 二次确认）----
@@ -181,6 +216,40 @@ fun ReportScreen(
                 viewModel.reanalyze()
             },
             onDismiss = { reanalyzeConfirm = false },
+        )
+
+        // ---- 删除 二次确认（总时长<5分钟→免审批直接删；否则走管理员审批）----
+        ConfirmSheet(
+            visible = deleteConfirm,
+            title = if (state.freeDeleteEligible) "删除这次接诊？" else "申请删除这次接诊？",
+            message = if (state.freeDeleteEligible) {
+                "这次陪伴总时长不到 5 分钟，可直接删除、无需审批。"
+            } else {
+                "提交后将由管理员审批。删除前你可随时撤销。"
+            },
+            confirmText = "确定删除",
+            confirming = false,
+            icon = MeiliIcons.Trash,
+            onConfirm = {
+                deleteConfirm = false
+                viewModel.requestDelete()
+            },
+            onDismiss = { deleteConfirm = false },
+        )
+
+        // ---- 撤销删除申请 二次确认 ----
+        ConfirmSheet(
+            visible = withdrawConfirm,
+            title = "撤销删除申请？",
+            message = "这次接诊正在删除审批中，撤销后将不再删除。",
+            confirmText = "撤销删除",
+            confirming = false,
+            icon = MeiliIcons.Sync,
+            onConfirm = {
+                withdrawConfirm = false
+                viewModel.withdrawDelete()
+            },
+            onDismiss = { withdrawConfirm = false },
         )
 
         // ---- toast ----
@@ -209,48 +278,45 @@ private fun ReportContent(
     onSubmitEvaluation: (String) -> Unit,
     onDeleteEvaluation: (Long) -> Unit,
     onRequestDelete: () -> Unit,
+    onWithdrawDelete: () -> Unit,
 ) {
     val report = state.detail?.report
     val hasRecordings = state.recordings.isNotEmpty()
 
     Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-        // ---- 机密 pill + 状态 pill + 动作行 ----
+        // ---- 动作行：原始音频(大·主) + 重新分析/申请删除(小·次)，一排。
+        //      机密/分析已完成 pill 去掉；任务执行状态挪到顶栏右上角 chip。----
         MeiliCard(tight = true, modifier = Modifier.padding(bottom = Dimens.CardGap)) {
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
-                modifier = Modifier.padding(bottom = 13.dp),
-            ) {
-                ConfidentialPill()
-                AnalysisStatePill(state)
-            }
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-                verticalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                GhostButton(
-                    "重新分析",
-                    onReanalyze,
-                    icon = MeiliIcons.Refresh,
-                    size = MeiliButtonSize.Xs,
-                    enabled = !state.reanalyzing,
-                )
-                if (hasRecordings) {
-                    GhostButton("原始音频", onToggleAudio, icon = MeiliIcons.Headphone, size = MeiliButtonSize.Xs)
+            val deletePending = state.detail?.deleteRequestPending == true
+            Column {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (hasRecordings) {
+                        SoftButton(
+                            text = "原始音频",
+                            onClick = onToggleAudio,
+                            icon = MeiliIcons.Headphone,
+                            size = MeiliButtonSize.Small,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    // 重新分析=小文字按钮；删除=垃圾桶图标按钮（无文字）。
+                    // 删除审批中时把垃圾桶撤下，改在下方整条「删除审批中·撤销」蜜色条。
+                    GhostButton("重新分析", onReanalyze, size = MeiliButtonSize.Xs, enabled = !state.reanalyzing)
+                    if (!deletePending) {
+                        TopBarIconButton(MeiliIcons.Trash, onRequestDelete)
+                    }
                 }
-                GhostButton("申请删除", onRequestDelete, icon = MeiliIcons.Trash, size = MeiliButtonSize.Xs)
+                if (deletePending) {
+                    DeletePendingBar(onClick = onWithdrawDelete, modifier = Modifier.padding(top = 9.dp))
+                } else if (hasRecordings && state.freeDeleteEligible) {
+                    // 提前告知：本次较短，点垃圾桶可直接删、不用等管理员审批。
+                    FreeDeleteHint(modifier = Modifier.padding(top = 9.dp))
+                }
             }
         }
-
-        // ---- 任务执行状态面板（对齐 report.html 顶部「任务执行状态」：进页即有数、可单独重跑/补齐）----
-        TaskStatusPanel(
-            tasks = state.tasks,
-            loading = state.tasksLoading,
-            submitting = state.rerunSubmitting,
-            onRerunTask = onRerunTask,
-            onFillMissing = onFillMissing,
-            modifier = Modifier.padding(bottom = Dimens.CardGap),
-        )
 
         // ---- 原始音频折叠（整屏唯一入口；多段录音、真播放、跳播、说话人确认、分割）----
         if (hasRecordings) {
@@ -406,27 +472,101 @@ private fun AnalysisStatePill(state: ReportUiState) {
 }
 
 /**
- * 任务执行状态面板（对齐 report.html 顶部「📋 任务执行状态 (X/Y 完成)」）。
- * 折叠卡：表头常显「X / 11 完成」；展开见平铺 11 个任务(T1–T11，不分「调用」组) + 单独「重跑」+「补齐所有缺失任务」。
+ * 顶栏右上角「任务执行状态」chip：紧凑 pill 显示「X/11」（全完成→叶绿，否则陶土），点开 [TaskSheet]。
  */
 @Composable
-private fun TaskStatusPanel(
+private fun TaskStatusChip(done: Int, total: Int, loading: Boolean, onClick: () -> Unit) {
+    val allDone = total > 0 && done >= total
+    val bg = if (allDone) MeiliPalette.LeafSoft else MeiliPalette.ClayTint
+    val fg = if (allDone) MeiliPalette.LeafText else MeiliPalette.ClayDeep
+    Surface(onClick = onClick, shape = MeiliShapes.Pill, color = bg, contentColor = fg) {
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(MeiliIcons.Tasks, contentDescription = "任务执行状态", tint = fg, modifier = Modifier.size(14.dp))
+            Text(
+                if (loading) "…" else "$done/$total",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold),
+                color = fg,
+            )
+        }
+    }
+}
+
+/** 免审批提示：本次陪伴不足 5 分钟，点垃圾桶可直接删、无需审批。一行小灰字，提前告知用户。 */
+@Composable
+private fun FreeDeleteHint(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(MeiliIcons.Trash, contentDescription = null, tint = MeiliPalette.Ink3, modifier = Modifier.size(13.dp))
+        Text(
+            "本次陪伴不足 5 分钟，可直接删除、无需审批",
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Normal),
+            color = MeiliPalette.Ink3,
+        )
+    }
+}
+
+/** 「删除审批中 · 点击撤销」整条蜜色条（替代垃圾桶图标）：已提交删除申请、待管理员审批；点它撤销删除。 */
+@Composable
+private fun DeletePendingBar(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        shape = MeiliShapes.Sm,
+        color = MeiliPalette.HoneySoft,
+        contentColor = MeiliPalette.HoneyText,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(MeiliIcons.Clock, contentDescription = null, tint = MeiliPalette.HoneyText, modifier = Modifier.size(15.dp))
+            Text(
+                "删除审批中",
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                color = MeiliPalette.HoneyText,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                "点击撤销",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                color = MeiliPalette.HoneyText,
+            )
+        }
+    }
+}
+
+/**
+ * 任务执行状态弹层（右上角 chip 点开）。平铺 11 个任务(T1–T11) + 单独「重跑」+「补齐所有缺失任务」。
+ * 对齐原 report.html 顶部「📋 任务执行状态 (X/Y 完成)」，只是从内联折叠改成右上角入口 + 弹层。
+ */
+@Composable
+private fun TaskSheet(
+    visible: Boolean,
     tasks: List<Task>,
     loading: Boolean,
     submitting: Boolean,
     onRerunTask: (String) -> Unit,
     onFillMissing: () -> Unit,
-    modifier: Modifier = Modifier,
+    onDismiss: () -> Unit,
 ) {
+    if (!visible) return
     val done = tasks.count { it.isDone }
     val total = if (tasks.isNotEmpty()) tasks.size else 11
-    Collapsible(
+    MeiliBottomSheet(
+        visible = true,
+        onDismiss = onDismiss,
         title = "任务执行状态",
         subtitle = if (tasks.isEmpty() && loading) "加载中…" else "$done / $total 完成",
-        leadingIcon = MeiliIcons.Doc,
-        initiallyOpen = false,
-        collapsedHint = "点击展开",
-        modifier = modifier,
+        onClose = onDismiss,
+        scrollable = true,
     ) {
         if (tasks.isEmpty()) {
             Text(
@@ -533,13 +673,14 @@ private fun ConfirmSheet(
     confirming: Boolean,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector = MeiliIcons.Refresh,
 ) {
     if (!visible) return
     MeiliBottomSheet(visible = true, onDismiss = onDismiss, title = title, subtitle = message) {
         PrimaryButton(
             text = if (confirming) "处理中…" else confirmText,
             onClick = onConfirm,
-            icon = MeiliIcons.Refresh,
+            icon = icon,
             enabled = !confirming,
             modifier = Modifier
                 .fillMaxWidth()

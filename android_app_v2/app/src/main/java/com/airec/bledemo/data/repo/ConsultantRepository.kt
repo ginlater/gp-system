@@ -293,6 +293,10 @@ class ConsultantRepository(
     suspend fun sessionDeleteRequest(sid: Long, reason: String? = null): ApiResult<SimpleResult> =
         call { api.sessionDeleteRequest(sid, DeleteRequestBody(reason)) }
 
+    /** 按 session 撤回本接诊未审批的删除申请。 */
+    suspend fun sessionDeleteRequestWithdraw(sid: Long): ApiResult<SimpleResult> =
+        call { api.sessionDeleteRequestWithdraw(sid) }
+
     /** 撤回自己未审批的删除申请。 */
     suspend fun deleteRequestWithdraw(rid: Long): ApiResult<SimpleResult> =
         call { api.deleteRequestWithdraw(rid) }

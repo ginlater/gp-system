@@ -350,6 +350,7 @@ data class SimpleResult(
     @Json(name = "session_id") val sessionId: Long? = null,
     @Json(name = "customer_id") val customerId: Long? = null,
     @Json(name = "request_id") val requestId: Long? = null,
+    @Json(name = "deleted") val deleted: Boolean? = null,     // 免审批删除：true=已直接删掉(无需审批)
     @Json(name = "unbound_count") val unboundCount: Int? = null,
     @Json(name = "unchanged") val unchanged: Boolean? = null,
     @Json(name = "status") val status: String? = null,        // started | all_done | running ... | queued | pending | done | failed

@@ -376,6 +376,12 @@ interface ConsultantApi {
         @Path("rid") rid: Long,
     ): Response<SimpleResult>
 
+    /** 按 session 撤回本接诊未审批的删除申请（撤销该 session 下自己仍 pending 的申请；无请求体）。 */
+    @POST("api/session/{sid}/delete-request/withdraw")
+    suspend fun sessionDeleteRequestWithdraw(
+        @Path("sid") sid: Long,
+    ): Response<SimpleResult>
+
     /** 关闭"删除被拒"提示：把最新一条 rejected 标记 dismissed（无请求体）。 */
     @POST("api/recording/{rid}/delete-request/dismiss")
     suspend fun deleteRequestDismiss(
