@@ -1788,7 +1788,7 @@ REPORT_TOOL = {
             "overview": {
                 "type": "object",
                 "required": ["customer_value", "pain_summary", "sales_diagnosis",
-                             "quality_score", "suggestions"],
+                             "quality_score"],
                 "properties": {
                     "customer_value": {
                         "type": "object",
@@ -1843,12 +1843,6 @@ REPORT_TOOL = {
                             "score": {"type": "number", "minimum": 0, "maximum": 10},
                             "note": {"type": "string"},
                         },
-                    },
-                    "suggestions": {
-                        "type": "array",
-                        "minItems": 2, "maxItems": 5,
-                        "items": {"type": "string",
-                                  "description": "1 条精炼的可操作建议"},
                     },
                 },
             },
@@ -2533,7 +2527,7 @@ TOOL_CALL3 = {
             "overview": {
                 "type": "object",
                 "required": ["customer_value", "pain_summary", "sales_diagnosis",
-                             "quality_score", "suggestions"],
+                             "quality_score"],
                 "properties": {
                     "customer_value": {
                         "type": "object",
@@ -2584,11 +2578,6 @@ TOOL_CALL3 = {
                             "score": {"type": "number"},
                             "note": {"type": "string"},
                         },
-                    },
-                    "suggestions": {
-                        "type": "array",
-                        "minItems": 2, "maxItems": 4,
-                        "items": {"type": "string"},
                     },
                 },
             },
@@ -3094,12 +3083,11 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
         "schema_keys": ["overview"],
         "depends_on": ["T1", "T2", "T3", "T4", "T5", "T6", "T7"],
         "prompt_snippet": """【任务9】PART1 全维度评估总览
-⚠ overview 对象必含 5 个子字段，都不能省略：
+⚠ overview 对象必含 4 个子字段，都不能省略：
 - customer_value：顾客价值评级（tag 简短 + tag_kind + note 一句话引用关键信号）
 - pain_summary：痛点识别（tag 如"3 个核心可攻破点" + items 列每个痛点，color 用 red/blue/teal/orange）
 - sales_diagnosis：销售问题诊断（tag 标签化根因 + tag_kind + note 复用 headline）
 - quality_score：质检评分（score 复用 overall + note 一句话）
-- suggestions：2-4 条可操作建议字符串数组（不能空数组），指向报告具体内容
 """,
     },
     "T10": {
@@ -3177,7 +3165,7 @@ def expand_to_call_chunk(task_ids):
 # ─── 任务输出验证 ─────────────────────────────────────────
 _NONEMPTY_LIST_KEYS = {
     "customer_tags", "cases", "pain_points",
-    "good_highlights", "bad_highlights", "suggestions",
+    "good_highlights", "bad_highlights",
     "return_scripts", "pain_entry_scripts", "medical_objections",
 }
 
@@ -5080,7 +5068,7 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.8"
+APP_V2_VERSION_NAME = "2.0.9"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
 #   每个版本同名("刁姐陪伴.apk")时，上次强更留在手机下载目录里的旧包会顶包——浏览器弹"该文件已下载"
 #   或存成"(1)"副本，顾问点开装的还是旧版 → 版本仍 < MIN → 又弹强更，"点了立即更新还要更新"死循环。
@@ -5693,6 +5681,9 @@ def api_session_get(sid):
         out["report"] = None
     if isinstance(out["report"], dict):
         out["report"] = {k: v for k, v in out["report"].items() if not k.startswith("_")}
+    # 该接诊是否有待审批的删除申请（顾问端据此显示「删除审批中 / 可撤销」）
+    out["delete_request_pending"] = bool(db_fetchone(
+        "SELECT 1 FROM delete_requests WHERE session_id=? AND status='pending' LIMIT 1", (sid,)))
     out["display_status"] = _display_status(
         out.get("analysis_status"), out.get("analysis_progress"),
         bool(out.get("analysis_result")),
@@ -5907,11 +5898,51 @@ def api_recording_delete(rid):
     return jsonify({"ok": True})
 
 
+# ─── 免审批删除：<5分钟的录音 / 总时长<5分钟的接诊，顾问可直接删，不走管理员审批 ───
+FREE_DELETE_MAX_SEC = 300  # 小于 5 分钟
+
+def _duration_label_seconds(label):
+    """'MM分SS秒' → 秒（MM 可 >59）；无法解析（'未知时长'/空/异格式）返回 None → 不享受免审批（安全侧：算不出就走审批）。"""
+    if not label:
+        return None
+    m = re.match(r"^\s*(\d+)\s*分\s*(\d+)\s*秒", str(label))
+    if not m:
+        return None
+    return int(m.group(1)) * 60 + int(m.group(2))
+
+def _hard_delete_recording(rec):
+    """彻底删一条录音：OSS + 墓碑(防"从录音笔同步"复活) + delete_requests + recordings。
+    rec 需含 oss_key/id/uploader_user_id/pen_file/recorded_at。与管理员审批通过删除同一套路。"""
+    try:
+        oss_bucket.delete_object(rec["oss_key"])
+    except Exception as e:
+        print(f"[free_delete] OSS {rec['oss_key']}: {e}")
+    _add_pen_tombstone(rec)
+    db_write("DELETE FROM delete_requests WHERE recording_id=?", (rec["id"],))
+    db_write("DELETE FROM recordings WHERE id=?", (rec["id"],))
+
+def _clear_session_if_empty(sid):
+    """录音删空后：解锁 + 清空分析态（保留 session 行，便于再绑录音重新分析）。"""
+    if not sid:
+        return
+    cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (sid,))
+    if not cnt or not cnt["n"]:
+        db_write(
+            """UPDATE sessions SET locked=0,
+                   analysis_status=NULL, analysis_result=NULL, analysis_error=NULL,
+                   analysis_started_at=NULL, analysis_finished_at=NULL,
+                   analysis_signature=NULL, analysis_scores=NULL,
+                   analysis_progress=NULL, task_status=NULL
+               WHERE id=?""",
+            (sid,),
+        )
+
+
 @app.route("/api/recording/<int:rid>/delete-request", methods=["POST"])
 @login_required
 def api_recording_delete_request(rid):
-    """顾问申请删除录音"""
-    rec = db_fetchone("SELECT id, session_id, company_id FROM recordings WHERE id=?", (rid,))
+    """顾问申请删除录音；<5分钟的录音免审批直接删。"""
+    rec = db_fetchone("SELECT id, session_id, company_id, oss_key, duration_label, uploader_user_id, pen_file, recorded_at FROM recordings WHERE id=?", (rid,))
     if not rec:
         return jsonify({"error": "录音不存在"}), 404
     role = session.get("role")
@@ -5919,6 +5950,13 @@ def api_recording_delete_request(rid):
         return jsonify({"error": "管理员请直接删除"}), 400
     if rec["company_id"] != session.get("company_id"):
         return jsonify({"error": "无权操作"}), 403
+    # 免审批：时长可解析且 <5 分钟 → 直接删
+    secs = _duration_label_seconds(rec["duration_label"])
+    if secs is not None and secs < FREE_DELETE_MAX_SEC:
+        sid_of = rec["session_id"]
+        _hard_delete_recording(rec)
+        _clear_session_if_empty(sid_of)
+        return jsonify({"ok": True, "deleted": True})
     existing = db_fetchone(
         "SELECT id FROM delete_requests WHERE recording_id=? AND status='pending'", (rid,)
     )
@@ -6112,16 +6150,25 @@ def api_session_recordings_delete(sid):
 @app.route("/api/session/<int:sid>/delete-request", methods=["POST"])
 @login_required
 def api_session_delete_request(sid):
-    """顾问申请删除某 session 下所有录音"""
+    """顾问申请删除某 session 下所有录音；总时长<5分钟的接诊免审批直接删（连接诊记录一起删）。"""
     role = session.get("role")
     if role in ("admin", "super"):
         return jsonify({"error": "管理员请直接删除"}), 400
-    recs = db_fetchall("SELECT id, session_id, company_id FROM recordings WHERE session_id=?", (sid,))
+    recs = db_fetchall("SELECT id, session_id, company_id, oss_key, duration_label, uploader_user_id, pen_file, recorded_at FROM recordings WHERE session_id=?", (sid,))
     if not recs:
         return jsonify({"error": "该接诊没有录音"}), 404
     for r in recs:
         if r["company_id"] != session.get("company_id"):
             return jsonify({"error": "无权操作"}), 403
+    # 免审批：所有录音时长都可解析且总时长 <5 分钟 → 直接彻底删除整次接诊（录音+评价+标签+接诊记录）
+    secs_list = [_duration_label_seconds(r["duration_label"]) for r in recs]
+    if all(s is not None for s in secs_list) and sum(secs_list) < FREE_DELETE_MAX_SEC:
+        for r in recs:
+            _hard_delete_recording(r)
+        db_write("DELETE FROM evaluations WHERE session_id=?", (sid,))
+        db_write("DELETE FROM customer_tags WHERE source_session_id=?", (sid,))
+        db_write("DELETE FROM sessions WHERE id=?", (sid,))
+        return jsonify({"ok": True, "deleted": True})
     data = request.get_json(silent=True) or {}
     reason = (data.get("reason") or "").strip()
     user_id = session.get("user_id")
@@ -6142,6 +6189,31 @@ def api_session_delete_request(sid):
     if added == 0:
         return jsonify({"error": "该接诊所有录音已有待审批申请"}), 400
     return jsonify({"ok": True, "added": added})
+
+
+@app.route("/api/session/<int:sid>/delete-request/withdraw", methods=["POST"])
+@login_required
+def api_session_delete_request_withdraw(sid):
+    """顾问撤回本接诊未审批的删除申请（撤销该 session 下所有自己提交、仍 pending 的申请）。"""
+    user_id = session.get("user_id")
+    is_mgr = session.get("role") in ("admin", "super")
+    drs = db_fetchall(
+        "SELECT id, requester_user_id FROM delete_requests WHERE session_id=? AND status='pending'", (sid,)
+    )
+    if not drs:
+        return jsonify({"error": "没有待审批的删除申请"}), 404
+    withdrawn = 0
+    for dr in drs:
+        if dr["requester_user_id"] != user_id and not is_mgr:
+            continue
+        db_write(
+            "UPDATE delete_requests SET status='withdrawn', reviewed_at=datetime('now','localtime') WHERE id=?",
+            (dr["id"],),
+        )
+        withdrawn += 1
+    if withdrawn == 0:
+        return jsonify({"error": "只能撤回自己的申请"}), 403
+    return jsonify({"ok": True, "withdrawn": withdrawn})
 
 
 @app.route("/api/admin/delete-requests")
