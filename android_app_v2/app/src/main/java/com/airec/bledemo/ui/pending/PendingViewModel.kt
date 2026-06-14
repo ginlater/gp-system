@@ -188,7 +188,9 @@ class PendingViewModel(
             when (val r = repo.deleteRequest(rid, reason?.ifBlank { null })) {
                 is ApiResult.Success -> {
                     setBusy(rid, false)
-                    showToast("已提交删除申请，等待审批", ToastIcon.Check)
+                    // 不足5分钟→后端免审批直接删(deleted=true)；否则进入审批。
+                    if (r.data.deleted == true) showToast("已删除", ToastIcon.Check)
+                    else showToast("已提交删除申请，等待审批", ToastIcon.Check)
                     load(initial = false)
                 }
                 is ApiResult.Failure -> {

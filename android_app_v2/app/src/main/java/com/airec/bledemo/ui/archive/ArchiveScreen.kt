@@ -92,6 +92,16 @@ fun ArchiveScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
+    // 回到本列表(从报告详情删除/返回、或回前台)即刷新，避免免审批删掉的接诊还残留在列表里。
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) viewModel.refresh()
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     // 「日期」选择器 / 「状态」筛选 bottom sheet 的可见性（屏内本地态）。
     var showDatePicker by remember { mutableStateOf(false) }
     var showStatusSheet by remember { mutableStateOf(false) }
@@ -371,15 +381,30 @@ private fun ReportRow(
     ) {
         Avatar(name = name)
         Column(modifier = Modifier.weight(1f)) {
+            // 第一排：姓名 + 会员号（会员号小灰字跟在姓名后）。会员号不再和日期挤一行被截断。
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MeiliPalette.Ink,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                row.memberCard?.takeIf { it.isNotBlank() }?.let { card ->
+                    Text(
+                        card,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                        color = MeiliPalette.Ink3,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 7.dp),
+                    )
+                }
+            }
+            // 第二排：服务日期单独一行，完整显示。
             Text(
-                name,
-                style = MaterialTheme.typography.titleMedium,
-                color = MeiliPalette.Ink,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                metaLine(row),
+                serviceLine(row),
                 style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
                 color = MeiliPalette.Ink3,
                 maxLines = 1,
@@ -448,12 +473,9 @@ private fun ReportScore(row: SessionRow) {
 /** 综合分整数显示：四舍五入取整（mockup 用整数 86/79；overall 为 0–10/0–100 皆按原值取整）。 */
 private fun formatScore(score: Double): String = Math.round(score).toString()
 
-/** 灰小字：「会员卡号 · 服务 {date}」（member_card 由 /api/sessions JOIN company_customers 回传；无卡号则只显服务日期）。 */
-private fun metaLine(row: SessionRow): String {
-    val card = row.memberCard?.takeIf { it.isNotBlank() }
-    val date = row.serviceDate?.takeIf { it.isNotBlank() }?.let { "服务 $it" } ?: "服务日期待补"
-    return if (card != null) "$card · $date" else date
-}
+/** 灰小字第二排：「服务 {date}」（缺日期则「服务日期待补」）。会员号已移到姓名同排，不再挤一行。 */
+private fun serviceLine(row: SessionRow): String =
+    row.serviceDate?.takeIf { it.isNotBlank() }?.let { "服务 $it" } ?: "服务日期待补"
 
 // ─────────────────────────── 状态筛选 bottom sheet ───────────────────────────
 

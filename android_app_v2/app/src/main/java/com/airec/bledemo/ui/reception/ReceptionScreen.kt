@@ -145,7 +145,8 @@ fun ReceptionScreen(
     val anyPlaying by remember { derivedStateOf { playingIds.values.any { it } } }
 
     // 待整理屏内 dialog 状态（不碰 nav）
-    var delReasonFor by remember { mutableStateOf<Long?>(null) }   // 「申请删除」原因弹窗目标 rid
+    var delReasonFor by remember { mutableStateOf<Long?>(null) }   // 「申请删除」原因弹窗目标 rid（≥5分钟，走审批）
+    var delDirectFor by remember { mutableStateOf<Long?>(null) }   // 「免审批直接删除」确认目标 rid（<5分钟）
     var confirmImport by remember { mutableStateOf(false) }        // 「导入选中」条数二次确认
 
     // 接诊一次性 toast（成交 / 删除 / 改期 / 错误）
@@ -344,7 +345,10 @@ fun ReceptionScreen(
                             busy = rec.id in pending.busyIds,
                             canRetry = pendingVm.canRetryPenUploads,
                             onBindCustomer = onBindCustomer,
-                            onRequestDelete = { delReasonFor = rec.id },
+                            onRequestDelete = {
+                                // <5分钟→免审批直接删(简单确认)；≥5分钟→原因弹窗走审批。
+                                if (isFreeDeleteEligible(rec)) delDirectFor = rec.id else delReasonFor = rec.id
+                            },
                             onWithdrawDelete = { pendingVm.withdrawDelete(rec.id) },
                             onDismissReject = { pendingVm.dismissDeleteReject(rec.id) },
                             onRetry = pendingVm::retryPenUploads,
@@ -441,7 +445,7 @@ fun ReceptionScreen(
         onImport = { confirmImport = true },
     )
 
-    // 「申请删除」原因输入弹窗（可空原因，确认才提交）
+    // 「申请删除」原因输入弹窗（≥5分钟，可空原因，确认才提交走审批）
     delReasonFor?.let { rid ->
         DeleteReasonDialog(
             onConfirm = { reason ->
@@ -449,6 +453,22 @@ fun ReceptionScreen(
                 pendingVm.requestDelete(rid, reason)
             },
             onDismiss = { delReasonFor = null },
+        )
+    }
+
+    // 「免审批直接删除」确认（<5分钟，无需原因/审批）
+    delDirectFor?.let { rid ->
+        ConfirmDialog(
+            icon = MeiliIcons.Trash,
+            title = "删除这段陪伴？",
+            body = "这段不足 5 分钟，可直接删除、无需审批。删除后不可恢复。",
+            confirmText = "确定删除",
+            danger = true,
+            onConfirm = {
+                delDirectFor = null
+                pendingVm.requestDelete(rid, null)
+            },
+            onDismiss = { delDirectFor = null },
         )
     }
 
@@ -889,6 +909,15 @@ private fun Avatar(name: String, sage: Boolean) {
 
 // ─────────────────────────── 待整理：紧凑三排卡 ───────────────────────────
 
+/** 这段待绑定录音是否够免审批删除：时长可解析且 <5 分钟（与后端 FREE_DELETE_MAX_SEC=300 同口径）。 */
+private fun isFreeDeleteEligible(rec: PendingRecording): Boolean {
+    val label = rec.durationLabel
+    if (label.isNullOrBlank()) return false
+    val m = Regex("""^\s*(\d+)\s*分\s*(\d+)\s*秒""").find(label) ?: return false
+    val secs = (m.groupValues[1].toIntOrNull() ?: return false) * 60 + (m.groupValues[2].toIntOrNull() ?: return false)
+    return secs < 300
+}
+
 @Composable
 private fun TriageRecordingCard(
     rec: PendingRecording,
@@ -934,6 +963,7 @@ private fun TriageNormalCard(
 ) {
     val crossDay = rec.serviceDate != null && rec.recDate != null && rec.serviceDate != rec.recDate
     val rejected = rec.deleteRequestStatus == "rejected"
+    val freeDelete = isFreeDeleteEligible(rec)   // <5分钟→免审批直接删
     val titleColor = if (crossDay) MeiliPalette.RoseText else MeiliPalette.Ink
 
     Surface(
@@ -1041,7 +1071,7 @@ private fun TriageNormalCard(
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = if (busy) "处理中…" else "申请删除",
+                    text = if (busy) "处理中…" else if (freeDelete) "删除" else "申请删除",
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontWeight = FontWeight.Bold,
                         textDecoration = TextDecoration.Underline,
@@ -1050,6 +1080,16 @@ private fun TriageNormalCard(
                     modifier = Modifier
                         .clickable(enabled = !busy, onClick = onRequestDelete)
                         .padding(vertical = 6.dp),
+                )
+            }
+
+            // 免审批提示：本段不足 5 分钟，点「删除」可直接删、无需审批。提前告知用户。
+            if (freeDelete && !rejected) {
+                Text(
+                    text = "不足 5 分钟，删除可直接生效、无需审批",
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Normal),
+                    color = MeiliPalette.Ink3,
+                    modifier = Modifier.padding(top = 6.dp),
                 )
             }
         }
