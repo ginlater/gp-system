@@ -321,50 +321,13 @@ private fun AboutCard(
     state: SettingsUiState,
     onUpdate: () -> Unit,
 ) {
+    // v2 独立版本系列：只显示本机自己的版本，不拉 v1 的「最新版本/更新」（两个包不互通）。
     MeiliCard {
         KvRow(
             key = "当前版本",
             value = state.installedVersionName,
-            divider = true,
-        )
-        KvRow(
-            key = "最新版本",
-            value = state.latestVersionName ?: if (state.versionLoading) "检查中…" else "—",
             divider = false,
         )
-
-        when {
-            // 非强制更新：有新版 → 蜜色柔和提示 + 「更新」轻按钮
-            state.updateAvailable -> {
-                Spacer(Modifier.height(14.dp))
-                NoticeRow(
-                    icon = MeiliIcons.Spark,
-                    tone = NoticeTone.Honey,
-                    title = "有可用更新" + (state.latestVersionName?.let { " · $it" } ?: ""),
-                    body = state.updateNote,
-                )
-                if (state.updateUrl != null) {
-                    Spacer(Modifier.height(11.dp))
-                    PrimaryButton(
-                        text = "立即更新",
-                        onClick = onUpdate,
-                        icon = MeiliIcons.Upload,
-                        size = MeiliButtonSize.Small,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-            }
-            // 已是最新
-            !state.versionLoading && state.latestVersionName != null && !state.mustUpgrade -> {
-                Spacer(Modifier.height(14.dp))
-                NoticeRow(
-                    icon = MeiliIcons.Check,
-                    tone = NoticeTone.Sage,
-                    title = "已是最新版本",
-                    body = null,
-                )
-            }
-        }
     }
 }
 

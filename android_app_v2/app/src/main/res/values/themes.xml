@@ -5,9 +5,10 @@
         <item name="colorPrimaryVariant">#1565C0</item>
         <item name="colorOnPrimary">@android:color/white</item>
         <item name="colorSecondary">@color/colorAccent</item>
-        <item name="android:windowBackground">@android:color/white</item>
-        <!-- 顶部状态栏：显式设成品牌蓝 + 白色图标。不显式设的话会落到 Material 默认的紫色。 -->
-        <item name="android:statusBarColor">@color/colorPrimary</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <!-- 冷启动窗口背景=暖玉柔光底（不再白屏）：Compose 还没绘制时就显示与 App 一致的米色，无缝过渡。 -->
+        <item name="android:windowBackground">@color/meili_bg</item>
+        <!-- 状态栏同米色 + 深色图标，避免冷启动一闪蓝色；运行时 enableEdgeToEdge 再接管。 -->
+        <item name="android:statusBarColor">@color/meili_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

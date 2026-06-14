@@ -2,6 +2,8 @@
 <resources>
     <color name="colorPrimary">#1976D2</color>
     <color name="colorAccent">#FF5722</color>
+    <!-- 暖玉柔光底色（= MeiliPalette.Bg）：冷启动窗口背景/状态栏用它，消除白屏闪烁 -->
+    <color name="meili_bg">#F8F3ED</color>
     <color name="cardBg">#F5F5F5</color>
     <color name="textPrimary">#212121</color>
     <color name="textSecondary">#757575</color>

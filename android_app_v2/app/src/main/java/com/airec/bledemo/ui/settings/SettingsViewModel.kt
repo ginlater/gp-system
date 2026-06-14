@@ -45,7 +45,10 @@ class SettingsViewModel(
     fun setInstalledVersion(versionName: String, versionCode: Long) {
         _state.update { it.copy(installedVersionName = versionName, installedVersionCode = versionCode) }
         if (!meLoaded) { meLoaded = true; loadMe() }
-        if (!versionChecked) { versionChecked = true; checkVersion() }
+        // v2 是独立版本系列、独立分发：绝不查 /api/app/version（那是 v1 WebView 杰理包的端点，
+        // 返回的是 v1 的 2.1.14/code25）。否则 v2(code9) 会被判「需强制升级到 v1 的 APK」、把两个包搅在一起。
+        // v2 只显示本机自己的版本，与 v1 不互通；v2 的新版靠 /download/v2 单独分发。
+        versionChecked = true   // 占位，确保不再触发任何 v1 版本检查
     }
 
     /** 拉陪伴师信息（顶部账号卡）。失败不阻断，留空展示即可。 */
