@@ -404,18 +404,17 @@ private fun ReportRow(
                     )
                 }
             }
-            // 第二排：分析状态 pill + 录音X/Y + 分析进度(N/N part)。
+            // 第二排：分析状态 pill + 服务日期（用户要求只留：姓名/会员号/日期/完成状态/综合分）。
             Row(
                 modifier = Modifier.padding(top = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 val (label, kind) = analysisStatusPill(row)
                 StatusPill(label, kind)
-                val meta = metaCounts(row)
-                if (meta.isNotEmpty()) {
+                row.serviceDate?.takeIf { it.isNotBlank() }?.let { date ->
                     Text(
-                        meta,
+                        date,
                         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Normal),
                         color = MeiliPalette.Ink3,
                         maxLines = 1,
@@ -424,15 +423,6 @@ private fun ReportRow(
                     )
                 }
             }
-            // 第三排：录音时间 · 最后分析时间 · 点评。
-            Text(
-                timeAndEvalLine(row),
-                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Normal),
-                color = MeiliPalette.Ink3,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 3.dp),
-            )
         }
         // 综合分：done 且有 overall → 衬线陶土整数；否则 muted「—」。（去掉箭头给三排文案让宽,整行可点。）
         ReportScore(row = row)
@@ -489,19 +479,6 @@ private fun ReportScore(row: SessionRow) {
 /** 综合分整数显示：四舍五入取整（mockup 用整数 86/79；overall 为 0–10/0–100 皆按原值取整）。 */
 private fun formatScore(score: Double): String = Math.round(score).toString()
 
-/** 时间戳解析 → (日期 "YYYY-MM-DD", 时刻 "HH:MM")；对齐 web fmtRecTime（兼容 14 位与 "YYYY-MM-DD HH:MM:SS"）。 */
-private fun parseStamp(t: String?): Pair<String, String>? {
-    val s = t?.trim()?.takeIf { it.isNotEmpty() } ?: return null
-    if (s.length == 14 && s.all { it.isDigit() }) {
-        return "${s.substring(0, 4)}-${s.substring(4, 6)}-${s.substring(6, 8)}" to "${s.substring(8, 10)}:${s.substring(10, 12)}"
-    }
-    val m = Regex("""^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})""").find(s) ?: return null
-    return "${m.groupValues[1]}-${m.groupValues[2]}-${m.groupValues[3]}" to "${m.groupValues[4]}:${m.groupValues[5]}"
-}
-
-/** MM-DD HH:MM（紧凑、去年份）。 */
-private fun shortStamp(t: String?): String? = parseStamp(t)?.let { "${it.first.substringAfter('-')} ${it.second}" }
-
 /** 分析状态 → (文案, pill 色)。对齐 web fmtStatus。 */
 private fun analysisStatusPill(row: SessionRow): Pair<String, PillKind> = when (row.displayStatus) {
     "done" -> "已完成" to PillKind.Ok
@@ -509,44 +486,6 @@ private fun analysisStatusPill(row: SessionRow): Pair<String, PillKind> = when (
     "queued" -> "排队中" to PillKind.Run
     "failed", "stuck", "cancelled" -> "失败" to PillKind.Danger
     else -> "未分析" to PillKind.Neutral
-}
-
-/** 「录音 X/Y · N/N part / 完成 D/T」：ASR完成/录音数 + 分析进度（对齐 web 录音/ASR + 分析状态）。 */
-private fun metaCounts(row: SessionRow): String {
-    val parts = mutableListOf<String>()
-    val rec = row.recordingCount ?: 0
-    if (rec > 0) parts.add("录音 ${row.asrDoneCount ?: 0}/$rec")
-    val tt = row.taskTotal
-    if (tt != null && tt > 0) {
-        when (row.displayStatus) {
-            "done" -> parts.add("${row.taskDone ?: tt}/$tt part")
-            "running", "queued" -> parts.add("完成 ${row.taskDone ?: 0}/$tt")
-            else -> {}
-        }
-    }
-    return parts.joinToString(" · ")
-}
-
-/** 「录音 {录音时间} · 分析 {最后分析时间} · 点评✓」第三排灰小字。 */
-private fun timeAndEvalLine(row: SessionRow): String {
-    val parts = mutableListOf<String>()
-    shortStamp(row.firstRecordedAt)?.let { parts.add("录音 $it") }
-    analysisTimeLabel(row)?.let { parts.add("分析 $it") }
-    if ((row.hasEvaluation ?: 0) != 0) parts.add("点评✓")
-    return if (parts.isEmpty()) "—" else parts.joinToString(" · ")
-}
-
-/** 最后分析时间：同日 "HH:MM–HH:MM"；否则结束时刻 "MM-DD HH:MM"；都无→null。对齐 web fmtAnalysisTime。 */
-private fun analysisTimeLabel(row: SessionRow): String? {
-    val a = parseStamp(row.analysisStartedAt)
-    val b = parseStamp(row.analysisFinishedAt)
-    return when {
-        a != null && b != null && a.first == b.first ->
-            if (a.second == b.second) "${a.first.substringAfter('-')} ${a.second}" else "${a.second}–${b.second}"
-        b != null -> "${b.first.substringAfter('-')} ${b.second}"
-        a != null -> "${a.first.substringAfter('-')} ${a.second}"
-        else -> null
-    }
 }
 
 // ─────────────────────────── 状态筛选 bottom sheet ───────────────────────────
