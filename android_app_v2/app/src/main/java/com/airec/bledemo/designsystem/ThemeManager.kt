@@ -99,29 +99,86 @@ object ThemeManager {
         ),
     )
 
-    // Compose State：读它的 composable 会在 apply() 时重组。
+    // ── 当前【生效】皮肤 id（Compose State：读它的 composable 在变化时重组） ──
     private var idState by mutableStateOf("jade")
     private var prefs: android.content.SharedPreferences? = null
 
+    // 自动日夜（晚 18:00–次日 06:00 用夜间皮肤）+ 各槽位皮肤；都持久化、都是 Compose State（设置页即时回显）。
+    var autoMode by mutableStateOf(false)
+        private set
+    var daySkinId by mutableStateOf("jade")
+        private set
+    var nightSkinId by mutableStateOf("noir")
+        private set
+    private var manualSkinId = "jade"
+
     val currentId: String get() = idState
     val current: Skin get() = skins.firstOrNull { it.id == idState } ?: skins[0]
+    fun skinOf(id: String): Skin = skins.firstOrNull { it.id == id } ?: skins[0]
 
     /** 主按钮渐变起点（略亮）/ 圆钮高光（更亮）：按当前主色朝白插值，任何皮肤都协调。 */
     val clayLight: Color get() = lerp(current.clay, Color.White, 0.13f)
     val clayGlow: Color get() = lerp(current.clay, Color.White, 0.32f)
 
-    /** 进程启动时调（MeiliActivity.onCreate）：载入持久化皮肤。 */
+    /** 夜间时段：18:00–次日 06:00（含 18 点起、到 6 点前）。 */
+    fun isNightNow(): Boolean {
+        val h = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        return h < 6 || h >= 18
+    }
+
+    private fun valid(id: String?): String? = id?.takeIf { id -> skins.any { it.id == id } }
+
+    /** 按 自动模式 + 当前时间 算出生效皮肤，写入 idState（触发全 app 重组）。 */
+    private fun recompute() {
+        idState = if (autoMode) (if (isNightNow()) nightSkinId else daySkinId) else manualSkinId
+    }
+
+    /** 进程启动时调（MeiliActivity.onCreate）：载入持久化设置。 */
     fun init(context: Context) {
         val p = context.getSharedPreferences("meili_theme", Context.MODE_PRIVATE)
         prefs = p
-        val saved = p.getString("skin", "jade") ?: "jade"
-        if (skins.any { it.id == saved }) idState = saved
+        manualSkinId = valid(p.getString("skin", "jade")) ?: "jade"
+        daySkinId = valid(p.getString("day_skin", "jade")) ?: "jade"
+        nightSkinId = valid(p.getString("night_skin", "noir")) ?: "noir"
+        // 默认：从没手动选过皮肤的（新装）→ 自动日夜开；老用户保留其手动选择，除非显式开过自动。
+        autoMode = p.getBoolean("auto", !p.contains("skin"))
+        recompute()
     }
 
-    /** 切换皮肤并持久化；全 app 立即重组换色。 */
+    /** 手动选皮肤（在设置里点某套皮肤）：关闭自动、记为手动皮肤、立即生效。 */
     fun apply(id: String) {
-        if (skins.none { it.id == id }) return
-        idState = id
-        prefs?.edit()?.putString("skin", id)?.apply()
+        if (valid(id) == null) return
+        manualSkinId = id
+        autoMode = false
+        prefs?.edit()?.putString("skin", id)?.putBoolean("auto", false)?.apply()
+        recompute()
+    }
+
+    /** 开/关 自动日夜切换。 */
+    fun setAuto(enabled: Boolean) {
+        autoMode = enabled
+        prefs?.edit()?.putBoolean("auto", enabled)?.apply()
+        recompute()
+    }
+
+    /** 设定白天皮肤（自动模式下白天用）。 */
+    fun setDaySkin(id: String) {
+        if (valid(id) == null) return
+        daySkinId = id
+        prefs?.edit()?.putString("day_skin", id)?.apply()
+        recompute()
+    }
+
+    /** 设定夜间皮肤（自动模式下夜间用）。 */
+    fun setNightSkin(id: String) {
+        if (valid(id) == null) return
+        nightSkinId = id
+        prefs?.edit()?.putString("night_skin", id)?.apply()
+        recompute()
+    }
+
+    /** 回前台 / 定时器调：自动模式下按当前时间刷新（处理 App 开着时跨过 6:00/18:00）。 */
+    fun tick() {
+        if (autoMode) recompute()
     }
 }

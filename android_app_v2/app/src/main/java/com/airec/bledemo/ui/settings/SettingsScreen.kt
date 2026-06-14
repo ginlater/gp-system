@@ -26,6 +26,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -249,74 +252,168 @@ private fun ConsultantCard(state: SettingsUiState) {
 
 /* ───────────────────────── 主题皮肤选择 ───────────────────────── */
 
-/** 4 套配色皮肤单选：色卡圆点 + 名称/描述 + 选中描边/对勾。点选即 [ThemeManager.apply] → 全 app 换色。 */
+/**
+ * 主题皮肤：
+ *  - 「自动日夜切换」开关：开 → 晚 18:00–早 6:00 用夜间皮肤，白天用白天皮肤；
+ *    下方段控切「白天 / 晚上」，分别给两个时段挑皮肤（默认 白天=暖玉柔光、晚上=曜夜鎏金）。
+ *  - 关 → 单选一套手动皮肤（点某套即关自动、记为手动）。
+ */
 @Composable
 private fun ThemePickerCard() {
-    val currentId = ThemeManager.currentId
+    val auto = ThemeManager.autoMode
+    var editNight by remember { mutableStateOf(ThemeManager.isNightNow()) }
     MeiliCard {
-        Text(
-            text = "选一套喜欢的配色，整个 App 会跟着变。",
-            style = MaterialTheme.typography.bodySmall,
-            color = MeiliPalette.Ink3,
-        )
-        Spacer(Modifier.height(12.dp))
-        ThemeManager.skins.forEachIndexed { i, skin ->
-            val selected = skin.id == currentId
-            Surface(
-                onClick = { ThemeManager.apply(skin.id) },
-                shape = MeiliShapes.Sm,
-                color = if (selected) MeiliPalette.ClayTint else MeiliPalette.Surface,
-                contentColor = MeiliPalette.Ink,
-                border = androidx.compose.foundation.BorderStroke(
-                    Dimens.BorderField,
-                    if (selected) MeiliPalette.Clay else MeiliPalette.Line,
+        // ── 自动日夜切换开关 ──
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "自动日夜切换",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.5f.sp),
+                    color = MeiliPalette.Ink,
+                )
+                Text(
+                    "晚 18:00–早 6:00 自动用夜间皮肤",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                    color = MeiliPalette.Ink3,
+                )
+            }
+            androidx.compose.material3.Switch(
+                checked = auto,
+                onCheckedChange = { ThemeManager.setAuto(it) },
+                colors = androidx.compose.material3.SwitchDefaults.colors(
+                    checkedThumbColor = MeiliPalette.White,
+                    checkedTrackColor = MeiliPalette.Clay,
+                    uncheckedThumbColor = MeiliPalette.White,
+                    uncheckedTrackColor = MeiliPalette.Line,
+                    uncheckedBorderColor = MeiliPalette.Line,
                 ),
+            )
+        }
+        Spacer(Modifier.height(13.dp))
+
+        if (auto) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                SegChip("☀ 白天", selected = !editNight, onClick = { editNight = false }, modifier = Modifier.weight(1f))
+                SegChip("🌙 晚上", selected = editNight, onClick = { editNight = true }, modifier = Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                if (editNight) "夜间（18:00–6:00）用这套：" else "白天（6:00–18:00）用这套：",
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5f.sp),
+                color = MeiliPalette.Ink3,
+            )
+            Spacer(Modifier.height(11.dp))
+        } else {
+            Text(
+                "选一套喜欢的配色，整个 App 会跟着变。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MeiliPalette.Ink3,
+            )
+            Spacer(Modifier.height(12.dp))
+        }
+
+        val targetId = when {
+            !auto -> ThemeManager.currentId
+            editNight -> ThemeManager.nightSkinId
+            else -> ThemeManager.daySkinId
+        }
+        ThemeManager.skins.forEachIndexed { i, skin ->
+            SkinRow(
+                skin = skin,
+                selected = skin.id == targetId,
+                last = i == ThemeManager.skins.lastIndex,
+                onClick = {
+                    when {
+                        !auto -> ThemeManager.apply(skin.id)
+                        editNight -> ThemeManager.setNightSkin(skin.id)
+                        else -> ThemeManager.setDaySkin(skin.id)
+                    }
+                },
+            )
+        }
+    }
+}
+
+/** 段控小胶囊：白天 / 晚上。 */
+@Composable
+private fun SegChip(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        shape = MeiliShapes.Sm,
+        color = if (selected) MeiliPalette.ClayTint else MeiliPalette.SurfaceSoft,
+        contentColor = if (selected) MeiliPalette.ClayDeep else MeiliPalette.Ink2,
+        border = androidx.compose.foundation.BorderStroke(
+            Dimens.BorderField,
+            if (selected) MeiliPalette.Clay else MeiliPalette.Line,
+        ),
+        modifier = modifier,
+    ) {
+        Box(modifier = Modifier.padding(vertical = 9.dp), contentAlignment = Alignment.Center) {
+            Text(
+                text,
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold),
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** 单套皮肤行：色卡（底色环+主色点）+ 名称/描述 + 选中描边/对勾。 */
+@Composable
+private fun SkinRow(skin: ThemeManager.Skin, selected: Boolean, last: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = MeiliShapes.Sm,
+        color = if (selected) MeiliPalette.ClayTint else MeiliPalette.Surface,
+        contentColor = MeiliPalette.Ink,
+        border = androidx.compose.foundation.BorderStroke(
+            Dimens.BorderField,
+            if (selected) MeiliPalette.Clay else MeiliPalette.Line,
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = if (last) 0.dp else 9.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // 色卡：外圈=该皮肤底色（黑金会是近黑），内圆=主色 → 一眼看出深浅
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = if (i == ThemeManager.skins.lastIndex) 0.dp else 9.dp),
+                    .size(26.dp)
+                    .background(skin.bg, CircleShape),
+                contentAlignment = Alignment.Center,
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    // 色卡：外圈=该皮肤底色（黑金会是近黑），内圆=主色（金/陶土…）→ 一眼看出深浅
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .background(skin.bg, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(15.dp)
-                                .background(
-                                    Brush.radialGradient(listOf(lerp(skin.clay, Color.White, 0.30f), skin.clay)),
-                                    CircleShape,
-                                ),
-                        )
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = skin.name,
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.5f.sp),
-                            color = MeiliPalette.Ink,
-                        )
-                        Text(
-                            text = skin.desc,
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                            color = MeiliPalette.Ink3,
-                        )
-                    }
-                    if (selected) {
-                        Icon(
-                            MeiliIcons.Check,
-                            contentDescription = "已选",
-                            tint = MeiliPalette.ClayDeep,
-                            modifier = Modifier.size(20.dp),
-                        )
-                    }
-                }
+                Box(
+                    modifier = Modifier
+                        .size(15.dp)
+                        .background(
+                            Brush.radialGradient(listOf(lerp(skin.clay, Color.White, 0.30f), skin.clay)),
+                            CircleShape,
+                        ),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = skin.name,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.5f.sp),
+                    color = MeiliPalette.Ink,
+                )
+                Text(
+                    text = skin.desc,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                    color = MeiliPalette.Ink3,
+                )
+            }
+            if (selected) {
+                Icon(
+                    MeiliIcons.Check,
+                    contentDescription = "已选",
+                    tint = MeiliPalette.ClayDeep,
+                    modifier = Modifier.size(20.dp),
+                )
             }
         }
     }

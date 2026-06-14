@@ -75,6 +75,8 @@ class MeiliActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // 回前台：自动日夜模式下按当前时间刷新皮肤（晚上打开自动变黑金等）。
+        com.airec.bledemo.designsystem.ThemeManager.tick()
         // 回前台：会话 Cookie 可能登录后才拿到/已变 → 刷新上传上下文，保证开启陪伴/后台补传带的是最新会话。
         RecordingModule.refreshUploadContext()
         // 引导加入电池白名单（每进程一次），降低国产 ROM 杀后台、保证陪伴/补传不被打断。
@@ -156,6 +158,13 @@ class MeiliActivity : ComponentActivity() {
 @Composable
 private fun MeiliApp(startDestination: String) {
     MeiliTheme {
+        // 自动日夜：App 开着时每分钟检查一次是否跨过 6:00/18:00 → 切换日/夜皮肤。
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            while (true) {
+                com.airec.bledemo.designsystem.ThemeManager.tick()
+                kotlinx.coroutines.delay(60_000)
+            }
+        }
         // 状态栏/导航栏图标随主题明暗：暗色皮肤(黑金)=浅色图标，浅色皮肤=深色图标。
         val view = androidx.compose.ui.platform.LocalView.current
         val dark = com.airec.bledemo.designsystem.ThemeManager.current.dark
