@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>下载 刁姐陪伴 App</title>
+<title>下载 {{ app_label|default('刁姐陪伴') }} App</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:#f4f6f9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}
@@ -23,13 +23,13 @@ h1{font-size:20px;color:#1c3461;margin-bottom:4px}
 </head>
 <body>
 <div class="box">
-  <div class="logo">刁</div>
-  <h1>刁姐陪伴</h1>
+  <div class="logo">{{ logo_char|default('刁') }}</div>
+  <h1>{{ app_label|default('刁姐陪伴') }}</h1>
   <div class="meta">
     安卓 App 安装包{% if size_mb %} · {{ size_mb }} MB{% endif %}{% if updated %} · 更新于 {{ updated }}{% endif %}
   </div>
   {% if available %}
-    <a class="btn" href="{{ url_for('download_apk', v=apk_version) }}">下载安装包（.apk）</a>
+    <a class="btn" href="{{ apk_href|default(url_for('download_apk', v=apk_version)) }}">下载安装包（.apk）</a>
   {% else %}
     <span class="btn disabled">安装包暂不可用</span>
   {% endif %}

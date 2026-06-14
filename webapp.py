@@ -5078,6 +5078,9 @@ def logout():
 
 # ============ App 下载（公开页面，无需登录）============
 APK_PATH = Path(__file__).parent / "app-release.apk"
+# v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
+V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
+APP_V2_VERSION_NAME = "2.0.8"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
 #   每个版本同名("刁姐陪伴.apk")时，上次强更留在手机下载目录里的旧包会顶包——浏览器弹"该文件已下载"
 #   或存成"(1)"副本，顾问点开装的还是旧版 → 版本仍 < MIN → 又弹强更，"点了立即更新还要更新"死循环。
@@ -5138,6 +5141,48 @@ def download_apk():
     # ★文件名带版本号：防上次强更留下的同名旧包顶包（详见上方 APK 命名注释），发版自动跟随版本常量。
     fallback_name = f"app-release-v{APP_LATEST_VERSION_CODE}.apk"
     download_name = f"刁姐陪伴-{APP_LATEST_VERSION_NAME}.apk"
+    resp.headers["Content-Disposition"] = (
+        f"attachment; filename={fallback_name}; "
+        f"filename*=UTF-8''{quote(download_name)}"
+    )
+    return resp
+
+
+@app.route("/download/v2")
+def download_page_v2():
+    """v2 原生重写包「美丽陪伴」下载落地页，与 v1 独立、互不影响。无需登录。"""
+    size_mb = updated = None
+    try:
+        st = V2_APK_PATH.stat()
+        size_mb = round(st.st_size / 1024 / 1024, 1)
+        updated = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
+    except OSError:
+        pass
+    return render_template(
+        "download.html",
+        size_mb=size_mb,
+        updated=updated,
+        available=V2_APK_PATH.exists(),
+        app_label="美丽陪伴",
+        logo_char="美",
+        apk_href=url_for("download_apk_v2", v=APP_V2_VERSION_NAME),
+        apk_version=APP_V2_VERSION_NAME,
+    )
+
+
+@app.route("/download/v2.apk")
+def download_apk_v2():
+    """v2 原生包直接下载（com.aibeautyfulwomen.gongpai.v2）。无需登录，与 v1 包并存不顶包。"""
+    if not V2_APK_PATH.exists():
+        abort(404)
+    resp = send_file(
+        str(V2_APK_PATH),
+        mimetype="application/vnd.android.package-archive",
+        max_age=0,
+    )
+    resp.headers["Cache-Control"] = "no-cache"
+    fallback_name = f"meili-v2-{APP_V2_VERSION_NAME}.apk"
+    download_name = f"美丽陪伴-{APP_V2_VERSION_NAME}.apk"
     resp.headers["Content-Disposition"] = (
         f"attachment; filename={fallback_name}; "
         f"filename*=UTF-8''{quote(download_name)}"
