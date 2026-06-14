@@ -157,6 +157,10 @@ class ConsultantRepository(
     suspend fun customerValue(id: Long): ApiResult<CustomerValueResponse> =
         call { api.customerValue(id) }
 
+    /** 美丽档案：生成/刷新客户价值预测（强制重算；约 20–40 秒）。 */
+    suspend fun generateCustomerValue(id: Long): ApiResult<CustomerValueResponse> =
+        call { api.generateCustomerValue(CustomerValueGenBody(id)) }
+
     // ───────────── 接诊/会话列表（「美丽档案」= web index.html）─────────────
 
     /**

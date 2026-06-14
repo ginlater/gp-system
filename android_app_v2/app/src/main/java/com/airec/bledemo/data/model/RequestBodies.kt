@@ -12,6 +12,11 @@ data class BindBody(
     @Json(name = "customer_id") val customerId: Long,
 )
 
+/** POST /api/admin/customer_value（生成/刷新客户价值预测，强制重算）。 */
+data class CustomerValueGenBody(
+    @Json(name = "customer_id") val customerId: Long,
+)
+
 /** POST /api/consultant/recordings/<rid>/direct_rebind */
 data class DirectRebindBody(
     @Json(name = "to_customer_id") val toCustomerId: Long,

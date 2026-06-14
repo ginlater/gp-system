@@ -185,7 +185,8 @@ data class CaseReview(
     @Json(name = "kind") val kind: String? = null,         // good | bad | miss
     @Json(name = "title") val title: String? = null,
     @Json(name = "quote") val quote: String? = null,
-    @Json(name = "timestamp_seconds") val timestampSeconds: Int? = null,
+    // AI 可能产出小数秒（如 2.81）；用 Double 兜底，避免 Moshi「Expected an int」整份报告解析失败
+    @Json(name = "timestamp_seconds") val timestampSeconds: Double? = null,
     @Json(name = "timestamp_label") val timestampLabel: String? = null,
     @Json(name = "segment") val segment: Int? = null,
     @Json(name = "surface") val surface: String? = null,   // 表层做法/问题

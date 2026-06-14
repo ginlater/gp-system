@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -278,7 +279,7 @@ private fun ReportContent(
             ReportEmptyState(state = state, onReanalyze = onReanalyze)
         } else {
             // ---- 11 个 PART（顺序 01→11，缺字段各自优雅占位）----
-            Part01Overview(report.overview)
+            Part01Overview(report.overview, report.scoring)
             // PART01 详细评分入口：仅当有 scoring 明细时给出（warm_2 #report 的「查看详细评分 ▾」）。
             if (report.scoring != null) {
                 SoftButton(
@@ -566,13 +567,17 @@ private fun ScoringSheet(
     onDismiss: () -> Unit,
 ) {
     if (!visible) return
+    // 综合分/阶段分一律重算（阶段=子项均值，综合=阶段均值），不读后端可能为 0/空的存量值。
+    val overall = overallScoreOf(scoring)
     MeiliBottomSheet(
         visible = true,
         onDismiss = onDismiss,
         title = "质检评分明细",
         subtitle = "AI 质检按阶段拆分打分，仅供顾问复盘参考。",
+        onClose = onDismiss,       // 右上角 ✕ 收起
+        scrollable = true,         // 阶段多时可滚动，避免底部（如 3.x 分项）被裁切
     ) {
-        if (scoring == null || (scoring.overall == null && scoring.stages.isNullOrEmpty())) {
+        if (scoring == null || (overall == null && scoring.stages.isNullOrEmpty())) {
             Text(
                 "暂无评分明细",
                 style = MaterialTheme.typography.bodyMedium,
@@ -584,9 +589,9 @@ private fun ScoringSheet(
             )
         } else {
             // 总分
-            scoring.overall?.let { overall ->
+            overall?.let {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
-                    Text(formatScoreValue(overall), style = MeiliTheme.scoreStyle, color = MeiliPalette.Honey)
+                    Text(formatScoreValue(it), style = MeiliTheme.scoreStyle, color = scoreTextColor(it))
                     Text(
                         "综合质检评分 / 10",
                         style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Normal),
@@ -594,14 +599,14 @@ private fun ScoringSheet(
                     )
                 }
             }
-            // 各阶段
-            scoring.stages?.forEach { stage -> ScoringStageBlock(stage) }
+            // 各阶段（阶段分重算）
+            scoring.stages?.forEach { stage -> ScoringStageBlock(stage, stageScoreOf(stage)) }
         }
     }
 }
 
 @Composable
-private fun ScoringStageBlock(stage: ScoringStage) {
+private fun ScoringStageBlock(stage: ScoringStage, stageScore: Double?) {
     Surface(
         shape = MeiliShapes.Sm,
         color = MeiliPalette.SurfaceSoft,
@@ -613,7 +618,7 @@ private fun ScoringStageBlock(stage: ScoringStage) {
         Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -622,48 +627,82 @@ private fun ScoringStageBlock(stage: ScoringStage) {
                     color = MeiliPalette.ClayDeep,
                     modifier = Modifier.weight(1f),
                 )
-                stage.score?.let {
+                stageScore?.let {
                     Text(
                         formatScoreValue(it),
-                        style = MeiliTheme.summaryStyle.copy(fontSize = 16.sp),
-                        color = MeiliPalette.Honey,
+                        style = MeiliTheme.summaryStyle.copy(fontSize = 18.sp),
+                        color = scoreTextColor(it),
                     )
                 }
             }
-            stage.sub?.forEach { sub ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 9.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.Top,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            sub.name.orEmpty(),
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                            color = MeiliPalette.Ink,
-                        )
-                        sub.detail?.let {
-                            Text(
-                                it,
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Normal),
-                                color = MeiliPalette.Ink3,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
-                        }
-                    }
-                    sub.score?.let {
-                        Text(
-                            formatScoreValue(it),
-                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                            color = MeiliPalette.Ink2,
-                        )
-                    }
-                }
-            }
+            stage.sub?.forEach { sub -> SubItemRow(sub) }
         }
     }
+}
+
+/**
+ * 子项评分行：名称 + 分数同一行（分数右对齐、彩色，小数完整显示）；下方一条进度条 + 可选说明。
+ * 纵向铺开避免「名称/进度条/分数」三者挤在一行把分数截断（之前 3.x 显示不全的根因）。
+ */
+@Composable
+private fun SubItemRow(sub: com.airec.bledemo.data.model.ScoringSub) {
+    Column(modifier = Modifier.fillMaxWidth().padding(top = 11.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                sub.name.orEmpty(),
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                color = MeiliPalette.Ink,
+                modifier = Modifier.weight(1f),
+            )
+            sub.score?.let {
+                Text(
+                    formatScoreValue(it),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold),
+                    color = scoreTextColor(it),
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+        }
+        sub.score?.let { sc ->
+            val frac = (sc / 10.0).coerceIn(0.0, 1.0).toFloat()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp)
+                    .height(5.dp)
+                    .background(MeiliPalette.Line, MeiliShapes.Pill),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(frac)
+                        .height(5.dp)
+                        .background(scoreBarColor(sc), MeiliShapes.Pill),
+                )
+            }
+        }
+        sub.detail?.let {
+            Text(
+                it,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Normal),
+                color = MeiliPalette.Ink3,
+                modifier = Modifier.padding(top = 5.dp),
+            )
+        }
+    }
+}
+
+/** 分数文字色（阶段/子项）：≥7 叶绿 / ≥5 蜜 / 否则玫瑰（对齐 web sc-ok/warn/bad）。 */
+private fun scoreTextColor(s: Double): androidx.compose.ui.graphics.Color = when {
+    s >= 7.0 -> MeiliPalette.LeafText
+    s >= 5.0 -> MeiliPalette.HoneyText
+    else -> MeiliPalette.RoseText
+}
+
+/** 进度条填充色：≥7 叶绿 / ≥5 蜜 / 否则玫瑰（对齐 web bar-good/warn/bad）。 */
+private fun scoreBarColor(s: Double): androidx.compose.ui.graphics.Color = when {
+    s >= 7.0 -> MeiliPalette.Leaf
+    s >= 5.0 -> MeiliPalette.Honey
+    else -> MeiliPalette.Rose
 }
 
 /** toast（.toast）：底部深墨条；danger 玫瑰底。约 2.6 秒自动消失。 */

@@ -311,6 +311,14 @@ object MeiliIcons {
         }
     }
 
+    /** 关闭：✕ 两条对角线（弹层/面板右上角收起用）。 */
+    val Close: ImageVector by lazy {
+        stroke("ic_close") {
+            moveTo(6.5f, 6.5f); lineTo(17.5f, 17.5f)
+            moveTo(17.5f, 6.5f); lineTo(6.5f, 17.5f)
+        }
+    }
+
     /** 设置/我的：齿轮（中心圆 + 8 根辐条），用于右上角「我的/设置」入口。 */
     val Settings: ImageVector by lazy {
         stroke("ic_settings") {

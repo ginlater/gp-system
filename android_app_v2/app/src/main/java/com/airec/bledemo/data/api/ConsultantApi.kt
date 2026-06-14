@@ -204,10 +204,16 @@ interface ConsultantApi {
         @Query("range") range: String,
     ): Response<CustomerProfileResponse>
 
-    /** 美丽档案：客户价值预测（只读，缓存内容；生成限管理员/店长，本端不触发）。 */
+    /** 美丽档案：客户价值预测（只读，缓存内容）。 */
     @GET("api/admin/customer_value")
     suspend fun customerValue(
         @Query("customer_id") id: Long,
+    ): Response<CustomerValueResponse>
+
+    /** 美丽档案：生成/刷新客户价值预测（POST，强制重算；后端对所有登录角色开放）。 */
+    @POST("api/admin/customer_value")
+    suspend fun generateCustomerValue(
+        @Body body: CustomerValueGenBody,
     ): Response<CustomerValueResponse>
 
     // ───────────── 接诊/会话列表（「美丽档案」= web index.html）─────────────

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
@@ -27,6 +28,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -40,6 +44,7 @@ import com.airec.bledemo.designsystem.MeiliIcons
 import com.airec.bledemo.designsystem.MeiliPalette
 import com.airec.bledemo.designsystem.MeiliShapes
 import com.airec.bledemo.designsystem.MeiliTheme
+import com.airec.bledemo.designsystem.ThemeManager
 import com.airec.bledemo.designsystem.components.GhostButton
 import com.airec.bledemo.designsystem.components.MeiliButtonSize
 import com.airec.bledemo.designsystem.components.MeiliCard
@@ -120,6 +125,12 @@ fun SettingsScreen(
             SectionLabel("陪伴师", icon = MeiliIcons.Profile)
             Spacer(Modifier.height(9.dp))
             ConsultantCard(state = state)
+            Spacer(Modifier.height(Dimens.CardGap))
+
+            // 主题皮肤（方案A：4 套配色随便换，全 app 立即生效）
+            SectionLabel("主题皮肤", icon = MeiliIcons.Palette)
+            Spacer(Modifier.height(9.dp))
+            ThemePickerCard()
             Spacer(Modifier.height(Dimens.CardGap))
 
             // 关于美丽陪伴 / 版本
@@ -232,6 +243,73 @@ private fun ConsultantCard(state: SettingsUiState) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MeiliPalette.RoseText,
             )
+        }
+    }
+}
+
+/* ───────────────────────── 主题皮肤选择 ───────────────────────── */
+
+/** 4 套配色皮肤单选：色卡圆点 + 名称/描述 + 选中描边/对勾。点选即 [ThemeManager.apply] → 全 app 换色。 */
+@Composable
+private fun ThemePickerCard() {
+    val currentId = ThemeManager.currentId
+    MeiliCard {
+        Text(
+            text = "选一套喜欢的配色，整个 App 会跟着变。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MeiliPalette.Ink3,
+        )
+        Spacer(Modifier.height(12.dp))
+        ThemeManager.skins.forEachIndexed { i, skin ->
+            val selected = skin.id == currentId
+            Surface(
+                onClick = { ThemeManager.apply(skin.id) },
+                shape = MeiliShapes.Sm,
+                color = if (selected) MeiliPalette.ClayTint else MeiliPalette.Surface,
+                contentColor = MeiliPalette.Ink,
+                border = androidx.compose.foundation.BorderStroke(
+                    Dimens.BorderField,
+                    if (selected) MeiliPalette.Clay else MeiliPalette.Line,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = if (i == ThemeManager.skins.lastIndex) 0.dp else 9.dp),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(26.dp)
+                            .background(
+                                Brush.radialGradient(listOf(lerp(skin.clay, Color.White, 0.30f), skin.clay)),
+                                CircleShape,
+                            ),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = skin.name,
+                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.5f.sp),
+                            color = MeiliPalette.Ink,
+                        )
+                        Text(
+                            text = skin.desc,
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                            color = MeiliPalette.Ink3,
+                        )
+                    }
+                    if (selected) {
+                        Icon(
+                            MeiliIcons.Check,
+                            contentDescription = "已选",
+                            tint = MeiliPalette.ClayDeep,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
+            }
         }
     }
 }

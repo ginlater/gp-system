@@ -25,13 +25,14 @@ object MeiliPalette {
     val SurfaceSoft = Color(0xFFFAF4ED)   // soft warm fill
     val SurfaceFrost = Color(0xBDFFFCF8) // rgba(255,252,248,.74) 微磨砂
 
-    // ---- terracotta primary 陶土 ----
-    val Clay = Color(0xFFBE7459)
-    val ClayDeep = Color(0xFFA35E45)
-    val ClaySoft = Color(0xFFEFDED4)
-    val ClayTint = Color(0xFFF8ECE4)
-    val ClayLight = Color(0xFFCC846C)     // 主按钮渐变起点
-    val ClayGlow = Color(0xFFE6A88F)      // 圆钮高光起点
+    // ---- terracotta primary 陶土（随「主题皮肤」动态：读 ThemeManager 当前皮肤；
+    //      任何 composable 读它即订阅快照 → 换肤时全 app 重组。非陶土色不随皮肤变） ----
+    val Clay: Color get() = ThemeManager.current.clay
+    val ClayDeep: Color get() = ThemeManager.current.clayDeep
+    val ClaySoft: Color get() = ThemeManager.current.claySoft
+    val ClayTint: Color get() = ThemeManager.current.clayTint
+    val ClayLight: Color get() = ThemeManager.clayLight   // 主按钮渐变起点（按当前皮肤派生）
+    val ClayGlow: Color get() = ThemeManager.clayGlow      // 圆钮高光起点（按当前皮肤派生）
 
     // ---- sage 雾感鼠尾草辅色 ----
     val Sage = Color(0xFF93A38E)

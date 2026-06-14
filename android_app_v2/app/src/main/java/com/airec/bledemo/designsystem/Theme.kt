@@ -19,55 +19,43 @@ import androidx.compose.ui.text.TextStyle
  *
  * token 像素级事实源：mockups/warm_2.html 的 :root；本主题不引入暗色（原型已定亮色版）。
  */
-private val WarmJadeColorScheme: ColorScheme = lightColorScheme(
-    // ---- 陶土主色 ----
-    primary = MeiliPalette.Clay,
-    onPrimary = MeiliPalette.White,
-    primaryContainer = MeiliPalette.ClayTint,
-    onPrimaryContainer = MeiliPalette.ClayDeep,
-
-    // ---- 雾感鼠尾草辅色 ----
-    secondary = MeiliPalette.Sage,
-    onSecondary = MeiliPalette.White,
-    secondaryContainer = MeiliPalette.SageTint,
-    onSecondaryContainer = MeiliPalette.SageDeep,
-
-    // ---- 蜜色第三色 ----
-    tertiary = MeiliPalette.Honey,
-    onTertiary = MeiliPalette.White,
-    tertiaryContainer = MeiliPalette.HoneySoft,
-    onTertiaryContainer = MeiliPalette.HoneyText,
-
-    // ---- 底 / surface ----
-    background = MeiliPalette.Bg,
-    onBackground = MeiliPalette.Ink,
-    surface = MeiliPalette.Surface,
-    onSurface = MeiliPalette.Ink,
-    surfaceVariant = MeiliPalette.SurfaceSoft,
-    onSurfaceVariant = MeiliPalette.Ink2,
-    surfaceTint = MeiliPalette.Clay,
-
-    // ---- 错误（玫瑰）----
-    error = MeiliPalette.Rose,
-    onError = MeiliPalette.White,
-    errorContainer = MeiliPalette.RoseSoft,
-    onErrorContainer = MeiliPalette.RoseText,
-
-    // ---- 线/描边 ----
-    outline = MeiliPalette.Line,
-    outlineVariant = MeiliPalette.LineSoft,
-
-    // ---- 反色（深色 toast / scrim） ----
-    inverseSurface = MeiliPalette.InkSurface,
-    inverseOnSurface = MeiliPalette.White,
-    scrim = MeiliPalette.Ink,
-)
-
 @Composable
 fun MeiliTheme(content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalMeiliColors provides LightMeiliColors) {
+    // colorScheme 在组合内构建，读「动态的」MeiliPalette.Clay* → 换肤时连 M3 角色色(primary 等)也跟着重算；
+    // 扩展色 MeiliColors() 也在此处新建，其默认值读 MeiliPalette.*（当前皮肤）→ MeiliTheme.colors.clay 同步换肤。
+    val colorScheme = lightColorScheme(
+        primary = MeiliPalette.Clay,
+        onPrimary = MeiliPalette.White,
+        primaryContainer = MeiliPalette.ClayTint,
+        onPrimaryContainer = MeiliPalette.ClayDeep,
+        secondary = MeiliPalette.Sage,
+        onSecondary = MeiliPalette.White,
+        secondaryContainer = MeiliPalette.SageTint,
+        onSecondaryContainer = MeiliPalette.SageDeep,
+        tertiary = MeiliPalette.Honey,
+        onTertiary = MeiliPalette.White,
+        tertiaryContainer = MeiliPalette.HoneySoft,
+        onTertiaryContainer = MeiliPalette.HoneyText,
+        background = MeiliPalette.Bg,
+        onBackground = MeiliPalette.Ink,
+        surface = MeiliPalette.Surface,
+        onSurface = MeiliPalette.Ink,
+        surfaceVariant = MeiliPalette.SurfaceSoft,
+        onSurfaceVariant = MeiliPalette.Ink2,
+        surfaceTint = MeiliPalette.Clay,
+        error = MeiliPalette.Rose,
+        onError = MeiliPalette.White,
+        errorContainer = MeiliPalette.RoseSoft,
+        onErrorContainer = MeiliPalette.RoseText,
+        outline = MeiliPalette.Line,
+        outlineVariant = MeiliPalette.LineSoft,
+        inverseSurface = MeiliPalette.InkSurface,
+        inverseOnSurface = MeiliPalette.White,
+        scrim = MeiliPalette.Ink,
+    )
+    CompositionLocalProvider(LocalMeiliColors provides MeiliColors()) {
         MaterialTheme(
-            colorScheme = WarmJadeColorScheme,
+            colorScheme = colorScheme,
             typography = MeiliTypography,
             shapes = MeiliMaterialShapes,
             content = content,

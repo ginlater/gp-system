@@ -102,6 +102,18 @@ object Routes {
     }
 
     /**
+     * 接诊包预览（按顾客 + 日期）：今日接诊「绑定录音 / 开始分析 / 看进度」入口。
+     * 用 customer_id + date 作键（对齐后端 session/preview），所以 0 录音、尚无 session 的「待绑定」顾客也能打开，
+     * 进去看「本人当日未绑定的陪伴」并加入绑定。区别于 [SessionPreview]（绑定后由 sessionId 进）。
+     */
+    object SessionPreviewByCustomer {
+        const val ARG_CUSTOMER_ID = "customerId"
+        const val ARG_DATE = "date"
+        const val routePattern = "previewByCustomer/{$ARG_CUSTOMER_ID}/{$ARG_DATE}"
+        fun build(customerId: Long, date: String): String = "previewByCustomer/$customerId/$date"
+    }
+
+    /**
      * 客户详情（美丽档案）：从「客户」tab 点某位顾客 push。
      * 携带顾客标识 [customerId]。
      */

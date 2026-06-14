@@ -232,27 +232,19 @@ private fun BindBody(
         )
     }
 
-    // 危险操作区：换绑模式=退回未归档；绑定模式=申请删除
-    Spacer(Modifier.height(20.dp))
-    Box(Modifier.fillMaxWidth().height(1.dp).background(MeiliPalette.LineSoft))
-    Spacer(Modifier.height(14.dp))
+    // 危险操作区：仅换绑模式显示「退回未归档」；绑定模式不再放「申请删除」——
+    // 「申请删除」已在「接诊」页的待整理卡片提供，绑定流程里重复反而碍事（用户反馈）。
     if (rebinding) {
+        Spacer(Modifier.height(20.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(MeiliPalette.LineSoft))
+        Spacer(Modifier.height(14.dp))
         DangerAction(
             title = "不想分析这一段？",
-            desc = "退回未归档片段（从当前顾客解绑，回到未归档池可再申请删除；若已分析将作废）。",
+            desc = "退回未归档片段（从当前顾客解绑，回到未归档池；若已分析将作废）。",
             buttonText = "退回未归档",
             icon = MeiliIcons.Unbind,
             enabled = !state.submitting,
             onClick = viewModel::openUnbind,
-        )
-    } else {
-        DangerAction(
-            title = "这段是误录 / 不需要？",
-            desc = "可申请删除这段未归档片段，提交后等待管理员审批；审批前可随时撤回。",
-            buttonText = "申请删除",
-            icon = MeiliIcons.Trash,
-            enabled = !state.submitting,
-            onClick = viewModel::openDeleteRequest,
         )
     }
 }

@@ -31,6 +31,8 @@ data class SessionsResponse(
 data class SessionRow(
     @Json(name = "id") val id: Long? = null,
     @Json(name = "customer") val customer: String? = null,
+    // 会员卡号：/api/sessions LEFT JOIN company_customers 回传（按 customer_id；无卡号/按名记的旧会话为空）。
+    @Json(name = "member_card") val memberCard: String? = null,
     @Json(name = "advisor") val advisor: String? = null,
     @Json(name = "service_date") val serviceDate: String? = null,
     @Json(name = "analysis_status") val analysisStatus: String? = null,

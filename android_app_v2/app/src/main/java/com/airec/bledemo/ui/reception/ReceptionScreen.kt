@@ -110,18 +110,16 @@ import java.util.Calendar
  * 导航回调由 [com.airec.bledemo.nav.AppScaffold] 注入。
  *
  * @param onBindCustomer 待整理某段→绑定顾客（recordingId）
- * @param onOpenPreview 接诊某条→接诊包预览（sessionId，开始分析 / 看进度 / 重新分析）
+ * @param onOpenPreview 接诊某条→接诊包预览（customerId + 服务日期；绑定录音 / 开始分析 / 看进度 / 重新分析）
  * @param onOpenReport 接诊某条→分析报告（sessionId，已完成）
- * @param onGoCompanion 接诊某条尚无陪伴→去陪伴（切到陪伴页）
  * @param openSyncSignal 进页即自动打开「从陪伴笔同步」（一键直达，消费后回调 [onSyncSignalConsumed]）
  * @param modifier 由 AppScaffold 传入（含底栏避让 padding）
  */
 @Composable
 fun ReceptionScreen(
     onBindCustomer: (recordingId: Long) -> Unit = {},
-    onOpenPreview: (sessionId: Long) -> Unit = {},
+    onOpenPreview: (customerId: Long, date: String) -> Unit = { _, _ -> },
     onOpenReport: (sessionId: Long) -> Unit = {},
-    onGoCompanion: () -> Unit = {},
     openSyncSignal: Boolean = false,
     onSyncSignalConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
@@ -280,7 +278,6 @@ fun ReceptionScreen(
                                 showDivider = idx != state.items.lastIndex,
                                 onEditDate = { receptionVm.openEditDate(item) },
                                 onRemove = { receptionVm.askRemove(item) },
-                                onGoCompanion = onGoCompanion,
                                 onOpenPreview = onOpenPreview,
                                 onOpenReport = onOpenReport,
                             )
@@ -622,8 +619,7 @@ private fun ReceptionRow(
     showDivider: Boolean,
     onEditDate: () -> Unit,
     onRemove: () -> Unit,
-    onGoCompanion: () -> Unit,
-    onOpenPreview: (Long) -> Unit,
+    onOpenPreview: (customerId: Long, date: String) -> Unit,
     onOpenReport: (Long) -> Unit,
 ) {
     val name = item.name?.takeIf { it.isNotBlank() } ?: "未知顾客"
@@ -685,7 +681,6 @@ private fun ReceptionRow(
             )
             ContextAction(
                 item = item,
-                onGoCompanion = onGoCompanion,
                 onOpenPreview = onOpenPreview,
                 onOpenReport = onOpenReport,
             )
@@ -702,39 +697,41 @@ private fun ReceptionRow(
 }
 
 /**
- * 接诊行右下角的上下文动作（按 状态 + sessionId 驱动）：
- *  - 无陪伴 → 去陪伴；未分析 → 开始分析；pending/queued/running → 看进度；done → 看报告；failed → 重新分析。
- * 所有走 sessionId 的动作都先判空，sessionId 为空则不出该按钮（避免空导航）。
+ * 接诊行右下角的上下文动作（按 状态 + 录音数 驱动）：
+ *  - 无陪伴 → 「绑定录音」（开接诊包按 customerId+日期，里面列「本人当日未绑定的陪伴」可加入绑定，对齐 web openPkg）；
+ *    未分析 → 开始分析；pending/queued/running → 看进度；done → 看报告；failed → 重新分析。
+ * 预览类动作走 customerId+日期（判空），看报告走 sessionId（判空），缺键则不出该按钮。
  */
 @Composable
 private fun ContextAction(
     item: TodayReception,
-    onGoCompanion: () -> Unit,
-    onOpenPreview: (Long) -> Unit,
+    onOpenPreview: (customerId: Long, date: String) -> Unit,
     onOpenReport: (Long) -> Unit,
 ) {
     val sid = item.sessionId
+    val cid = item.customerId
+    val date = item.serviceDate.orEmpty()
+    val canPreview = cid != null && date.isNotBlank()
     val recCount = item.recordingCount ?: 0
     val status = item.analysisStatus
 
     when {
-        recCount == 0 -> SoftButton(
-            text = "去陪伴",
-            onClick = onGoCompanion,
-            size = MeiliButtonSize.Xs,
-        )
+        // 尚无陪伴：点「绑定录音」→ 开接诊包，挑「本人当日未绑定的陪伴」加入绑定
+        recCount == 0 -> if (canPreview) {
+            PrimaryButton(text = "绑定录音", onClick = { onOpenPreview(cid!!, date) }, size = MeiliButtonSize.Xs)
+        }
         status == "done" -> if (sid != null) {
             HoneyButton(text = "看报告", onClick = { onOpenReport(sid) })
         }
-        status == "failed" -> if (sid != null) {
-            GhostButton(text = "重新分析", onClick = { onOpenPreview(sid) }, size = MeiliButtonSize.Xs)
+        status == "failed" -> if (canPreview) {
+            GhostButton(text = "重新分析", onClick = { onOpenPreview(cid!!, date) }, size = MeiliButtonSize.Xs)
         }
-        status == "running" || status == "queued" || status == "pending" -> if (sid != null) {
-            GhostButton(text = "看进度", onClick = { onOpenPreview(sid) }, size = MeiliButtonSize.Xs)
+        status == "running" || status == "queued" || status == "pending" -> if (canPreview) {
+            GhostButton(text = "看进度", onClick = { onOpenPreview(cid!!, date) }, size = MeiliButtonSize.Xs)
         }
         // 有陪伴但未分析（null/""/idle）
-        else -> if (sid != null) {
-            PrimaryButton(text = "开始分析", onClick = { onOpenPreview(sid) }, size = MeiliButtonSize.Xs)
+        else -> if (canPreview) {
+            PrimaryButton(text = "开始分析", onClick = { onOpenPreview(cid!!, date) }, size = MeiliButtonSize.Xs)
         }
     }
 }
@@ -951,7 +948,15 @@ private fun TriageNormalCard(
         shadowElevation = Dimens.Elev2,
     ) {
         Column(modifier = Modifier.padding(Dimens.CardPadTight)) {
-            // tri-top: 相册图标 chip + 时段/时长 标题 + 副标 + 圆形试听
+            // 试听控制器：行内小播放钮（跟时段/服务日期并排）+ 点了才展开的进度条（省面积）
+            val audio = com.airec.bledemo.ui.pending.rememberPreviewAudio(
+                recordingId = rec.id,
+                directUrl = rec.audioUrl,
+                processing = rec.isProcessing,
+                onPlayingChange = onPlayingChange,
+                onPreviewToast = onPreviewToast,
+            )
+            // tri-top: 相册图标 chip + 时段/时长 标题 + 副标 + 行内播放钮
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -990,12 +995,8 @@ private fun TriageNormalCard(
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }
-                MiniPlay(
-                    recordingId = rec.id,
-                    directUrl = rec.audioUrl,
-                    onPlayingChange = onPlayingChange,
-                    onPreviewToast = onPreviewToast,
-                )
+                // 行内播放钮：跟时段/服务日期并排，点了才在下方展开进度条
+                com.airec.bledemo.ui.pending.PreviewPlayDot(audio)
             }
 
             // 删除申请被拒：红 banner + 「知道了」
@@ -1020,6 +1021,9 @@ private fun TriageNormalCard(
                     modifier = Modifier.padding(top = 11.dp),
                 )
             }
+
+            // 点了行内播放钮才出现的进度条（可拖拽跳播 + 当前/总时长，全程无 60s 上限）
+            com.airec.bledemo.ui.pending.PreviewTrack(audio)
 
             // tri-actions: 绑定顾客（弹性占满） + 申请删除（下划线文字链）
             Row(
@@ -1411,7 +1415,7 @@ private fun subLabel(rec: PendingRecording, crossDay: Boolean): String {
     val date = rec.serviceDate ?: rec.recDate ?: "—"
     val dur = rec.durationLabel ?: rec.durationMin?.let { "${it}分钟" } ?: "时长待补"
     val crossTag = if (crossDay) "（跨日）" else ""
-    return "服务日期 $date$crossTag · $dur · 未绑定"
+    return "$date$crossTag · $dur · 未绑定"
 }
 
 private fun secToLabel(sec: Int): String {

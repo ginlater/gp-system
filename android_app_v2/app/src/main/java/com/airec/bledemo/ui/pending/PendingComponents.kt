@@ -64,6 +64,7 @@ fun AudioPreviewBar(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     onSeek: (Float) -> Unit = {},
+    showButton: Boolean = true,
 ) {
     Surface(
         modifier = modifier.fillMaxWidth().padding(vertical = 12.dp),
@@ -76,39 +77,41 @@ fun AudioPreviewBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            val interaction = remember { MutableInteractionSource() }
-            val pressed by interaction.collectIsPressedAsState()
-            Surface(
-                onClick = onToggle,
-                enabled = enabled,
-                interactionSource = interaction,
-                shape = MeiliShapes.Pill,
-                color = MeiliPalette.Clay,
-                contentColor = MeiliPalette.White,
-                modifier = Modifier
-                    .size(Dimens.PlayButton)
-                    .scale(if (pressed) 0.94f else 1f),
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    if (playing) {
-                        // 播放中 = 暂停态：两根白色竖条（无 Pause 图标，内联绘制，保持线性极简）。
-                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                            repeat(2) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(width = 3.5.dp, height = 14.dp)
-                                        .clip(RoundedCornerShape(2.dp))
-                                        .background(MeiliPalette.White),
-                                )
+            // showButton=false：只渲染进度轨 + 时长（播放钮在外面跟服务日期并排，见 PreviewPlayDot）。
+            if (showButton) {
+                val interaction = remember { MutableInteractionSource() }
+                val pressed by interaction.collectIsPressedAsState()
+                Surface(
+                    onClick = onToggle,
+                    enabled = enabled,
+                    interactionSource = interaction,
+                    shape = MeiliShapes.Pill,
+                    color = MeiliPalette.Clay,
+                    contentColor = MeiliPalette.White,
+                    modifier = Modifier
+                        .size(Dimens.PlayButton)
+                        .scale(if (pressed) 0.94f else 1f),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (playing) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                repeat(2) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(width = 3.5.dp, height = 14.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(MeiliPalette.White),
+                                    )
+                                }
                             }
+                        } else {
+                            Icon(
+                                imageVector = MeiliIcons.Play,
+                                contentDescription = "试听",
+                                tint = MeiliPalette.White,
+                                modifier = Modifier.size(17.dp),
+                            )
                         }
-                    } else {
-                        Icon(
-                            imageVector = MeiliIcons.Play,
-                            contentDescription = "试听",
-                            tint = MeiliPalette.White,
-                            modifier = Modifier.size(17.dp),
-                        )
                     }
                 }
             }

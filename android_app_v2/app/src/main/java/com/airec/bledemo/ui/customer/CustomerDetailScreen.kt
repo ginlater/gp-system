@@ -1,6 +1,7 @@
 package com.airec.bledemo.ui.customer
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -72,6 +75,7 @@ import com.airec.bledemo.designsystem.components.StatusPill
 fun CustomerDetailScreen(
     customerId: Long,
     onBack: () -> Unit = {},
+    onOpenReport: (sessionId: Long) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: CustomerDetailViewModel = viewModel(),
 ) {
@@ -133,18 +137,24 @@ fun CustomerDetailScreen(
                     item {
                         ValueCard(
                             loading = state.valueLoading,
+                            generating = state.valueGenerating,
                             hasContent = state.hasValueContent,
                             content = state.value?.content,
                             stale = state.value?.stale == true,
+                            doneCount = state.valueDoneCount,
                             error = state.valueError,
-                            onFetch = viewModel::refetchValue,
+                            onGenerate = viewModel::generateValue,
                         )
                     }
 
-                    // ④ 陪伴时间线
+                    // ④ 陪伴时间线（点某次 → 跳该次接诊的分析报告）
                     val sessions = state.profile?.sessions.orEmpty()
                     item {
-                        TimelineCard(sessions = sessions, count = state.profile?.sessionCount)
+                        TimelineCard(
+                            sessions = sessions,
+                            count = state.profile?.sessionCount,
+                            onOpenReport = onOpenReport,
+                        )
                     }
                 }
             }
@@ -245,51 +255,98 @@ private fun TagsCard(tags: List<AccumulatedTag>) {
  * 客户价值预测卡。各维度 markdown-lite 文本，标题对齐 web VALUE_TOOL：
  *  value_rebuild=客户价值评估 / battle_plan=可攻破痛点 + 作战方案 /
  *  project_plan=竞品 + 项目 + 学习清单 / biz_plan=下一步动作 + 回店规划 / advisor_match=按顾问匹配度。
- * 未生成（content 为空）→ SoftButton「看客户价值预测」重新拉缓存。顾问端只读，不提供生成入口。
+ *
+ * 任何登录角色都能点「生成」(后端 POST 已放开)；每次接诊分析完成后台也会自动重算。
+ * 未生成 → 「生成客户价值预测」按钮；已生成但过期 → 末尾给「重新生成」。无已完成接诊则提示先去接诊。
  */
 @Composable
 private fun ValueCard(
     loading: Boolean,
+    generating: Boolean,
     hasContent: Boolean,
     content: CustomerValueContent?,
     stale: Boolean,
+    doneCount: Int,
     error: String?,
-    onFetch: () -> Unit,
+    onGenerate: () -> Unit,
 ) {
-    MeiliCard {
-        SectionLabel("客户价值预测", icon = MeiliIcons.Gem)
-        Spacer(Modifier.height(12.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(Dimens.CardGap)) {
+        // 区块标题 + 过期提示
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SectionLabel("客户价值预测", icon = MeiliIcons.Gem)
+            if (stale && hasContent) {
+                Text(
+                    text = "· 可能已过期",
+                    style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.sp),
+                    color = MeiliPalette.HoneyText,
+                )
+            }
+        }
         when {
-            loading -> InlineLoading(text = "正在调取客户价值预测…")
+            generating -> MeiliCard { InlineLoading(text = "正在生成客户价值预测…（约 20–40 秒，请稍候）") }
+            loading -> MeiliCard { InlineLoading(text = "正在调取客户价值预测…") }
             hasContent && content != null -> {
+                // 4 维度卡 + 顾问匹配度卡，1:1 还原 web VP_DIMS（彩色头部 + markdown-lite 正文）。
+                content.valueRebuild?.takeIf { it.isNotBlank() }?.let {
+                    VpCard("客户价值评估", MeiliIcons.Gem, VpGold) { MdLiteContent(it, VpGold) }
+                }
+                content.battlePlan?.takeIf { it.isNotBlank() }?.let {
+                    VpCard("攻坚作战方案", MeiliIcons.Target, VpRed) { MdLiteContent(it, VpRed) }
+                }
+                content.projectPlan?.takeIf { it.isNotBlank() }?.let {
+                    VpCard("项目规划 · 竞品/项目/学习清单", MeiliIcons.Doc, VpBlue) { MdLiteContent(it, VpBlue) }
+                }
+                content.bizPlan?.takeIf { it.isNotBlank() }?.let {
+                    VpCard("经营规划 · 下一步/回店", MeiliIcons.Trend, VpGreen) { MdLiteContent(it, VpGreen) }
+                }
+                val matches = content.advisorMatch.orEmpty()
+                    .filter { !it.advisor.isNullOrBlank() || !it.assessment.isNullOrBlank() }
+                if (matches.isNotEmpty()) {
+                    VpCard("顾问匹配度", MeiliIcons.Heart, VpPurple) {
+                        matches.forEachIndexed { i, m ->
+                            AdvisorRow(m, showDivider = i != matches.lastIndex)
+                        }
+                    }
+                }
+                // 已过期 → 给「重新生成」入口（不过期就不打扰）
                 if (stale) {
-                    Text(
-                        text = "以下为缓存内容，可能已过期。",
-                        style = MaterialTheme.typography.labelMedium.copy(fontSize = 11.5f.sp),
-                        color = MeiliPalette.HoneyText,
-                        modifier = Modifier.padding(bottom = 10.dp),
+                    SoftButton(
+                        text = "重新生成",
+                        onClick = onGenerate,
+                        icon = MeiliIcons.Refresh,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    ValueSection("客户价值评估", content.valueRebuild)
-                    ValueSection("可攻破痛点 + 作战方案", content.battlePlan)
-                    ValueSection("竞品分析 + 项目 + 学习清单", content.projectPlan)
-                    ValueSection("下一步动作 + 回店规划", content.bizPlan)
-                    AdvisorMatchSection(content.advisorMatch)
-                }
             }
-            else -> {
-                // 未生成 / 拉取失败：给重新拉取入口
+            // 无已完成接诊：生成会被后端拒，直接提示
+            doneCount <= 0 && error == null -> MeiliCard {
                 Text(
-                    text = error?.takeIf { it.isNotBlank() }
-                        ?: "客户价值预测由店长/管理员生成，这里还没有内容。",
+                    text = "这位顾客还没有已完成的接诊分析，完成一次接诊分析后即可生成价值预测。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MeiliPalette.Ink3,
+                )
+            }
+            else -> MeiliCard {
+                error?.takeIf { it.isNotBlank() }?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MeiliPalette.RoseText,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+                Text(
+                    text = "还没有生成客户价值预测。点下方按钮，按这位顾客的历次接诊分析即时生成。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MeiliPalette.Ink3,
                 )
                 Spacer(Modifier.height(12.dp))
                 SoftButton(
-                    text = "看客户价值预测",
-                    onClick = onFetch,
+                    text = "生成客户价值预测",
+                    onClick = onGenerate,
                     icon = MeiliIcons.Spark,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -298,72 +355,57 @@ private fun ValueCard(
     }
 }
 
-/** 单个价值维度块：小标题 + 正文（正文空则整块不渲染）。 */
+/** 顾问匹配度卡内一行：圆形头像徽标 + 顾问名 + 评估（markdown-lite 渲染）。 */
 @Composable
-private fun ValueSection(title: String, body: String?) {
-    val text = body?.trim()?.takeIf { it.isNotBlank() } ?: return
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.5f.sp, fontWeight = FontWeight.Bold),
-            color = MeiliPalette.ClayDeep,
-        )
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodySmall.copy(fontSize = 13.sp, lineHeight = 20.sp),
-            color = MeiliPalette.Ink,
-        )
-    }
-}
-
-/** 按顾问匹配度块：每个 advisor 一行「顾问名」+ assessment。 */
-@Composable
-private fun AdvisorMatchSection(matches: List<AdvisorMatch>?) {
-    val list = matches.orEmpty().filter { !it.advisor.isNullOrBlank() || !it.assessment.isNullOrBlank() }
-    if (list.isEmpty()) return
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(
-            text = "按顾问匹配度",
-            style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.5f.sp, fontWeight = FontWeight.Bold),
-            color = MeiliPalette.ClayDeep,
-        )
-        list.forEach { m ->
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = MeiliShapes.Sm,
-                color = MeiliPalette.SurfaceSoft,
-                contentColor = MeiliPalette.Ink,
-                border = androidx.compose.foundation.BorderStroke(Dimens.BorderThin, MeiliPalette.Line),
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    m.advisor?.takeIf { it.isNotBlank() }?.let {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.5f.sp, fontWeight = FontWeight.Bold),
-                            color = MeiliPalette.SageDeep,
-                        )
-                    }
-                    m.assessment?.takeIf { it.isNotBlank() }?.let {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5f.sp, lineHeight = 19.sp),
-                            color = MeiliPalette.Ink2,
-                        )
-                    }
-                }
+private fun AdvisorRow(m: AdvisorMatch, showDivider: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 11.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(38.dp)
+                .background(
+                    Brush.linearGradient(listOf(Color(0xFF7B5EC7), Color(0xFF9B7FE0))),
+                    MeiliShapes.Pill,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = (m.advisor?.takeIf { it.isNotBlank() } ?: "?").take(1),
+                style = MaterialTheme.typography.titleMedium.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
+                color = Color.White,
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            m.advisor?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
+                    color = MeiliPalette.Ink,
+                )
+            }
+            m.assessment?.takeIf { it.isNotBlank() }?.let {
+                MdLiteContent(it, VpPurple)
             }
         }
+    }
+    if (showDivider) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MeiliPalette.Line),
+        )
     }
 }
 
 // ─────────────────────────── ④ 陪伴时间线 ───────────────────────────
 
-/** 陪伴时间线卡：标题（共 N 次）+ 每次接诊一行（日期 + 顾问·门店·状态）。 */
+/** 陪伴时间线卡：标题（共 N 次）+ 每次接诊一行（日期 + 顾问·门店·状态）。点行 → 该次接诊报告。 */
 @Composable
-private fun TimelineCard(sessions: List<ProfileSession>, count: Int?) {
+private fun TimelineCard(sessions: List<ProfileSession>, count: Int?, onOpenReport: (Long) -> Unit) {
     MeiliCard(tight = true) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -389,17 +431,21 @@ private fun TimelineCard(sessions: List<ProfileSession>, count: Int?) {
             )
         } else {
             sessions.forEachIndexed { idx, s ->
-                TimelineRow(session = s, showDivider = idx != sessions.lastIndex)
+                TimelineRow(session = s, showDivider = idx != sessions.lastIndex, onOpenReport = onOpenReport)
             }
         }
     }
 }
 
 @Composable
-private fun TimelineRow(session: ProfileSession, showDivider: Boolean) {
+private fun TimelineRow(session: ProfileSession, showDivider: Boolean, onOpenReport: (Long) -> Unit) {
+    val sid = session.id
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(
+                if (sid != null) Modifier.clickable { onOpenReport(sid) } else Modifier
+            )
             .padding(vertical = 13.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(13.dp),
@@ -440,6 +486,14 @@ private fun TimelineRow(session: ProfileSession, showDivider: Boolean) {
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        if (sid != null) {
+            Icon(
+                MeiliIcons.ChevRight,
+                contentDescription = "查看报告",
+                tint = MeiliPalette.Ink4,
+                modifier = Modifier.size(18.dp),
             )
         }
     }

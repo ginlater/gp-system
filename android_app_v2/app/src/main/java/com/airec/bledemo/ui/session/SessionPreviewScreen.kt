@@ -83,12 +83,21 @@ fun SessionPreviewScreen(
     onBack: () -> Unit = {},
     onAnalysisStarted: (sessionId: Long) -> Unit = {},
     modifier: Modifier = Modifier,
+    // 「按顾客+日期」入口（今日接诊「绑定录音/开始分析」用）：给了就走 loadByCustomer，否则按 sessionId 加载。
+    customerId: Long? = null,
+    serviceDate: String? = null,
     viewModel: SessionPreviewViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsState()
     var showConfirm by remember { mutableStateOf(false) }
 
-    LaunchedEffect(sessionId) { viewModel.load(sessionId) }
+    LaunchedEffect(sessionId, customerId, serviceDate) {
+        if (customerId != null && customerId > 0 && !serviceDate.isNullOrBlank()) {
+            viewModel.loadByCustomer(customerId, serviceDate)
+        } else {
+            viewModel.load(sessionId)
+        }
+    }
 
     // 一次性提示
     LaunchedEffect(state.toast) {
@@ -130,7 +139,6 @@ fun SessionPreviewScreen(
                 state.loadError != null -> ErrorBlock(state.loadError!!) { viewModel.refresh(initial = true) }
                 else -> PreviewBody(
                     state = state,
-                    onPlay = viewModel::togglePlay,
                     onRemove = viewModel::removeFromPackage,
                     onAdd = viewModel::addToPackage,
                     onRebind = viewModel::openRebind,
@@ -222,7 +230,6 @@ private fun subtitleFor(s: SessionPreviewViewModel.UiState): String {
 @Composable
 private fun PreviewBody(
     state: SessionPreviewViewModel.UiState,
-    onPlay: (PreviewRecording) -> Unit,
     onRemove: (Long) -> Unit,
     onAdd: (Long) -> Unit,
     onRebind: (PreviewRecording) -> Unit,
@@ -284,11 +291,9 @@ private fun PreviewBody(
             val busyOp = if (state.rowOpId == rec.id) state.rowOp else null
             BoundRecordingCard(
                 rec = rec,
-                playing = state.playingId == rec.id,
                 editable = state.editable,
                 anyRowBusy = state.rowOpId != null,
                 busyOp = busyOp,
-                onPlay = { onPlay(rec) },
                 onRemove = { onRemove(rec.id) },
                 onRebind = { onRebind(rec) },
                 onConfirmSpeakers = { onConfirmSpeakers(rec.id) },
@@ -508,11 +513,9 @@ private fun StatusPhasePill(state: SessionPreviewViewModel.UiState) {
 @Composable
 private fun BoundRecordingCard(
     rec: PreviewRecording,
-    playing: Boolean,
     editable: Boolean,
     anyRowBusy: Boolean,
     busyOp: SessionPreviewViewModel.RowOp?,
-    onPlay: () -> Unit,
     onRemove: () -> Unit,
     onRebind: () -> Unit,
     onConfirmSpeakers: () -> Unit,
@@ -520,6 +523,13 @@ private fun BoundRecordingCard(
 ) {
     val speakerWarn = rec.asrSpeakerWarning == 1 && (rec.speakerConfirmed ?: 0) == 0
     MeiliCard(tight = true, modifier = modifier) {
+        val audio = com.airec.bledemo.ui.pending.rememberPreviewAudio(
+            recordingId = rec.id,
+            directUrl = rec.audioUrl,
+            processing = false,
+            onPlayingChange = {},
+            onPreviewToast = {},
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -539,6 +549,8 @@ private fun BoundRecordingCard(
                 )
             }
             AsrPill(rec.asrStatus)
+            // 行内播放钮：跟时长/识别状态并排，点了才在下方展开进度条
+            com.airec.bledemo.ui.pending.PreviewPlayDot(audio)
         }
 
         // 换绑审批中（后端已有 pending 换绑申请）→ 只读提示，不再叠加换绑动作
@@ -557,22 +569,8 @@ private fun BoundRecordingCard(
             )
         }
 
-        // 全程试听行（无 60s 上限）
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            PlayButton(playing = playing, onClick = onPlay)
-            Text(
-                text = if (playing) "正在试听全程…" else "点击试听全程",
-                style = MaterialTheme.typography.bodySmall,
-                color = MeiliPalette.Ink2,
-                modifier = Modifier.weight(1f),
-            )
-        }
+        // 点了行内播放钮才出现的进度条（可拖拽跳播 + 当前/总时长，全程无 60s 上限）
+        com.airec.bledemo.ui.pending.PreviewTrack(audio)
 
         if (editable) {
             Spacer(Modifier.height(11.dp))
@@ -622,6 +620,13 @@ private fun UnboundRecordingCard(
     modifier: Modifier = Modifier,
 ) {
     MeiliCard(tight = true, modifier = modifier) {
+        val audio = com.airec.bledemo.ui.pending.rememberPreviewAudio(
+            recordingId = rec.id,
+            directUrl = rec.audioUrl,
+            processing = false,
+            onPlayingChange = {},
+            onPreviewToast = {},
+        )
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -651,7 +656,11 @@ private fun UnboundRecordingCard(
             } else {
                 StatusPill(text = "去待整理绑定", kind = PillKind.Neutral, icon = MeiliIcons.Tidy)
             }
+            // 行内播放钮：跟时长并排，点了才在下方展开进度条（先听清是谁的再加入绑定）
+            com.airec.bledemo.ui.pending.PreviewPlayDot(audio)
         }
+        // 点了行内播放钮才出现的进度条（可拖拽跳播 + 时长）
+        com.airec.bledemo.ui.pending.PreviewTrack(audio)
     }
 }
 

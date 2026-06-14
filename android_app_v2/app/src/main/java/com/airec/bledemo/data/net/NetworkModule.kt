@@ -68,6 +68,8 @@ object NetworkModule {
             .build()
 
         moshi = Moshi.Builder()
+            // 报告(analysis_result)逐字段容错解析，单个 AI 飘类型的字段不连累整份 → 必须在反射工厂之前
+            .add(SessionReportAdapterFactory())
             .add(KotlinJsonAdapterFactory())       // Kotlin data class 反射适配
             .build()
 

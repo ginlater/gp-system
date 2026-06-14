@@ -27,12 +27,17 @@ data class CustomerDetailState(
     val profileError: String? = null,
     val profile: CustomerProfileResponse? = null,
     val valueLoading: Boolean = false,
+    val valueGenerating: Boolean = false,
     val valueError: String? = null,
     val value: CustomerValueResponse? = null,
 ) {
     /** 已生成价值预测正文（has_cache 且 content 非空）。 */
     val hasValueContent: Boolean
         get() = value?.content != null && value.error == null
+
+    /** 该顾客已完成的接诊数（done_count）；0 时生成会被后端拒。 */
+    val valueDoneCount: Int
+        get() = value?.doneCount ?: 0
 }
 
 class CustomerDetailViewModel(
@@ -97,5 +102,30 @@ class CustomerDetailViewModel(
     /** 「看客户价值预测」点击：重新拉缓存。 */
     fun refetchValue() {
         loadedId?.let { loadValue(it) }
+    }
+
+    /**
+     * 「生成 / 重新生成客户价值预测」点击：强制重算（POST，约 20–40 秒）。
+     * 后端已对所有登录角色开放；该顾客无已完成接诊时后端会返回 400（valueError 提示）。
+     * 成功直接用返回的 content 刷新本地（无需再 GET）。
+     */
+    fun generateValue() {
+        val cid = loadedId ?: return
+        if (_state.value.valueGenerating) return
+        _state.update { it.copy(valueGenerating = true, valueError = null) }
+        viewModelScope.launch {
+            when (val r = repo.generateCustomerValue(cid)) {
+                is ApiResult.Success -> {
+                    val d = r.data
+                    if (d.error != null) {
+                        _state.update { it.copy(valueGenerating = false, valueError = d.error) }
+                    } else {
+                        _state.update { it.copy(valueGenerating = false, valueError = null, value = d) }
+                    }
+                }
+                is ApiResult.Failure ->
+                    _state.update { it.copy(valueGenerating = false, valueError = r.message) }
+            }
+        }
     }
 }

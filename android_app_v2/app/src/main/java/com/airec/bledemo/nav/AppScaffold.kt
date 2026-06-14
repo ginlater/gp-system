@@ -205,7 +205,7 @@ private fun AppNavHost(
                 onBindCustomer = { rid -> navController.navigate(Routes.BindCustomer.build(rid)) },
                 onOpenReminders = { navController.navigate(Routes.Reminders) },
                 onOpenReport = { sid -> navController.navigate(Routes.Report.build(sid)) },
-                onOpenPreview = { sid -> navController.navigate(Routes.SessionPreview.build(sid)) },
+                onOpenPreview = { cid, date -> navController.navigate(Routes.SessionPreviewByCustomer.build(cid, date)) },
                 onOpenCustomerDetail = { cid -> navController.navigate(Routes.CustomerDetail.build(cid)) },
                 onOpenSettings = { navController.navigate(Routes.Settings) },
             )
@@ -253,6 +253,24 @@ private fun AppNavHost(
                 onAnalysisStarted = { s -> navController.navigate(Routes.Report.build(s)) },
             )
         }
+        // 接诊包预览（按顾客+日期）：今日接诊「绑定录音/开始分析/看进度」入口，0 录音的待绑定顾客也能开。
+        composable(
+            route = Routes.SessionPreviewByCustomer.routePattern,
+            arguments = listOf(
+                navArgument(Routes.SessionPreviewByCustomer.ARG_CUSTOMER_ID) { type = NavType.LongType },
+                navArgument(Routes.SessionPreviewByCustomer.ARG_DATE) { type = NavType.StringType },
+            ),
+        ) { entry ->
+            val cid = entry.arguments?.getLong(Routes.SessionPreviewByCustomer.ARG_CUSTOMER_ID) ?: -1L
+            val date = entry.arguments?.getString(Routes.SessionPreviewByCustomer.ARG_DATE).orEmpty()
+            SessionPreviewScreen(
+                sessionId = -1L,
+                customerId = cid,
+                serviceDate = date,
+                onBack = { navController.popBackStack() },
+                onAnalysisStarted = { s -> navController.navigate(Routes.Report.build(s)) },
+            )
+        }
         composable(
             route = Routes.Report.routePattern,
             arguments = listOf(
@@ -269,7 +287,11 @@ private fun AppNavHost(
             ),
         ) { entry ->
             val cid = entry.arguments?.getLong(Routes.CustomerDetail.ARG_CUSTOMER_ID) ?: -1L
-            CustomerDetailScreen(customerId = cid, onBack = { navController.popBackStack() })
+            CustomerDetailScreen(
+                customerId = cid,
+                onBack = { navController.popBackStack() },
+                onOpenReport = { sid -> navController.navigate(Routes.Report.build(sid)) },
+            )
         }
     }
 }
@@ -286,7 +308,7 @@ private fun MainTabsScaffold(
     onBindCustomer: (recordingId: Long) -> Unit,
     onOpenReminders: () -> Unit,
     onOpenReport: (sessionId: Long) -> Unit,
-    onOpenPreview: (sessionId: Long) -> Unit,
+    onOpenPreview: (customerId: Long, date: String) -> Unit,
     onOpenCustomerDetail: (customerId: Long) -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -322,7 +344,6 @@ private fun MainTabsScaffold(
                     onBindCustomer = onBindCustomer,
                     onOpenPreview = onOpenPreview,
                     onOpenReport = onOpenReport,
-                    onGoCompanion = { animateToPage(BottomTab.Home.ordinal) },
                 )
                 BottomTab.Report.ordinal -> ArchiveScreen(
                     onOpenReport = onOpenReport,

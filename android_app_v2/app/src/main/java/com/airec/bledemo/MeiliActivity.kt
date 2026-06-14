@@ -61,6 +61,8 @@ class MeiliActivity : ComponentActivity() {
         NetworkModule.init(applicationContext)
         // 共享录音引擎单例（陪伴首页 / 待整理同步共用同一引擎实例，避免各拿各的 PenController 打架）。
         RecordingModule.init(applicationContext)
+        // 主题皮肤：载入用户上次选定的配色（默认暖玉柔光），全 app 据此着色。
+        com.airec.bledemo.designsystem.ThemeManager.init(applicationContext)
         // 登录门：本地有未过期会话 Cookie 才进 Gate（再按角色分流到顾问端主壳 / 管理台），否则先进登录页。
         // 粗判（不打网络），无网也可用；Gate 会打 /api/me 实判会话与角色，失败再退回登录页。
         val startDestination = if (AuthManager().isLoggedIn()) Routes.Gate else Routes.Login

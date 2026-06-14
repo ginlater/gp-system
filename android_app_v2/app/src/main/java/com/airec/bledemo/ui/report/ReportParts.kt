@@ -47,6 +47,7 @@ import com.airec.bledemo.data.model.Overview
 import com.airec.bledemo.data.model.PainPoint
 import com.airec.bledemo.data.model.Persona
 import com.airec.bledemo.data.model.RootCause
+import com.airec.bledemo.data.model.ScoringStage
 import com.airec.bledemo.designsystem.Dimens
 import com.airec.bledemo.designsystem.MeiliIcons
 import com.airec.bledemo.designsystem.MeiliPalette
@@ -84,62 +85,144 @@ private fun EmptyPartNote(text: String = "本部分暂无分析结果") {
 
 // ─────────────────────────── PART 01 ───────────────────────────
 
+/**
+ * PART 01 全维度评估总览。对齐 web report.html 的「维度 | 我方分析判断」表，
+ * 但照搬其手机端断点行为：表头隐藏、每个维度纵向成块（不做 2 列窄表，否则一列只挤两三个字）。
+ * 每块 = 维度名 + 彩色标签胶囊 + 说明/彩色要点。
+ * 质检评分用 [scoring] 重算的综合分（阶段均值），不读后端可能为 0/空的存量值。
+ * 「可操作建议」按产品要求不在 App 渲染（改由生成 prompt 处理）。
+ */
 @Composable
-fun Part01Overview(overview: Overview?) {
+fun Part01Overview(overview: Overview?, scoring: com.airec.bledemo.data.model.Scoring?) {
     Collapsible(title = "全维度评估总览", numberBadge = "01", modifier = Modifier.padding(bottom = partGap)) {
         if (overview == null) {
             EmptyPartNote()
             return@Collapsible
         }
+        var first = true
         // 顾客价值评级
         overview.customerValue?.let { cell ->
-            TagLabel("顾客价值评级", MeiliIcons.Gem)
-            if (cell.tag != null) {
-                Text(
-                    cell.tag,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MeiliPalette.ClayDeep,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
-                )
+            OvRow("顾客价值评级", divider = !first) { first = false
+                cell.tag?.let { OvTagPill(it, cell.tagKind ?: "level") }
+                cell.note?.let { OvNote(it) }
             }
-            if (cell.note != null) SmallNote(cell.note, modifier = Modifier.padding(bottom = 11.dp))
         }
         // 痛点识别
         overview.painSummary?.let { ps ->
-            TagLabel("痛点识别", MeiliIcons.Target, rose = true, modifier = Modifier.padding(top = 4.dp))
-            ps.items?.forEach { item -> item.text?.let { Bullet(it) } }
-        }
-        // 销售问题诊断（对齐 report.html：独立成行，绝不与质检评分并排——并排会把分数挤成「一字一行」）
-        overview.salesDiagnosis?.note?.let { note ->
-            AdviceBlock(
-                text = note,
-                leadBold = overview.salesDiagnosis?.tag ?: "销售问题诊断",
-                accent = MeiliPalette.Honey,
-                modifier = Modifier.padding(top = 6.dp),
-            )
-        }
-        // 质检评分（独立成行；大字分数与「/ 10」同一行横排，整块占满宽度不竖排）
-        overview.qualityScore?.score?.let { score ->
-            TagLabel("质检评分", MeiliIcons.Star, modifier = Modifier.padding(top = 13.dp))
-            Row(
-                modifier = Modifier.padding(top = 4.dp),
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                Text(formatScore(score), style = MeiliTheme.scoreStyle, color = MeiliPalette.Honey)
-                Text(
-                    "/ 10",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MeiliPalette.Ink3,
-                    modifier = Modifier.padding(start = 5.dp, bottom = 6.dp),
-                )
+            OvRow("痛点识别", divider = !first) { first = false
+                ps.tag?.let { OvTagPill(it, ps.tagKind ?: "warn") }
+                ps.items?.takeIf { it.isNotEmpty() }?.let { items ->
+                    Column(modifier = Modifier.padding(top = if (ps.tag != null) 8.dp else 0.dp)) {
+                        items.forEach { OvColoredBullet(it.color, it.text.orEmpty()) }
+                    }
+                }
             }
-            overview.qualityScore?.note?.let { SmallNote(it, modifier = Modifier.padding(top = 4.dp)) }
         }
-        // 建议
-        overview.suggestions?.forEachIndexed { i, s ->
-            AdviceBlock(text = s, leadBold = "建议 ${i + 1}")
+        // 销售问题诊断
+        overview.salesDiagnosis?.let { cell ->
+            if (cell.tag != null || cell.note != null) {
+                OvRow("销售问题诊断", divider = !first) { first = false
+                    cell.tag?.let { OvTagPill(it, cell.tagKind ?: "bad") }
+                    cell.note?.let { OvNote(it) }
+                }
+            }
         }
-        // 查看详细评分（仅当有 scoring 详情时给入口；缺则不显示）
+        // 质检评分（重算综合分 = 各阶段分均值；阶段分 = 子项均值。无明细则退回存量值）
+        val qScore = overallScoreOf(scoring) ?: overview.qualityScore?.score
+        if (qScore != null) {
+            OvRow("质检评分", divider = !first) { first = false
+                ScoreTag(qScore)
+                overview.qualityScore?.note?.let { OvNote(it) }
+            }
+        }
+    }
+}
+
+/** 总览一个维度块：上方细分隔线 + 维度名（陶土深色加粗）+ 内容。手机端纵向铺满，不挤窄列。 */
+@Composable
+private fun OvRow(label: String, divider: Boolean, content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    if (divider) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(MeiliPalette.Line),
+        )
+    }
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 13.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.ExtraBold),
+            color = MeiliPalette.ClayDeep,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        content()
+    }
+}
+
+/** 总览彩色标签胶囊（对齐 web .ov-tag）：level=陶土深 / warn=蜜 / bad=玫瑰 / good=叶绿，白字。 */
+@Composable
+private fun OvTagPill(text: String, kind: String) {
+    val bg = when (kind.removePrefix("c-")) {
+        "good" -> MeiliPalette.Leaf
+        "warn" -> MeiliPalette.Honey
+        "bad" -> MeiliPalette.Rose
+        else -> MeiliPalette.ClayDeep   // level / 未知
+    }
+    Surface(shape = MeiliShapes.Xs, color = bg, contentColor = MeiliPalette.White) {
+        Text(
+            text,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = 0.3.sp),
+            color = MeiliPalette.White,
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 4.dp),
+        )
+    }
+}
+
+/** 质检评分大胶囊（对齐 web 质检评分 tag）：≥8 叶绿 / ≥6 蜜 / 否则玫瑰，白字「{分} / 10」。 */
+@Composable
+private fun ScoreTag(score: Double) {
+    val bg = when {
+        score >= 8.0 -> MeiliPalette.Leaf
+        score >= 6.0 -> MeiliPalette.Honey
+        else -> MeiliPalette.Rose
+    }
+    Surface(shape = MeiliShapes.Xs, color = bg, contentColor = MeiliPalette.White) {
+        Text(
+            "${formatScore(score)} / 10",
+            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.ExtraBold),
+            color = MeiliPalette.White,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 5.dp),
+        )
+    }
+}
+
+/** 总览说明小字（ov-content note）。 */
+@Composable
+private fun OvNote(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MeiliPalette.Ink2,
+        modifier = Modifier.padding(top = 7.dp),
+    )
+}
+
+/** 痛点识别彩色要点（对齐 web .c-{color} 的 ● 行）。 */
+@Composable
+private fun OvColoredBullet(color: String?, text: String) {
+    val c = ovBulletColor(color)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text("●", style = MaterialTheme.typography.bodySmall, color = c, modifier = Modifier.padding(end = 7.dp))
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+            color = c,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -384,7 +467,7 @@ private fun CaseCard(c: CaseReview, no: Int, onSeek: (Int, Int) -> Unit) {
             StatusPill(pillText, pillKind)
         }
         // 时间戳跳播
-        val ts = c.timestampLabel ?: c.timestampSeconds?.let { formatSeconds(it) }
+        val ts = c.timestampLabel ?: c.timestampSeconds?.let { formatSeconds(it.toInt()) }
         if (ts != null) {
             Surface(
                 shape = MeiliShapes.Pill,
@@ -395,7 +478,7 @@ private fun CaseCard(c: CaseReview, no: Int, onSeek: (Int, Int) -> Unit) {
                 Row(
                     modifier = Modifier
                         .padding(horizontal = 13.dp, vertical = 7.dp)
-                        .clickableSeek { onSeek(c.timestampSeconds ?: 0, (c.segment ?: 1) - 1) },
+                        .clickableSeek { onSeek(c.timestampSeconds?.toInt() ?: 0, (c.segment ?: 1) - 1) },
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -811,6 +894,31 @@ fun BossCommentCard(
 
 private fun formatScore(score: Double): String =
     if (score == score.toLong().toDouble()) score.toLong().toString() else String.format("%.1f", score)
+
+// ── 质检评分重算（对齐 report.html:177-196）：阶段分=子项均值，综合分=阶段分均值，保留1位 ──
+internal fun round1(d: Double): Double = kotlin.math.round(d * 10.0) / 10.0
+
+/** 阶段分 = 子项分均值（保留1位）；无子项分则退回存量阶段分。 */
+internal fun stageScoreOf(stage: ScoringStage): Double? {
+    val subs = stage.sub?.mapNotNull { it.score }
+    return if (!subs.isNullOrEmpty()) round1(subs.average()) else stage.score
+}
+
+/** 综合分 = 各阶段分均值（保留1位）；无阶段明细则退回存量综合分。 */
+internal fun overallScoreOf(scoring: com.airec.bledemo.data.model.Scoring?): Double? {
+    val stageScores = scoring?.stages?.mapNotNull { stageScoreOf(it) }
+    return if (!stageScores.isNullOrEmpty()) round1(stageScores.average()) else scoring?.overall
+}
+
+/** 总览痛点要点彩色（web .c-red/.c-green/.c-blue/.c-orange/.c-gold）。 */
+internal fun ovBulletColor(color: String?): Color = when (color) {
+    "red" -> MeiliPalette.RoseText
+    "green" -> MeiliPalette.LeafText
+    "blue" -> MeiliPalette.SageDeep
+    "orange" -> MeiliPalette.HoneyText
+    "gold" -> MeiliPalette.Honey
+    else -> MeiliPalette.Ink2
+}
 
 private fun formatSeconds(sec: Int): String {
     val h = sec / 3600

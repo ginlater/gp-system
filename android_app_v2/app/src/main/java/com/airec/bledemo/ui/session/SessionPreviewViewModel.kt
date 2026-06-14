@@ -139,20 +139,30 @@ class SessionPreviewViewModel(
         refresh(initial = true)
     }
 
-    /** 重新拉取：sessionId → session 详情（取 customerId/date）→ preview。 */
+    /**
+     * 按「顾客 + 日期」直接打开接诊包（今日接诊「绑定录音 / 开始分析」入口）。
+     * 不需要 sessionId——0 录音、尚无 session 的待绑定顾客也能开，进去看「本人当日未绑定的陪伴」加入绑定。
+     */
+    fun loadByCustomer(customerId: Long, date: String) {
+        _state.update { it.copy(sessionId = -1L, customerId = customerId, serviceDate = date) }
+        refresh(initial = true)
+    }
+
+    /** 重新拉取：sessionId → session 详情（取 customerId/date）→ preview；或直接用已知 customerId+date。 */
     fun refresh(initial: Boolean = false) {
         val sid = _state.value.sessionId
-        if (sid <= 0L) {
+        val haveCustomer = _state.value.customerId != null && _state.value.serviceDate.isNotBlank()
+        if (sid <= 0L && !haveCustomer) {
             _state.update { it.copy(loading = false, loadError = "无效的会话") }
             return
         }
         viewModelScope.launch {
             if (initial) _state.update { it.copy(loading = true, loadError = null) }
-            // 1) 解析 customerId + serviceDate（已知则跳过 session 调用）
+            // 1) 解析 customerId + serviceDate（已知则跳过 session 调用；仅在有 sessionId 时才回查 session）
             var customerId = _state.value.customerId
             var date = _state.value.serviceDate.ifBlank { null }
             var name = _state.value.customerName
-            if (customerId == null || date == null) {
+            if ((customerId == null || date == null) && sid > 0L) {
                 when (val r = repo.session(sid)) {
                     is ApiResult.Success -> {
                         customerId = r.data.customerId

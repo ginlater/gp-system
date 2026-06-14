@@ -448,10 +448,11 @@ private fun ReportScore(row: SessionRow) {
 /** 综合分整数显示：四舍五入取整（mockup 用整数 86/79；overall 为 0–10/0–100 皆按原值取整）。 */
 private fun formatScore(score: Double): String = Math.round(score).toString()
 
-/** 灰小字：只用真实字段 service_date —— 「服务 {date}」；缺日期则「服务日期待补」。 */
+/** 灰小字：「会员卡号 · 服务 {date}」（member_card 由 /api/sessions JOIN company_customers 回传；无卡号则只显服务日期）。 */
 private fun metaLine(row: SessionRow): String {
-    val d = row.serviceDate?.takeIf { it.isNotBlank() }
-    return if (d != null) "服务 $d" else "服务日期待补"
+    val card = row.memberCard?.takeIf { it.isNotBlank() }
+    val date = row.serviceDate?.takeIf { it.isNotBlank() }?.let { "服务 $it" } ?: "服务日期待补"
+    return if (card != null) "$card · $date" else date
 }
 
 // ─────────────────────────── 状态筛选 bottom sheet ───────────────────────────
