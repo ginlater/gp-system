@@ -18,15 +18,15 @@ import androidx.compose.ui.graphics.Color
  *   供组件层精确还原原型。
  */
 object MeiliPalette {
-    // ---- ground 底色（已整体提亮 ~10–15%，勿再调暗） ----
-    val Bg = Color(0xFFF8F3ED)            // warm grey-cream 暖灰米底
-    val Bg2 = Color(0xFFF2EBE2)           // deeper ground
-    val Surface = Color(0xFFFFFCF8)       // card 柔光
-    val SurfaceSoft = Color(0xFFFAF4ED)   // soft warm fill
-    val SurfaceFrost = Color(0xBDFFFCF8) // rgba(255,252,248,.74) 微磨砂
+    // ---- ground 底色（随主题皮肤；暗色皮肤=深底） ----
+    val Bg: Color get() = ThemeManager.current.bg
+    val Bg2: Color get() = ThemeManager.current.bg2
+    val Surface: Color get() = ThemeManager.current.surface
+    val SurfaceSoft: Color get() = ThemeManager.current.surfaceSoft
+    val SurfaceFrost: Color get() = ThemeManager.current.surfaceFrost
 
     // ---- terracotta primary 陶土（随「主题皮肤」动态：读 ThemeManager 当前皮肤；
-    //      任何 composable 读它即订阅快照 → 换肤时全 app 重组。非陶土色不随皮肤变） ----
+    //      任何 composable 读它即订阅快照 → 换肤时全 app 重组） ----
     val Clay: Color get() = ThemeManager.current.clay
     val ClayDeep: Color get() = ThemeManager.current.clayDeep
     val ClaySoft: Color get() = ThemeManager.current.claySoft
@@ -34,43 +34,43 @@ object MeiliPalette {
     val ClayLight: Color get() = ThemeManager.clayLight   // 主按钮渐变起点（按当前皮肤派生）
     val ClayGlow: Color get() = ThemeManager.clayGlow      // 圆钮高光起点（按当前皮肤派生）
 
-    // ---- sage 雾感鼠尾草辅色 ----
+    // ---- sage 雾感鼠尾草辅色（sageSoft 随主题，其余固定） ----
     val Sage = Color(0xFF93A38E)
     val SageDeep = Color(0xFF74866F)
-    val SageSoft = Color(0xFFE3E9DE)
-    val SageTint = Color(0xFFF1F4ED)
+    val SageSoft: Color get() = ThemeManager.current.sageSoft
+    val SageTint: Color get() = ThemeManager.current.sageTint
     val SageLight = Color(0xFF9DAE97)     // sage 按钮渐变起点
 
-    // ---- ink 深摩卡文字 ----
-    val Ink = Color(0xFF3D3833)
-    val Ink2 = Color(0xFF736A60)
-    val Ink3 = Color(0xFFA89F94)
-    val Ink4 = Color(0xFFC8BFB4)
+    // ---- ink 文字（随主题；暗色皮肤=浅色文字） ----
+    val Ink: Color get() = ThemeManager.current.ink
+    val Ink2: Color get() = ThemeManager.current.ink2
+    val Ink3: Color get() = ThemeManager.current.ink3
+    val Ink4: Color get() = ThemeManager.current.ink4
 
-    // ---- lines ----
-    val Line = Color(0xFFEBE2D7)
-    val LineSoft = Color(0xFFF2EBE1)
+    // ---- lines（随主题） ----
+    val Line: Color get() = ThemeManager.current.line
+    val LineSoft: Color get() = ThemeManager.current.lineSoft
 
-    // ---- status：蜜色 / 玫瑰 / 叶绿 ----
+    // ---- status：蜜色 / 玫瑰 / 叶绿（柔底+文字随主题，主色固定语义色） ----
     val Honey = Color(0xFFC99A5B)         // warm gold/honey
-    val HoneySoft = Color(0xFFF0E2C8)
-    val HoneyText = Color(0xFF8C6322)     // 蜜色态文字
+    val HoneySoft: Color get() = ThemeManager.current.honeySoft
+    val HoneyText: Color get() = ThemeManager.current.honeyText  // 蜜色态文字
     val HoneyLight = Color(0xFFD6AC6E)    // honey 按钮渐变起点
     val HoneyDeep = Color(0xFFB98A45)     // honey 按钮渐变终点
 
     val Rose = Color(0xFFC57D6B)
-    val RoseSoft = Color(0xFFF2DED7)
-    val RoseText = Color(0xFF9B4B3A)      // 玫瑰/危险态文字
+    val RoseSoft: Color get() = ThemeManager.current.roseSoft
+    val RoseText: Color get() = ThemeManager.current.roseText    // 玫瑰/危险态文字
     val RoseDeep = Color(0xFFA8503C)      // 进行中圆钮渐变终点
-    val RoseLine = Color(0xFFE9C4BA)      // danger 边框
+    val RoseLine: Color get() = ThemeManager.current.roseLine    // danger 边框
 
     val Leaf = Color(0xFF7FA083)
-    val LeafSoft = Color(0xFFDFEADD)
-    val LeafText = Color(0xFF3D7150)      // 成功态文字
-    val LeafLine = Color(0xFFC7DEC9)      // good 边框
+    val LeafSoft: Color get() = ThemeManager.current.leafSoft
+    val LeafText: Color get() = ThemeManager.current.leafText    // 成功态文字
+    val LeafLine: Color get() = ThemeManager.current.leafLine    // good 边框
 
     // ---- 深色 toast / 标签底 ----
-    val InkSurface = Color(0xFF3D3833)
+    val InkSurface: Color get() = ThemeManager.current.inkSurface
     val OnInk = Color(0xFFFFFFFF)
 
     val White = Color(0xFFFFFFFF)

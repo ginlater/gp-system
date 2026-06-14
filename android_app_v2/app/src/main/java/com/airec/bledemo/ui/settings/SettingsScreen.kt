@@ -279,14 +279,22 @@ private fun ThemePickerCard() {
                     modifier = Modifier.padding(horizontal = 13.dp, vertical = 11.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // 色卡：外圈=该皮肤底色（黑金会是近黑），内圆=主色（金/陶土…）→ 一眼看出深浅
                     Box(
                         modifier = Modifier
                             .size(26.dp)
-                            .background(
-                                Brush.radialGradient(listOf(lerp(skin.clay, Color.White, 0.30f), skin.clay)),
-                                CircleShape,
-                            ),
-                    )
+                            .background(skin.bg, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(15.dp)
+                                .background(
+                                    Brush.radialGradient(listOf(lerp(skin.clay, Color.White, 0.30f), skin.clay)),
+                                    CircleShape,
+                                ),
+                        )
+                    }
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(

@@ -156,6 +156,17 @@ class MeiliActivity : ComponentActivity() {
 @Composable
 private fun MeiliApp(startDestination: String) {
     MeiliTheme {
+        // 状态栏/导航栏图标随主题明暗：暗色皮肤(黑金)=浅色图标，浅色皮肤=深色图标。
+        val view = androidx.compose.ui.platform.LocalView.current
+        val dark = com.airec.bledemo.designsystem.ThemeManager.current.dark
+        if (!view.isInEditMode) {
+            androidx.compose.runtime.SideEffect {
+                val window = (view.context as android.app.Activity).window
+                val ctl = androidx.core.view.WindowCompat.getInsetsController(window, view)
+                ctl.isAppearanceLightStatusBars = !dark
+                ctl.isAppearanceLightNavigationBars = !dark
+            }
+        }
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MeiliPalette.Bg,
