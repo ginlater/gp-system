@@ -5031,7 +5031,7 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.14"
+APP_V2_VERSION_NAME = "2.0.15"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
 #   每个版本同名("刁姐陪伴.apk")时，上次强更留在手机下载目录里的旧包会顶包——浏览器弹"该文件已下载"
 #   或存成"(1)"副本，顾问点开装的还是旧版 → 版本仍 < MIN → 又弹强更，"点了立即更新还要更新"死循环。
@@ -11866,14 +11866,30 @@ def api_consultant_customer_lookup():
     u = current_user()
     cid = u["company_id"] or 1
     q = (request.args.get("q") or "").strip()
-    sql = "SELECT id, name, phone_tail, member_card FROM company_customers WHERE company_id=?"
-    params = [cid]
     if q:
-        sql += " AND (name LIKE ? OR phone_tail LIKE ? OR member_card LIKE ?)"
+        # 有关键字：全公司按 姓名/手机尾号/会员号 搜（加入接诊找已有顾客 / 客户tab 搜索）
         like = f"%{q}%"
-        params += [like, like, like]
-    sql += " ORDER BY id DESC LIMIT 30"
-    rows = db_fetchall(sql, tuple(params))
+        rows = db_fetchall(
+            """SELECT id, name, phone_tail, member_card FROM company_customers
+               WHERE company_id=?
+                 AND (name LIKE ? OR phone_tail LIKE ? OR member_card LIKE ?)
+               ORDER BY id DESC LIMIT 30""",
+            (cid, like, like, like),
+        )
+    else:
+        # 空关键字（客户 tab 默认）：本顾问【最近一个月接待过】的客户，最近接待优先
+        advisor = u["advisor_name"] or u["username"]
+        rows = db_fetchall(
+            """SELECT cc.id, cc.name, cc.phone_tail, cc.member_card,
+                      MAX(s.service_date) AS last_date
+               FROM sessions s
+               JOIN company_customers cc ON cc.id = s.customer_id
+               WHERE s.company_id=? AND s.advisor=? AND s.customer_id IS NOT NULL
+                 AND s.service_date >= date('now','localtime','-30 days')
+               GROUP BY cc.id, cc.name, cc.phone_tail, cc.member_card
+               ORDER BY last_date DESC, cc.id DESC LIMIT 50""",
+            (cid, advisor),
+        )
     return jsonify({"customers": [dict(r) for r in rows]})
 
 

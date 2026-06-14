@@ -84,13 +84,28 @@ fun CustomerScreen(
             item {
                 MeiliTopBar(
                     title = "客户",
-                    subtitle = "搜顾客，看 TA 的历史陪伴与画像",
+                    subtitle = "默认看最近一个月接待的顾客；也可搜姓名 / 卡号查任意顾客",
                 )
             }
 
             // ── 搜索框（姓名 / 会员卡号；去抖在 VM）──
             item {
                 CustomerSearchField(value = state.query, onValueChange = viewModel::setQuery)
+            }
+
+            // ── 列表区小标题：默认显示「最近一个月接待」，搜索时显示「搜索结果」──
+            if (state.customers.isNotEmpty() || !state.loading) {
+                item {
+                    Text(
+                        text = if (state.query.isBlank()) "最近一个月接待" else "搜索结果",
+                        style = MaterialTheme.typography.labelLarge.copy(
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                        ),
+                        color = MeiliPalette.Ink2,
+                        modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                    )
+                }
             }
 
             // ── 列表 / 加载 / 空 / 错误 ──
@@ -107,9 +122,9 @@ fun CustomerScreen(
                     MeiliCard {
                         EmptyHint(
                             icon = MeiliIcons.Profile,
-                            title = if (state.query.isBlank()) "还没有可看的顾客" else "没有匹配的顾客",
+                            title = if (state.query.isBlank()) "最近一个月还没有接待记录" else "没有匹配的顾客",
                             sub = if (state.query.isBlank()) {
-                                "完成接诊并绑定顾客后，会在这里看到 TA 的历史陪伴"
+                                "完成接诊并绑定顾客后，会在这里看到最近接待的顾客；也可在上方搜索任意顾客"
                             } else {
                                 "换个姓名 / 会员卡号试试"
                             },
