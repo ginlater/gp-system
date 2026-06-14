@@ -6056,12 +6056,15 @@ def api_recording_delete_request_dismiss(rid):
 @app.route("/api/session/<int:sid>/report/delete", methods=["DELETE"])
 @admin_required
 def api_session_report_delete(sid):
-    """管理员清除分析报告（接诊记录和录音保留）"""
+    """管理员清除分析报告（接诊记录和录音保留，便于重新分析）"""
     sess = db_fetchone("SELECT id, company_id FROM sessions WHERE id=?", (sid,))
     if not sess:
         return jsonify({"error": "接诊不存在"}), 404
     if session.get("role") != "super" and sess["company_id"] != session.get("company_id"):
         return jsonify({"error": "无权操作"}), 403
+    # 清空报告的同时，把这次分析产生的派生物(点评/顾客标签/价值预测)也清掉——它们都是这份分析
+    # 的产物，否则"清了分析、还没重新分析"的空窗期里顾客档案仍挂着旧标签/旧价值预测。重新分析会重写。
+    _purge_session_derived(sid)
     db_write("""UPDATE sessions SET
         analysis_status='pending', analysis_result=NULL, analysis_error=NULL,
         analysis_started_at=NULL, analysis_finished_at=NULL, analysis_signature=NULL,
