@@ -2219,7 +2219,7 @@ SYSTEM_PROMPT_SHARED_CALL2 = """\
 
 SYSTEM_PROMPT_CALL3 = """\
 你是身美美容院的接诊报告撰写专家。
-你会收到前两步的分析结果（顾客画像、痛点、成交诊断、质检评分、Case复盘、失分根因），
+你会收到前两步的分析结果（顾客画像、痛点、成交诊断、质检评分、Case复盘），
 你的任务是把这些诊断结论转化成顾问能立刻用的方案，并生成报告首屏的总览。
 
 你的输出标准：
@@ -2402,10 +2402,10 @@ TOOL_CALL1 = {
 
 TOOL_CALL2 = {
     "name": "submit_call2",
-    "description": "提交接诊评判：质检评分、Case复盘、失分根因、收割四步",
+    "description": "提交接诊评判：质检评分、Case复盘、收割四步",
     "input_schema": {
         "type": "object",
-        "required": ["scoring", "cases", "cases_summary", "root_cause", "harvest"],
+        "required": ["scoring", "cases", "cases_summary", "harvest"],
         "properties": {
             "scoring": {
                 "type": "object",
@@ -2471,25 +2471,6 @@ TOOL_CALL2 = {
             },
             "cases_summary": {"type": "string",
                               "description": "一句话总结整个 Case，要尖锐有力"},
-            "root_cause": {
-                "type": "object",
-                "required": ["headline", "product_dimension",
-                             "problem_dimension", "gap_note"],
-                "properties": {
-                    "headline": {"type": "string",
-                                 "description": "从所有 case 里往上抽象一层，找到背后唯一的思维模式根因，不是某句话的问题，是整体思维模式，如'始终在产品维度对话而非问题维度'"},
-                    "lead": {"type": "string"},
-                    "product_dimension": {
-                        "type": "array", "items": {"type": "string"},
-                        "description": "顾问实际说的（2-3 条，简短）",
-                    },
-                    "problem_dimension": {
-                        "type": "array", "items": {"type": "string"},
-                        "description": "顾客需要听到的（2-3 条，与上面一一对应）",
-                    },
-                    "gap_note": {"type": "string", "description": "差距本质，一句话"},
-                },
-            },
             "harvest": {
                 "type": "object",
                 "required": ["intro", "steps"],
@@ -2502,12 +2483,10 @@ TOOL_CALL2 = {
                         "minItems": 3, "maxItems": 5,
                         "items": {
                             "type": "object",
-                            "required": ["title", "body"],
+                            "required": ["title"],
                             "properties": {
                                 "title": {"type": "string",
                                           "description": "步骤标题，如 '引导顾客说出效果' / '解释今天效果的原理' / '埋下下次的钩子' / '自然过渡到方案'"},
-                                "body": {"type": "string",
-                                         "description": "具体话术 + 操作说明（话术用「」或斜体），必须含顾客真名"},
                             },
                         },
                     },
@@ -2622,11 +2601,10 @@ TOOL_CALL3 = {
                         "minItems": 2,
                         "items": {
                             "type": "object",
-                            "required": ["title", "body"],
+                            "required": ["title"],
                             "properties": {
-                                "title": {"type": "string"},
-                                "body": {"type": "string", "minLength": 40,
-                                         "description": "含顾客真名，以'上次你提到...'开头，50-80 字"},
+                                "title": {"type": "string",
+                                          "description": "回店切入角度的标题（只写大标题，不写话术正文）"},
                             },
                         },
                     },
@@ -2647,18 +2625,10 @@ TOOL_CALL3 = {
                         "minItems": 2,
                         "items": {
                             "type": "object",
-                            "required": ["pain_name", "entry", "principle",
-                                         "direction", "sales_link"],
+                            "required": ["pain_name"],
                             "properties": {
-                                "pain_name": {"type": "string"},
-                                "entry": {"type": "string",
-                                          "description": "切入话，含顾客真名，以'上次你提到...'开头"},
-                                "principle": {"type": "string",
-                                              "description": "原理话，身体机制解释，30 字"},
-                                "direction": {"type": "string",
-                                              "description": "方向话，医美和我们的分工边界，30 字"},
-                                "sales_link": {"type": "string",
-                                               "description": "回销售衔接句，20 字"},
+                                "pain_name": {"type": "string",
+                                              "description": "痛点名称（只写标题，不写 entry/principle/direction/sales_link 话术）"},
                             },
                         },
                     },
@@ -3041,22 +3011,6 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
 时间戳：录音转录每行 `[Xs - Ys] 说话人N: ...`。第 2 段的 [134s-142s] → segment=2, timestamp_seconds=134, timestamp_label="0:02:14"。
 """,
     },
-    "T7": {
-        "name": "失分根因",
-        "call": 2,
-        "result_keys": ["root_cause"],
-        "schema_keys": ["root_cause"],
-        "depends_on": [],
-        "prompt_snippet": """【任务7】接诊失分根因
-⚠ root_cause 对象的所有字段必填，不能为空：
-- headline：思维模式根因（整体抽象，如"始终在产品维度对话而非问题维度"，不是某句话的问题）
-- product_dimension：顾问实际说的（2-3 条字符串）
-- problem_dimension：顾客需要听到的（2-3 条字符串，与上面一一对应）
-- gap_note：差距本质，一句话
-
-注意：不要重复 Case 复盘里的具体问题，要从所有 case 往上抽象一层，找到背后唯一的思维模式根因。
-""",
-    },
     "T8": {
         "name": "黄金窗口收割",
         "call": 2,
@@ -3067,11 +3021,11 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
 项目结束后的 10 分钟是成交概率最高的窗口（顾客身体放松、防御最低）。
 基于本次接诊的痛点和顾客状态，给出 3-5 步顾问应执行的标准收割动作。
 
-⚠ harvest 对象的所有字段必填：
+⚠ harvest 字段：
 - intro：导语一句，强调黄金窗口为什么重要
-- steps：3-5 步，每步：title（步骤名）+ body（具体话术 + 操作说明，话术用「」或斜体，必须含"{customer_name}"）
+- steps：3-5 步，每步**只写 title（步骤名）**，不要写 body 话术/操作说明
 
-注意：harvest 是给顾问的"下次怎么做"指引，不是复盘本次。
+注意：harvest 是给顾问的"下次怎么做"指引，不是复盘本次。只列步骤标题即可，不展开话术。
 """,
     },
 
@@ -3081,12 +3035,12 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
         "call": 3,
         "result_keys": ["overview"],
         "schema_keys": ["overview"],
-        "depends_on": ["T1", "T2", "T3", "T4", "T5", "T6", "T7"],
+        "depends_on": ["T1", "T2", "T3", "T4", "T5", "T6"],
         "prompt_snippet": """【任务9】PART1 全维度评估总览
 ⚠ overview 对象必含 4 个子字段，都不能省略：
 - customer_value：顾客价值评级（tag 简短 + tag_kind + note 一句话引用关键信号）
 - pain_summary：痛点识别（tag 如"3 个核心可攻破点" + items 列每个痛点，color 用 red/blue/teal/orange）
-- sales_diagnosis：销售问题诊断（tag 标签化根因 + tag_kind + note 复用 headline）
+- sales_diagnosis：销售问题诊断（tag 标签化根因 + tag_kind + note 一句话点出销售根因）
 - quality_score：质检评分（score 复用 overall + note 一句话）
 """,
     },
@@ -3095,7 +3049,7 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
         "call": 3,
         "result_keys": ["logic_chain"],
         "schema_keys": ["logic_chain"],
-        "depends_on": ["T6", "T7"],
+        "depends_on": ["T6"],
         "prompt_snippet": """【任务10】能力训练路径
 ⚠ logic_chain 对象所有字段必填：
 - bad_chain：顾问实际思维链（用 → 连接），如"顾客来了 → 了解需求 → 介绍产品 → 希望成交"
@@ -3114,9 +3068,9 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
         "depends_on": ["T1", "T2", "T4"],
         "prompt_snippet": """【任务11】下一步动作 · 回店规划
 ⚠ next_steps 对象 4 个字段必填：
-- return_scripts：至少 2 条回店话术，含"{customer_name}"，以"上次你提到..."开头，50-80 字
+- return_scripts：至少 2 条回店切入角度，**每条只写 title 大标题，不写话术正文（body）**
 - priority_projects：按成交难度从低到高 2-3 条（name + desc）
-- pain_entry_scripts：针对每个痛点的四步话术（pain_name + entry 含{customer_name} + principle 30 字 + direction 30 字 + sales_link 20 字）
+- pain_entry_scripts：列出针对的每个痛点，**每条只写 pain_name 痛点名称，不写 entry/principle/direction/sales_link 话术**
 - medical_objections：至少 3 条泛医疗异议应答，60-100 字，严格遵循 ①承认医院 → ②分工边界 → ③我们位置 → ④互补不冲突
 """,
     },
@@ -3125,7 +3079,7 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
 
 CALL_GROUPS = {
     1: ["T1", "T2", "T3", "T4"],
-    2: ["T5", "T6", "T7", "T8"],
+    2: ["T5", "T6", "T8"],
     3: ["T9", "T10", "T11"],
 }
 
@@ -3135,7 +3089,7 @@ CALL_GROUPS = {
 # 本就是结构化摘要，不做 preflight，直接分块。
 CALL_CHUNKS = {
     1: [["T1"], ["T2"], ["T3", "T4"]],
-    2: [["T5"], ["T6"], ["T7", "T8"]],
+    2: [["T5"], ["T6"], ["T8"]],
     3: [["T9"], ["T10"], ["T11"]],
 }
 
@@ -3252,14 +3206,6 @@ def build_call_summaries(call1_result: dict, call2_result: dict):
         c2.append(f"  {stage.get('name','')} {stage.get('score','')} 分")
         for sub in stage.get("sub") or []:
             c2.append(f"    · {sub.get('name','')} {sub.get('score','')} 分：{sub.get('detail','')}")
-
-    root = call2_result.get("root_cause", {}) or {}
-    c2.append(f"【失分根因】{root.get('headline','')}")
-    pd = root.get("product_dimension") or []
-    prd = root.get("problem_dimension") or []
-    for i in range(min(len(pd), len(prd))):
-        c2.append(f"  顾问说：{pd[i]} → 应该说：{prd[i]}")
-    c2.append(f"差距本质：{root.get('gap_note','')}")
 
     c2.append("【关键 Case 摘要】")
     for case in call2_result.get("cases") or []:
