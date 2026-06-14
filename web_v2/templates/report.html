@@ -355,43 +355,7 @@
 </div>
 {% endif %}
 
-<!-- PART 03 -->
-{% if root %}
-<div class="section">
-  <div class="part-label">PART 03</div>
-  <div class="section-title">接诊失分根因定位</div>
-  {% if root.lead %}<div class="section-lead">{{ root.lead }}</div>{% endif %}
-
-  {% if root.headline %}
-  <div class="box box-red" style="font-size:15px;font-weight:700;margin-bottom:20px">
-    {{ root.headline|md_inline|safe }}
-  </div>
-  {% endif %}
-
-  {% if root.product_dimension or root.problem_dimension %}
-  <div class="compare-grid mb16">
-    <div class="compare-col">
-      <div class="compare-col-head bad">产品维度（顾问实际做的）</div>
-      {% for x in root.product_dimension or [] %}
-        <div class="compare-item bad">"{{ x }}"</div>
-      {% endfor %}
-    </div>
-    <div class="compare-col" style="border-left:1px solid var(--border)">
-      <div class="compare-col-head good">问题维度（顾客需要听到的）</div>
-      {% for x in root.problem_dimension or [] %}
-        <div class="compare-item good">"{{ x }}"</div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
-
-  {% if root.gap_note %}
-  <div class="box box-orange">
-    <strong>差距的本质：</strong>{{ root.gap_note|md_inline|safe }}
-  </div>
-  {% endif %}
-</div>
-{% endif %}
+<!-- PART 03 失分根因 已下线（不再生成/展示） -->
 
 <!-- PART 04 -->
 {% if pains %}
@@ -452,7 +416,7 @@
     <div class="harvest-step"{% if loop.last %} style="border-right:none"{% endif %}>
       <div class="hs-badge h{{ loop.index if loop.index <= 4 else 4 }}">STEP {{ loop.index }}</div>
       <div class="hs-title">{{ st.title }}</div>
-      <div class="hs-body"><em>{{ st.body|md_inline|safe }}</em></div>
+      {% if st.body %}<div class="hs-body"><em>{{ st.body|md_inline|safe }}</em></div>{% endif %}
     </div>
     {% endfor %}
   </div>
@@ -588,10 +552,12 @@
       <div class="next-card-body">
         {% for s in ns.return_scripts %}
         <div style="margin-bottom:14px">
-          <div style="font-weight:700;color:var(--navy);margin-bottom:6px">{{ s.title }}</div>
-          <div style="font-style:italic;color:var(--text-mid);border-left:3px solid var(--border);padding-left:10px;line-height:1.9">
+          <div style="font-weight:700;color:var(--navy)">{{ s.title }}</div>
+          {% if s.body %}
+          <div style="font-style:italic;color:var(--text-mid);border-left:3px solid var(--border);padding-left:10px;line-height:1.9;margin-top:6px">
             {{ s.body|md_inline|safe }}
           </div>
+          {% endif %}
         </div>
         {% endfor %}
       </div>
@@ -640,40 +606,10 @@
 
   {% if ns.pain_entry_scripts %}
   <div style="margin-top:20px">
-    <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">痛点切入四步话术</div>
-    <!-- Desktop table -->
-    <table class="strategy-tbl hide-on-mobile">
-      <thead>
-        <tr>
-          <th style="width:120px">痛点</th>
-          <th style="width:30%">① 切入（含顾客名）</th>
-          <th>② 原理</th>
-          <th>③ 方向（医美 vs 我们）</th>
-          <th style="width:18%">④ 销售衔接</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for p in ns.pain_entry_scripts %}
-        <tr>
-          <td class="strat-name">{{ p.pain_name }}</td>
-          <td><em>{{ p.entry }}</em></td>
-          <td>{{ p.principle }}</td>
-          <td>{{ p.direction }}</td>
-          <td>{{ p.sales_link }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    <!-- Mobile cards -->
-    <div class="show-on-mobile">
+    <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">针对痛点的进店切入</div>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
       {% for p in ns.pain_entry_scripts %}
-      <div class="m-card">
-        <div class="m-card-head">{{ p.pain_name }}</div>
-        <div class="m-card-row"><span class="m-card-label">① 切入</span><span class="m-card-val"><em>{{ p.entry }}</em></span></div>
-        <div class="m-card-row"><span class="m-card-label">② 原理</span><span class="m-card-val">{{ p.principle }}</span></div>
-        <div class="m-card-row"><span class="m-card-label">③ 方向</span><span class="m-card-val">{{ p.direction }}</span></div>
-        <div class="m-card-row"><span class="m-card-label">④ 销售衔接</span><span class="m-card-val">{{ p.sales_link }}</span></div>
-      </div>
+      <span style="background:rgba(74,144,217,.12);color:var(--navy);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:14px">{{ p.pain_name }}</span>
       {% endfor %}
     </div>
   </div>
@@ -1546,6 +1482,9 @@ highlightStep({{ (sess.analysis_progress or '')|tojson }});
 // ── PART 10 顾客标签（动态：按服务次数 + 本次新增/历史 + 时间区间）──
 function _tagEsc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function loadCustomerTags() {
+  // 顾客标签已移到顾客档案/价值预测，报告页不再展示（标签仍照常生成、入库）。
+  const _sec = document.getElementById('tagSection'); if (_sec) _sec.style.display = 'none';
+  return;
   const rng = (document.getElementById('tagRange')||{}).value || 'all';
   fetch(`${BASE}/api/session/${SESSION_ID}/customer_tags?range=${rng}`)
     .then(r => r.json()).then(d => {

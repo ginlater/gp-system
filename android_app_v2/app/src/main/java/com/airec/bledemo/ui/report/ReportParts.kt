@@ -413,10 +413,13 @@ fun Part05Harvest(harvest: Harvest?) {
                         )
                     }
                     Column(modifier = Modifier.weight(1f)) {
+                        // 只展示步骤标题（话术 body 已下线）
                         step.title?.let {
-                            Text(it, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold), color = MeiliPalette.Ink, modifier = Modifier.padding(bottom = 3.dp))
+                            Text(it, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold), color = MeiliPalette.Ink)
                         }
-                        Text(step.body.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MeiliPalette.Ink2)
+                        step.body?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall, color = MeiliPalette.Ink2, modifier = Modifier.padding(top = 3.dp))
+                        }
                     }
                 }
                 if (i != harvest.steps.lastIndex) {
@@ -592,9 +595,11 @@ fun Part08NextSteps(nextSteps: NextSteps?) {
             return@Collapsible
         }
         if (!nextSteps.returnScripts.isNullOrEmpty()) {
-            SectionLabel("回店切入话术", icon = MeiliIcons.Comment, modifier = Modifier.padding(bottom = 8.dp))
-            nextSteps.returnScripts.forEachIndexed { i, s ->
-                AdviceBlock(text = s.body.orEmpty(), leadBold = s.title ?: "话术 ${i + 1}", accent = MeiliPalette.Clay)
+            SectionLabel("回店切入角度", icon = MeiliIcons.Comment, modifier = Modifier.padding(bottom = 8.dp))
+            // 只展示切入角度大标题（话术正文已下线）
+            nextSteps.returnScripts.forEach { s ->
+                val head = s.title?.takeIf { it.isNotBlank() } ?: s.body.orEmpty()
+                if (head.isNotBlank()) AdviceBlock(text = head, accent = MeiliPalette.Clay)
             }
         }
         if (!nextSteps.priorityProjects.isNullOrEmpty()) {
@@ -604,9 +609,10 @@ fun Part08NextSteps(nextSteps: NextSteps?) {
             }
         }
         if (!nextSteps.painEntryScripts.isNullOrEmpty()) {
-            SectionLabel("针对痛点的进店话术", icon = MeiliIcons.Target, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
+            SectionLabel("针对痛点的进店切入", icon = MeiliIcons.Target, modifier = Modifier.padding(top = 14.dp, bottom = 8.dp))
+            // 只展示痛点名称（entry/principle/direction/sales_link 话术已下线）
             nextSteps.painEntryScripts.forEach { s ->
-                AdviceBlock(text = s.entry.orEmpty(), leadBold = s.painName)
+                s.painName?.takeIf { it.isNotBlank() }?.let { AdviceBlock(text = it) }
             }
         }
         val qa = (nextSteps.medicalObjections ?: emptyList()) + (nextSteps.objectionQa ?: emptyList())

@@ -359,14 +359,14 @@ private fun ReportContent(
                 )
             }
             Part02Persona(report.persona)
-            Part03RootCause(report.rootCause)
+            // 失分根因(PART03)已下线：不再生成/展示
             Part04PainPoints(report.painPoints)
             Part05Harvest(report.harvest)
             Part06Cases(report.cases, report.casesSummary, onSeek = onSeek)
             Part07LogicChain(report.logicChain)
             Part08NextSteps(report.nextSteps)
             Part09Competitors(report.externalSignals?.flatten())
-            Part10Tags(report.customerTags, state.tags)
+            // 顾客标签(PART10)移到顾客档案/价值预测，报告页不再展示
             Part11DealDiagnosis(report.dealDiagnosis)
         }
 
