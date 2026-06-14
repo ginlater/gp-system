@@ -182,7 +182,7 @@ fun SessionPreviewScreen(
             title = { Text("确认开始分析？", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Text(
-                    "接诊包将被锁定，普通陪伴师无法再修改。本次将分析 ${state.bound.size} 段陪伴。",
+                    "本次将分析 ${state.bound.size} 段陪伴。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             },
@@ -353,7 +353,6 @@ private fun PreviewBody(
 
         else -> {
             // Idle / Failed / Outdated：可开始（失败/变更=重新分析，后端只补跑失败/缺失或全量重跑）
-            ClayBanner(text = "开始分析前接诊包将被锁定，普通陪伴师无法再修改。")
             val startLabel = when {
                 state.submitting -> "提交中…"
                 phase == SessionPreviewViewModel.AnalysisPhase.Failed -> "重新开始分析"
