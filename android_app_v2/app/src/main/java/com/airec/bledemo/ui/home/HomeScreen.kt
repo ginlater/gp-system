@@ -414,12 +414,22 @@ private fun CompactCompanionRow(
             onClick = onToggle,
         )
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = formatTimer(companion.elapsedSec),
-                style = MeiliTheme.timerStyle.copy(fontSize = 32.sp, lineHeight = 36.sp, letterSpacing = 1.sp),
-                color = MeiliPalette.Ink,
-                maxLines = 1,
-            )
+            if (companion.syncingTime) {
+                // 重连到已在录的笔、真实时长同步中：计时位置先显示提示，别让用户看到从 0 往上跳的假时间。
+                Text(
+                    text = "正在同步小伙伴时间…",
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 17.sp, fontWeight = FontWeight.Bold, lineHeight = 36.sp),
+                    color = MeiliPalette.Ink2,
+                    maxLines = 1,
+                )
+            } else {
+                Text(
+                    text = formatTimer(companion.elapsedSec),
+                    style = MeiliTheme.timerStyle.copy(fontSize = 32.sp, lineHeight = 36.sp, letterSpacing = 1.sp),
+                    color = MeiliPalette.Ink,
+                    maxLines = 1,
+                )
+            }
             Row(
                 modifier = Modifier.padding(top = 3.dp),
                 verticalAlignment = Alignment.CenterVertically,

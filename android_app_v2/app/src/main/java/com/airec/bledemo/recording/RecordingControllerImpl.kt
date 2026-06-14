@@ -84,6 +84,25 @@ class RecordingControllerImpl(
 
     @Volatile private var currentSource: CompanionSource = CompanionSource.Phone
 
+    // ============ 录音时间「同步中」判定（重连到已在录的笔时，先别显示从0跳的假计时） ============
+    // 本进程内用户主动开的录 → 时长天然从0真实自走，无需「同步中」。
+    @Volatile private var sessionStartedByUser = false
+    // 陪伴笔已回报过真实时长(onPenRecordDuration) → 时长可信。
+    @Volatile private var penTimeSynced = false
+
+    /** 给即将下发的状态打 timeSynced：进行中(非starting)按"用户主动开或已收到真实时长"判定；回 Idle 时复位两个标志。 */
+    private fun applyTimeSync(st: RecordingState): RecordingState = when {
+        st is RecordingState.Idle -> {
+            sessionStartedByUser = false
+            penTimeSynced = false
+            st
+        }
+        st is RecordingState.Recording && !st.starting ->
+            // 已知真实时长(用户主动开 / 笔回报过 / 本帧 durSec 已非0) → 同步好；否则=重连占位0=同步中。
+            st.copy(timeSynced = sessionStartedByUser || penTimeSynced || st.durationSec > 0)
+        else -> st
+    }
+
     // 手动「从陪伴笔同步」的一次性回调：拉到列表后回调并清空。
     @Volatile private var penFilesCallback: ((List<PenFile>) -> Unit)? = null
 
@@ -131,10 +150,11 @@ class RecordingControllerImpl(
         }
 
         override fun onPenRecordDuration(durationSec: Int) {
-            // 时长同步：仅在进行中态刷新秒数（RecordingBus 也会带时长，这里做一次兜底对齐）。
+            // 笔报来真实时长 = 时间已同步（重连场景据此从「同步中」切回真实计时）。
+            penTimeSynced = true
             val cur = _state.value
             if (cur is RecordingState.Recording) {
-                _state.value = cur.copy(durationSec = durationSec)
+                _state.value = cur.copy(durationSec = durationSec, timeSynced = true)
             } else if (cur is RecordingState.Paused) {
                 _state.value = cur.copy(durationSec = durationSec)
             }
@@ -214,15 +234,17 @@ class RecordingControllerImpl(
         if (busState == PhoneMicService.STATE_ERROR && !message.isNullOrBlank()) {
             _penEvents.tryEmit(message)
         }
-        _state.value = mapBusState(busState, message, durSec, recId)
+        _state.value = applyTimeSync(mapBusState(busState, message, durSec, recId))
     }
 
     override fun attach() {
         RecordingBus.setListener(busListener)
         // 切回前台：用 Bus 的最近快照同步一次，避免 UI 错过中途状态。
         // ★"假录音中"兜底：显示进行中但陪伴笔其实没在录(黑屏笔结束、idle 没传到→快照残留)→当场拉回 Idle。
-        _state.value = withRecordingConsistency(
-            mapBusState(RecordingBus.lastState, RecordingBus.lastMessage, RecordingBus.lastDurSec, -1L),
+        _state.value = applyTimeSync(
+            withRecordingConsistency(
+                mapBusState(RecordingBus.lastState, RecordingBus.lastMessage, RecordingBus.lastDurSec, -1L),
+            ),
         )
         // 同步一次待传 / 失败 / 连接快照。
         _pendingCount.value = penController.pendingCount()
@@ -299,6 +321,8 @@ class RecordingControllerImpl(
         when (source) {
             CompanionSource.Phone -> startPhoneMic()
             CompanionSource.Pen -> {
+                sessionStartedByUser = true   // 用户主动开录：时长从 0 真实自走，不进入「同步中」
+                penTimeSynced = false
                 // 笔未真连接 → 记下「连上后自动开录」意图、显示「正在连接陪伴笔…」(starting)、打开扫描连接页。
                 // 连上后由 onPenConnected(true)/onPenRecordStatus 兑现意图（对齐旧宿主 pendingRecordAfterConnect），
                 // 用户无需再点第二次。

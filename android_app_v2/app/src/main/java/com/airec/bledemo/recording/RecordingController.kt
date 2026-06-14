@@ -189,6 +189,12 @@ sealed interface RecordingState {
         override val durationSec: Int = 0,
         val source: CompanionSource = CompanionSource.Phone,
         val starting: Boolean = false,
+        /**
+         * true = 已拿到陪伴笔的真实录音时长（durationSec 可信）。
+         * false = 重连到「已在录」的笔、还没同步到真实时长（durationSec 是 0 占位）——
+         *         UI 应在计时位置显示「正在同步小伙伴时间…」，而非从 0 往上跳的假计时。
+         */
+        val timeSynced: Boolean = true,
         /** 引擎附带文案（如「🔄 信号断开，正在自动重连，录音继续中…」）。 */
         val message: String? = null,
     ) : RecordingState

@@ -333,6 +333,9 @@ class HomeViewModel(
             is RecordingState.Recording -> {
                 if (st.starting) {
                     stopTicking(reset = true)            // 「正在唤醒陪伴笔…」阶段不计时
+                } else if (!st.timeSynced) {
+                    // 重连到已在录的笔、真实时长还没同步：不跑从 0 往上跳的假计时；UI 改显「正在同步小伙伴时间…」。
+                    stopTicking(reset = true)
                 } else {
                     // 只向前对齐：引擎报的已录秒数明显更大时（重连到已在录的笔）跳上去，否则继续自走。
                     if (!ticking || st.durationSec > _elapsedSec.value + 2) {
@@ -391,6 +394,10 @@ data class CompanionUiState(
 ) {
     /** 唤醒/连接中（已发开始命令、等陪伴笔确认真开录）：视觉=「正在唤醒」可取消，**不算已在录**。 */
     val starting: Boolean get() = (state as? RecordingState.Recording)?.starting == true
+
+    /** 重连到已在录的笔、真实时长还没同步好：计时位置应显示「正在同步小伙伴时间…」而非假计时。 */
+    val syncingTime: Boolean get() =
+        (state as? RecordingState.Recording)?.let { !it.starting && !it.timeSynced } == true
 
     /**
      * 已在录（呼吸态 + 停止方块 + 红点）：仅真正进行中 / 暂停才算；
