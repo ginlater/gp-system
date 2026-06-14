@@ -4440,6 +4440,23 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
                 except Exception as _tag_err:
                     print(f"[save_customer_tags] {session_id}: {_tag_err}")
 
+        # ★兜底：多任务分块里，模型偶发只产出其中一个任务的字段(如 T7+T8 只回了 T7)，
+        #   另一个被整段漏掉 → 校验报"结果为空/缺少字段"。这类"漏任务"单独重跑一次极易成功
+        #   (单任务时模型注意力集中、不会漏)。只在 bundled(len>1) 时触发；重跑时 tids 长度=1
+        #   不会再递归，避免死循环。把 T8 这类偶发空结果从"分析失败"里救回来。
+        if len(tids) > 1:
+            ts_now = _ts_get()
+            dropped = [
+                tid for tid in tids
+                if ts_now.get(tid, {}).get("status") == "failed"
+                and any(k in (ts_now.get(tid, {}).get("error") or "")
+                        for k in ("结果为空", "缺少字段"))
+            ]
+            if dropped:
+                print(f"[{stage}] session={session_id} 漏任务 {dropped} → 单独重跑一次")
+                for tid in dropped:
+                    _run_chunk(call_no, [tid], chunk_input)
+
     def run_call(call_no, target_tids):
         """编排单个 Call：Call1/2 先 shared_preflight 再分块并行；Call3 不做 preflight"""
         if not target_tids:
