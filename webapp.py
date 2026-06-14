@@ -9913,6 +9913,28 @@ def api_consultant_recordings_pending():
         return err
     u = current_user()
     advisor = u["advisor_name"] or u["username"]
+    # ★自愈孤儿占位：录音结束时建的 processing 占位(0字节、无 session、source 含 placeholder)，
+    #   真实音频却作为「新行」done 入库(同一 uploader + 同一 recorded_at)而没回填/删占位——
+    #   占位就永远卡在「后台同步中，传完后补时段/时长」。这里凡是已有同时间 done 录音存在的占位即删，
+    #   不会误删真正在传的占位(那种此刻还没有同时间的 done 兄弟)。每次拉列表顺手清，幂等。
+    try:
+        db_write(
+            """DELETE FROM recordings
+               WHERE uploader_user_id=? AND upload_status='processing' AND session_id IS NULL
+                 AND COALESCE(size_bytes,0)=0
+                 AND IFNULL(recorded_at,'')<>''
+                 AND IFNULL(source,'') LIKE '%placeholder%'
+                 AND EXISTS (
+                     SELECT 1 FROM recordings d
+                     WHERE d.uploader_user_id=recordings.uploader_user_id
+                       AND d.recorded_at=recordings.recorded_at
+                       AND d.id<>recordings.id
+                       AND d.upload_status='done'
+                 )""",
+            (u["id"],),
+        )
+    except Exception as _e:
+        app.logger.warning("orphan placeholder self-heal failed: %s", _e)
     rows = db_fetchall(
         """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
                   asr_status, asr_error, customer, created_at,
