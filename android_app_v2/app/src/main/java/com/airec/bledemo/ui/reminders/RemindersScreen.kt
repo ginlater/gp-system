@@ -67,6 +67,7 @@ fun RemindersScreen(
     onBack: () -> Unit = {},
     onGoToPending: () -> Unit = {},
     onOpenReport: (sessionId: Long) -> Unit = {},
+    onBindRecording: (recordingId: Long) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: RemindersViewModel = viewModel(),
 ) {
@@ -95,6 +96,7 @@ fun RemindersScreen(
         onHandle = { viewModel.handle(it) },
         onGoToPending = onGoToPending,
         onOpenReport = onOpenReport,
+        onBindRecording = onBindRecording,
         modifier = modifier,
     )
 }
@@ -107,6 +109,7 @@ private fun RemindersContent(
     onHandle: (Long) -> Unit,
     onGoToPending: () -> Unit,
     onOpenReport: (Long) -> Unit,
+    onBindRecording: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(
@@ -143,6 +146,7 @@ private fun RemindersContent(
                                 reminder = rem,
                                 onGoToPending = onGoToPending,
                                 onOpenReport = onOpenReport,
+                                onBindRecording = onBindRecording,
                                 modifier = Modifier.padding(bottom = 11.dp),
                             )
                         }
@@ -192,6 +196,7 @@ private fun ReminderRow(
     reminder: Reminder,
     onGoToPending: () -> Unit,
     onOpenReport: (Long) -> Unit,
+    onBindRecording: (Long) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val pill = personalPill(reminder)
@@ -226,7 +231,9 @@ private fun ReminderRow(
                     text = action.label,
                     onClick = {
                         when (action.target) {
-                            ActionTarget.Pending -> onGoToPending()
+                            // 「去绑定」：未绑定提醒带录音 id → 直达该录音的绑定页；拿不到才回退待整理
+                            ActionTarget.Pending ->
+                                reminder.recordingRef()?.let(onBindRecording) ?: onGoToPending()
                             ActionTarget.Report -> reminder.sessionRef()?.let(onOpenReport)
                         }
                     },
@@ -549,6 +556,10 @@ private fun personalAction(r: Reminder): RowAction? = when {
 private fun Reminder.sessionRef(): Long? =
     sessionId ?: refId?.takeIf { refType == "session" }
 
+/** 取待绑定录音 id：未绑定提醒 ref_type=recording 时用 ref_id（点「去绑定」直达该录音绑定页）。 */
+private fun Reminder.recordingRef(): Long? =
+    refId?.takeIf { refType == "recording" }
+
 /** level 解析为数字（后端为 INTEGER 1/2/3，Moshi 收成字符串；非数字/缺省 → null）。用于 'L' 前缀与分级配色。 */
 private fun Reminder.levelNum(): Int? = level?.trim()?.toIntOrNull()
 
@@ -587,7 +598,7 @@ private fun RemindersScreenPreview() {
                 ),
                 showEscalationGroup = true,
             ),
-            onBack = {}, onRetry = {}, onHandle = {}, onGoToPending = {}, onOpenReport = {},
+            onBack = {}, onRetry = {}, onHandle = {}, onGoToPending = {}, onOpenReport = {}, onBindRecording = {},
         )
     }
 }
@@ -598,7 +609,7 @@ private fun RemindersEmptyPreview() {
     MeiliTheme {
         RemindersContent(
             state = RemindersUiState(loading = false),
-            onBack = {}, onRetry = {}, onHandle = {}, onGoToPending = {}, onOpenReport = {},
+            onBack = {}, onRetry = {}, onHandle = {}, onGoToPending = {}, onOpenReport = {}, onBindRecording = {},
         )
     }
 }

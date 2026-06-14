@@ -19,8 +19,8 @@ android {
         applicationId "com.aibeautyfulwomen.gongpai"
         minSdk 24
         targetSdk 34
-        versionCode 13
-        versionName "2.0.12"
+        versionCode 14
+        versionName "2.0.13"
 
         ndk {
             // 只保留 armeabi-v7a：droidkit:opus 只提供了 v7a 的 libopus.so（无 arm64）。
@@ -144,4 +144,6 @@ dependencies {
     implementation 'io.coil-kt:coil-compose:2.7.0'
     // ---- Kotlin 协程 ----
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+    // ---- WorkManager：后台周期轮询提醒 → 本地通知 ----
+    implementation 'androidx.work:work-runtime-ktx:2.9.1'
 }

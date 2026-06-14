@@ -244,6 +244,8 @@ class HomeViewModel(
                     val personal = d.personalCount ?: d.count ?: 0
                     val escalation = d.escalationCount ?: 0
                     _reminderCount.value = if (isManager == true) personal + escalation else personal
+                    // 前台拉到提醒时，对「新出现的」弹本地系统通知（已见集合去重，不会重复弹）
+                    com.airec.bledemo.notify.ReminderNotifier.notifyNew(d.items.orEmpty())
                 }
                 is ApiResult.Failure -> Unit // 静默：取不到不打断首页（红点保持上次值）
             }

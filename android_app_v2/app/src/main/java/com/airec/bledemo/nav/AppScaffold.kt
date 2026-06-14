@@ -213,7 +213,13 @@ private fun AppNavHost(
 
         // ---- 次级页 ----
         composable(Routes.Reminders) {
-            RemindersScreen(onBack = { navController.popBackStack() })
+            RemindersScreen(
+                onBack = { navController.popBackStack() },
+                // 「查看报告」→ 报告页；「去绑定」→ 该录音的绑定页（修复：原来这俩没接，点了没反应）
+                onOpenReport = { sid -> navController.navigate(Routes.Report.build(sid)) },
+                onBindRecording = { rid -> navController.navigate(Routes.BindCustomer.build(rid)) },
+                onGoToPending = { navController.popBackStack() },
+            )
         }
         composable(Routes.Settings) {
             SettingsScreen(
