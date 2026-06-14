@@ -6294,26 +6294,22 @@ def api_admin_delete_requests():
     return jsonify({"requests": out})
 
 
-@app.route("/api/admin/delete-requests/<int:req_id>/approve", methods=["POST"])
-@admin_required
-def api_admin_delete_request_approve(req_id):
-    """管理员审批通过：删除录音"""
-    dr = db_fetchone("SELECT * FROM delete_requests WHERE id=?", (req_id,))
-    if not dr:
-        return jsonify({"error": "申请不存在"}), 404
+def _approve_delete_request_row(dr, reviewer_user_id, reviewer_name):
+    """审批通过单条删除申请：删录音(OSS) + 记墓碑(防同步复活) + 标 approved + 删空则清派生。
+    dr 需含 id/recording_id/session_id/status。返回 (ok, err)。
+    company 权限：单条端点已查 dr；批量端点 SELECT 已按 company 过滤；这里再对 rec 做一次防御。"""
     if dr["status"] != "pending":
-        return jsonify({"error": "该申请已处理"}), 400
+        return False, "该申请已处理"
     rec = db_fetchone("SELECT id, oss_key, company_id, uploader_user_id, pen_file, recorded_at FROM recordings WHERE id=?", (dr["recording_id"],))
     if not rec:
         # 录音已不存在，直接更新申请状态
         db_write(
             "UPDATE delete_requests SET status='approved', reviewer_user_id=?, reviewer_name=?, reviewed_at=datetime('now','localtime') WHERE id=?",
-            (session.get("user_id"), session.get("advisor_name") or session.get("username"), req_id),
+            (reviewer_user_id, reviewer_name, dr["id"]),
         )
-        return jsonify({"ok": True})
+        return True, None
     if session.get("role") != "super" and rec["company_id"] != session.get("company_id"):
-        return jsonify({"error": "无权操作"}), 403
-    reviewer = session.get("advisor_name") or session.get("username")
+        return False, "无权操作"
     try:
         oss_bucket.delete_object(rec["oss_key"])
     except Exception as e:
@@ -6323,12 +6319,54 @@ def api_admin_delete_request_approve(req_id):
     db_write("DELETE FROM recordings WHERE id=?", (rec["id"],))
     db_write(
         "UPDATE delete_requests SET status='approved', reviewer_user_id=?, reviewer_name=?, reviewed_at=datetime('now','localtime') WHERE id=?",
-        (session.get("user_id"), reviewer, req_id),
+        (reviewer_user_id, reviewer_name, dr["id"]),
     )
     # 若所属 session 因此变空：解锁并清空分析状态 + 清派生(点评/标签/价值预测)（保留 session
     # + daily_reception，让顾问能继续给同一顾客绑新录音、重新分析）
     _clear_session_if_empty(affected_sid)
+    return True, None
+
+
+@app.route("/api/admin/delete-requests/<int:req_id>/approve", methods=["POST"])
+@admin_required
+def api_admin_delete_request_approve(req_id):
+    """管理员审批通过：删除录音"""
+    dr = db_fetchone("SELECT * FROM delete_requests WHERE id=?", (req_id,))
+    if not dr:
+        return jsonify({"error": "申请不存在"}), 404
+    ok, err = _approve_delete_request_row(
+        dr, session.get("user_id"), session.get("advisor_name") or session.get("username"))
+    if not ok:
+        return jsonify({"error": err}), (403 if err == "无权操作" else 400)
     return jsonify({"ok": True})
+
+
+@app.route("/api/admin/delete-requests/approve-all", methods=["POST"])
+@admin_required
+def api_admin_delete_requests_approve_all():
+    """一键批准【全部】待审批删除申请：逐条删录音+清派生。
+    按管理员所属公司过滤(super 则全量)，与列表/徽章口径一致。"""
+    role = session.get("role")
+    company_id = session.get("company_id")
+    if role == "super":
+        rows = db_fetchall(
+            "SELECT dr.* FROM delete_requests dr WHERE dr.status='pending' ORDER BY dr.id")
+    else:
+        rows = db_fetchall(
+            """SELECT dr.* FROM delete_requests dr
+               JOIN recordings r ON r.id = dr.recording_id
+               WHERE dr.status='pending' AND r.company_id=? ORDER BY dr.id""",
+            (company_id,))
+    reviewer = session.get("advisor_name") or session.get("username")
+    uid = session.get("user_id")
+    approved, failed = 0, 0
+    for dr in rows:
+        ok, _err = _approve_delete_request_row(dr, uid, reviewer)
+        if ok:
+            approved += 1
+        else:
+            failed += 1
+    return jsonify({"ok": True, "approved": approved, "failed": failed})
 
 
 @app.route("/api/admin/delete-requests/<int:req_id>/reject", methods=["POST"])

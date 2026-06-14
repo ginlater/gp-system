@@ -628,6 +628,7 @@ html,body{overflow-x:hidden;max-width:100%}
           <option value="rejected">已拒绝</option>
           <option value="withdrawn">已撤回</option>
         </select>
+        <button id="drApproveAll" class="btn danger" style="margin-left:10px;padding:6px 12px;font-size:13px;display:none" onclick="approveAllDeleteRequests()">一键批准 · 全部删除</button>
       </div>
       <table class="tbl">
         <thead><tr><th>申请时间</th><th>申请人</th><th>顾问</th><th>顾客</th><th>录音时间</th><th>录音</th><th>申请原因</th><th>状态</th><th>操作</th></tr></thead>
@@ -1748,6 +1749,9 @@ async function loadDeleteRequests() {
     if (list.length > 0) { badge.textContent = list.length; badge.style.display = ''; }
     else badge.style.display = 'none';
   }
+  // 「一键批准·全部删除」只在【待审批】且有记录时显示
+  const allBtn = document.getElementById('drApproveAll');
+  if (allBtn) allBtn.style.display = (status === 'pending' && list.length > 0) ? '' : 'none';
   if (!list.length) { tb.innerHTML = '<tr><td colspan="9" class="muted">暂无记录</td></tr>'; return; }
   tb.innerHTML = list.map(x => {
     const sessionLink = x.session_id
@@ -1780,6 +1784,22 @@ async function approveDeleteRequest(reqId) {
   const d = await r.json();
   if (d.ok) loadDeleteRequests();
   else showMsg('drMsg', d.error || '操作失败', true);
+}
+
+async function approveAllDeleteRequests() {
+  const n = (document.getElementById('drBadge').textContent || '').trim();
+  if (!confirm('确认【一键批准全部】待审批申请' + (n ? ('（共 ' + n + ' 条）') : '') + '？\n将立即删除这些录音文件，不可恢复！')) return;
+  const btn = document.getElementById('drApproveAll');
+  if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+  const r = await fetch(BASE + '/api/admin/delete-requests/approve-all', {method: 'POST'});
+  const d = await r.json();
+  if (btn) { btn.disabled = false; btn.textContent = '一键批准 · 全部删除'; }
+  if (d.ok) {
+    showMsg('drMsg', '已批准 ' + d.approved + ' 条' + (d.failed ? ('，' + d.failed + ' 条失败') : ''), false);
+    loadDeleteRequests();
+  } else {
+    showMsg('drMsg', d.error || '操作失败', true);
+  }
 }
 
 async function rejectDeleteRequest(reqId) {
