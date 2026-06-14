@@ -1220,43 +1220,64 @@ def store_for_advisor(advisor, company_id):
 
 
 def get_or_create_session(advisor, customer, service_date, company_id=1, customer_id=None):
-    """根据 (advisor, customer_id, service_date) 找或创建 session（兼容旧逻辑）。"""
+    """根据 (advisor, customer, service_date, company_id) 找或创建 session。
+
+    唯一键是 uq_sessions_acsc(advisor, customer, service_date, company_id)——**不含 customer_id**。
+    所以同一(顾问·姓名·日期·公司)只能有一条 session；绑定/换绑/上传都必须**复用**它，
+    绝不能因为"按 customer_id 没查到"就另建一条同键行（会撞唯一键：旧库 INSERT 出重复行、
+    新库 INSERT OR IGNORE 被静默忽略导致返回错 session）。这正是 2026-06-14 宋心重复→重启
+    init_db 建唯一索引失败→生产崩的根因。
+    """
     if not (advisor and customer and service_date):
         return None
 
     _sid = store_for_advisor(advisor, company_id)
+    cid = company_id or 1
+
     if customer_id:
+        # 1) 按 customer_id 精确命中
         row = db_fetchone(
             "SELECT id FROM sessions WHERE advisor=? AND customer_id=? AND service_date=? AND company_id=?",
-            (advisor, customer_id, service_date, company_id or 1),
+            (advisor, customer_id, service_date, cid),
         )
         if row:
             return row["id"]
+        # 2) 复用同(顾问·姓名·日期·公司)的现有会话（多半是"只有名字 customer_id IS NULL"的那条），
+        #    把它升级为带 customer_id，而不是另建——否则撞唯一键。
+        row = db_fetchone(
+            "SELECT id, customer_id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=?",
+            (advisor, customer, service_date, cid),
+        )
+        if row:
+            if row["customer_id"] is None:
+                db_write("UPDATE sessions SET customer_id=? WHERE id=?", (customer_id, row["id"]))
+            return row["id"]
+        # 3) 确无同键行才新建
         db_write(
             "INSERT OR IGNORE INTO sessions (advisor, customer, customer_id, service_date, company_id, store_id) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (advisor, customer, customer_id, service_date, company_id or 1, _sid),
+            (advisor, customer, customer_id, service_date, cid, _sid),
         )
         row = db_fetchone(
-            "SELECT id FROM sessions WHERE advisor=? AND customer_id=? AND service_date=? AND company_id=?",
-            (advisor, customer_id, service_date, company_id or 1),
+            "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=?",
+            (advisor, customer, service_date, cid),
         )
         return row["id"] if row else None
 
-    # 兼容：没传 customer_id 走旧的按姓名匹配
+    # 没传 customer_id：按(顾问·姓名·日期·公司)复用任意已存在行（含已带 customer_id 的），避免反向重复
     row = db_fetchone(
-        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=? AND customer_id IS NULL",
-        (advisor, customer, service_date, company_id or 1),
+        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=?",
+        (advisor, customer, service_date, cid),
     )
     if row:
         return row["id"]
     db_write(
         "INSERT OR IGNORE INTO sessions (advisor, customer, service_date, company_id, store_id) VALUES (?, ?, ?, ?, ?)",
-        (advisor, customer, service_date, company_id or 1, _sid),
+        (advisor, customer, service_date, cid, _sid),
     )
     row = db_fetchone(
-        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=? AND customer_id IS NULL",
-        (advisor, customer, service_date, company_id or 1),
+        "SELECT id FROM sessions WHERE advisor=? AND customer=? AND service_date=? AND company_id=?",
+        (advisor, customer, service_date, cid),
     )
     return row["id"] if row else None
 
@@ -9106,9 +9127,9 @@ def _value_generate_and_store(cust, done, model):
 
 
 @app.route("/api/admin/customer_value", methods=["POST"])
-@manager_required  # P1.7：手动"刷新"仍限 admin/super/store_manager；自动生成在后台跑，所有人都能在 GET 看到结果
+@login_required  # 价值预测"点击即生成"对所有登录角色开放（含顾问）；company_id 作用域仍在下方收口。自动生成也在后台跑。
 def api_customer_value_generate():
-    """手动生成/刷新客户价值预测（强制重算）。日常已由后台自动生成，这里供管理员立即刷新。"""
+    """生成/刷新客户价值预测（强制重算）。任何登录用户可对本公司顾客触发；接诊分析完成后台亦自动重算。"""
     data = request.get_json(silent=True) or {}
     cid = session.get("company_id")
     is_super = session.get("role") == "super"
