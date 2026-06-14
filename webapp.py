@@ -5912,6 +5912,7 @@ def api_recording_delete(rid):
     _add_pen_tombstone(rec)
     db_write("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
     db_write("DELETE FROM recordings WHERE id=?", (rid,))
+    _clear_session_if_empty(rec["session_id"])  # 删空则连派生(点评/标签/价值预测)一起清
     return jsonify({"ok": True})
 
 
@@ -5938,12 +5939,30 @@ def _hard_delete_recording(rec):
     db_write("DELETE FROM delete_requests WHERE recording_id=?", (rec["id"],))
     db_write("DELETE FROM recordings WHERE id=?", (rec["id"],))
 
+def _purge_session_derived(sid):
+    """删掉一次接诊【派生出来的所有下游数据】，让顾客档案不残留孤儿：
+       ① 点评 evaluations  ② 顾客标签 customer_tags(source_session_id，直接从顾客档案抹掉)
+       ③ 该顾客的价值预测缓存 customer_value_cache 失效(删缓存行→下次按删后的新数据重新生成)。
+    必须在删 sessions 行【之前】调用(要先读 customer_id)。"""
+    if not sid:
+        return
+    row = db_fetchone("SELECT customer_id, company_id FROM sessions WHERE id=?", (sid,))
+    db_write("DELETE FROM evaluations WHERE session_id=?", (sid,))
+    db_write("DELETE FROM customer_tags WHERE source_session_id=?", (sid,))
+    if row and row["customer_id"]:
+        db_write(
+            "DELETE FROM customer_value_cache WHERE company_id=? AND customer_id=?",
+            (row["company_id"], row["customer_id"]),
+        )
+
 def _clear_session_if_empty(sid):
-    """录音删空后：解锁 + 清空分析态（保留 session 行，便于再绑录音重新分析）。"""
+    """录音删空后：先清派生(点评/标签/价值预测都是孤儿了) + 解锁 + 清空分析态
+    （保留 session 行，便于再绑录音重新分析）。"""
     if not sid:
         return
     cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (sid,))
     if not cnt or not cnt["n"]:
+        _purge_session_derived(sid)
         db_write(
             """UPDATE sessions SET locked=0,
                    analysis_status=NULL, analysis_result=NULL, analysis_error=NULL,
@@ -6069,8 +6088,7 @@ def api_session_delete(sid):
         _add_pen_tombstone(r)
         db_write("DELETE FROM delete_requests WHERE recording_id=?", (r["id"],))
         db_write("DELETE FROM recordings WHERE id=?", (r["id"],))
-    db_write("DELETE FROM evaluations WHERE session_id=?", (sid,))
-    db_write("DELETE FROM customer_tags WHERE source_session_id=?", (sid,))
+    _purge_session_derived(sid)   # 点评 + 顾客标签 + 价值预测缓存一起清
     db_write("DELETE FROM sessions WHERE id=?", (sid,))
     return jsonify({"ok": True})
 
@@ -6104,8 +6122,7 @@ def api_sessions_batch_delete():
             _add_pen_tombstone(r)
             db_write("DELETE FROM delete_requests WHERE recording_id=?", (r["id"],))
             db_write("DELETE FROM recordings WHERE id=?", (r["id"],))
-        db_write("DELETE FROM evaluations WHERE session_id=?", (sid,))
-        db_write("DELETE FROM customer_tags WHERE source_session_id=?", (sid,))
+        _purge_session_derived(sid)   # 点评 + 顾客标签 + 价值预测缓存一起清
         db_write("DELETE FROM sessions WHERE id=?", (sid,))
         deleted += 1
     return jsonify({"ok": True, "deleted": deleted, "skipped": skipped})
@@ -6125,9 +6142,9 @@ def api_admin_recordings_batch_delete():
         return jsonify({"error": "ids 含非法值"}), 400
     is_super = session.get("role") == "super"
     cid = session.get("company_id")
-    deleted, skipped = 0, []
+    deleted, skipped, affected_sids = 0, [], set()
     for rid in ids:
-        rec = db_fetchone("SELECT id, oss_key, company_id, uploader_user_id, pen_file, recorded_at FROM recordings WHERE id=?", (rid,))
+        rec = db_fetchone("SELECT id, oss_key, company_id, session_id, uploader_user_id, pen_file, recorded_at FROM recordings WHERE id=?", (rid,))
         if not rec:
             skipped.append(rid); continue
         if not is_super and rec["company_id"] != cid:
@@ -6139,7 +6156,11 @@ def api_admin_recordings_batch_delete():
         _add_pen_tombstone(rec)
         db_write("DELETE FROM delete_requests WHERE recording_id=?", (rid,))
         db_write("DELETE FROM recordings WHERE id=?", (rid,))
+        if rec["session_id"]:
+            affected_sids.add(rec["session_id"])
         deleted += 1
+    for sid in affected_sids:
+        _clear_session_if_empty(sid)  # 删空则连派生(点评/标签/价值预测)一起清
     return jsonify({"ok": True, "deleted": deleted, "skipped": skipped})
 
 
@@ -6147,7 +6168,7 @@ def api_admin_recordings_batch_delete():
 @admin_required
 def api_session_recordings_delete(sid):
     """管理员删除某 session 下所有录音（OSS + DB）"""
-    recs = db_fetchall("SELECT id, oss_key, company_id FROM recordings WHERE session_id=?", (sid,))
+    recs = db_fetchall("SELECT id, oss_key, company_id, uploader_user_id, pen_file, recorded_at FROM recordings WHERE session_id=?", (sid,))
     if not recs:
         return jsonify({"error": "该接诊没有录音"}), 404
     if session.get("role") != "super":
@@ -6159,8 +6180,10 @@ def api_session_recordings_delete(sid):
             oss_bucket.delete_object(r["oss_key"])
         except Exception as e:
             print(f"[session_del_rec] OSS {r['oss_key']}: {e}")
+        _add_pen_tombstone(r)   # 防"从录音笔同步"把已删录音又拉回复活
         db_write("DELETE FROM delete_requests WHERE recording_id=?", (r["id"],))
         db_write("DELETE FROM recordings WHERE id=?", (r["id"],))
+    _clear_session_if_empty(sid)  # 删空则连派生(点评/标签/价值预测)一起清
     return jsonify({"ok": True, "deleted": len(recs)})
 
 
@@ -6182,8 +6205,7 @@ def api_session_delete_request(sid):
     if all(s is not None for s in secs_list) and sum(secs_list) < FREE_DELETE_MAX_SEC:
         for r in recs:
             _hard_delete_recording(r)
-        db_write("DELETE FROM evaluations WHERE session_id=?", (sid,))
-        db_write("DELETE FROM customer_tags WHERE source_session_id=?", (sid,))
+        _purge_session_derived(sid)   # 点评 + 顾客标签 + 价值预测缓存一起清
         db_write("DELETE FROM sessions WHERE id=?", (sid,))
         return jsonify({"ok": True, "deleted": True})
     data = request.get_json(silent=True) or {}
@@ -6300,20 +6322,9 @@ def api_admin_delete_request_approve(req_id):
         "UPDATE delete_requests SET status='approved', reviewer_user_id=?, reviewer_name=?, reviewed_at=datetime('now','localtime') WHERE id=?",
         (session.get("user_id"), reviewer, req_id),
     )
-    # 若所属 session 因此变空：解锁并清空分析状态（保留 session + daily_reception，
-    # 让顾问能继续给同一顾客绑新录音、重新分析）
-    if affected_sid:
-        cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (affected_sid,))
-        if not cnt or not cnt["n"]:
-            db_write(
-                """UPDATE sessions SET locked=0,
-                       analysis_status=NULL, analysis_result=NULL, analysis_error=NULL,
-                       analysis_started_at=NULL, analysis_finished_at=NULL,
-                       analysis_signature=NULL, analysis_scores=NULL,
-                       analysis_progress=NULL, task_status=NULL
-                   WHERE id=?""",
-                (affected_sid,),
-            )
+    # 若所属 session 因此变空：解锁并清空分析状态 + 清派生(点评/标签/价值预测)（保留 session
+    # + daily_reception，让顾问能继续给同一顾客绑新录音、重新分析）
+    _clear_session_if_empty(affected_sid)
     return jsonify({"ok": True})
 
 
