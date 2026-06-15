@@ -335,7 +335,7 @@ private fun PendingRecordingCard(
         // 删除审批中：需先撤回才能其他操作
         rec.deleteRequestStatus == "pending" -> DeletePendingCard(busy, onWithdrawDelete, modifier)
         // 同步中占位：audio_url 为空，不可试听（可重试补传）
-        rec.isProcessing -> ProcessingCard(canRetry = canRetry, onRetry = onRetry, modifier = modifier)
+        rec.isProcessing -> ProcessingCard(rec = rec, canRetry = canRetry, onRetry = onRetry, modifier = modifier)
         else -> NormalRecordingCard(
             rec = rec,
             busy = busy,
@@ -464,7 +464,9 @@ private fun NormalRecordingCard(
 }
 
 @Composable
-private fun ProcessingCard(canRetry: Boolean, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+private fun ProcessingCard(rec: PendingRecording, canRetry: Boolean, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    // 同步中也先把「这段陪伴是什么时候录的」露出来：日期 + 开始时间（数据来自占位行的 recorded_at）
+    val whenLabel = syncingWhenLabel(rec)
     MeiliCard(modifier = modifier) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -472,13 +474,13 @@ private fun ProcessingCard(canRetry: Boolean, onRetry: () -> Unit, modifier: Mod
         ) {
             Icon(MeiliIcons.Upload, contentDescription = null, tint = MeiliPalette.Ink2, modifier = Modifier.size(Dimens.Icon))
             Text(
-                text = "同步中…",
+                text = whenLabel ?: "同步中…",
                 style = MaterialTheme.typography.titleSmall.copy(fontSize = 15.sp, fontWeight = FontWeight.ExtraBold),
-                color = MeiliPalette.Ink2,
+                color = MeiliPalette.Ink,
             )
         }
         Text(
-            text = "后台同步中，传完后补时段 / 时长",
+            text = if (whenLabel != null) "这段陪伴正在后台同步中，传完后补时长" else "后台同步中，传完后补时段 / 时长",
             style = MaterialTheme.typography.bodySmall,
             color = MeiliPalette.Ink3,
             modifier = Modifier.padding(top = 4.dp),
@@ -1072,6 +1074,23 @@ private fun secToLabel(sec: Int): String {
     val m = sec / 60
     val s = sec % 60
     return "%02d:%02d".format(m, s)
+}
+
+/**
+ * 同步中占位的标题：把占位行的 recorded_at（"YYYY-MM-DD HH:MM:SS"）格式化成「6月15日 13:01 录制」。
+ * 拿不到合法时间（极旧占位 / 字段缺失）时返回 null，调用方回退到「同步中…」。
+ */
+private fun syncingWhenLabel(rec: PendingRecording): String? {
+    val raw = rec.recordedAt ?: rec.createdAt ?: return null
+    // 期望 "2026-06-15 13:01:01"；容错只截到能用的部分
+    val datePart = raw.take(10)            // 2026-06-15
+    val match = Regex("""(\d{4})-(\d{2})-(\d{2})""").find(datePart) ?: return null
+    val (_, mm, dd) = match.destructured
+    val hm = raw.takeLast(8).take(5)       // 13:01:01 → 13:01
+    val timeStr = if (Regex("""\d{2}:\d{2}""").matches(hm)) " $hm" else ""
+    val month = mm.toIntOrNull() ?: return null
+    val day = dd.toIntOrNull() ?: return null
+    return "${month}月${day}日$timeStr 录制"
 }
 
 private fun penDateLabel(recordedAt: String): String =
