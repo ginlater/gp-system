@@ -28,7 +28,12 @@ body{background:#F4EEE6}
       <div class="nav-title">
         {% set _b = request.args.get('back') or '' %}
         {% set _bok = _b.startswith('/') and not _b.startswith('//') %}
-        <a href="{{ _b if _bok else url_for('index') }}" class="nav-back">← {{ '返回' if _bok else '接诊列表' }}</a>
+        {% set _is_mgr = role in ('admin', 'super') %}
+        {# 管理员永不回首页 /：有 back 参数用它；否则管理员默认回 /admin、顾问回接诊列表；JS 再用同源 referrer 精确回来时那一页 #}
+        <a href="{{ _b if _bok else (url_for('admin_page') if _is_mgr else url_for('index')) }}" id="navBackLink" class="nav-back">← {{ '返回' if (_bok or _is_mgr) else '接诊列表' }}</a>
+        {% if not _bok %}
+        <script>(function(){try{var r=document.referrer;if(r){var u=new URL(r);if(u.origin===location.origin&&u.pathname.indexOf('/session/')===-1){var a=document.getElementById('navBackLink');if(a){a.setAttribute('href',r);a.textContent='← 返回';}}}}catch(e){}})();</script>
+        {% endif %}
         <span class="nav-sep"></span>
         <span class="dot"></span>
         <span class="nav-headline">{{ sess.advisor or '未知顾问' }} × {{ sess.customer or '未知顾客' }} · 接诊全维度分析报告</span>
@@ -806,6 +811,15 @@ const SESSION_ID = {{ sess.id }};
 const RECORDINGS = {{ recordings|tojson }};
 const BASE = {{ request.script_root|tojson }};
 const ROLE = {{ role|tojson }};
+// 删除等操作后回的"主页"：管理员永不回首页 / —— 有 back 参数回那一页，否则回 /admin；顾问才回 /
+function _homeUrl(){
+  if (ROLE === 'admin' || ROLE === 'super') {
+    var b = new URLSearchParams(location.search).get('back');
+    if (b && b.charAt(0) === '/' && b.charAt(1) !== '/') return b;
+    return BASE + '/admin';
+  }
+  return BASE + '/';
+}
 async function loadTaskStatus() {
   try {
     const resp = await fetch(`${BASE}/api/session/${SESSION_ID}/tasks`);
@@ -1008,7 +1022,7 @@ async function confirmSpeakers(action) {
       setTimeout(() => location.reload(), 800);
     } else {
       if (msg) msg.textContent = '已解绑';
-      setTimeout(() => location.href = BASE + '/', 600);
+      setTimeout(() => location.href = _homeUrl(), 600);
     }
   } catch (e) {
     if (msg) msg.textContent = '失败：' + e;
@@ -1129,7 +1143,7 @@ async function deleteSession() {
   if (!confirm('再次确认：此操作无法撤销，是否继续？')) return;
   const r = await fetch(`${BASE}/api/session/${SESSION_ID}/delete`, {method: 'DELETE'});
   const d = await r.json();
-  if (d.ok) location.href = BASE + '/';
+  if (d.ok) location.href = _homeUrl();
   else alert(d.error || '失败');
 }
 
