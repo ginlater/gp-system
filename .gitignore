@@ -35,3 +35,6 @@ recordings.db-wal
 
 # App 一键诊断上传的回收数据（penlog/last_result/设备信息，含 SN，勿提交）
 diag_uploads/
+
+# 本地开发虚拟环境(勿提交)
+.venv/

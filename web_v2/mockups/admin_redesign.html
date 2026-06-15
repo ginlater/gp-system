@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>美丽陪伴 · 管理后台（样式预览）</title>
+<style>
+  :root{
+    --bg:#F4EEE6;          /* 暖象牙白 内容底 */
+    --card:#FFFDFA;        /* 卡片 */
+    --ink:#2E2A26;         /* 主文字 */
+    --muted:#9A9087;       /* 次文字 */
+    --faint:#BCB2A6;       /* 更淡 */
+    --line:#EBE2D6;        /* 描边 */
+    --jade:#5E9B7E;        /* 玉绿 主点缀 */
+    --jade-deep:#3F7D62;
+    --jade-soft:#E7F0EA;
+    --gold:#C6A56B;        /* 暖金 次点缀 */
+    --rose:#C97B6E;        /* 警示/下降 */
+    --side1:#243029;       /* 墨玉绿侧栏 */
+    --side2:#1B241F;
+    --r:18px;
+    --shadow:0 8px 28px rgba(74,55,32,.07), 0 2px 6px rgba(74,55,32,.04);
+    --serif:"Songti SC","STSong","Noto Serif SC",serif;
+    --sans:"PingFang SC","Noto Sans SC",system-ui,-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--bg);color:var(--ink);-webkit-font-smoothing:antialiased;display:flex;min-height:100vh}
+
+  /* ===== 侧栏 ===== */
+  .side{width:262px;flex:0 0 262px;background:linear-gradient(180deg,var(--side1),var(--side2));color:#E9E2D6;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;padding:22px 14px}
+  .brand{display:flex;align-items:center;gap:12px;padding:6px 10px 20px}
+  .emblem{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--jade),var(--gold));display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:20px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+  .brand .t1{font-family:var(--serif);font-size:18px;letter-spacing:1px;color:#fbf6ee}
+  .brand .t2{font-size:11px;color:#9FB0A6;letter-spacing:3px;margin-top:2px}
+
+  .nav{flex:1;overflow-y:auto;margin-top:4px}
+  .nav::-webkit-scrollbar{width:0}
+  .nav-item,.grp-head{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:11px;cursor:pointer;color:#C9C2B4;font-size:14.5px;user-select:none;transition:.18s}
+  .nav-item:hover,.grp-head:hover{background:rgba(255,255,255,.05);color:#fbf6ee}
+  .nav-item.active{background:rgba(94,155,126,.22);color:#fff}
+  .nav-item.active .ic{color:var(--gold)}
+  .ic{width:18px;height:18px;flex:0 0 18px;color:#8FA295;stroke-width:1.7}
+  .grp-head .chev{margin-left:auto;width:14px;height:14px;transition:.2s;color:#7d8c81}
+  .grp.open .grp-head .chev{transform:rotate(90deg)}
+  .grp-head{margin-top:3px}
+  .sub{max-height:0;overflow:hidden;transition:max-height .25s ease}
+  .grp.open .sub{max-height:320px}
+  .sub a{display:flex;align-items:center;gap:10px;padding:9px 12px 9px 42px;border-radius:10px;color:#A9B3A8;font-size:13.5px;text-decoration:none;position:relative;transition:.15s}
+  .sub a:hover{color:#fbf6ee;background:rgba(255,255,255,.04)}
+  .sub a.active{color:#fff;background:rgba(94,155,126,.2)}
+  .sub a.active::before{content:"";position:absolute;left:26px;top:50%;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:var(--gold)}
+  .dot{width:5px;height:5px;border-radius:50%;background:#5b6a60;flex:0 0 5px}
+
+  .me{display:flex;align-items:center;gap:11px;padding:12px 10px;border-top:1px solid rgba(255,255,255,.08);margin-top:8px}
+  .me .av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#8aa,#cba36b);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-family:var(--serif)}
+  .me .nm{font-size:13.5px;color:#f3ede2}
+  .me .rl{font-size:11px;color:#8FA295}
+  .me .out{margin-left:auto;font-size:12px;color:#9FB0A6;cursor:pointer}
+  .me .out:hover{color:var(--rose)}
+
+  /* ===== 主区 ===== */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .top{display:flex;align-items:center;gap:16px;padding:20px 34px;position:sticky;top:0;background:rgba(244,238,230,.86);backdrop-filter:blur(10px);z-index:5;border-bottom:1px solid var(--line)}
+  .crumb{font-size:13px;color:var(--muted)}
+  .crumb b{color:var(--ink);font-weight:600}
+  .crumb .url{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--faint);margin-left:10px}
+  .top .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .pill{display:flex;align-items:center;gap:7px;background:var(--card);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:13px;color:var(--ink);cursor:pointer;box-shadow:var(--shadow)}
+  .pill .ic{width:15px;height:15px;color:var(--muted)}
+
+  .body{padding:28px 34px 48px;overflow-y:auto}
+  .page{display:none}
+  .page.active{display:block;animation:fade .3s ease}
+  @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+  .h1{font-family:var(--serif);font-size:25px;letter-spacing:1px;margin-bottom:4px}
+  .sub-note{font-size:13px;color:var(--muted);margin-bottom:22px}
+  .tag-demo{display:inline-block;font-size:11px;color:var(--gold);border:1px solid var(--gold);border-radius:999px;padding:1px 9px;margin-left:8px;vertical-align:middle;letter-spacing:.5px}
+
+  /* KPI */
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-bottom:22px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;box-shadow:var(--shadow);position:relative;overflow:hidden}
+  .kpi .row1{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+  .kpi .badge{width:36px;height:36px;border-radius:11px;background:var(--jade-soft);display:flex;align-items:center;justify-content:center}
+  .kpi .badge svg{width:19px;height:19px;color:var(--jade-deep)}
+  .kpi .lbl{font-size:13px;color:var(--muted)}
+  .kpi .num{font-family:var(--serif);font-size:32px;line-height:1.1}
+  .kpi .unit{font-size:13px;color:var(--faint);font-family:var(--sans);margin-left:5px}
+  .kpi .trend{font-size:12.5px;margin-top:8px;display:flex;align-items:center;gap:5px}
+  .up{color:var(--jade-deep)} .down{color:var(--rose)}
+  .kpi .spark{position:absolute;right:14px;bottom:12px;width:88px;height:34px;opacity:.85}
+
+  .grid2{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;margin-bottom:22px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+  .card .hd{display:flex;align-items:center;padding:18px 22px;border-bottom:1px solid var(--line)}
+  .card .hd h3{font-family:var(--serif);font-size:16px;font-weight:500;letter-spacing:.5px}
+  .card .hd .more{margin-left:auto;font-size:12px;color:var(--muted);cursor:pointer}
+  .card .bd{padding:20px 22px}
+
+  /* leaderboard */
+  .lb-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px dashed var(--line)}
+  .lb-row:last-child{border-bottom:0}
+  .lb-rank{width:22px;font-family:var(--serif);color:var(--faint);font-size:15px;text-align:center}
+  .lb-row:nth-child(1) .lb-rank{color:var(--gold)}
+  .lb-av{width:30px;height:30px;border-radius:50%;background:#EEE6DA;display:flex;align-items:center;justify-content:center;font-size:13px;color:#8a7d6c}
+  .lb-nm{font-size:13.5px;flex:0 0 56px}
+  .lb-bar{flex:1;height:7px;border-radius:4px;background:#F0E9DE;overflow:hidden}
+  .lb-bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--jade),var(--gold))}
+  .lb-val{font-size:12.5px;color:var(--muted);flex:0 0 58px;text-align:right}
+
+  /* table */
+  table{width:100%;border-collapse:collapse}
+  th{font-size:12px;color:var(--muted);font-weight:500;text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);letter-spacing:.5px}
+  td{font-size:13.5px;padding:14px;border-bottom:1px solid var(--line)}
+  tr:last-child td{border-bottom:0}
+  tbody tr:hover{background:#FAF5EE}
+  .st{font-size:11.5px;padding:2px 9px;border-radius:999px}
+  .st.g{background:var(--jade-soft);color:var(--jade-deep)}
+  .st.r{background:#F7E6E2;color:var(--rose)}
+
+  /* placeholder page */
+  .ph{background:var(--card);border:1px dashed var(--line);border-radius:var(--r);padding:60px;text-align:center;color:var(--muted)}
+  .ph .pic{font-size:40px;margin-bottom:14px;opacity:.5}
+  .ph code{background:#F0E9DE;padding:2px 8px;border-radius:6px;font-size:12px;color:var(--jade-deep)}
+</style>
+</head>
+<body>
+
+<!-- ============ 侧栏 ============ -->
+<aside class="side">
+  <div class="brand">
+    <div class="emblem">玉</div>
+    <div><div class="t1">美丽陪伴</div><div class="t2">管理后台</div></div>
+  </div>
+
+  <nav class="nav" id="nav">
+    <!-- 经营总览（独立） -->
+    <div class="nav-item active" data-page="overview" data-url="/admin/overview">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+      经营总览
+    </div>
+
+    <!-- 客户中心 -->
+    <div class="grp">
+      <div class="grp-head">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>
+        客户中心
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg>
+      </div>
+      <div class="sub">
+        <a data-page="ph" data-url="/admin/customer/companion-archive">美丽陪伴档案</a>
+        <a data-page="ph" data-url="/admin/customer/profiles">顾客档案</a>
+        <a data-page="ph" data-url="/admin/customer/risk-alert">差评高风险预警</a>
+      </div>
+    </div>
+
+    <!-- 运营总览 -->
+    <div class="grp">
+      <div class="grp-head">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3M20 16v-7"/></svg>
+        运营总览
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg>
+      </div>
+      <div class="sub">
+        <a data-page="ph" data-url="/admin/operations/dashboard">运营看板</a>
+        <a data-page="ph" data-url="/admin/operations/bottleneck">接诊卡点</a>
+        <a data-page="ph" data-url="/admin/operations/reminders">提醒设置</a>
+      </div>
+    </div>
+
+    <!-- 陪伴管理 -->
+    <div class="grp">
+      <div class="grp-head">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v10M12 21a4 4 0 004-4V7a4 4 0 00-8 0v10a4 4 0 004 4z" /><circle cx="12" cy="11" r="2.2"/></svg>
+        陪伴管理
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg>
+      </div>
+      <div class="sub">
+        <a data-page="ph" data-url="/admin/companion/unbound">未绑定陪伴</a>
+        <a data-page="ph" data-url="/admin/companion/delete-requests">删除申请</a>
+        <a data-page="ph" data-url="/admin/companion/rebind-log">换绑/解绑记录</a>
+        <a data-page="ph" data-url="/admin/companion/audit-log">操作日志</a>
+      </div>
+    </div>
+
+    <!-- 人员管理 -->
+    <div class="grp">
+      <div class="grp-head">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3 2.5-5 6-5s6 2 6 5"/><path d="M16 6.5a3 3 0 010 5.8M22 19c0-2.4-1.6-4.2-4-4.8"/></svg>
+        人员管理
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg>
+      </div>
+      <div class="sub">
+        <a data-page="ph" data-url="/admin/staff/employees">员工管理</a>
+        <a data-page="ph" data-url="/admin/staff/stores">门店管理</a>
+        <a data-page="ph" data-url="/admin/staff/admins">管理员账号</a>
+      </div>
+    </div>
+
+    <!-- 数据配置 -->
+    <div class="grp">
+      <div class="grp-head">
+        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+        数据配置
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg>
+      </div>
+      <div class="sub">
+        <a data-page="ph" data-url="/admin/data/tag-dict">标签词典</a>
+        <a data-page="ph" data-url="/admin/data/tag-stats">标签统计</a>
+        <a data-page="ph" data-url="/admin/data/customers">顾客管理</a>
+        <a data-page="ph" data-url="/admin/data/merge">客户合并</a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="me">
+    <div class="av">刁</div>
+    <div><div class="nm">刁经理</div><div class="rl">超级管理员</div></div>
+    <div class="out">退出</div>
+  </div>
+</aside>
+
+<!-- ============ 主区 ============ -->
+<div class="main">
+  <div class="top">
+    <div class="crumb"><b id="crumbName">经营总览</b><span class="url" id="crumbUrl">/admin/overview</span></div>
+    <div class="right">
+      <div class="pill"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>本周 6/9–6/15</div>
+      <div class="pill"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M7 12h10M10 18h4"/></svg>全部门店</div>
+    </div>
+  </div>
+
+  <div class="body">
+
+    <!-- ===== 经营总览 ===== -->
+    <div class="page active" id="page-overview">
+      <div class="h1">经营总览 <span class="tag-demo">示例数据</span></div>
+      <div class="sub-note">本周（6月9日–6月15日）· 全部门店 · 人均口径 = 总量 ÷ 在岗顾问数</div>
+
+      <div class="kpis">
+        <div class="kpi">
+          <div class="row1"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v10M12 21a4 4 0 004-4V7a4 4 0 00-8 0v10a4 4 0 004 4z"/></svg></div><div class="lbl">人均陪伴时长</div></div>
+          <div class="num">42.6<span class="unit">分钟/人·日</span></div>
+          <div class="trend up">▲ 8.3% <span style="color:var(--faint)">较上周</span></div>
+          <svg class="spark" viewBox="0 0 88 34" preserveAspectRatio="none"><polyline fill="none" stroke="#5E9B7E" stroke-width="2" points="0,26 14,22 28,24 42,16 56,18 70,9 88,6"/></svg>
+        </div>
+        <div class="kpi">
+          <div class="row1"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v12H4zM4 17l4 3M20 17l-4 3M9 9h6M9 12h4"/></svg></div><div class="lbl">人均学习时长</div></div>
+          <div class="num">18.4<span class="unit">分钟/人·日</span></div>
+          <div class="trend up">▲ 12.1% <span style="color:var(--faint)">较上周</span></div>
+          <svg class="spark" viewBox="0 0 88 34" preserveAspectRatio="none"><polyline fill="none" stroke="#5E9B7E" stroke-width="2" points="0,28 14,25 28,20 42,21 56,14 70,12 88,7"/></svg>
+        </div>
+        <div class="kpi">
+          <div class="row1"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.3 3-5.6 7-5.6s7 2.3 7 5.6"/></svg></div><div class="lbl">人均接待客人数</div></div>
+          <div class="num">5.2<span class="unit">位/人·日</span></div>
+          <div class="trend down">▼ 3.0% <span style="color:var(--faint)">较上周</span></div>
+          <svg class="spark" viewBox="0 0 88 34" preserveAspectRatio="none"><polyline fill="none" stroke="#C97B6E" stroke-width="2" points="0,10 14,12 28,9 42,15 56,14 70,18 88,20"/></svg>
+        </div>
+        <div class="kpi">
+          <div class="row1"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div><div class="lbl">人均接诊时长</div></div>
+          <div class="num">23.8<span class="unit">分钟/单</span></div>
+          <div class="trend up">▲ 1.6% <span style="color:var(--faint)">较上周</span></div>
+          <svg class="spark" viewBox="0 0 88 34" preserveAspectRatio="none"><polyline fill="none" stroke="#5E9B7E" stroke-width="2" points="0,18 14,17 28,19 42,15 56,16 70,14 88,13"/></svg>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="hd"><h3>人均陪伴时长 · 近 30 天趋势</h3><span class="more">导出</span></div>
+          <div class="bd">
+            <svg viewBox="0 0 600 220" style="width:100%;height:220px">
+              <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5E9B7E" stop-opacity=".25"/><stop offset="1" stop-color="#5E9B7E" stop-opacity="0"/></linearGradient></defs>
+              <g stroke="#EBE2D6"><line x1="0" y1="40" x2="600" y2="40"/><line x1="0" y1="90" x2="600" y2="90"/><line x1="0" y1="140" x2="600" y2="140"/><line x1="0" y1="190" x2="600" y2="190"/></g>
+              <path d="M0,170 60,150 120,158 180,120 240,132 300,96 360,108 420,72 480,84 540,52 600,44 L600,190 L0,190 Z" fill="url(#g)"/>
+              <path d="M0,170 60,150 120,158 180,120 240,132 300,96 360,108 420,72 480,84 540,52 600,44" fill="none" stroke="#5E9B7E" stroke-width="2.5"/>
+              <circle cx="600" cy="44" r="4" fill="#C6A56B"/>
+            </svg>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h3>顾问陪伴时长排行</h3><span class="more">本周</span></div>
+          <div class="bd">
+            <div class="lb-row"><div class="lb-rank">1</div><div class="lb-av">林</div><div class="lb-nm">林春华</div><div class="lb-bar"><i style="width:96%"></i></div><div class="lb-val">58.2 分</div></div>
+            <div class="lb-row"><div class="lb-rank">2</div><div class="lb-av">何</div><div class="lb-nm">何智莉</div><div class="lb-bar"><i style="width:81%"></i></div><div class="lb-val">49.1 分</div></div>
+            <div class="lb-row"><div class="lb-rank">3</div><div class="lb-av">朱</div><div class="lb-nm">朱红霞</div><div class="lb-bar"><i style="width:67%"></i></div><div class="lb-val">40.6 分</div></div>
+            <div class="lb-row"><div class="lb-rank">4</div><div class="lb-av">张</div><div class="lb-nm">张　杰</div><div class="lb-bar"><i style="width:52%"></i></div><div class="lb-val">31.4 分</div></div>
+            <div class="lb-row"><div class="lb-rank">5</div><div class="lb-av">刘</div><div class="lb-nm">刘　爽</div><div class="lb-bar"><i style="width:40%"></i></div><div class="lb-val">24.0 分</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd"><h3>各门店经营概览</h3><span class="more">查看全部</span></div>
+        <div class="bd" style="padding:0">
+          <table>
+            <thead><tr><th>门店</th><th>在岗顾问</th><th>人均陪伴时长</th><th>人均学习时长</th><th>人均接待客人</th><th>人均接诊时长</th><th>状态</th></tr></thead>
+            <tbody>
+              <tr><td>身美·旗舰店</td><td>8</td><td>46.2 分</td><td>20.1 分</td><td>5.8 位</td><td>24.6 分</td><td><span class="st g">达标</span></td></tr>
+              <tr><td>身美·万象城店</td><td>6</td><td>41.0 分</td><td>17.9 分</td><td>5.1 位</td><td>23.2 分</td><td><span class="st g">达标</span></td></tr>
+              <tr><td>身美·高新店</td><td>5</td><td>33.4 分</td><td>12.6 分</td><td>4.3 位</td><td>21.8 分</td><td><span class="st r">偏低</span></td></tr>
+              <tr><td>身美·天府店</td><td>4</td><td>49.7 分</td><td>22.8 分</td><td>6.0 位</td><td>25.9 分</td><td><span class="st g">达标</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 其它页占位（展示风格 & 路由） ===== -->
+    <div class="page" id="page-ph">
+      <div class="h1" id="phTitle">页面</div>
+      <div class="sub-note">此页沿用现有功能，迁移到新框架后即可使用</div>
+      <div class="ph">
+        <div class="pic">✦</div>
+        <div>「<b id="phName">—</b>」页面占位</div>
+        <div style="margin-top:10px">独立访问地址 <code id="phUrl">/admin/...</code></div>
+        <div style="margin-top:18px;font-size:12.5px;color:var(--faint)">（正式版这里会渲染该模块的真实内容：列表 / 表单 / 看板，沿用现有 /api/admin 接口）</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // 分组展开/折叠
+  document.querySelectorAll('.grp-head').forEach(h=>{
+    h.addEventListener('click',()=>h.parentElement.classList.toggle('open'));
+  });
+  // 默认展开第一组
+  document.querySelector('.grp').classList.add('open');
+
+  const pages=document.querySelectorAll('.page');
+  function go(el){
+    document.querySelectorAll('.nav-item,.sub a').forEach(n=>n.classList.remove('active'));
+    el.classList.add('active');
+    const page=el.dataset.page, url=el.dataset.url, name=el.textContent.trim();
+    pages.forEach(p=>p.classList.remove('active'));
+    document.getElementById('page-'+page).classList.add('active');
+    document.getElementById('crumbName').textContent=name;
+    document.getElementById('crumbUrl').textContent=url;
+    if(page==='ph'){
+      document.getElementById('phTitle').textContent=name;
+      document.getElementById('phName').textContent=name;
+      document.getElementById('phUrl').textContent=url;
+    }
+  }
+  document.querySelector('.nav-item[data-page=overview]').addEventListener('click',function(){go(this)});
+  document.querySelectorAll('.sub a').forEach(a=>a.addEventListener('click',function(e){e.preventDefault();go(this)}));
+</script>
+</body>
+</html>

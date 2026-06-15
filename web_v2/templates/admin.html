@@ -41,38 +41,225 @@ html,body{overflow-x:hidden;max-width:100%}
   .tbl th,.tbl td{padding:7px 8px}
 }
 </style>
+<style>
+/* ===== 暖玉柔光 换肤：重映射 report.css 变量，15个面板自动换色 ===== */
+:root{
+  --navy:#3F7D62; --blue:#5E9B7E; --border:#EBE2D6; --text-mid:#5b534a; --text-mute:#9A9087; --text-mid:#5b534a;
+  --bg:#F4EEE6; --card2:#FFFDFA; --ink:#2E2A26; --muted:#9A9087; --faint:#BCB2A6; --line:#EBE2D6;
+  --jade:#5E9B7E; --jade-deep:#3F7D62; --jade-soft:#E7F0EA; --gold:#C6A56B; --rose:#C97B6E;
+  --side1:#243029; --side2:#1B241F; --rr:16px;
+  --shadow:0 8px 28px rgba(74,55,32,.07),0 2px 6px rgba(74,55,32,.04);
+  --serif:"Songti SC","STSong","Noto Serif SC",serif;
+  --sans:"PingFang SC","Noto Sans SC",system-ui,-apple-system,sans-serif;
+}
+body{display:flex;min-height:100vh;background:var(--bg);font-family:var(--sans);color:var(--ink);margin:0}
+a{text-decoration:none}
+.side{width:262px;flex:0 0 262px;background:linear-gradient(180deg,var(--side1),var(--side2));color:#E9E2D6;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;padding:22px 14px;overflow:hidden}
+.side .brand{display:flex;align-items:center;gap:12px;padding:6px 10px 20px}
+.side .emblem{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--jade),var(--gold));display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:20px;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.25)}
+.side .t1{font-family:var(--serif);font-size:18px;letter-spacing:1px;color:#fbf6ee}
+.side .t2{font-size:11px;color:#9FB0A6;letter-spacing:3px;margin-top:2px}
+.side nav{flex:1;overflow-y:auto;margin-top:4px}
+.side nav::-webkit-scrollbar{width:0}
+.nav-item,.grp-head{display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:11px;cursor:pointer;color:#C9C2B4;font-size:14.5px;user-select:none;transition:.18s}
+.nav-item:hover,.grp-head:hover{background:rgba(255,255,255,.05);color:#fbf6ee}
+.nav-item.active{background:rgba(94,155,126,.22);color:#fff}
+.nav-item.active .ic{color:var(--gold)}
+.side .ic{width:18px;height:18px;flex:0 0 18px;color:#8FA295;stroke-width:1.7}
+.grp-head .chev{margin-left:auto;width:14px;height:14px;transition:.2s;color:#7d8c81}
+.grp.open .grp-head .chev{transform:rotate(90deg)}
+.grp-head{margin-top:3px}
+.sub{max-height:0;overflow:hidden;transition:max-height .25s ease}
+.grp.open .sub{max-height:360px}
+.sub a{display:flex;align-items:center;gap:10px;padding:9px 12px 9px 42px;border-radius:10px;color:#A9B3A8;font-size:13.5px;position:relative;transition:.15s}
+.sub a:hover{color:#fbf6ee;background:rgba(255,255,255,.04)}
+.sub a.active{color:#fff;background:rgba(94,155,126,.2)}
+.sub a.active::before{content:"";position:absolute;left:26px;top:50%;transform:translateY(-50%);width:5px;height:5px;border-radius:50%;background:var(--gold)}
+.side .me{display:flex;align-items:center;gap:11px;padding:12px 10px;border-top:1px solid rgba(255,255,255,.08);margin-top:8px}
+.side .me .av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,#88a596,#cba36b);display:flex;align-items:center;justify-content:center;color:#fff;font-size:14px;font-family:var(--serif)}
+.side .me .nm{font-size:13.5px;color:#f3ede2}.side .me .rl{font-size:11px;color:#8FA295}
+.side .me .out{margin-left:auto;font-size:12px;color:#9FB0A6}.side .me .out:hover{color:var(--rose)}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{display:flex;align-items:center;gap:16px;padding:18px 32px;position:sticky;top:0;background:rgba(244,238,230,.88);backdrop-filter:blur(10px);z-index:5;border-bottom:1px solid var(--line)}
+.topbar .crumb{font-size:13px;color:var(--muted)}.topbar .crumb b{color:var(--ink);font-weight:600}
+.topbar .crumb .url{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--faint);margin-left:10px}
+.topbar .right{margin-left:auto;display:flex;align-items:center;gap:14px;font-size:13px}
+.wrap{max-width:1180px;margin:0;padding:26px 32px 60px}
+.tabs{display:none !important}
+.card{background:var(--card2);border:1px solid var(--line);border-radius:var(--rr);padding:20px 22px;margin-bottom:18px;box-shadow:var(--shadow)}
+.card h3{font-family:var(--serif);font-size:15px;color:var(--ink);font-weight:500;letter-spacing:.5px}
+.btn{border-radius:9px;padding:8px 16px}
+.btn.sec{background:var(--card2)}
+.tbl{border-radius:12px;overflow:hidden;box-shadow:var(--shadow)}
+.tbl th{background:var(--jade-deep);font-weight:500;letter-spacing:.5px}
+.subtabs button{border-radius:9px}
+.h1{font-family:var(--serif);font-size:25px;letter-spacing:1px;margin:0 0 4px}
+.sub-note{font-size:13px;color:var(--muted);margin-bottom:22px}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;margin-bottom:22px}
+.kpi{background:var(--card2);border:1px solid var(--line);border-radius:var(--rr);padding:20px;box-shadow:var(--shadow)}
+.kpi .krow{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.kpi .badge{width:36px;height:36px;border-radius:11px;background:var(--jade-soft);display:flex;align-items:center;justify-content:center}
+.kpi .badge svg{width:19px;height:19px;color:var(--jade-deep)}
+.kpi .lbl{font-size:13px;color:var(--muted)}
+.kpi .num{font-family:var(--serif);font-size:32px;line-height:1.1}
+.kpi .unit{font-size:13px;color:var(--faint);margin-left:5px}
+.grid2{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;margin-bottom:22px}
+.lb-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px dashed var(--line)}
+.lb-row:last-child{border-bottom:0}
+.lb-rank{width:22px;font-family:var(--serif);color:var(--faint);font-size:15px;text-align:center}
+.lb-row:first-child .lb-rank{color:var(--gold)}
+.lb-av{width:30px;height:30px;border-radius:50%;background:#EEE6DA;display:flex;align-items:center;justify-content:center;font-size:13px;color:#8a7d6c}
+.lb-nm{font-size:13.5px;flex:0 0 60px}
+.lb-bar{flex:1;height:7px;border-radius:4px;background:#F0E9DE;overflow:hidden}
+.lb-bar i{display:block;height:100%;border-radius:4px;background:linear-gradient(90deg,var(--jade),var(--gold))}
+.lb-val{font-size:12.5px;color:var(--muted);flex:0 0 64px;text-align:right}
+.empty{padding:26px;text-align:center;color:var(--faint);font-size:13px}
+.ph{background:var(--card2);border:1px dashed var(--line);border-radius:var(--rr);padding:60px;text-align:center;color:var(--muted)}
+.ph .pic{font-size:40px;margin-bottom:14px;opacity:.5}
+.st{font-size:11.5px;padding:2px 9px;border-radius:999px;background:#F0E9DE;color:var(--text-mid)}
+.st.g{background:var(--jade-soft);color:var(--jade-deep)}.st.r{background:#F7E6E2;color:var(--rose)}
+@media (max-width:768px){.side{width:200px;flex-basis:200px}.wrap{padding:16px 14px 50px}.kpis{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}}
+</style>
 </head>
 <body>
-<div class="wrap">
-  <div class="header-bar">
-    <div class="header-title">管理后台</div>
-    <div class="header-user">
-      <a class="back" href="{{ url_for('index') }}">← 返回接诊列表</a>
-      {{ username or '' }}（{{ role }}）·
-      <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a>
+{% set grp = page.split('/')[0] %}
+<aside class="side">
+  <div class="brand"><div class="emblem">玉</div><div><div class="t1">美丽陪伴</div><div class="t2">管理后台</div></div></div>
+  <nav>
+    <a class="nav-item {{ 'active' if page=='overview' }}" href="{{ url_for('admin_v2_page', group='overview') }}">
+      <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>经营总览</a>
+
+    <div class="grp {{ 'open' if grp=='customer' }}">
+      <div class="grp-head"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>客户中心<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="sub">
+        <a class="{{ 'active' if page=='customer/companion-archive' }}" href="{{ url_for('admin_v2_page', group='customer', page='companion-archive') }}">美丽陪伴档案</a>
+        {% if role != 'store_manager' %}<a class="{{ 'active' if page=='customer/profiles' }}" href="{{ url_for('admin_v2_page', group='customer', page='profiles') }}">顾客档案</a>{% endif %}
+        <a class="{{ 'active' if page=='customer/risk-alert' }}" href="{{ url_for('admin_v2_page', group='customer', page='risk-alert') }}">差评高风险预警</a>
+      </div>
+    </div>
+
+    <div class="grp {{ 'open' if grp=='operations' }}">
+      <div class="grp-head"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19V5M4 19h16M8 16v-5M12 16V8M16 16v-3M20 16v-7"/></svg>运营总览<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="sub">
+        <a class="{{ 'active' if page=='operations/dashboard' }}" href="{{ url_for('admin_v2_page', group='operations', page='dashboard') }}">运营看板</a>
+        <a class="{{ 'active' if page=='operations/bottleneck' }}" href="{{ url_for('admin_v2_page', group='operations', page='bottleneck') }}">接诊卡点</a>
+        {% if role != 'store_manager' %}<a class="{{ 'active' if page=='operations/reminders' }}" href="{{ url_for('admin_v2_page', group='operations', page='reminders') }}">提醒设置</a>{% endif %}
+      </div>
+    </div>
+
+    <div class="grp {{ 'open' if grp=='companion' }}">
+      <div class="grp-head"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v10M12 21a4 4 0 004-4V7a4 4 0 00-8 0v10a4 4 0 004 4z"/><circle cx="12" cy="11" r="2.2"/></svg>陪伴管理<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="sub">
+        <a class="{{ 'active' if page=='companion/unbound' }}" href="{{ url_for('admin_v2_page', group='companion', page='unbound') }}">未绑定陪伴</a>
+        {% if role != 'store_manager' %}
+        <a class="{{ 'active' if page=='companion/delete-requests' }}" href="{{ url_for('admin_v2_page', group='companion', page='delete-requests') }}">删除申请</a>
+        <a class="{{ 'active' if page=='companion/rebind-log' }}" href="{{ url_for('admin_v2_page', group='companion', page='rebind-log') }}">换绑/解绑记录</a>
+        <a class="{{ 'active' if page=='companion/audit-log' }}" href="{{ url_for('admin_v2_page', group='companion', page='audit-log') }}">操作日志</a>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if role != 'store_manager' %}
+    <div class="grp {{ 'open' if grp=='staff' }}">
+      <div class="grp-head"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="9" cy="8" r="3"/><path d="M3 19c0-3 2.5-5 6-5s6 2 6 5"/><path d="M16 6.5a3 3 0 010 5.8M22 19c0-2.4-1.6-4.2-4-4.8"/></svg>人员管理<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="sub">
+        <a class="{{ 'active' if page=='staff/employees' }}" href="{{ url_for('admin_v2_page', group='staff', page='employees') }}">员工管理</a>
+        <a class="{{ 'active' if page=='staff/stores' }}" href="{{ url_for('admin_v2_page', group='staff', page='stores') }}">门店管理</a>
+        <a class="{{ 'active' if page=='staff/admins' }}" href="{{ url_for('admin_v2_page', group='staff', page='admins') }}">管理员账号</a>
+        {% if role == 'super' %}<a class="{{ 'active' if page=='staff/companies' }}" href="{{ url_for('admin_v2_page', group='staff', page='companies') }}">公司管理</a>{% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="grp {{ 'open' if grp=='data' }}">
+      <div class="grp-head"><svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>数据配置<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 6l6 6-6 6"/></svg></div>
+      <div class="sub">
+        {% if role != 'store_manager' %}<a class="{{ 'active' if page=='data/tag-dict' }}" href="{{ url_for('admin_v2_page', group='data', page='tag-dict') }}">标签词典</a>{% endif %}
+        <a class="{{ 'active' if page=='data/tag-stats' }}" href="{{ url_for('admin_v2_page', group='data', page='tag-stats') }}">标签统计</a>
+        {% if role != 'store_manager' %}
+        <a class="{{ 'active' if page=='data/customers' }}" href="{{ url_for('admin_v2_page', group='data', page='customers') }}">顾客管理</a>
+        <a class="{{ 'active' if page=='data/merge' }}" href="{{ url_for('admin_v2_page', group='data', page='merge') }}">客户合并</a>
+        {% endif %}
+      </div>
+    </div>
+  </nav>
+  <div class="me">
+    <div class="av">{{ (username or '管')[0] }}</div>
+    <div><div class="nm">{{ username or '管理员' }}</div><div class="rl">{{ {'super':'超级管理员','admin':'管理员','store_manager':'店长'}.get(role, role) }}</div></div>
+    <a class="out" href="{{ url_for('logout') }}">退出</a>
+  </div>
+</aside>
+
+<div class="main">
+  <div class="topbar">
+    <div class="crumb"><b>{{ page_title }}</b><span class="url">/admin/{{ page }}</span></div>
+    <div class="right"><a class="back" href="{{ url_for('index') }}">← 接诊列表</a></div>
+  </div>
+  <div class="wrap">
+
+  <!-- 隐藏计数容器：原来这些 id 在顶部 tab 里，改侧栏后保留它们让既有计数/徽标逻辑不报错 -->
+  <div style="display:none">
+    <span id="consCount"></span><span id="custCount"></span><span id="storeCount"></span><span id="adminCount"></span><span id="tagDictCount"></span><span id="mergeDupCount"></span><span id="unboundCount"></span><span id="hrBadge"></span><span id="pipelineBadge"></span><span id="drBadge"></span>
+  </div>
+
+  <!-- 经营总览（新）-->
+  <div id="tab-overview" class="panel">
+    <div class="h1">经营总览</div>
+    <div class="sub-note" id="ov-range">加载中…</div>
+    <div class="kpis">
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v10M12 21a4 4 0 004-4V7a4 4 0 00-8 0v10a4 4 0 004 4z"/></svg></div><div class="lbl">人均陪伴时长</div></div><div class="num"><span id="ov-companion">—</span><span class="unit">分钟/人·日</span></div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v12H4zM9 9h6M9 12h4"/></svg></div><div class="lbl">人均学习时长</div></div><div class="num"><span id="ov-study">—</span><span class="unit">分钟/人·日</span></div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.3 3-5.6 7-5.6s7 2.3 7 5.6"/></svg></div><div class="lbl">人均接待客人</div></div><div class="num"><span id="ov-customers">—</span><span class="unit">位/人·日</span></div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div><div class="lbl">人均接诊时长</div></div><div class="num"><span id="ov-intake">—</span><span class="unit">分钟/单</span></div></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h3 style="margin-bottom:12px">各门店经营概览</h3>
+        <table class="tbl"><thead><tr><th>门店</th><th>在岗顾问</th><th>人均陪伴</th><th>人均学习</th><th>人均接待</th><th>人均接诊</th></tr></thead><tbody id="ov-stores"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody></table>
+      </div>
+      <div class="card"><h3 style="margin-bottom:6px">顾问陪伴时长排行</h3><div id="ov-leaders"><div class="empty">加载中…</div></div></div>
     </div>
   </div>
 
-  <div class="tabs">
-    {% if role != 'store_manager' %}
-    <button data-tab="consultants" class="active">员工管理 <span class="tab-count" id="consCount"></span></button>
-    <button data-tab="stores">门店管理 <span class="tab-count" id="storeCount"></span></button>
-    <button data-tab="admins">管理员账号 <span class="tab-count" id="adminCount"></span></button>
-    <button data-tab="tagdict">标签词典 <span class="tab-count" id="tagDictCount"></span></button>
-    <button data-tab="customers">顾客管理 <span class="tab-count" id="custCount"></span></button>
-    <button data-tab="customer-merge">客户合并 <span class="tab-count" id="mergeDupCount"></span></button>
-    {% endif %}
-    <button data-tab="high-risk">差评高风险预警 <span id="hrBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
-    <button data-tab="pipeline">接诊卡点 <span id="pipelineBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
-    {% if role != 'store_manager' %}<button data-tab="reminder-cfg">提醒设置</button>{% endif %}
-    <button data-tab="unbound">未绑定录音 <span class="tab-count" id="unboundCount"></span></button>
-    <button data-tab="tagstats">标签统计</button>
-    {% if role != 'store_manager' %}
-    <button data-tab="delete-requests">删除申请 <span id="drBadge" style="display:none;background:#e74c3c;color:#fff;border-radius:99px;font-size:11px;padding:1px 6px;margin-left:4px"></span></button>
-    <button data-tab="rebind-requests">换绑/解绑记录</button>
-    {% endif %}
-    {% if role == 'super' %}<button data-tab="companies">公司管理</button>{% endif %}
-    <button data-tab="ops-dashboard">运营看板</button>
+  <!-- 操作日志（新）-->
+  <div id="tab-audit-log" class="panel">
+    <div class="h1">操作日志</div>
+    <div class="sub-note">各账号在网页端的登入 / 登出记录</div>
+    <div class="card">
+      <div class="row" style="margin-bottom:4px">
+        <input id="alQ" placeholder="搜账号 / 姓名" onkeydown="if(event.key==='Enter')loadAuditLog()">
+        <select id="alEvent"><option value="">全部类型</option><option value="login">登入</option><option value="logout">登出</option></select>
+        <button class="btn" onclick="loadAuditLog()">查询</button>
+      </div>
+      <table class="tbl"><thead><tr><th>时间</th><th>账号</th><th>姓名</th><th>角色</th><th>类型</th><th>IP</th></tr></thead><tbody id="alBody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody></table>
+    </div>
+  </div>
+
+  <!-- 美丽陪伴档案（新）：全公司接诊/陪伴记录列表 -->
+  <div id="tab-companion-archive" class="panel">
+    <div class="h1">美丽陪伴档案</div>
+    <div class="sub-note">全公司接诊 / 陪伴记录 —— 点「查看」进报告</div>
+    <div class="card">
+      <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:4px">
+        <input id="caAdvisor" placeholder="顾问姓名" style="width:118px" onkeydown="if(event.key==='Enter')caLoad(1)">
+        <input id="caCustomer" placeholder="会员姓名" style="width:118px" onkeydown="if(event.key==='Enter')caLoad(1)">
+        <input id="caDate" type="date" style="width:150px">
+        <select id="caStatus">
+          <option value="">全部状态</option><option value="done">已完成</option><option value="running">分析中</option>
+          <option value="queued">排队中</option><option value="failed">失败</option><option value="idle">待分析</option>
+        </select>
+        <button class="btn" onclick="caLoad(1)">查询</button>
+        <button class="btn sec" onclick="caReset()">重置</button>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>顾客</th><th>顾问</th><th>录音时间</th><th>录音/识别</th><th>综合分</th><th>分析状态</th><th></th></tr></thead>
+        <tbody id="caBody"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody>
+      </table>
+      <div class="pager" style="margin-top:14px">
+        <button id="caPrev" onclick="caGo(-1)">上一页</button>
+        <span id="caPage" style="color:var(--muted);font-size:13px">—</span>
+        <button id="caNext" onclick="caGo(1)">下一页</button>
+      </div>
+    </div>
   </div>
   <style>.tab-count{font-size:11px;color:#888;font-weight:normal;margin-left:2px}
   .subtabs{display:flex;gap:6px;margin-bottom:16px}
@@ -658,6 +845,7 @@ html,body{overflow-x:hidden;max-width:100%}
     </div>
   </div>
 </div>
+</div>
 
 <script>
 const BASE = {{ request.script_root|tojson }};
@@ -681,6 +869,9 @@ const _tabLoaders = {
   'rebind-requests': () => loadRebindRequests(),
   companies: () => (typeof loadCompanies === 'function') && loadCompanies(),
   'ops-dashboard': () => loadOpsDashboard(),
+  overview: () => loadOverview(),
+  'audit-log': () => loadAuditLog(),
+  'companion-archive': () => loadCompanionArchive(),
 };
 const _tabLoaded = {};
 function activateTab(name) {
@@ -2346,9 +2537,102 @@ function saveReminderConfig() {
   });
 }
 
+// ===== 新版：经营总览 / 操作日志 加载器 =====
+function _esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const _ROLE_CN = {super:'超管', admin:'管理员', store_manager:'店长', consultant:'顾问'};
+function loadOverview(){
+  fetch(BASE + '/api/admin/overview_kpis', {headers:{'Accept':'application/json'}})
+    .then(r=>r.json()).then(d=>{
+      const f=v=>(v==null?'—':v);
+      document.getElementById('ov-companion').textContent=f(d.companion_min_per_day);
+      document.getElementById('ov-study').textContent=f(d.study_min_per_day);
+      document.getElementById('ov-customers').textContent=f(d.customers_per_day);
+      document.getElementById('ov-intake').textContent=f(d.intake_avg_min);
+      document.getElementById('ov-range').textContent=
+        `${d.range.from} 至 ${d.range.to} · 在岗顾问 ${d.advisors} 人 · 人均 = 总量 ÷ 顾问数 ÷ 天数`;
+      const tb=document.getElementById('ov-stores');
+      tb.innerHTML=(d.by_store&&d.by_store.length)
+        ? d.by_store.map(s=>`<tr><td>${_esc(s.store)}</td><td>${s.advisors}</td><td>${s.companion_min_per_day} 分</td><td>${s.study_min_per_day} 分</td><td>${s.customers_per_day} 位</td><td>${s.intake_avg_min} 分</td></tr>`).join('')
+        : '<tr><td colspan="6" class="empty">本区间暂无门店数据</td></tr>';
+      const lb=document.getElementById('ov-leaders');
+      if(d.leaderboard&&d.leaderboard.length){
+        const mx=Math.max.apply(null, d.leaderboard.map(x=>x.minutes).concat([1]));
+        lb.innerHTML=d.leaderboard.map((x,i)=>`<div class="lb-row"><div class="lb-rank">${i+1}</div><div class="lb-av">${_esc((x.name||'?')[0])}</div><div class="lb-nm">${_esc(x.name)}</div><div class="lb-bar"><i style="width:${Math.round(x.minutes/mx*100)}%"></i></div><div class="lb-val">${x.minutes} 分</div></div>`).join('');
+      } else { lb.innerHTML='<div class="empty">本区间暂无陪伴数据</div>'; }
+    }).catch(()=>{ const e=document.getElementById('ov-range'); if(e) e.textContent='指标加载失败，请刷新重试'; });
+}
+function loadAuditLog(){
+  const q=(document.getElementById('alQ')||{}).value||'';
+  const ev=(document.getElementById('alEvent')||{}).value||'';
+  const p=[]; if(q)p.push('q='+encodeURIComponent(q)); if(ev)p.push('event='+ev);
+  fetch(BASE + '/api/admin/audit_log'+(p.length?('?'+p.join('&')):''), {headers:{'Accept':'application/json'}})
+    .then(r=>r.json()).then(d=>{
+      const tb=document.getElementById('alBody'); const list=d.items||[];
+      tb.innerHTML=list.length
+        ? list.map(x=>`<tr><td>${_esc(x.created_at)}</td><td>${_esc(x.username)}</td><td>${_esc(x.advisor_name||'—')}</td><td>${_esc(_ROLE_CN[x.role]||x.role||'')}</td><td>${x.event_type==='login'?'<span class="badge-prof yes">登入</span>':'<span class="badge-prof no">登出</span>'}</td><td>${_esc(x.ip_address||'')}</td></tr>`).join('')
+        : '<tr><td colspan="6" class="empty">暂无记录</td></tr>';
+    }).catch(()=>{ const tb=document.getElementById('alBody'); if(tb) tb.innerHTML='<tr><td colspan="6" class="empty">加载失败</td></tr>'; });
+}
+
+// ===== 美丽陪伴档案：全公司接诊/陪伴记录列表（复用 /api/sessions，管理员=全公司）=====
+let _caPage=1, _caPages=1;
+const _CA_ST_CN={done:'已完成',running:'分析中',queued:'排队中',failed:'失败',idle:'待分析',stuck:'卡住'};
+function _caStCls(s){ return s==='done'?'g':((s==='failed'||s==='stuck')?'r':''); }
+function caReset(){ ['caAdvisor','caCustomer','caDate'].forEach(id=>{const e=document.getElementById(id); if(e)e.value='';}); const s=document.getElementById('caStatus'); if(s)s.value=''; caLoad(1); }
+function caGo(d){ const n=_caPage+d; if(n>=1&&n<=_caPages) caLoad(n); }
+function caLoad(page){
+  _caPage=page||1;
+  const p=new URLSearchParams(); p.set('page',_caPage); p.set('page_size','15');
+  const a=(document.getElementById('caAdvisor')||{}).value; if(a&&a.trim())p.set('advisor',a.trim());
+  const c=(document.getElementById('caCustomer')||{}).value; if(c&&c.trim())p.set('customer',c.trim());
+  const dt=(document.getElementById('caDate')||{}).value; if(dt)p.set('date',dt);
+  const st=(document.getElementById('caStatus')||{}).value; if(st)p.set('status',st);
+  fetch(BASE+'/api/sessions?'+p.toString(),{headers:{'Accept':'application/json'}}).then(r=>r.json()).then(d=>{
+    const tb=document.getElementById('caBody'); const list=d.sessions||[];
+    tb.innerHTML = list.length ? list.map(s=>{
+      let overall=null; try{ overall=s.analysis_scores?JSON.parse(s.analysis_scores).overall:null; }catch(e){}
+      const cust=_esc(s.customer||'—')+(s.member_card?` <span class="muted" style="font-size:12px">${_esc(s.member_card)}</span>`:'');
+      const recT=_esc(String(s.first_recorded_at||'').slice(0,16).replace('T',' '))||'—';
+      return `<tr><td>${cust}</td><td>${_esc(s.advisor||'—')}</td><td style="font-size:12px;color:var(--muted);white-space:nowrap">${recT}</td><td>${s.asr_done_count||0}/${s.recording_count||0}</td><td>${overall!=null?overall:'—'}</td><td><span class="st ${_caStCls(s.display_status)}">${_CA_ST_CN[s.display_status]||s.display_status||'—'}</span></td><td style="white-space:nowrap"><a href="${BASE}/session/${s.id}?from=admin&back=${encodeURIComponent(BASE+'/admin/customer/companion-archive')}" style="color:var(--jade-deep);font-weight:600">查看 →</a></td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="empty">没有匹配的记录</td></tr>';
+    _caPages=Math.max(1,Math.ceil((d.total||0)/(d.page_size||15)));
+    document.getElementById('caPage').textContent=`第 ${d.page} / ${_caPages} 页（共 ${d.total||0} 条）`;
+    document.getElementById('caPrev').disabled=_caPage<=1;
+    document.getElementById('caNext').disabled=_caPage>=_caPages;
+  }).catch(()=>{ const tb=document.getElementById('caBody'); if(tb)tb.innerHTML='<tr><td colspan="7" class="empty">加载失败</td></tr>'; });
+}
+function loadCompanionArchive(){ caLoad(1); }
+
 refreshAdminStats();
-// 默认 tab：管理员/超管进员工管理；店长无管理类 tab，直接进运营看板
-activateTab(ROLE === 'store_manager' ? 'ops-dashboard' : 'consultants');
+// 按 URL 对应的页面初始化（服务端传 page）：映射到既有面板 id（+可选二级 tab）
+(function(){
+  const MAP = {
+    'overview':['overview'],
+    'customer/companion-archive':['companion-archive'],
+    'customer/profiles':['customers','cust-profiles'],
+    'customer/risk-alert':['high-risk'],
+    'operations/dashboard':['ops-dashboard'],
+    'operations/bottleneck':['pipeline'],
+    'operations/reminders':['reminder-cfg'],
+    'companion/unbound':['unbound'],
+    'companion/delete-requests':['delete-requests'],
+    'companion/rebind-log':['rebind-requests'],
+    'companion/audit-log':['audit-log'],
+    'staff/employees':['consultants'],
+    'staff/stores':['stores'],
+    'staff/admins':['admins'],
+    'staff/companies':['companies'],
+    'data/tag-dict':['tagdict'],
+    'data/tag-stats':['tagstats'],
+    'data/customers':['customers','cust-manage'],
+    'data/merge':['customer-merge'],
+  };
+  const m = MAP[{{ page|tojson }}] || ['overview'];
+  activateTab(m[0]);
+  if (m[1]) activateSubTab(m[0], m[1]);
+})();
+// 侧栏分组：点标题展开/折叠
+document.querySelectorAll('.grp-head').forEach(h=>h.addEventListener('click',()=>h.parentElement.classList.toggle('open')));
 </script>
 </body>
 </html>
