@@ -98,7 +98,10 @@ public final class Uploader {
             conn.setDoOutput(true);
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(30000);
-            conn.setReadTimeout(120000);
+            // ★读超时给到 5 分钟：客户端发完 body 后要等服务器响应，而服务器收完还要把整文件再推到 OSS
+            //   (双跳串行)。大文件(1 小时手机麦 ~14MB、录音笔补传更大)若服务器→OSS 慢，120s 会被误判超时
+            //   → 整包重传一遍，表现成「特别慢/像卡住/传好几遍」。放宽到 300s 避免这种假超时。
+            conn.setReadTimeout(300000);
             conn.setRequestProperty("Connection", "keep-alive");
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
             if (cookie != null && !cookie.isEmpty()) {

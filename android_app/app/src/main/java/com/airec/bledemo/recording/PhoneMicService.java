@@ -115,8 +115,12 @@ public class PhoneMicService extends Service {
             recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            recorder.setAudioSamplingRate(44100);
-            recorder.setAudioEncodingBitRate(96000);
+            // ★录音只用于转写(ASR)，不是听音乐：单声道 / 16kHz / 32kbps 对人声足够清晰(也是 ASR 标准采样率)，
+            //   文件只有原来(44.1kHz/96kbps)的约 1/3 —— 1 小时从 ~42MB 降到 ~14MB。
+            //   手机麦是「停录后才整包上传」，文件越小「保存中」越短，长录音上传快约 3 倍，还省流量。
+            recorder.setAudioChannels(1);
+            recorder.setAudioSamplingRate(16000);
+            recorder.setAudioEncodingBitRate(32000);
             recorder.setOutputFile(currentFile.getAbsolutePath());
             // ★来电/被其他App抢麦/底层编码出错 → 回调这里。不设监听的话会静默录废、UI 还一直"录音中"(瞎录)。
             recorder.setOnErrorListener((mr, what, extra) -> {
