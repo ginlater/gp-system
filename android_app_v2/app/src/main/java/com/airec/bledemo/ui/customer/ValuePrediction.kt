@@ -55,6 +55,12 @@ private val OkGreen = Color(0xFF22A36B)
 private val NoRed = Color(0xFFD9534F)
 private val HeadInk = Color(0xFF2A2D3A) // 正文标题/加粗的深色（偏中性，配暖卡也不跳）
 
+/** 强调色/符号色用作【文字】时：暗色主题(黑金)下朝白提亮，保证黑底也读得清；亮色主题原样。 */
+private fun vpText(c: Color): Color =
+    if (com.airec.bledemo.designsystem.ThemeManager.current.dark)
+        androidx.compose.ui.graphics.lerp(c, Color.White, 0.55f)
+    else c
+
 /**
  * 维度卡：彩色渐变头部（图标 chip + 标题）+ 白底正文。对齐 web .vp-card。
  */
@@ -216,14 +222,14 @@ private fun MdBlockView(block: MdBlock, accent: Color) {
             Text(
                 text = inlineMd(block.text),
                 style = MaterialTheme.typography.titleSmall.copy(fontSize = 13.5f.sp, fontWeight = FontWeight.Bold),
-                color = HeadInk,
+                color = MeiliPalette.Ink,
                 modifier = Modifier.padding(start = 8.dp),
             )
         }
         is MdSub -> Text(
             text = inlineMd(block.text),
             style = MaterialTheme.typography.bodyMedium.copy(fontSize = 13.sp, fontWeight = FontWeight.Bold),
-            color = accent,
+            color = vpText(accent),
             modifier = Modifier.padding(top = 10.dp, bottom = 4.dp),
         )
         is MdParagraph -> Text(
@@ -341,7 +347,7 @@ private fun inlineMd(text: String): AnnotatedString = buildAnnotatedString {
     text.split("**").forEachIndexed { idx, part ->
         val bold = idx % 2 == 1
         if (bold) {
-            pushStyle(SpanStyle(fontWeight = FontWeight.Bold, color = HeadInk, background = MeiliPalette.HoneySoft))
+            pushStyle(SpanStyle(fontWeight = FontWeight.Bold, color = MeiliPalette.Ink, background = MeiliPalette.HoneySoft))
         }
         appendColored(part)
         if (bold) pop()
@@ -358,12 +364,12 @@ private fun AnnotatedString.Builder.appendColored(s: String) {
             c == '★' || c == '☆' -> {
                 val start = i
                 while (i < s.length && (s[i] == '★' || s[i] == '☆')) i++
-                pushStyle(SpanStyle(color = StarGold, fontWeight = FontWeight.Bold))
+                pushStyle(SpanStyle(color = vpText(StarGold), fontWeight = FontWeight.Bold))
                 append(s.substring(start, i))
                 pop()
             }
-            c == '✓' -> { pushStyle(SpanStyle(color = OkGreen, fontWeight = FontWeight.Bold)); append("✓"); pop(); i++ }
-            c == '✗' || c == '✘' || c == '×' -> { pushStyle(SpanStyle(color = NoRed, fontWeight = FontWeight.Bold)); append(c.toString()); pop(); i++ }
+            c == '✓' -> { pushStyle(SpanStyle(color = vpText(OkGreen), fontWeight = FontWeight.Bold)); append("✓"); pop(); i++ }
+            c == '✗' || c == '✘' || c == '×' -> { pushStyle(SpanStyle(color = vpText(NoRed), fontWeight = FontWeight.Bold)); append(c.toString()); pop(); i++ }
             else -> {
                 val start = i
                 while (i < s.length && s[i] !in specials) i++

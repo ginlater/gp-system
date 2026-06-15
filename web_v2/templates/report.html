@@ -360,7 +360,7 @@
 <!-- PART 04 -->
 {% if pains %}
 <div class="section">
-  <div class="part-label">PART 04</div>
+  <div class="part-label">PART 03</div>
   <div class="section-title">可攻破痛点 · 完整作战方案</div>
   {% set badge_class = {'最强突破口': '', '最佳情感连接点': 'b2', '最高价值突破口': 'b3', '其它': 'b2'} %}
   {% for p in pains %}
@@ -405,7 +405,7 @@
 <!-- PART 05 -->
 {% if harvest and harvest.steps %}
 <div class="section">
-  <div class="part-label">PART 05</div>
+  <div class="part-label">PART 04</div>
   <div class="section-title">项目后价值收割 · 黄金窗口标准流程</div>
   {% if harvest.intro %}
   <div class="box box-blue mb16">{{ harvest.intro|md_inline|safe }}</div>
@@ -426,7 +426,7 @@
 <!-- PART 06 -->
 {% if cases %}
 <div class="section">
-  <div class="part-label">PART 06</div>
+  <div class="part-label">PART 05</div>
   <div class="section-title">关键 Case 复盘 · 三层分析</div>
   <div class="section-lead" style="margin-bottom:20px">
     每个关键时刻都包含：<strong>时间戳 + 原话</strong> → 三层分析（表层做法 / 深层问题 / 正确做法）。点击 <span style="display:inline-flex;align-items:center;gap:4px;padding:1px 8px;background:rgba(39,174,96,.1);border-radius:3px;font-size:12px;color:var(--green)">▶ 0:01:34</span> 跳转录音；点击「查看详情」展开三层分析。
@@ -481,7 +481,7 @@
 <!-- PART 07 -->
 {% if logic %}
 <div class="section">
-  <div class="part-label">PART 07</div>
+  <div class="part-label">PART 06</div>
   <div class="section-title">逻辑总结 · 顾问能力训练路径</div>
 
   <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">接诊失败的底层逻辑链</div>
@@ -538,7 +538,7 @@
 <!-- PART 08 -->
 {% if ns %}
 <div class="section">
-  <div class="part-label">PART 08</div>
+  <div class="part-label">PART 07</div>
   <div class="section-title">下一步动作 · 回店规划</div>
 
   <div class="next-grid">
@@ -627,7 +627,7 @@
 {% endif %}
 {% if competitors %}
 <div class="section">
-  <div class="part-label">PART 09</div>
+  <div class="part-label">PART 08</div>
   <div class="section-title">竞品分析 · 顾问售后学习清单</div>
   <div class="section-lead">顾客本次提到的外部品牌/项目/机构，顾问需要在售后了解清楚，下次顾客再提时能接得住。</div>
 
@@ -702,7 +702,7 @@
 {% set diag = report.deal_diagnosis %}
 {% if diag and diag.dimensions %}
 <div class="section">
-  <div class="part-label">PART 11</div>
+  <div class="part-label">PART 09</div>
   <div class="section-title">成交诊断 · 5 维度判断</div>
 
   {# 成交状态 + 金额 + 风险等级 三联条 #}
