@@ -1648,6 +1648,12 @@ def run_asr(recording_id):
         speaker_set = set()
         for transcription in resp.output["results"]:
             if transcription["subtask_status"] != "SUCCEEDED":
+                # DashScope 明确返回"这段录音里没有可识别的话"(ASR_RESPONSE_HAVE_NO_WORDS)
+                # ——不是系统故障/坏文件，就是没听清。给顾问一句干净的"未识别到文字"，
+                # 别把一整坨 JSON 塞进 asr_error 吓人。其它真故障才说"识别失败"。
+                blob = str(transcription)
+                if "NO_WORDS" in blob or "HAVE_NO_WORDS" in blob:
+                    raise RuntimeError("未识别到文字")
                 raise RuntimeError(f"识别失败: {transcription}")
             detailed = json.loads(
                 # ★加 timeout：无超时时下载转写结果若 hang，run_asr 线程永远挂在 try 里、
@@ -5031,12 +5037,12 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.28"
+APP_V2_VERSION_NAME = "2.0.29"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 29   # = build.gradle versionCode（2.0.19）
+APP_V2_LATEST_VERSION_CODE = 30   # = build.gradle versionCode（2.0.19）
 APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
 APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
@@ -12089,7 +12095,7 @@ def api_consultant_session_preview():
     if sess:
         rows = db_fetchall(
             """SELECT id, oss_key, recorded_at, duration_label,
-                      asr_status, asr_speaker_count, asr_speaker_warning, speaker_confirmed
+                      asr_status, asr_error, asr_speaker_count, asr_speaker_warning, speaker_confirmed
                FROM recordings WHERE session_id=? ORDER BY COALESCE(recorded_at,''), id""",
             (sess["id"],),
         )

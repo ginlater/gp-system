@@ -233,6 +233,7 @@ data class PreviewRecording(
     @Json(name = "recorded_at") val recordedAt: String? = null,
     @Json(name = "duration_label") val durationLabel: String? = null,
     @Json(name = "asr_status") val asrStatus: String? = null,
+    @Json(name = "asr_error") val asrError: String? = null,
     @Json(name = "asr_speaker_count") val asrSpeakerCount: Int? = null,
     @Json(name = "asr_speaker_warning") val asrSpeakerWarning: Int? = null,
     @Json(name = "speaker_confirmed") val speakerConfirmed: Int? = null,

@@ -547,7 +547,7 @@ private fun BoundRecordingCard(
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            AsrPill(rec.asrStatus)
+            AsrPill(rec.asrStatus, rec.asrError)
             // 行内播放钮：跟时长/识别状态并排，点了才在下方展开进度条
             com.airec.bledemo.ui.pending.PreviewPlayDot(audio)
         }
@@ -663,12 +663,24 @@ private fun UnboundRecordingCard(
     }
 }
 
-/** 识别状态 pill。done=识别完成 / running|pending=识别中 / failed=识别失败。 */
+/**
+ * 识别状态 pill。done=识别完成 / running|pending=识别中 / failed。
+ * failed 再细分：DashScope 说"这段没听清/没有可识别的话"(asr_error 含 未识别 / NO_WORDS)
+ * → 友好显示「未识别到文字」(琥珀色 Warn，不是系统故障)；其它真故障才显示「识别失败」(红 Danger)。
+ */
 @Composable
-private fun AsrPill(asrStatus: String?) {
+private fun AsrPill(asrStatus: String?, asrError: String? = null) {
     when (asrStatus) {
         "done" -> StatusPill(text = "识别完成", kind = PillKind.Ok, icon = MeiliIcons.Check)
-        "failed" -> StatusPill(text = "识别失败", kind = PillKind.Danger, icon = MeiliIcons.Warn)
+        "failed" -> {
+            val noWords = asrError != null &&
+                (asrError.contains("未识别") || asrError.contains("NO_WORDS"))
+            if (noWords) {
+                StatusPill(text = "未识别到文字", kind = PillKind.Warn, icon = MeiliIcons.Warn)
+            } else {
+                StatusPill(text = "识别失败", kind = PillKind.Danger, icon = MeiliIcons.Warn)
+            }
+        }
         else -> StatusPill(text = "识别中", kind = PillKind.Warn, icon = MeiliIcons.Clock)
     }
 }
