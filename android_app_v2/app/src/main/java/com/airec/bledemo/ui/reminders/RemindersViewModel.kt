@@ -48,6 +48,8 @@ class RemindersViewModel(
                             showEscalationGroup = escalation.isNotEmpty(),
                         )
                     }
+                    // 列表拉到最新即同步首页铃铛红点（非顾问端 escalation 恒空，所以 personal+escalation 两端都对）。
+                    ReminderBadge.set(personal.size + escalation.size)
                 }
                 is ApiResult.Failure -> {
                     _state.update { it.copy(loading = false, error = r.message) }
@@ -70,6 +72,9 @@ class RemindersViewModel(
                             handledIds = s.handledIds + reminderId,
                         )
                     }
+                    // 已跟进的升级项不再计入红点（个人项 + 未跟进升级项）。
+                    val s = _state.value
+                    ReminderBadge.set(s.personal.size + s.escalation.count { it.id !in s.handledIds })
                 }
                 is ApiResult.Failure -> {
                     _state.update { s ->

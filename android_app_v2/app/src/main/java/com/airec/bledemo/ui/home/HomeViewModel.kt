@@ -58,8 +58,8 @@ class HomeViewModel(
      * 计数口径：店长 = 升级项数 + 个人提醒数；顾问 = 个人提醒数（personal_count 缺省退回 count）。
      * 0 时不显示红点；>99 由 UI 显示「99+」。
      */
-    private val _reminderCount = MutableStateFlow(0)
-    val reminderCount: StateFlow<Int> = _reminderCount.asStateFlow()
+    // 红点数读共享单一真相（提醒列表也写它）→ 列表清空/处理后红点同步，不再各拉各的对不上。
+    val reminderCount: StateFlow<Int> = com.airec.bledemo.ui.reminders.ReminderBadge.count
 
     /** 当前用户是否店长（决定铃铛 badge 是否把升级项计入；对齐 web 的 IS_MANAGER）。null=尚未拉到 /api/me。 */
     private var isManager: Boolean? = null
@@ -247,7 +247,9 @@ class HomeViewModel(
                     val d = r.data
                     val personal = d.personalCount ?: d.count ?: 0
                     val escalation = d.escalationCount ?: 0
-                    _reminderCount.value = if (isManager == true) personal + escalation else personal
+                    com.airec.bledemo.ui.reminders.ReminderBadge.set(
+                        if (isManager == true) personal + escalation else personal
+                    )
                     // 前台拉到提醒时，对「新出现的」弹本地系统通知（已见集合去重，不会重复弹）
                     com.airec.bledemo.notify.ReminderNotifier.notifyNew(d.items.orEmpty())
                 }
