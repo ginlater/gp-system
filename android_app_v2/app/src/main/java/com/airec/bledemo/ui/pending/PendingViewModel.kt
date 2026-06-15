@@ -41,7 +41,9 @@ data class PenSyncRow(
 data class PenSyncUiState(
     val visible: Boolean = false,
     val loading: Boolean = false,
+    /** 仅【未导入】片段，已按录音时间倒序（最近的在最上）。 */
     val rows: List<PenSyncRow> = emptyList(),
+    val page: Int = 1,                          // 当前页（1-based）
     val importing: Boolean = false,
     val penUnavailable: Boolean = false,
 ) {
@@ -49,7 +51,14 @@ data class PenSyncUiState(
     val selectedCount: Int get() = rows.count { it.selected && it.importable }
     val allSelected: Boolean
         get() = selectableRows.isNotEmpty() && selectableRows.all { it.selected }
+
+    val totalPages: Int get() = if (rows.isEmpty()) 1 else (rows.size + PEN_SYNC_PAGE_SIZE - 1) / PEN_SYNC_PAGE_SIZE
+    /** 当前页要展示的行（分页）。 */
+    val pageRows: List<PenSyncRow> get() = rows.drop((page - 1) * PEN_SYNC_PAGE_SIZE).take(PEN_SYNC_PAGE_SIZE)
 }
+
+/** 「从陪伴笔同步」每页条数（机身片段多时分页，避免一屏塞不下/显示不全）。 */
+const val PEN_SYNC_PAGE_SIZE = 8
 
 /**
  * 一条 toast（对应 warm_2 .toast）：文案 + 可选语义图标 + 是否危险态。
@@ -288,8 +297,16 @@ class PendingViewModel(
             // 对齐网页端：未传【默认不勾】，由顾问自己选要传的（避免误把一堆机身片段全导进来）。
             PenSyncRow(file = f, status = st, selected = false)
         }
-        _penSync.update { it.copy(loading = false, rows = rows, penUnavailable = false) }
+            // 只显示【未导入】的（已导入 / 已删除 都不展示）
+            .filter { it.status == "new" }
+            // 从最近的开始，从上往下（按录音时间倒序；时间为空的排末尾）
+            .sortedByDescending { it.file.recordedAt }
+        _penSync.update { it.copy(loading = false, rows = rows, page = 1, penUnavailable = false) }
     }
+
+    /** 同步 sheet 翻页。 */
+    fun penNextPage() = _penSync.update { if (it.page < it.totalPages) it.copy(page = it.page + 1) else it }
+    fun penPrevPage() = _penSync.update { if (it.page > 1) it.copy(page = it.page - 1) else it }
 
     fun closePenSync() {
         _penSync.update { it.copy(visible = false) }
