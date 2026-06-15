@@ -37,6 +37,9 @@ interface RecordingController {
     /** 后台下载进度（0-100），用于「保存中 N%」。无下载时为 0。 */
     val progressPercent: StateFlow<Int>
 
+    /** 陪伴笔电量（cmd=6 上报；null=未知/未连接）。首页连接后显示。 */
+    val penBattery: StateFlow<PenBattery?>
+
     /**
      * 一次性面向用户的陪伴笔提示（连接成功 / 错误 / 归属拒绝 / 「开机自动录制」被关 等）。
      * 走独立事件流而非去重的 [state]——否则相同文案被 StateFlow 去重、或被随后的 Idle 覆盖而被悄悄吞掉
@@ -247,4 +250,14 @@ data class PenFile(
     val durationSec: Int,
     /** 是否已上传过（App 本地记录的已传集合）。 */
     val uploaded: Boolean,
+)
+
+/**
+ * 陪伴笔电量（声云笔 cmd=6 上报）。
+ * @param percent 0–100 电量百分比（充电时仅供参考）。
+ * @param charging 是否充电中（声云 cbc 百位=充电标记）。
+ */
+data class PenBattery(
+    val percent: Int,
+    val charging: Boolean,
 )

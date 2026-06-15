@@ -107,6 +107,7 @@ class HomeViewModel(
     private val _livePending = MutableStateFlow(0)
     private val _failed = MutableStateFlow(0)
     private val _progress = MutableStateFlow(0)
+    private val _penBattery = MutableStateFlow<com.airec.bledemo.recording.PenBattery?>(null)
 
     // 陪伴计时：引擎不按秒推时长（手机麦/笔都靠墙钟自走，引擎 durSec 只在重连时用于"只向前对齐"）。
     // 故 UI 计时由本地墙钟驱动（对齐网页端 appStartTimer：进行中每 250ms 走一秒，结束清零）。
@@ -132,6 +133,8 @@ class HomeViewModel(
             )
         }.combine(_elapsedSec) { base, elapsed ->
             base.copy(elapsedSec = elapsed)
+        }.combine(_penBattery) { base, batt ->
+            base.copy(penBattery = batt)
         }.stateIn(
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5_000),
@@ -166,6 +169,7 @@ class HomeViewModel(
             }
         }
         viewModelScope.launch { rc.penConnected.collect { _penConnected.value = it } }
+        viewModelScope.launch { rc.penBattery.collect { _penBattery.value = it } }
         viewModelScope.launch { rc.pendingCount.collect { _livePending.value = it } }
         viewModelScope.launch {
             rc.failedCount.collect { failed ->
@@ -393,6 +397,8 @@ data class CompanionUiState(
     val progressPercent: Int = 0,
     /** 显示用墙钟计时（秒）；由 ViewModel 在进行中每秒自走，结束清零。 */
     val elapsedSec: Int = 0,
+    /** 陪伴笔电量（连接后由 cmd=6 上报；null=未知）。 */
+    val penBattery: com.airec.bledemo.recording.PenBattery? = null,
 ) {
     /** 唤醒/连接中（已发开始命令、等陪伴笔确认真开录）：视觉=「正在唤醒」可取消，**不算已在录**。 */
     val starting: Boolean get() = (state as? RecordingState.Recording)?.starting == true

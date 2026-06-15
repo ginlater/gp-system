@@ -66,6 +66,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         void onPenProgress(int percent);
         /** 手动"从陪伴笔同步"：机身文件列表(JSON 数组)。 */
         void onPenFileList(String filesJson);
+        /** 陪伴笔电量(cmd=6)：percent=0–100；charging=是否充电中(充电时 percent 仅供参考)。 */
+        default void onPenBattery(int percent, boolean charging) {}
     }
 
     /** 扫描页注册：cmd=1 设备发现转发。 */
@@ -1021,6 +1023,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             case "6": markPenResponded();
                 batteryPct = data != null ? String.valueOf(data.opt("cbc")) : "";
                 notifyBatteryIfLow();   // 低电(<10%/<5%)发本地通知充电
+                notifyBatteryToUi();    // 推给首页显示电量
                 break;
             case "7": markPenResponded();
                 if (data != null) {
@@ -2003,6 +2006,24 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     /** 当前电量（cmd=6 缓存；"110"=充电中；空=未知）。 */
     public String batteryPercent() { return batteryPct; }
+
+    /** 解析当前缓存电量 → 推给首页显示（percent 0–100；声云充电时 cbc 形如 1xx，百位=充电标记）。 */
+    private void notifyBatteryToUi() {
+        if (listener == null) return;
+        try {
+            String b = batteryPct;
+            if (b == null) return;
+            b = b.trim();
+            if (b.isEmpty() || "null".equals(b)) return;
+            int lvl = Integer.parseInt(b);
+            boolean charging = lvl > 100;
+            int pct = charging ? lvl - 100 : lvl;
+            if (pct < 0) pct = 0;
+            if (pct > 100) pct = 100;
+            final int fp = pct; final boolean fc = charging;
+            main.post(() -> { if (listener != null) listener.onPenBattery(fp, fc); });
+        } catch (Exception ignore) {}
+    }
 
     /** 解析当前缓存电量 → 交给 ReminderNotifier 判低电发通知（<10%/<5%，去重）。 */
     private void notifyBatteryIfLow() {

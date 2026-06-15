@@ -5039,12 +5039,12 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.33"
+APP_V2_VERSION_NAME = "2.0.34"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 34   # = build.gradle versionCode（2.0.19）
+APP_V2_LATEST_VERSION_CODE = 35   # = build.gradle versionCode（2.0.19）
 APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
 APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
@@ -10309,6 +10309,16 @@ def api_consultant_recording_bind(rid):
         return jsonify({"error": f"绑定失败：{e}"}), 500
     if old_key_to_del and new_key != old_key_to_del:
         _oss_delete_quiet(old_key_to_del)
+    # 绑定即闭环：把这段录音"待绑定"的提醒立刻置 processed=1，顾问/店长 badge 即时 -1，
+    # 不必等后台 10 分钟扫描（_close_resolved_reminders 仍会兜底）。
+    try:
+        db_write(
+            "UPDATE reminder_log SET processed=1, processed_at=datetime('now','localtime') "
+            "WHERE ref_type='recording' AND ref_id=? AND processed=0 AND kind='unbound'",
+            (rid,),
+        )
+    except Exception as _e:
+        app.logger.warning("bind 关闭待绑定提醒失败 rid=%s: %s", rid, _e)
     trigger_pipeline_for_recording(rid)
     return jsonify({"ok": True, "session_id": sid})
 

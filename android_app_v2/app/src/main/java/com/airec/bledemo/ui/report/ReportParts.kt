@@ -754,8 +754,9 @@ fun Part11DealDiagnosis(deal: DealDiagnosis?) {
                 if (it) StatusPill("已成交", PillKind.Ok, icon = MeiliIcons.Check)
                 else StatusPill("未成交", PillKind.Danger, icon = MeiliIcons.Warn)
             }
-            deal.dealAmount?.let { StatusPill(it, PillKind.Warn) }
-            deal.riskLevel?.let { StatusPill(riskLabel(it), PillKind.Clay) }
+            // 加前缀让单独的「无」「留意」自解释，不再没头没尾。成交结果已够清楚，不加。
+            deal.dealAmount?.let { StatusPill("成交金额：$it", PillKind.Warn) }
+            deal.riskLevel?.let { StatusPill("差评风险：${riskLabel(it)}", PillKind.Clay) }
         }
         deal.dimensions?.let { d ->
             val rows = listOf(

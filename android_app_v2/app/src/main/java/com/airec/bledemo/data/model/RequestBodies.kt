@@ -127,3 +127,9 @@ data class ConsultantAnalyzeBody(
 data class SplitBody(
     @Json(name = "at_seconds") val atSeconds: Double,
 )
+
+/** POST /api/report_view/enter：打开报告即上报"已查看"（后端据此关闭该 session 的未查看提醒）。 */
+data class ReportViewBody(
+    @Json(name = "session_id") val sessionId: Long,
+    @Json(name = "source") val source: String = "app",
+)

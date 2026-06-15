@@ -58,6 +58,9 @@ class RecordingControllerImpl(
     private val _progressPercent = MutableStateFlow(0)
     override val progressPercent: StateFlow<Int> = _progressPercent.asStateFlow()
 
+    private val _penBattery = MutableStateFlow<PenBattery?>(null)
+    override val penBattery: StateFlow<PenBattery?> = _penBattery.asStateFlow()
+
     // 一次性面向用户的陪伴笔提示（连接成功/错误/归属拒绝/开机自录被关）——独立于去重的 _state，绝不被覆盖吞掉。
     private val _penEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     override val penEvents: SharedFlow<String> = _penEvents.asSharedFlow()
@@ -173,6 +176,7 @@ class RecordingControllerImpl(
                 consumePendingStartIfAny()
             } else {
                 penWasConnected = false
+                _penBattery.value = null   // 断开即清电量，别留旧值
                 if (pendingStartAfterConnect) {
                     // 还没把「要开录」落地就断了 → 清意图(防泄漏到下次连接幽灵开录)、撤兜底、回 Idle。
                     pendingStartAfterConnect = false
@@ -195,6 +199,10 @@ class RecordingControllerImpl(
         override fun onPenPendingChanged(pending: Int, failed: Int) {
             _pendingCount.value = pending
             _failedCount.value = failed
+        }
+
+        override fun onPenBattery(percent: Int, charging: Boolean) {
+            _penBattery.value = PenBattery(percent, charging)
         }
 
         override fun onPenUploaded(recordingId: Long) {

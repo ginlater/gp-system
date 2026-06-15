@@ -402,6 +402,12 @@ interface ConsultantApi {
         @Body body: SplitBody,
     ): Response<SimpleResult>
 
+    // ───────────── 报告查看埋点 ─────────────
+
+    /** 打开报告即上报"已查看"：后端关闭该 session 的未查看提醒，红点即时 -1。 */
+    @POST("api/report_view/enter")
+    suspend fun reportViewEnter(@Body body: ReportViewBody): Response<SimpleResult>
+
     // ───────────── 提醒 ─────────────
 
     @GET("api/consultant/reminders")

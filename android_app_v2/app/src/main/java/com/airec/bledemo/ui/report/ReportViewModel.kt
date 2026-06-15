@@ -154,6 +154,16 @@ class ReportViewModel(
     init {
         load()
         detectRole()
+        markViewed()
+    }
+
+    /**
+     * 打开报告即上报"已查看"：后端据此关闭该 session 的"报告未查看"提醒，红点即时 -1
+     * （之前 App 从不上报，导致服务器永远以为没看过、提醒永不消）。每次打开报告调一次，失败忽略。
+     */
+    private fun markViewed() {
+        if (sessionId <= 0) return
+        viewModelScope.launch { repo.reportViewEnter(sessionId) }
     }
 
     /**

@@ -314,6 +314,12 @@ class ConsultantRepository(
     suspend fun splitRecording(rid: Long, atSeconds: Double): ApiResult<SimpleResult> =
         call { api.splitRecording(rid, SplitBody(atSeconds)) }
 
+    // ───────────── 报告查看埋点 ─────────────
+
+    /** 打开报告即上报"已查看"（关闭未查看提醒）。失败不影响阅读，调用方忽略结果即可。 */
+    suspend fun reportViewEnter(sessionId: Long): ApiResult<SimpleResult> =
+        call { api.reportViewEnter(ReportViewBody(sessionId = sessionId)) }
+
     // ───────────── 提醒 ─────────────
 
     suspend fun reminders(): ApiResult<RemindersResponse> = call { api.reminders() }

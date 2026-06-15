@@ -370,6 +370,7 @@ private fun CompanionCard(
             SourceRow(
                 source = source,
                 penConnected = companion.penConnected,
+                penBattery = companion.penBattery,
                 onPickSource = onPickSource,
             )
 
@@ -536,13 +537,22 @@ private fun CompactCompanionButton(
 private fun SourceRow(
     source: CompanionSource,
     penConnected: Boolean,
+    penBattery: com.airec.bledemo.recording.PenBattery?,
     onPickSource: (CompanionSource) -> Unit,
 ) {
+    // 已连接时副标题带上电量：「已连接 · 电量78%」/ 充电时「已连接 · 充电中」；电量未知则只显示已连接。
+    val penSub = if (penConnected) {
+        when {
+            penBattery == null -> "已连接"
+            penBattery.charging -> "已连接 · 充电中"
+            else -> "已连接 · 电量${penBattery.percent}%"
+        }
+    } else "未连接"
     Row(horizontalArrangement = Arrangement.spacedBy(11.dp)) {
         SourceCell(
             icon = MeiliIcons.Pen,
             title = "陪伴笔",
-            sub = if (penConnected) "已连接" else "未连接",
+            sub = penSub,
             subDot = penConnected,
             selected = source == CompanionSource.Pen,
             onClick = { onPickSource(CompanionSource.Pen) },

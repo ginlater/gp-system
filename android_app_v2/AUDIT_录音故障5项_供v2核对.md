@@ -109,6 +109,15 @@
 
 ---
 
+## 附:手机麦长录音保存慢(2026-06-15 修,v2 务必同步)
+
+- **现象**:手机麦录 1 小时,点结束后"保存中/上传中"要等好几分钟。
+- **根因**:① 录音码率过高(`44100Hz / AAC 96kbps` → 1 小时 ~42MB,纯转写根本用不上);② 手机麦是「停录后才整包上传」(不像录音笔边录边流式传),停的瞬间一个字节都还没传;③ 服务器收完还要再把整文件推到 OSS(双跳串行,都在返回前完成);④ 客户端 `readTimeout=120s`,服务器→OSS 慢时会被误判超时→整包重传。
+- **v1 修法**(`recording/PhoneMicService.java` 录音参数 + `net/Uploader.java` 超时):
+  - `setAudioChannels(1)` + `setAudioSamplingRate(16000)` + `setAudioEncodingBitRate(32000)`(单声道/16kHz/32kbps,人声足够、也是 ASR 标准采样率)→ 文件从 ~42MB 降到 ~14MB,上传快约 3 倍;
+  - `Uploader` 的 `setReadTimeout(120000)` → `300000`,避免服务器→OSS 慢时假超时整包重传。
+- **v2 检查点**:v2 复用了同名 `PhoneMicService.java` / `Uploader.java`,**大概率还是 96kbps/44.1kHz + 120s 超时**,照上面改一遍。
+
 ## 附:这次还顺手做的(v2 可一并核对)
 
 - **录满 90 分钟自动结束**(`MAX_REC_SEC=90*60`):录音到 90 分钟 → 自动 `stopRecording`(笔 + App 都停、这段照常保存)、不自动续录(免与声控打架),顾问要继续手动点开始。v2 粗扫**缺**。位置:`PenController.java`(`MAX_REC_SEC`、`maybeAutoStopAt90`、`onRecordDurationUpdated` 和心跳里的检查、新段重置 `autoStoppedAt90`)。
