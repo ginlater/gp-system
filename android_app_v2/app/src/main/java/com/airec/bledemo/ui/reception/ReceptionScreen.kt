@@ -140,6 +140,17 @@ fun ReceptionScreen(
     val pendingToast by pendingVm.toast.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    // 回到本页即刷新接诊列表（从接诊包预览「开始/重新分析」「退回片段」回来后，
+    // 状态胶囊立刻反映最新——分析中 / 已作废，而不是傻等 20s 轮询）。
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) receptionVm.refresh()
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     // 试听播放态（按片段 id）——抬到屏级，待整理自动轮询据此「播放中跳过」。
     val playingIds = remember { mutableStateMapOf<Long, Boolean>() }
     val anyPlaying by remember { derivedStateOf { playingIds.values.any { it } } }

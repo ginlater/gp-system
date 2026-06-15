@@ -5037,12 +5037,12 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.30"
+APP_V2_VERSION_NAME = "2.0.31"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 31   # = build.gradle versionCode（2.0.19）
+APP_V2_LATEST_VERSION_CODE = 32   # = build.gradle versionCode（2.0.19）
 APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
 APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
@@ -5061,12 +5061,12 @@ APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问�
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
 #   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
-APP_LATEST_VERSION_CODE = 25
-APP_LATEST_VERSION_NAME = "2.1.14"
-# ★v25 灰度中：MIN 暂留 24（可选更新、不强制）→ 先让测试机/林春华手动装 v25 验证(治乱码#3/RSSI电量诊断/防丢音频#1/手机麦#5/待取回#4)，
-#   验证通过后再把 MIN 抬到 25 全网强更。改 MIN=25 即全网强更。
+APP_LATEST_VERSION_CODE = 26
+APP_LATEST_VERSION_NAME = "2.1.15"
+# ★v26 灰度中：MIN 暂留 24（可选更新、不强制）→ 先让测试机手动装 v26 验证(长录音保存提速#6)，
+#   验证通过后再把 MIN 抬到 26 全网强更。改 MIN=26 即全网强更。
 APP_MIN_VERSION_CODE = 24
-APP_UPDATE_NOTE = "本次更新：① 后段乱码根治——蓝牙传来的录音不再从某处起变噪音；② 登录失效也不会丢录音，重登后自动补传；③ 录音笔信号/电量可被诊断读取，排查更快；④ 手机录音被来电打断会提示并保留；⑤「小伙伴里没导入的录音」会主动提示取回。更新后更稳 💛"
+APP_UPDATE_NOTE = "本次更新：① 后段乱码根治——蓝牙传来的录音不再从某处起变噪音；② 登录失效也不会丢录音，重登后自动补传；③ 录音笔信号/电量可被诊断读取，排查更快；④ 手机录音被来电打断会提示并保留；⑤「小伙伴里没导入的录音」会主动提示取回；⑥ 手机录音(尤其一小时以上的长录音)保存更快、更省流量。更新后更稳 💛"
 
 
 @app.route("/download")
@@ -10811,6 +10811,34 @@ def api_consultant_recording_remove_day_customer(rid):
     return jsonify({"ok": True})
 
 
+def _invalidate_session_after_recording_removed(old_sid):
+    """录音被移出某 session（退回未归档 / 接诊包预览里移除）后，作废原 session 的分析：
+    - 变空（已无录音）→ 整份清空 + 解锁（不删 session/daily_reception，顾客仍在当日列表里）；
+      否则会出现"接诊包里 0 段录音却还显示分析成功/失败"的幽灵状态。
+    - 仍有录音但内容已变 → 把 done/failed 标 outdated（录音有变更，需重新分析），并解锁。
+    两条移除路径（unbind / preview_remove）必须都走这里，否则状态不一致。"""
+    if not old_sid:
+        return
+    cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (old_sid,))
+    if not cnt or not cnt["n"]:
+        db_write(
+            """UPDATE sessions SET locked=0,
+                   analysis_status=NULL, analysis_result=NULL, analysis_error=NULL,
+                   analysis_started_at=NULL, analysis_finished_at=NULL,
+                   analysis_signature=NULL, analysis_scores=NULL,
+                   analysis_progress=NULL, task_status=NULL
+               WHERE id=?""",
+            (old_sid,),
+        )
+    else:
+        db_write(
+            """UPDATE sessions SET locked=0,
+                   analysis_status=CASE WHEN analysis_status IN ('done','failed') THEN 'outdated' ELSE analysis_status END
+               WHERE id=?""",
+            (old_sid,),
+        )
+
+
 @app.route("/api/consultant/recordings/<int:rid>/unbind", methods=["POST"])
 @login_required
 def api_consultant_recording_unbind(rid):
@@ -10852,25 +10880,7 @@ def api_consultant_recording_unbind(rid):
         (rid,),
     )
     # 老 session：变空则解锁+清分析（不删 session/daily_reception，顾客仍在当日列表里）
-    if old_sid:
-        cnt = db_fetchone("SELECT COUNT(*) AS n FROM recordings WHERE session_id=?", (old_sid,))
-        if not cnt or not cnt["n"]:
-            db_write(
-                """UPDATE sessions SET locked=0,
-                       analysis_status=NULL, analysis_result=NULL, analysis_error=NULL,
-                       analysis_started_at=NULL, analysis_finished_at=NULL,
-                       analysis_signature=NULL, analysis_scores=NULL,
-                       analysis_progress=NULL, task_status=NULL
-                   WHERE id=?""",
-                (old_sid,),
-            )
-        else:
-            db_write(
-                """UPDATE sessions SET locked=0,
-                                      analysis_status=CASE WHEN analysis_status IN ('done','failed') THEN 'outdated' ELSE analysis_status END
-                   WHERE id=?""",
-                (old_sid,),
-            )
+    _invalidate_session_after_recording_removed(old_sid)
     # 审计日志：to_customer_id 用 0 表示"未归档"
     db_write(
         """INSERT INTO rebind_requests
@@ -12215,14 +12225,18 @@ def api_consultant_session_preview_remove():
         return jsonify({"error": "录音不存在"}), 404
     if rec["uploader_user_id"] and rec["uploader_user_id"] != u["id"]:
         return jsonify({"error": "无权操作他人录音"}), 403
-    if rec["session_id"]:
-        err2 = _assert_session_unlocked_for_consultant(rec["session_id"])
+    old_sid = rec["session_id"]
+    if old_sid:
+        err2 = _assert_session_unlocked_for_consultant(old_sid)
         if err2:
             return err2
     db_write(
         "UPDATE recordings SET session_id=NULL, customer=NULL, speaker_confirmed=0 WHERE id=?",
         (rid,),
     )
+    # ★把片段移出后必须作废原 session 的分析：空了清光、非空了标 outdated。
+    #   否则会出现"接诊包里录音被移除了却仍显示分析成功"(孟非宝宝 2026-06-15)。
+    _invalidate_session_after_recording_removed(old_sid)
     return jsonify({"ok": True})
 
 
