@@ -13162,7 +13162,8 @@ def _close_resolved_reminders(company_id, kind, ref_type, active_ids):
     （unviewed 的 escalation 升级项也在此随报告被查看而关闭。）"""
     rows = db_fetchall(
         "SELECT id, ref_id FROM reminder_log WHERE company_id=? AND kind=? AND ref_type=? "
-        "AND channel IN ('inapp','phone','sms','wecom','escalation') AND processed=0",
+        # ★含 'board'：看板标红项原来不在关闭名单里，录音被删/绑定后这条「未绑定·看板」永不关闭→堆成孤儿。
+        "AND channel IN ('inapp','phone','sms','wecom','escalation','board') AND processed=0",
         (company_id, kind, ref_type),
     )
     n = 0
