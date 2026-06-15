@@ -886,6 +886,7 @@ private fun statusFor(item: TodayReception): Triple<String, PillKind, ImageVecto
         "done" -> Triple("已完成", PillKind.Ok, MeiliIcons.Check)
         "failed" -> Triple("分析失败，可重试", PillKind.Danger, MeiliIcons.Warn)
         "running", "queued" -> Triple("分析中…", PillKind.Run, MeiliIcons.Sync)
+        "outdated" -> Triple("录音有变更，重新分析", PillKind.Warn, MeiliIcons.Sync)
         "pending" -> Triple("待分析", PillKind.Warn, MeiliIcons.Clock)
         null, "" -> {
             val n = item.recordingCount ?: 0

@@ -425,10 +425,14 @@ class SessionPreviewViewModel(
             when (val r = repo.startAnalysis(cid, s.serviceDate.ifBlank { null })) {
                 is ApiResult.Success -> {
                     val targetSid = r.data.sessionId ?: s.sessionId
+                    // 乐观更新：一点就把本页状态翻成「分析中…」(queued/Running)，
+                    // 不等返回再刷。真实进度由报告页轮询 + 回本页 ON_RESUME 刷新校正。
                     _state.update {
                         it.copy(
                             submitting = false,
                             toast = r.data.msg ?: "已开始分析",
+                            analysisStatus = "queued",
+                            phase = AnalysisPhase.Running,
                             navigateToReport = targetSid,
                         )
                     }

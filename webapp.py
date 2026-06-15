@@ -4635,10 +4635,12 @@ def ingest_recording(oss_key, *, source, size_bytes=None,
          duration_label, size_bytes, source, company_id or 1, uploader_user_id, rec_store_id),
     )
 
-    # 新增录音会让 session 之前的分析结果过期；标 pending 等流水线
+    # 新增录音会让 session 之前的分析结果过期 → 标 outdated（"录音有变更，需重新分析"）。
+    # 和"移除/换绑录音"作废原分析用同一个 outdated 语义，顾问看到的提示一致；
+    # 不用 pending（pending+残留 result 会被状态桶误判成 'stuck'，且前端显示"待分析"不告诉原因）。
     if session_id:
         db_write(
-            """UPDATE sessions SET analysis_status='pending',
+            """UPDATE sessions SET analysis_status='outdated',
                analysis_error=NULL WHERE id=?
                AND analysis_status='done' AND analysis_signature != ?""",
             (session_id, compute_session_signature(session_id)),
@@ -5037,12 +5039,12 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.31"
+APP_V2_VERSION_NAME = "2.0.32"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 32   # = build.gradle versionCode（2.0.19）
+APP_V2_LATEST_VERSION_CODE = 33   # = build.gradle versionCode（2.0.19）
 APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
 APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
@@ -5063,10 +5065,10 @@ APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问�
 #   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
 APP_LATEST_VERSION_CODE = 26
 APP_LATEST_VERSION_NAME = "2.1.15"
-# ★v26 灰度中：MIN 暂留 24（可选更新、不强制）→ 先让测试机手动装 v26 验证(长录音保存提速#6)，
-#   验证通过后再把 MIN 抬到 26 全网强更。改 MIN=26 即全网强更。
-APP_MIN_VERSION_CODE = 24
-APP_UPDATE_NOTE = "本次更新：① 后段乱码根治——蓝牙传来的录音不再从某处起变噪音；② 登录失效也不会丢录音，重登后自动补传；③ 录音笔信号/电量可被诊断读取，排查更快；④ 手机录音被来电打断会提示并保留；⑤「小伙伴里没导入的录音」会主动提示取回；⑥ 手机录音(尤其一小时以上的长录音)保存更快、更省流量。更新后更稳 💛"
+# ★v26/2.1.15 全网强制更新(2026-06-15)：真机验证长录音提速通过(96→32kbps,1小时42MB→14MB)→ MIN 抬到 26，
+#   所有 <26 的顾问打开 App 即弹不可关强更框。改 MIN 即全网强更；要回退灰度把 MIN 降回上一档即可。
+APP_MIN_VERSION_CODE = 26
+APP_UPDATE_NOTE = "本次更新解决了这些问题：① 手机长录音（一小时以上）保存慢又费流量——现在文件更小、保存快约3倍；② 偶尔出现的「录音后段变乱码噪声」已根治；③ 登录过期时正在上传的录音不再丢失，重新登录会自动补传；④ 手机录音被来电或其他应用打断时会提示并保留已录部分（不再悄悄录废）；⑤ 小伙伴里还没导入的录音会主动提示「点取回」，不再被遗漏；⑥ 蓝牙断连更好排查（可读取小伙伴的信号与电量）。建议立即更新，更稳更省心 💛"
 
 
 @app.route("/download")

@@ -99,6 +99,20 @@ fun SessionPreviewScreen(
         }
     }
 
+    // 回到本页即刷新（从报告页返回、或回前台）——保证状态/按钮反映最新分析状态。
+    // 跳过首个 ON_RESUME，避免与上面的首次 load 重复联网。
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        var firstResume = true
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                if (firstResume) firstResume = false else viewModel.refresh(initial = false)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     // 一次性提示
     LaunchedEffect(state.toast) {
         // toast 直接通过下方 inline 提示展示；这里仅做自动清理

@@ -83,6 +83,19 @@ fun CustomerDetailScreen(
 
     LaunchedEffect(customerId) { viewModel.load(customerId) }
 
+    // 回到本页即刷新（从某次接诊报告/分析返回后，档案里的接诊状态跟着更新）。跳过首个 ON_RESUME 避免与首次 load 重复。
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        var firstResume = true
+        val obs = androidx.lifecycle.LifecycleEventObserver { _, e ->
+            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                if (firstResume) firstResume = false else viewModel.load(customerId)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(obs)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(obs) }
+    }
+
     val info = state.profile?.info
     val name = info?.name?.takeIf { it.isNotBlank() } ?: "顾客档案"
 
