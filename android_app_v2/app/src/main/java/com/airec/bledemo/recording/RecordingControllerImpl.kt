@@ -205,6 +205,11 @@ class RecordingControllerImpl(
             _penBattery.value = PenBattery(percent, charging)
         }
 
+        override fun onPenAutoStopped() {
+            // 录满 90 分钟自动结束这一段 → 一次性提示顾问（这段已正常保存上传；要继续得手动再开启）。
+            _penEvents.tryEmit("已录满 90 分钟，已自动保存并结束这一段。要继续请点「开启陪伴」💛")
+        }
+
         override fun onPenUploaded(recordingId: Long) {
             // 一段后台上传成功 → 通知 UI 刷新「待整理」列表与首页待整理计数（对齐旧宿主 → loadPending）。
             _penListChanged.tryEmit(Unit)

@@ -68,6 +68,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         void onPenFileList(String filesJson);
         /** 陪伴笔电量(cmd=6)：percent=0–100；charging=是否充电中(充电时 percent 仅供参考)。 */
         default void onPenBattery(int percent, boolean charging) {}
+        /** 录满 90 分钟自动结束这一段 → UI 提示"已自动保存，要继续请点开始陪伴"。 */
+        default void onPenAutoStopped() {}
     }
 
     /** 扫描页注册：cmd=1 设备发现转发。 */
@@ -158,6 +160,11 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private static final long CONFIRM_TIMEOUT_MS = 5000;
     private static final long REC_HEALTH_GRACE_MS = 9000;
     private volatile int lastPenDurationSec = 0;
+    // ★单段最长 90 分钟：到点自动结束保存（声云笔无暂停，连续录会越来越大）。
+    //   计时以【笔上报的真实录音时长 lastPenDurationSec】为准（最权威、跨黑屏/重连都准），
+    //   笔没报时退回 elapsedSec()（startElapsedMs 为 0 时它返回 0，不会像旧 V1 那样用墙钟算出天文数字误触发）。
+    private static final int MAX_REC_SEC = 90 * 60;
+    private volatile boolean autoStoppedAt90 = false;   // 本段是否已触发90分钟自动结束(防重复)
     private volatile boolean healthWatchdogArmed = false;
     private static final long RECONNECT_RECORDING_GRACE_MS = 25000;
 
@@ -498,6 +505,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private final Runnable heartbeat = new Runnable() {
         @Override public void run() {
             if (!linkUp) { stopHeartbeat(); return; }
+            checkMaxRecordLimit();   // ★每拍查一次：录满90分钟就自动结束保存
             long now = SystemClock.elapsedRealtime();
             boolean busy = penRecording || sessionActive || workerBusy || waitingForFile || dlState != null;
             if (busy && (now - lastRxMs) < HB_INTERVAL_BUSY_MS) {
@@ -530,6 +538,31 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     };
     private void startHeartbeat() { hbMissed = 0; main.removeCallbacks(heartbeat); main.postDelayed(heartbeat, HB_INTERVAL_MS); }
     private void stopHeartbeat() { main.removeCallbacks(heartbeat); hbMissed = 0; }
+
+    /**
+     * 录满 90 分钟自动结束的判定。只在【真在录、未暂停、本段还没触发过】时查；
+     * 时长优先用笔上报的真实录音时长，笔没报才退回 elapsedSec()（无基准时它返回 0，不会误触发）。
+     * 心跳每 8~15s 跑一次，到点 15s 内必结束。
+     */
+    private void checkMaxRecordLimit() {
+        if (autoStoppedAt90 || penPaused || !penRecording) return;
+        int dur = lastPenDurationSec > 0 ? lastPenDurationSec : elapsedSec();
+        if (dur >= MAX_REC_SEC) maybeAutoStopAt90(dur);
+    }
+
+    /** 到 90 分钟：笔 endRecord + App 收尾上传（这段照常保存），并通知 UI 提示"已自动结束，要继续请点开始陪伴"。 */
+    private void maybeAutoStopAt90(int durSec) {
+        if (durSec < MAX_REC_SEC) return;
+        main.post(() -> {
+            if (autoStoppedAt90 || !penRecording) return;
+            autoStoppedAt90 = true;
+            Log.w(TAG, "录满90分钟 → 自动结束 dur=" + durSec);
+            penLog("★录满90分钟,自动结束保存(要继续请点开始陪伴)");
+            stopRecording();   // 走正常结束流程：笔停 + 这段照常收尾上传
+            final Listener l = listener;
+            if (l != null) main.post(l::onPenAutoStopped);
+        });
+    }
 
     // ============ App 主动控制 ============
 
@@ -1163,6 +1196,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 sessionFileName = !TextUtils.isEmpty(fileName) ? fileName : null;
                 if (sessionStartWallMs == 0) sessionStartWallMs = System.currentTimeMillis();
                 startElapsedMs = SystemClock.elapsedRealtime();
+                autoStoppedAt90 = false;   // 新一段开始 → 重置90分钟自动结束标记
                 penPaused = false;
                 pauseWorker();
                 startStreamCapture();
