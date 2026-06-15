@@ -412,13 +412,10 @@ fun Part05Harvest(harvest: Harvest?) {
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                         )
                     }
-                    Column(modifier = Modifier.weight(1f)) {
-                        // 只展示步骤标题（话术 body 已下线）
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.Center) {
+                        // 只展示步骤标题（话术 body 一律不显示，老报告也不再露出）
                         step.title?.let {
                             Text(it, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.ExtraBold), color = MeiliPalette.Ink)
-                        }
-                        step.body?.takeIf { it.isNotBlank() }?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = MeiliPalette.Ink2, modifier = Modifier.padding(top = 3.dp))
                         }
                     }
                 }

@@ -416,7 +416,7 @@
     <div class="harvest-step"{% if loop.last %} style="border-right:none"{% endif %}>
       <div class="hs-badge h{{ loop.index if loop.index <= 4 else 4 }}">STEP {{ loop.index }}</div>
       <div class="hs-title">{{ st.title }}</div>
-      {% if st.body %}<div class="hs-body"><em>{{ st.body|md_inline|safe }}</em></div>{% endif %}
+      {# 话术 body 一律不显示，只保留步骤标题（老报告也不再露出） #}
     </div>
     {% endfor %}
   </div>
