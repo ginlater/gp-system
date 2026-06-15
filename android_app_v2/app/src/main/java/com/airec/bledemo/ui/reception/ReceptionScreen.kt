@@ -458,6 +458,8 @@ fun ReceptionScreen(
         onToggleRow = pendingVm::togglePenRow,
         onToggleAll = pendingVm::togglePenAll,
         onImport = { confirmImport = true },
+        onPrevPage = pendingVm::penPrevPage,
+        onNextPage = pendingVm::penNextPage,
     )
 
     // 「申请删除」原因输入弹窗（≥5分钟，可空原因，确认才提交走审批）
@@ -1288,6 +1290,8 @@ private fun PenSyncSheet(
     onToggleRow: (String) -> Unit,
     onToggleAll: () -> Unit,
     onImport: () -> Unit,
+    onPrevPage: () -> Unit,
+    onNextPage: () -> Unit,
 ) {
     MeiliBottomSheet(
         visible = state.visible,
@@ -1334,7 +1338,9 @@ private fun PenSyncSheet(
                     trailing = { StatusPill(text = "陪伴笔", kind = PillKind.Clay, icon = MeiliIcons.Pen) },
                     modifier = Modifier.padding(bottom = 14.dp),
                 )
-                state.rows.forEach { row ->
+                // 只渲染当前页（pageRows，每页 PEN_SYNC_PAGE_SIZE 段），机身片段多时翻页看，
+                // 否则一屏塞不下、翻页器和导入按钮掉到屏外（弹窗不可靠滚动）。
+                state.pageRows.forEach { row ->
                     CheckRow(
                         title = "${penDateLabel(row.file.recordedAt)} · ${secToLabel(row.file.durationSec)}",
                         meta = penMeta(row.file.sizeBytes),
@@ -1344,6 +1350,24 @@ private fun PenSyncSheet(
                         trailing = { StatusPill(text = penStatusText(row.status), kind = penStatusKind(row.status)) },
                         modifier = Modifier.padding(bottom = 10.dp),
                     )
+                }
+                // 翻页导航（机身片段多于一页时）
+                if (state.totalPages > 1) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        GhostButton(text = "上一页", onClick = onPrevPage, enabled = state.page > 1, size = MeiliButtonSize.Xs)
+                        Text(
+                            text = "第 ${state.page} / ${state.totalPages} 页",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MeiliPalette.Ink3,
+                            modifier = Modifier.weight(1f),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        )
+                        GhostButton(text = "下一页", onClick = onNextPage, enabled = state.page < state.totalPages, size = MeiliButtonSize.Xs)
+                    }
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
