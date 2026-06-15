@@ -19,8 +19,8 @@ android {
         applicationId "com.aibeautyfulwomen.gongpai"
         minSdk 24
         targetSdk 34
-        versionCode 27
-        versionName "2.0.26"
+        versionCode 28
+        versionName "2.0.27"
 
         ndk {
             // 只保留 armeabi-v7a：droidkit:opus 只提供了 v7a 的 libopus.so（无 arm64）。

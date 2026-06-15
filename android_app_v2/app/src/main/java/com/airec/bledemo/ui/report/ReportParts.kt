@@ -767,13 +767,40 @@ fun Part11DealDiagnosis(deal: DealDiagnosis?) {
             ).filter { it.second != null }
             rows.forEachIndexed { i, (label, dim) ->
                 val (txt, color) = dimStatus(dim!!)
-                KvRow(label, txt, color, showDivider = i != rows.lastIndex)
+                val note = dim.note?.takeIf { it.isNotBlank() }
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 9.dp, bottom = if (note == null) 9.dp else 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Text(label, style = MaterialTheme.typography.bodySmall, color = MeiliPalette.Ink2)
+                        Text(
+                            txt,
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                            color = color,
+                        )
+                    }
+                    // 维度详细解读（引用原话）——之前数据里有但没展示
+                    note?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5f.sp, lineHeight = 19.sp),
+                            color = MeiliPalette.Ink3,
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        )
+                    }
+                    if (i != rows.lastIndex) {
+                        Box(modifier = Modifier.fillMaxWidth().height(1.dp).background(MeiliPalette.Line))
+                    }
+                }
             }
         }
-        if (deal.riskAlert == true || deal.riskText != null) {
-            deal.riskText?.let {
-                ReportBanner(it, BannerKind.Warn, MeiliIcons.Warn, modifier = Modifier.padding(top = 13.dp))
-            }
+        // 只有真有风险文字才显示警示框（risk_text 为空/空白时不显示空框）
+        deal.riskText?.takeIf { it.isNotBlank() }?.let {
+            ReportBanner(it, BannerKind.Warn, MeiliIcons.Warn, modifier = Modifier.padding(top = 13.dp))
         }
     }
 }

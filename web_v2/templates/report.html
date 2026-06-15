@@ -771,7 +771,7 @@
     {% endif %}
     {% endfor %}
   </div>
-  {% if diag.risk_alert %}
+  {% if diag.risk_alert and diag.risk_text and diag.risk_text.strip() %}
   <div class="box box-red" style="margin-top:16px"><strong>⚠️ 差评/流失风险预警：</strong>{{ diag.risk_text|md_inline|safe }}</div>
   {% endif %}
 </div>
