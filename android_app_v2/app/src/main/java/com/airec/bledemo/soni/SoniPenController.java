@@ -103,6 +103,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private volatile boolean verifiedConnected = false;
     private volatile long    lastRxMs = 0;
     private volatile int     hbMissed = 0;
+    private int              hbBatteryTick = 0;   // 心跳计数：每 ~8 拍(≈64s)查一次电量
     private static final long HANDSHAKE_TIMEOUT_MS = 7000;  // 连上后 2s 才发首批命令（手册要求），整体放宽到 7s
     private static final long STALE_RX_MS = 12000;
     private static final long HB_INTERVAL_MS = 8000;
@@ -516,6 +517,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             }
             if (!busy && btReady()) {
                 try { PNote.getRecordState(); } catch (Throwable ignore) {}   // cmd=9 回包即心跳
+                // ~每 64s 查一次电量(cmd=6)，低电时由 cmd=6 回包触发充电通知
+                if ((++hbBatteryTick % 8) == 0) { try { PNote.getCBC(); } catch (Throwable ignore) {} }
             }
             main.postDelayed(this, busy ? HB_INTERVAL_BUSY_MS : HB_INTERVAL_MS);
         }
@@ -1014,6 +1017,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             case "5": markPenResponded(); handleTransferState(data); break;
             case "6": markPenResponded();
                 batteryPct = data != null ? String.valueOf(data.opt("cbc")) : "";
+                notifyBatteryIfLow();   // 低电(<10%/<5%)发本地通知充电
                 break;
             case "7": markPenResponded();
                 if (data != null) {
@@ -1985,6 +1989,19 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     /** 当前电量（cmd=6 缓存；"110"=充电中；空=未知）。 */
     public String batteryPercent() { return batteryPct; }
+
+    /** 解析当前缓存电量 → 交给 ReminderNotifier 判低电发通知（<10%/<5%，去重）。 */
+    private void notifyBatteryIfLow() {
+        try {
+            String b = batteryPct;
+            if (b == null) return;
+            b = b.trim();
+            if (b.isEmpty() || "null".equals(b)) return;
+            int lvl = Integer.parseInt(b);
+            boolean charging = lvl > 100;   // 声云 "110" = 充电中
+            com.airec.bledemo.notify.ReminderNotifier.INSTANCE.onPenBattery(lvl, charging);
+        } catch (Exception ignore) {}
+    }
 
     // ============ 工具 ============
 

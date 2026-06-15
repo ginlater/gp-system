@@ -29,9 +29,62 @@ object ReminderNotifier {
     private const val CHANNEL_ID = "reminders"
     private const val PREFS = "reminder_notify_prefs"
     private const val KEY_SEEN = "seen_ids"
+    private const val BATTERY_NOTIF_ID = 990001
 
     @Volatile
     private var appCtx: Context? = null
+
+    // 电量提醒去重：-1=未提醒 / 10=已提醒过10%档 / 5=已提醒过5%档。充电或回到>10%即重置。
+    @Volatile
+    private var batteryNotifiedLevel = -1
+
+    /**
+     * 陪伴笔电量回调（SoniPenController cmd=6 收到电量时触发）。
+     * 低于 10% 发一次「该充电」、低于 5% 发一次「剩5%」通知；同一档不重复弹，充电/回升后重置。
+     * @param level 0–100 电量百分比（>100 视为充电中）
+     * @param charging 是否充电中（声云笔 "110"=充电中）
+     */
+    fun onPenBattery(level: Int, charging: Boolean) {
+        val c = appCtx ?: return
+        if (charging || level !in 0..100) { batteryNotifiedLevel = -1; return }
+        if (level > 10) { batteryNotifiedLevel = -1; return }   // 电量正常 → 重置, 下次低电再提醒
+        ensureChannel(c)
+        if (!NotificationManagerCompat.from(c).areNotificationsEnabled()) return
+        if (level <= 5) {
+            if (batteryNotifiedLevel != 5) {
+                batteryNotifiedLevel = 5
+                postBattery(c, "陪伴笔电量不足", "电量剩余5%，快去充电吧，充电时长在1.5～2小时就可以充满了哦～")
+            }
+        } else { // 6..10
+            if (batteryNotifiedLevel == -1) {
+                batteryNotifiedLevel = 10
+                postBattery(c, "陪伴笔该充电啦", "陪伴笔电量已低于 10%，建议尽快充电，别耽误美丽陪伴的记录哦～")
+            }
+        }
+    }
+
+    private fun postBattery(context: Context, title: String, text: String) {
+        val tapIntent = android.content.Intent(context, MeiliActivity::class.java).apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pi = android.app.PendingIntent.getActivity(
+            context, BATTERY_NOTIF_ID, tapIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        val n = android.app.Notification.Builder(context, CHANNEL_ID).let { b ->
+            b.setSmallIcon(R.mipmap.ic_launcher)
+            b.setContentTitle(title)
+            b.setContentText(text)
+            b.setStyle(android.app.Notification.BigTextStyle().bigText(text))
+            b.setAutoCancel(true)
+            b.setContentIntent(pi)
+            b.build()
+        }
+        try {
+            NotificationManagerCompat.from(context).notify(BATTERY_NOTIF_ID, n)
+        } catch (_: SecurityException) {
+        }
+    }
 
     /** Application.onCreate 调一次：存 app context（供无 Context 的 ViewModel 用）+ 建渠道。 */
     fun init(context: Context) {
