@@ -5078,6 +5078,17 @@ def logout():
     return redirect(url_for("login"))
 
 
+# ============ 公开页面：隐私政策、用户协议（无需登录）============
+@app.route("/privacy-policy")
+def privacy_policy():
+    return render_template("privacy-policy.html")
+
+
+@app.route("/terms-of-service")
+def terms_of_service():
+    return render_template("terms-of-service.html")
+
+
 # ============ App 下载（公开页面，无需登录）============
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
@@ -7745,6 +7756,16 @@ def api_admin_customers_list():
     cid = session.get("company_id")
     q = (request.args.get("q") or "").strip()
     is_super = session.get("role") == "super"
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", 20))
+    except (TypeError, ValueError):
+        page_size = 20
+    page_size = max(1, min(page_size, 200))
+    offset = (page - 1) * page_size
     # 排除已被合并的客人（merged_into IS NOT NULL），避免合并后还出现两条
     base_where = ("1=1" if is_super else "company_id=?") + " AND merged_into IS NULL"
     base_params = [] if is_super else [cid]
@@ -7756,8 +7777,8 @@ def api_admin_customers_list():
         params = base_params
     rows = db_fetchall(
         f"SELECT id, name, member_card, phone_tail, company_id, created_at "
-        f"FROM company_customers WHERE {where} ORDER BY id DESC LIMIT 100",
-        tuple(params),
+        f"FROM company_customers WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+        tuple(params) + (page_size, offset),
     )
     total = db_fetchone(
         f"SELECT COUNT(*) AS n FROM company_customers WHERE {where}",
@@ -7772,6 +7793,8 @@ def api_admin_customers_list():
         "customers": [dict(r) for r in rows],
         "total": total,
         "total_all": total_all,
+        "page": page,
+        "page_size": page_size,
     })
 
 

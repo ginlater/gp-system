@@ -118,6 +118,8 @@ a{text-decoration:none}
 .ph .pic{font-size:40px;margin-bottom:14px;opacity:.5}
 .st{font-size:11.5px;padding:2px 9px;border-radius:999px;background:#F0E9DE;color:var(--text-mid)}
 .st.g{background:var(--jade-soft);color:var(--jade-deep)}.st.r{background:#F7E6E2;color:var(--rose)}
+/* customers 面板拆分：数据配置/顾客管理 只显示客户管理、客户中心/顾客档案 只显示档案 → 隐藏二级切换条(路由已各自定位子面板) */
+#tab-customers .subtabs{display:none}
 @media (max-width:768px){.side{width:200px;flex-basis:200px}.wrap{padding:16px 14px 50px}.kpis{grid-template-columns:repeat(2,1fr)}.grid2{grid-template-columns:1fr}}
 </style>
 </head>
@@ -519,6 +521,7 @@ a{text-decoration:none}
           <thead><tr><th>姓名</th><th>会员卡号</th>{% if role == 'super' %}<th>公司</th>{% endif %}<th>创建时间</th><th>操作</th></tr></thead>
           <tbody id="custBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
         </table>
+        <div class="pager" id="custPager" style="margin-top:12px"></div>
       </div>
     </div>
 
@@ -1543,25 +1546,32 @@ function blacklistComp(btn) {
 }
 
 // ---- 顾客 ----
-function loadCustomers(q) {
-  const url = BASE + '/api/admin/customers' + (q ? ('?q=' + encodeURIComponent(q)) : '');
-  fetch(url).then(r => r.json()).then(d => {
+let _custPage = 1;
+const _CUST_PS = 20;
+function loadCustomers(q, page) {
+  // q 不是字符串(loadCustomers()/翻页) → 沿用搜索框当前值；page 默认回第1页
+  if (typeof q !== 'string') {
+    const qi = document.getElementById('qCust');
+    q = qi ? qi.value.trim() : '';
+  }
+  _custPage = page || 1;
+  const p = new URLSearchParams({ page: _custPage, page_size: _CUST_PS });
+  if (q) p.set('q', q);
+  fetch(BASE + '/api/admin/customers?' + p.toString()).then(r => r.json()).then(d => {
     _custCache = d.customers || [];
     const totalAll = (typeof d.total_all === 'number') ? d.total_all : _custCache.length;
     const cu = document.getElementById('custCount'); if (cu) cu.textContent = `(${totalAll})`;
     const matched = (typeof d.total === 'number') ? d.total : _custCache.length;
-    const shown = _custCache.length;
+    const ps = d.page_size || _CUST_PS;
     const el = document.getElementById('custTotal');
-    if (el) {
-      if (q) {
-        el.textContent = `（共 ${totalAll} 个，匹配 ${matched} 个${matched > shown ? `，显示前 ${shown}` : ''}）`;
-      } else {
-        el.textContent = totalAll > shown
-          ? `（共 ${totalAll} 个，显示最新 ${shown}，可用搜索查找其他）`
-          : `（共 ${totalAll} 个）`;
-      }
-    }
+    if (el) el.textContent = q ? `（匹配 ${matched} 个 / 共 ${totalAll} 个）` : `（共 ${totalAll} 个）`;
     renderCustomers(_custCache);
+    const totalPages = Math.max(1, Math.ceil(matched / ps));
+    const pg = document.getElementById('custPager');
+    if (pg) pg.innerHTML =
+      `<button onclick="loadCustomers(undefined, ${_custPage - 1})" ${_custPage <= 1 ? 'disabled' : ''}>上一页</button>`
+      + `<span>第 ${_custPage} / ${totalPages} 页（共 ${matched} 个）</span>`
+      + `<button onclick="loadCustomers(undefined, ${_custPage + 1})" ${_custPage >= totalPages ? 'disabled' : ''}>下一页</button>`;
   });
 }
 let _consSearchTimer = null;
