@@ -5081,12 +5081,12 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.36"
+APP_V2_VERSION_NAME = "2.0.37"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 37   # = build.gradle versionCode（2.0.19）
+APP_V2_LATEST_VERSION_CODE = 38   # = build.gradle versionCode（2.0.19）
 APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
 APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
@@ -10601,6 +10601,15 @@ def api_consultant_recording_bind(rid):
         return jsonify({"error": f"绑定失败：{e}"}), 500
     if old_key_to_del and new_key != old_key_to_del:
         _oss_delete_quiet(old_key_to_del)
+    # ★给「已出报告/已失败」的接诊包新增录音 = 录音集变了，原报告作废 → 标 outdated + 解锁。
+    #   否则接诊列表仍显示"已完成"(实际有待新增分析)、且顾客被路由去看报告而非可编辑的预览，
+    #   导致刚绑的录音想移除也没入口。和"移除/换绑作废"对称——新增也作废，无论增减都提示重新分析。
+    sess_now = db_fetchone("SELECT analysis_status FROM sessions WHERE id=?", (sid,))
+    if sess_now and sess_now["analysis_status"] in ("done", "failed"):
+        db_write(
+            "UPDATE sessions SET analysis_status='outdated', locked=0, analysis_error=NULL WHERE id=?",
+            (sid,),
+        )
     # 绑定即闭环：把这段录音"待绑定"的提醒立刻置 processed=1，顾问/店长 badge 即时 -1，
     # 不必等后台 10 分钟扫描（_close_resolved_reminders 仍会兜底）。
     try:
@@ -11467,6 +11476,13 @@ def api_admin_recording_admin_bind(rid):
         return jsonify({"error": f"绑定失败：{e}"}), 500
     if old_key_to_del and new_key != old_key_to_del:
         _oss_delete_quiet(old_key_to_del)
+    # 给已出报告/已失败的接诊包代绑新录音 → 原报告作废标 outdated + 解锁（同顾问端绑定）。
+    sess_now = db_fetchone("SELECT analysis_status FROM sessions WHERE id=?", (sid,))
+    if sess_now and sess_now["analysis_status"] in ("done", "failed"):
+        db_write(
+            "UPDATE sessions SET analysis_status='outdated', locked=0, analysis_error=NULL WHERE id=?",
+            (sid,),
+        )
     trigger_pipeline_for_recording(rid)
 
     db_write(

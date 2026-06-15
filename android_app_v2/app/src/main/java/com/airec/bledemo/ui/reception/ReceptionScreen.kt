@@ -755,7 +755,8 @@ private fun ContextAction(
         status == "done" -> if (sid != null) {
             HoneyButton(text = "看报告", onClick = { onOpenReport(sid) })
         }
-        status == "failed" -> if (canPreview) {
+        // 失败 / 录音有变更(outdated，含给已完成报告新增/移除录音) → 重新分析，走可编辑预览(能移除片段)
+        status == "failed" || status == "outdated" -> if (canPreview) {
             GhostButton(text = "重新分析", onClick = { onOpenPreview(cid!!, date) }, size = MeiliButtonSize.Xs)
         }
         status == "running" || status == "queued" || status == "pending" -> if (canPreview) {
