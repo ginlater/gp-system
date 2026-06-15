@@ -166,6 +166,25 @@ class ReportViewModel(
         viewModelScope.launch { repo.reportViewEnter(sessionId) }
     }
 
+    // 本次打开已上报过的章节 part_key（去重，避免反复展开刷接口）。
+    private val reportedParts = mutableSetOf<String>()
+
+    /** 章节首次展开 → 上报（喂运营看板「展开章节」）。同一 part 本次只报一次。 */
+    fun reportPartEnter(partKey: String) {
+        if (sessionId <= 0 || partKey.isBlank()) return
+        if (!reportedParts.add(partKey)) return
+        viewModelScope.launch { repo.reportViewPart(sessionId, partKey, "enter") }
+    }
+
+    /** 离开报告页时上报本次停留时长 ms（喂运营看板「总时长」=顾问看 app 的时间）。 */
+    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+    fun reportDwell(durationMs: Long) {
+        if (sessionId <= 0 || durationMs <= 0) return
+        // ★用进程级 GlobalScope 而非 viewModelScope：本调用发生在屏幕 dispose 时，紧接着 VM 就被 clear、
+        //   viewModelScope 会被取消，网络请求会半路夭折。telemetry 走 GlobalScope 才能可靠送达（类比 web sendBeacon）。
+        kotlinx.coroutines.GlobalScope.launch { repo.reportViewPart(sessionId, "overall", "duration", durationMs) }
+    }
+
     /**
      * 取当前用户角色，决定「分割」是否显示。
      * splitRecording 后端 @manager_required，顾问账号调用会 403 → 仅店长/管理员/超管显示分割入口。

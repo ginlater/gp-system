@@ -133,3 +133,14 @@ data class ReportViewBody(
     @Json(name = "session_id") val sessionId: Long,
     @Json(name = "source") val source: String = "app",
 )
+
+/**
+ * POST /api/report_view/part：上报章节展开 / 停留时长（喂运营看板的「展开章节」「总时长」）。
+ * event="enter"（展开某章节，part_key 用 part2..part11 白名单）/ "duration"（停留 duration_ms 毫秒）。
+ */
+data class ReportViewPartBody(
+    @Json(name = "session_id") val sessionId: Long,
+    @Json(name = "part_key") val partKey: String,
+    @Json(name = "event") val event: String,
+    @Json(name = "duration_ms") val durationMs: Long = 0,
+)

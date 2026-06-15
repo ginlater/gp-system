@@ -288,7 +288,11 @@ fun ReceptionScreen(
                             ReceptionRow(
                                 item = item,
                                 showDivider = idx != state.items.lastIndex,
-                                onEditDate = { receptionVm.openEditDate(item) },
+                                // 可改期→开选择器；不可改→给原因提示(别让按钮静默失灵)
+                                onEditDate = {
+                                    if (item.editable) receptionVm.openEditDate(item)
+                                    else receptionVm.onEditDateBlocked(item)
+                                },
                                 onRemove = { receptionVm.askRemove(item) },
                                 onOpenPreview = onOpenPreview,
                                 onOpenReport = onOpenReport,
@@ -665,25 +669,22 @@ private fun ReceptionRow(
     ) {
         Avatar(name = name, sage = (item.id % 2L == 0L))
         Column(modifier = Modifier.weight(1f)) {
-            // Row1: 姓名 + 内联「接诊 M-DD」日期 chip
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MeiliPalette.Ink,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                DateChip(
-                    label = "接诊 ${shortDate(item.serviceDate)}",
-                    enabled = editable,
-                    onClick = onEditDate,
-                )
-            }
+            // 姓名独占一行，不再和日期 chip 抢宽度（原来 weight(1f,fill=false) 被 chip 挤得只剩两字，
+            // 像「孟非宝宝」被截成「孟非」）。chip 放姓名下方单独一行。
+            Text(
+                text = name,
+                style = MaterialTheme.typography.titleMedium,
+                color = MeiliPalette.Ink,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(5.dp))
+            DateChip(
+                label = "接诊 ${shortDate(item.serviceDate)}",
+                enabled = editable,
+                onClick = onEditDate,
+            )
             Text(
                 text = metaLine(item),
                 style = MaterialTheme.typography.labelMedium.copy(
@@ -812,13 +813,13 @@ private fun DateChip(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    val base = Modifier
-    val clickable = if (enabled) base.clickable(onClick = onClick) else base
+    // 永远可点：不可改期时也点得动，由调用方弹原因提示（别再做静默失灵的死按钮）。
+    // enabled 只决定配色——可改=陶土高亮，不可改=灰底，给视觉区分。
     Surface(
-        modifier = clickable,
+        modifier = Modifier.clickable(onClick = onClick),
         shape = MeiliShapes.Pill,
-        color = MeiliPalette.ClayTint,
-        contentColor = MeiliPalette.ClayDeep,
+        color = if (enabled) MeiliPalette.ClayTint else MeiliPalette.SurfaceSoft,
+        contentColor = if (enabled) MeiliPalette.ClayDeep else MeiliPalette.Ink3,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),

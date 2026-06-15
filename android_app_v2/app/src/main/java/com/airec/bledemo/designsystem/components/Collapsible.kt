@@ -23,6 +23,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +60,12 @@ import com.airec.bledemo.designsystem.MeiliTheme
  * @param collapsedHint 折叠态时表头右侧的淡色提示（如「点击展开」，对齐 report.html 折叠 part）；展开后隐藏
  * @param content 折叠体内容，置于 [ColumnScope]
  */
+/**
+ * 章节展开埋点回调（运营看板「展开章节」用）。报告屏在外层 Provide 一个上报函数，
+ * 任何带 [Collapsible.reportKey] 的折叠卡首次展开时回调它，无需逐层穿参。默认 null=不上报。
+ */
+val LocalChapterExpandReporter = compositionLocalOf<((String) -> Unit)?> { null }
+
 @Composable
 fun Collapsible(
     title: String,
@@ -67,9 +75,15 @@ fun Collapsible(
     leadingIcon: ImageVector? = null,
     initiallyOpen: Boolean = true,
     collapsedHint: String? = null,
+    reportKey: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     var open by remember { mutableStateOf(initiallyOpen) }
+    // 展开(open=true)且带 reportKey → 上报一次（去重在上报方做）。初始已展开的章节(part1)不传 reportKey，不计入。
+    val expandReporter = LocalChapterExpandReporter.current
+    LaunchedEffect(open) {
+        if (open && reportKey != null) expandReporter?.invoke(reportKey)
+    }
     val chevRotation by animateFloatAsState(
         targetValue = if (open) 180f else 0f,
         animationSpec = tween(250),

@@ -90,6 +90,15 @@ fun ReportScreen(
 ) {
     val state by viewModel.state.collectAsState()
 
+    // 停留计时：进报告记一个时刻，离开时把停留毫秒上报（喂运营看板「总时长」=顾问看 app 的时长）。
+    androidx.compose.runtime.DisposableEffect(sessionId) {
+        val enterMs = System.currentTimeMillis()
+        onDispose {
+            val dwell = System.currentTimeMillis() - enterMs
+            if (dwell in 1_000..6 * 60 * 60 * 1000L) viewModel.reportDwell(dwell)
+        }
+    }
+
     // 一次性提示（VM toast → 本地条；显示后立即回执 onToastShown 避免重组重弹）。
     var snackbar by remember { mutableStateOf<ReportToast?>(null) }
     LaunchedEffect(state.toast) {
@@ -156,7 +165,12 @@ fun ReportScreen(
             when {
                 state.loading && state.detail == null -> LoadingBlock()
                 state.detail == null -> ErrorBlock(state.error ?: "报告加载失败", onRetry = viewModel::load)
-                else -> ReportContent(
+                else -> androidx.compose.runtime.CompositionLocalProvider(
+                    // 章节展开埋点：报告里任何带 reportKey 的折叠卡首次展开都回调上报（运营看板「展开章节」）。
+                    com.airec.bledemo.designsystem.components.LocalChapterExpandReporter provides
+                        { key: String -> viewModel.reportPartEnter(key) },
+                ) {
+                ReportContent(
                     state = state,
                     audioOpen = audioOpen,
                     onToggleAudio = {
@@ -183,6 +197,7 @@ fun ReportScreen(
                     onRequestDelete = { deleteConfirm = true },
                     onWithdrawDelete = { withdrawConfirm = true },
                 )
+                }
             }
         }
 

@@ -51,6 +51,22 @@ class HomeViewModel(
     private val _pendingOnServer = MutableStateFlow(0)
     val pendingOnServer: StateFlow<Int> = _pendingOnServer.asStateFlow()
 
+    /** 今日接诊客人列表（含每位的分析状态/录音数），算入口副标题统计用。 */
+    private val _todayReception =
+        MutableStateFlow<List<com.airec.bledemo.data.model.TodayReception>>(emptyList())
+
+    /** 「今天的接诊与待整理」入口副标题的 4 个实时数字：待绑定 / 待分析 / 报告 / 客人数。 */
+    val receptionStats: StateFlow<ReceptionStats> =
+        combine(_pendingOnServer, _todayReception) { pending, items ->
+            ReceptionStats(
+                pendingBind = pending,
+                waitingAnalysis = items.count { (it.recordingCount ?: 0) > 0 && it.analysisStatus != "done" },
+                reportsDone = items.count { it.analysisStatus == "done" },
+                customers = items.size,
+                loaded = true,
+            )
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ReceptionStats())
+
     // ───────────────────────── 提醒未读计数（顶部铃铛红点 badge） ─────────────────────────
 
     /**
@@ -198,6 +214,7 @@ class HomeViewModel(
         loadHeader()
         loadPenBinding()
         loadPending()
+        loadTodayReception()
         loadReminderCount()
     }
 
@@ -272,6 +289,16 @@ class HomeViewModel(
             when (val r = repo.pending()) {
                 is ApiResult.Success -> _pendingOnServer.value = r.data.size
                 is ApiResult.Failure -> Unit
+            }
+        }
+    }
+
+    /** 拉今日接诊（客人数 / 已绑未分析 / 已出报告），供首页入口副标题统计。 */
+    private fun loadTodayReception() {
+        viewModelScope.launch {
+            when (val r = repo.todayReception()) {
+                is ApiResult.Success -> _todayReception.value = r.data.items ?: emptyList()
+                is ApiResult.Failure -> Unit // 静默，不打断首页
             }
         }
     }
@@ -387,6 +414,15 @@ class HomeViewModel(
 data class HomeHeader(
     val advisorName: String? = null,
     val storeName: String? = null,
+    val loaded: Boolean = false,
+)
+
+/** 「今天的接诊与待整理」入口副标题统计。 */
+data class ReceptionStats(
+    val pendingBind: Int = 0,     // 待绑定的陪伴（未绑定片段数）
+    val waitingAnalysis: Int = 0, // 已绑录音但还没出报告的客人数
+    val reportsDone: Int = 0,     // 已生成报告（analysis_status=done）的客人数
+    val customers: Int = 0,       // 今日接诊客人总数
     val loaded: Boolean = false,
 )
 

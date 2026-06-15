@@ -230,7 +230,7 @@ private fun OvColoredBullet(color: String?, text: String) {
 
 @Composable
 fun Part02Persona(persona: Persona?) {
-    Collapsible(title = "顾客真实画像重建", numberBadge = "02", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
+    Collapsible(title = "顾客真实画像重建", numberBadge = "02", initiallyOpen = false, collapsedHint = "点击展开", reportKey = "part2", modifier = Modifier.padding(bottom = partGap)) {
         if (persona == null || (persona.signals.isNullOrEmpty() && persona.summary.isNullOrBlank() && persona.lead.isNullOrBlank())) {
             EmptyPartNote()
             return@Collapsible
@@ -280,7 +280,7 @@ fun Part03RootCause(rootCause: RootCause?) {
 
 @Composable
 fun Part04PainPoints(painPoints: List<PainPoint>?) {
-    Collapsible(title = "可攻破痛点 · 完整作战方案", numberBadge = "03", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
+    Collapsible(title = "可攻破痛点 · 完整作战方案", numberBadge = "03", initiallyOpen = false, collapsedHint = "点击展开", reportKey = "part4", modifier = Modifier.padding(bottom = partGap)) {
         if (painPoints.isNullOrEmpty()) {
             EmptyPartNote()
             return@Collapsible
@@ -390,7 +390,7 @@ private fun PainBadge(text: String, index: Int) {
 
 @Composable
 fun Part05Harvest(harvest: Harvest?) {
-    Collapsible(title = "项目后价值收割 · 黄金窗口标准流程", numberBadge = "04", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
+    Collapsible(title = "项目后价值收割 · 黄金窗口标准流程", numberBadge = "04", initiallyOpen = false, collapsedHint = "点击展开", reportKey = "part5", modifier = Modifier.padding(bottom = partGap)) {
         if (harvest == null || harvest.steps.isNullOrEmpty()) {
             EmptyPartNote()
             return@Collapsible
@@ -436,7 +436,7 @@ fun Part05Harvest(harvest: Harvest?) {
 
 @Composable
 fun Part06Cases(cases: List<CaseReview>?, casesSummary: String?, onSeek: (Int, Int) -> Unit) {
-    Collapsible(title = "关键 Case 复盘 · 三层分析", numberBadge = "05", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
+    Collapsible(title = "关键 Case 复盘 · 三层分析", numberBadge = "05", initiallyOpen = false, collapsedHint = "点击展开", reportKey = "part6", modifier = Modifier.padding(bottom = partGap)) {
         if (cases.isNullOrEmpty()) {
             EmptyPartNote()
             return@Collapsible
@@ -498,7 +498,7 @@ private fun CaseCard(c: CaseReview, no: Int, onSeek: (Int, Int) -> Unit) {
 
 @Composable
 fun Part07LogicChain(logicChain: LogicChain?) {
-    Collapsible(title = "逻辑总结 · 顾问能力训练路径", numberBadge = "06", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
+    Collapsible(title = "逻辑总结 · 顾问能力训练路径", numberBadge = "06", initiallyOpen = false, collapsedHint = "点击展开", reportKey = "part7", modifier = Modifier.padding(bottom = partGap)) {
         if (logicChain == null) {
             EmptyPartNote()
             return@Collapsible
@@ -586,7 +586,7 @@ private fun CapRow(key: String, value: String, valueColor: Color) {
 
 @Composable
 fun Part08NextSteps(nextSteps: NextSteps?) {
-    Collapsible(title = "下一步动作 · 回店规划", numberBadge = "07", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
+    Collapsible(title = "下一步动作 · 回店规划", numberBadge = "07", initiallyOpen = false, collapsedHint = "点击展开", reportKey = "part8", modifier = Modifier.padding(bottom = partGap)) {
         if (nextSteps == null) {
             EmptyPartNote()
             return@Collapsible
@@ -656,7 +656,7 @@ private fun QaBlock(q: String, a: String) {
 
 @Composable
 fun Part09Competitors(competitors: List<Competitor>?) {
-    Collapsible(title = "竞品分析 · 顾问售后学习清单", numberBadge = "08", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
+    Collapsible(title = "竞品分析 · 顾问售后学习清单", numberBadge = "08", initiallyOpen = false, collapsedHint = "点击展开", reportKey = "part9", modifier = Modifier.padding(bottom = partGap)) {
         if (competitors.isNullOrEmpty()) {
             EmptyPartNote()
             return@Collapsible
@@ -740,7 +740,7 @@ private fun TagChip(text: String, isNew: Boolean = false, count: Int? = null) {
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun Part11DealDiagnosis(deal: DealDiagnosis?) {
-    Collapsible(title = "成交诊断 · 5 维度判断", numberBadge = "09", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
+    Collapsible(title = "成交诊断 · 5 维度判断", numberBadge = "09", initiallyOpen = false, collapsedHint = "点击展开", reportKey = "part11", modifier = Modifier.padding(bottom = partGap)) {
         if (deal == null) {
             EmptyPartNote()
             return@Collapsible

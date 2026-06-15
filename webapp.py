@@ -381,6 +381,22 @@ CREATE TABLE IF NOT EXISTS rebind_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_rebind_status ON rebind_requests(status);
 CREATE INDEX IF NOT EXISTS idx_rebind_recording ON rebind_requests(recording_id);
+
+-- 操作日志：记录各账号在网页端的登入/登出（管理后台「操作日志」用）
+CREATE TABLE IF NOT EXISTS login_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    advisor_name TEXT,
+    role TEXT,
+    company_id INTEGER,
+    store_id INTEGER,
+    event_type TEXT NOT NULL,           -- login | logout
+    ip_address TEXT,
+    user_agent TEXT,
+    created_at TEXT DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_login_log_company ON login_log(company_id, id);
 """
 
 
@@ -4999,6 +5015,22 @@ def _safe_next(target):
     return target
 
 
+def _log_login_event(u, event_type):
+    """记一条登入/登出审计（供管理后台「操作日志」）。u 是 dict，含 id/username/advisor_name/role/company_id/store_id。
+    全程吞异常：审计失败绝不能影响登录/登出本身。"""
+    try:
+        ip = (request.headers.get("X-Forwarded-For") or request.remote_addr or "").split(",")[0].strip()
+        ua = (request.headers.get("User-Agent") or "")[:300]
+        db_write(
+            "INSERT INTO login_log (user_id, username, advisor_name, role, company_id, store_id, "
+            "event_type, ip_address, user_agent) VALUES (?,?,?,?,?,?,?,?,?)",
+            (u.get("id"), u.get("username"), u.get("advisor_name"), u.get("role"),
+             u.get("company_id"), u.get("store_id"), event_type, ip, ua),
+        )
+    except Exception as e:
+        app.logger.info("[login_log] 记录失败: %s", e)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
@@ -5018,6 +5050,10 @@ def login():
             session["store_id"] = row["store_id"]
             session["advisor_name"] = row["advisor_name"] or ""
             session.permanent = True
+            _log_login_event({
+                "id": row["id"], "username": row["username"], "advisor_name": row["advisor_name"],
+                "role": row["role"], "company_id": row["company_id"], "store_id": row["store_id"],
+            }, "login")
             # 顾问默认跳 consultant 页
             nxt = _safe_next(request.args.get("next"))
             if nxt:
@@ -5031,6 +5067,12 @@ def login():
 
 @app.route("/logout")
 def logout():
+    if session.get("user_id"):
+        _log_login_event({
+            "id": session.get("user_id"), "username": session.get("username"),
+            "advisor_name": session.get("advisor_name"), "role": session.get("role"),
+            "company_id": session.get("company_id"), "store_id": session.get("store_id"),
+        }, "logout")
     session.clear()
     return redirect(url_for("login"))
 
@@ -5039,12 +5081,12 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.35"
+APP_V2_VERSION_NAME = "2.0.36"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 36   # = build.gradle versionCode（2.0.19）
+APP_V2_LATEST_VERSION_CODE = 37   # = build.gradle versionCode（2.0.19）
 APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
 APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
@@ -5205,6 +5247,45 @@ def admin_page():
         "admin.html",
         username=session.get("username"),
         role=session.get("role"),
+    )
+
+
+# ===== 新版管理后台（侧栏分组 + 独立路由，逐步替代上方旧 /admin）=====
+ADMIN_V2_PAGES = {
+    "overview": "经营总览",
+    "customer/companion-archive": "美丽陪伴档案",
+    "customer/profiles": "顾客档案",
+    "customer/risk-alert": "差评高风险预警",
+    "operations/dashboard": "运营看板",
+    "operations/bottleneck": "接诊卡点",
+    "operations/reminders": "提醒设置",
+    "companion/unbound": "未绑定陪伴",
+    "companion/delete-requests": "删除申请",
+    "companion/rebind-log": "换绑/解绑记录",
+    "companion/audit-log": "操作日志",
+    "staff/employees": "员工管理",
+    "staff/stores": "门店管理",
+    "staff/admins": "管理员账号",
+    "data/tag-dict": "标签词典",
+    "data/tag-stats": "标签统计",
+    "data/customers": "顾客管理",
+    "data/merge": "客户合并",
+}
+
+
+@app.route("/admin/<group>")
+@app.route("/admin/<group>/<page>")
+@manager_required
+def admin_v2_page(group, page=None):
+    key = group if page is None else f"{group}/{page}"
+    if key not in ADMIN_V2_PAGES:
+        abort(404)
+    return render_template(
+        "admin_v2.html",
+        username=session.get("username"),
+        role=session.get("role"),
+        page=key,
+        page_title=ADMIN_V2_PAGES[key],
     )
 
 
@@ -7026,6 +7107,217 @@ def api_admin_report_view_stats():
         "total_expandable": total_expandable,
         "expandable_parts": EXPANDABLE_PARTS,
     })
+
+
+def _overview_metrics(cid, sid, d_from, d_to, n_days):
+    """算某 公司(cid)+门店(sid) 区间内四项人均指标；cid/sid 为 None 表示该维度不过滤。供总览与各门店复用。"""
+    awhere, ap = ["role='consultant'"], []
+    if cid is not None:
+        awhere.append("company_id=?"); ap.append(cid)
+    if sid is not None:
+        awhere.append("store_id=?"); ap.append(sid)
+    r = db_fetchone(f"SELECT COUNT(*) c FROM users WHERE {' AND '.join(awhere)}", tuple(ap))
+    advisors = (r["c"] if r else 0) or 0
+
+    rwhere, rp = ["DATE(r.recorded_at) BETWEEN ? AND ?", "r.upload_status='done'"], [d_from, d_to]
+    if cid is not None:
+        rwhere.append("r.company_id=?"); rp.append(cid)
+    if sid is not None:
+        rwhere.append("r.store_id=?"); rp.append(sid)
+    companion_sec = sum((_duration_label_seconds(x["duration_label"]) or 0)
+                        for x in db_fetchall(f"SELECT duration_label FROM recordings r WHERE {' AND '.join(rwhere)}", tuple(rp)))
+
+    ewhere, ep, ej = ["e.event='duration'", "DATE(e.created_at) BETWEEN ? AND ?"], [d_from, d_to], ""
+    if cid is not None:
+        ewhere.append("e.company_id=?"); ep.append(cid)
+    if sid is not None:
+        ej = "JOIN users u ON e.user_id=u.id"; ewhere.append("u.store_id=?"); ep.append(sid)
+    er = db_fetchone(f"SELECT COALESCE(SUM(e.duration_ms),0) ms FROM report_view_events e {ej} WHERE {' AND '.join(ewhere)}", tuple(ep))
+    study_sec = (er["ms"] if er else 0) / 1000.0
+
+    dwhere, dp, dj = ["dr.service_date BETWEEN ? AND ?"], [d_from, d_to], ""
+    if cid is not None:
+        dwhere.append("dr.company_id=?"); dp.append(cid)
+    if sid is not None:
+        dj = "JOIN users u2 ON dr.advisor_user_id=u2.id"; dwhere.append("u2.store_id=?"); dp.append(sid)
+    drow = db_fetchone(f"SELECT COUNT(*) c FROM daily_reception dr {dj} WHERE {' AND '.join(dwhere)}", tuple(dp))
+    receptions = (drow["c"] if drow else 0) or 0
+
+    swhere, sp = ["s.service_date BETWEEN ? AND ?"], [d_from, d_to]
+    if cid is not None:
+        swhere.append("s.company_id=?"); sp.append(cid)
+    if sid is not None:
+        swhere.append("s.store_id=?"); sp.append(sid)
+    sess_dur, has = {}, set()
+    for x in db_fetchall(f"SELECT s.id sid, r.duration_label dl FROM sessions s LEFT JOIN recordings r ON r.session_id=s.id WHERE {' AND '.join(swhere)}", tuple(sp)):
+        sess_dur.setdefault(x["sid"], 0)
+        if x["dl"]:
+            has.add(x["sid"]); sess_dur[x["sid"]] += _duration_label_seconds(x["dl"]) or 0
+    intake_avg_sec = (sum(sess_dur[k] for k in has) / len(has)) if has else 0
+
+    pcd = (lambda t: round(t / advisors / n_days, 1) if advisors else 0)
+    return {
+        "advisors": advisors,
+        "companion_min_per_day": pcd(companion_sec / 60.0),
+        "study_min_per_day": pcd(study_sec / 60.0),
+        "customers_per_day": pcd(receptions),
+        "intake_avg_min": round(intake_avg_sec / 60.0, 1),
+    }
+
+
+@app.route("/api/admin/overview_kpis")
+@manager_required
+def api_admin_overview_kpis():
+    """经营总览四项人均指标。按 公司 + 门店 + 日期区间 过滤；人均口径 = 总量 ÷ 在岗顾问数 ÷ 天数。
+    参数：from / to（YYYY-MM-DD，默认本周一→今天）；admin/super 可带 ?store_id=、super 可带 ?company_id=。"""
+    is_super = session.get("role") == "super"
+    cid = session.get("company_id")
+    if is_super:
+        rc = (request.args.get("company_id") or "").strip()
+        cid = int(rc) if rc.isdigit() else cid  # super 不带则用自身公司；都没有=全部公司(None)
+    sid = current_store_filter()  # 店长=本店；admin/super 可选 ?store_id=
+
+    now = datetime.now()
+    default_from = (now - timedelta(days=now.weekday())).strftime("%Y-%m-%d")
+    default_to = now.strftime("%Y-%m-%d")
+    d_from = (request.args.get("from") or default_from).strip()
+    d_to = (request.args.get("to") or default_to).strip()
+    try:
+        n_days = (datetime.strptime(d_to, "%Y-%m-%d") - datetime.strptime(d_from, "%Y-%m-%d")).days + 1
+    except ValueError:
+        d_from, d_to, n_days = default_from, default_to, 1
+    n_days = max(1, n_days)
+
+    # 在岗顾问数（分母）
+    awhere, aparams = ["role='consultant'"], []
+    if cid is not None:
+        awhere.append("company_id=?"); aparams.append(cid)
+    if sid is not None:
+        awhere.append("store_id=?"); aparams.append(sid)
+    arow = db_fetchone(f"SELECT COUNT(*) c FROM users WHERE {' AND '.join(awhere)}", tuple(aparams))
+    advisors = (arow["c"] if arow else 0) or 0
+
+    # ① 陪伴时长：recordings.duration_label（'MM分SS秒'，Python 解析求和）
+    rwhere, rparams = ["DATE(r.recorded_at) BETWEEN ? AND ?", "r.upload_status='done'"], [d_from, d_to]
+    if cid is not None:
+        rwhere.append("r.company_id=?"); rparams.append(cid)
+    if sid is not None:
+        rwhere.append("r.store_id=?"); rparams.append(sid)
+    rec_rows = db_fetchall(
+        f"SELECT duration_label FROM recordings r WHERE {' AND '.join(rwhere)}", tuple(rparams))
+    companion_sec = sum((_duration_label_seconds(x["duration_label"]) or 0) for x in rec_rows)
+
+    # ② 学习时长：report_view_events.duration_ms（event='duration'）
+    ewhere, eparams, ejoin = ["e.event='duration'", "DATE(e.created_at) BETWEEN ? AND ?"], [d_from, d_to], ""
+    if cid is not None:
+        ewhere.append("e.company_id=?"); eparams.append(cid)
+    if sid is not None:
+        ejoin = "JOIN users u ON e.user_id=u.id"
+        ewhere.append("u.store_id=?"); eparams.append(sid)
+    erow = db_fetchone(
+        f"SELECT COALESCE(SUM(e.duration_ms),0) ms FROM report_view_events e {ejoin} "
+        f"WHERE {' AND '.join(ewhere)}", tuple(eparams))
+    study_sec = (erow["ms"] if erow else 0) / 1000.0
+
+    # ③ 接待客人数：daily_reception（每条=某顾问某天某客人一次）
+    dwhere, dparams, djoin = ["dr.service_date BETWEEN ? AND ?"], [d_from, d_to], ""
+    if cid is not None:
+        dwhere.append("dr.company_id=?"); dparams.append(cid)
+    if sid is not None:
+        djoin = "JOIN users u2 ON dr.advisor_user_id=u2.id"
+        dwhere.append("u2.store_id=?"); dparams.append(sid)
+    drow = db_fetchone(
+        f"SELECT COUNT(*) c FROM daily_reception dr {djoin} WHERE {' AND '.join(dwhere)}", tuple(dparams))
+    receptions = (drow["c"] if drow else 0) or 0
+
+    # ④ 接诊时长：每个 session = 其下录音时长之和，对有录音的 session 取平均
+    swhere, sparams = ["s.service_date BETWEEN ? AND ?"], [d_from, d_to]
+    if cid is not None:
+        swhere.append("s.company_id=?"); sparams.append(cid)
+    if sid is not None:
+        swhere.append("s.store_id=?"); sparams.append(sid)
+    srows = db_fetchall(
+        f"SELECT s.id sid, r.duration_label dl FROM sessions s LEFT JOIN recordings r ON r.session_id=s.id "
+        f"WHERE {' AND '.join(swhere)}", tuple(sparams))
+    sess_dur, sess_has_rec = {}, set()
+    for x in srows:
+        k = x["sid"]
+        sess_dur.setdefault(k, 0)
+        if x["dl"]:
+            sess_has_rec.add(k)
+            sess_dur[k] += _duration_label_seconds(x["dl"]) or 0
+    intake_avg_sec = (sum(sess_dur[k] for k in sess_has_rec) / len(sess_has_rec)) if sess_has_rec else 0
+
+    def per_cap_day(total):
+        return round(total / advisors / n_days, 1) if advisors else 0
+
+    # 顾问陪伴时长排行（前 8）：按 uploader_user_id 聚合录音时长
+    lwhere = ["DATE(r.recorded_at) BETWEEN ? AND ?", "r.upload_status='done'", "r.uploader_user_id IS NOT NULL"]
+    lp = [d_from, d_to]
+    if cid is not None:
+        lwhere.append("r.company_id=?"); lp.append(cid)
+    if sid is not None:
+        lwhere.append("r.store_id=?"); lp.append(sid)
+    amap = {}
+    for x in db_fetchall(f"SELECT uploader_user_id uid, duration_label dl FROM recordings r WHERE {' AND '.join(lwhere)}", tuple(lp)):
+        amap[x["uid"]] = amap.get(x["uid"], 0) + (_duration_label_seconds(x["dl"]) or 0)
+    names = {}
+    if amap:
+        qs = ",".join("?" * len(amap))
+        for u in db_fetchall(f"SELECT id, advisor_name, username FROM users WHERE id IN ({qs})", tuple(amap.keys())):
+            names[u["id"]] = u["advisor_name"] or u["username"] or f"#{u['id']}"
+    leaderboard = sorted(
+        [{"name": names.get(uid, f"#{uid}"), "minutes": round(sec / 60.0, 1)} for uid, sec in amap.items()],
+        key=lambda z: -z["minutes"])[:8]
+
+    # 各门店概览：仅在限定了公司、未限定单店时按门店逐个算（避免 super 全公司时太重）
+    by_store = []
+    try:
+        if cid is not None and sid is None:
+            for st in db_fetchall("SELECT id, name FROM stores WHERE company_id=? ORDER BY id", (cid,)):
+                m = _overview_metrics(cid, st["id"], d_from, d_to, n_days)
+                m["store"] = st["name"]
+                by_store.append(m)
+    except Exception as e:
+        app.logger.info("[overview] by_store 跳过: %s", e)
+
+    return jsonify({
+        "range": {"from": d_from, "to": d_to, "days": n_days},
+        "advisors": advisors,
+        "companion_min_per_day": per_cap_day(companion_sec / 60.0),  # 人均陪伴时长 分钟/人·日
+        "study_min_per_day": per_cap_day(study_sec / 60.0),          # 人均学习时长 分钟/人·日
+        "customers_per_day": per_cap_day(receptions),                # 人均接待客人 位/人·日
+        "intake_avg_min": round(intake_avg_sec / 60.0, 1),           # 人均接诊时长 分钟/单
+        "leaderboard": leaderboard,
+        "by_store": by_store,
+    })
+
+
+@app.route("/api/admin/audit_log")
+@manager_required
+def api_admin_audit_log():
+    """操作日志：各账号网页端登入/登出记录。admin/store_manager 限本公司；super 看全部。
+    参数：q（按用户名/姓名搜）、event（login|logout）、limit（默认 200，上限 1000）。"""
+    is_super = session.get("role") == "super"
+    cid = session.get("company_id")
+    where, params = [], []
+    if not is_super and cid is not None:
+        where.append("company_id=?"); params.append(cid)
+    q = (request.args.get("q") or "").strip()
+    if q:
+        where.append("(username LIKE ? OR advisor_name LIKE ?)"); params += [f"%{q}%", f"%{q}%"]
+    et = (request.args.get("event") or "").strip()
+    if et in ("login", "logout"):
+        where.append("event_type=?"); params.append(et)
+    wsql = ("WHERE " + " AND ".join(where)) if where else ""
+    try:
+        limit = min(max(int(request.args.get("limit") or 200), 1), 1000)
+    except ValueError:
+        limit = 200
+    rows = db_fetchall(
+        f"SELECT id, user_id, username, advisor_name, role, event_type, ip_address, created_at "
+        f"FROM login_log {wsql} ORDER BY id DESC LIMIT ?", tuple(params) + (limit,))
+    return jsonify({"items": [dict(r) for r in rows]})
 
 
 @app.route("/api/admin/ops_dashboard")

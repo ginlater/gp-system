@@ -89,6 +89,7 @@ fun HomeScreen(
     val companion by viewModel.companion.collectAsStateWithLifecycle()
     val source by viewModel.source.collectAsStateWithLifecycle()
     val reminderCount by viewModel.reminderCount.collectAsStateWithLifecycle()
+    val receptionStats by viewModel.receptionStats.collectAsStateWithLifecycle()
     val toast by viewModel.toast.collectAsStateWithLifecycle()
 
     // 标记是否已经历过首个 onResume（首拉已覆盖，故首个 resume 不再重复联网）。
@@ -134,6 +135,7 @@ fun HomeScreen(
         companion = companion,
         source = source,
         reminderCount = reminderCount,
+        receptionStats = receptionStats,
         onToggleCompanion = viewModel::toggleCompanion,
         onPickSource = viewModel::pickSource,
         onRetryUploads = viewModel::retryUploads,
@@ -151,6 +153,7 @@ private fun HomeContent(
     companion: CompanionUiState,
     source: CompanionSource,
     reminderCount: Int = 0,
+    receptionStats: ReceptionStats = ReceptionStats(),
     onToggleCompanion: () -> Unit,
     onPickSource: (CompanionSource) -> Unit,
     onRetryUploads: () -> Unit,
@@ -190,7 +193,7 @@ private fun HomeContent(
             background = MeiliPalette.SageTint,
             border = MeiliPalette.SageSoft,
             title = "今天的接诊与待整理",
-            subtitle = "接诊记录、分析报告，以及待绑定的陪伴",
+            subtitle = receptionSubtitle(receptionStats),
             onClick = onOpenReception,
         )
     }
@@ -763,6 +766,16 @@ private fun ReminderTile(
     }
 }
 
+/**
+ * 「今天的接诊与待整理」副标题：待绑定 / 待分析 / 报告 / 客人数 四个实时数字。
+ * 首次加载前用静态文案，避免闪「0 段待绑定…」。
+ */
+private fun receptionSubtitle(s: ReceptionStats): String {
+    if (!s.loaded) return "接诊记录、分析报告，以及待绑定的陪伴"
+    return "${s.pendingBind} 段待绑定 · ${s.waitingAnalysis} 位待分析 · " +
+        "${s.reportsDone} 份报告 · 共 ${s.customers} 位顾客"
+}
+
 /** .entry：渐变底大入口（今天的接诊与待整理）。 */
 @Composable
 private fun EntryTile(
@@ -810,6 +823,8 @@ private fun EntryTile(
                     text = subtitle,
                     style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5f.sp),
                     color = MeiliPalette.Ink2,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.padding(top = 3.dp),
                 )
             }

@@ -117,6 +117,12 @@ class ReceptionViewModel(
         _ui.update { it.copy(editDate = EditDateState(item = item, target = item.serviceDate ?: it.date)) }
     }
 
+    /** 不可改期的行点了日期 chip：弹一句原因，别让按钮看起来坏了。 */
+    fun onEditDateBlocked(item: TodayReception) {
+        val reason = item.editDateBlockReason ?: return
+        _ui.update { it.copy(toast = reason) }
+    }
+
     fun closeEditDate() {
         _ui.update { it.copy(editDate = null) }
     }
@@ -355,6 +361,18 @@ val TodayReception.editable: Boolean
         val d = serviceDate ?: return false
         val diff = ReceptionViewModel.diffDaysFromToday(d) ?: return false
         return diff in -7..0
+    }
+
+/** 不可改期时的原因（点 chip 时弹给用户，对齐后端 409/400），可改返回 null。 */
+val TodayReception.editDateBlockReason: String?
+    get() {
+        val st = analysisStatus
+        if (st == "done") return "已完成分析，不能再改接诊日期"
+        if (st == "running" || st == "queued") return "正在分析中，不能改接诊日期"
+        val d = serviceDate ?: return "缺少接诊日期，暂不能修改"
+        val diff = ReceptionViewModel.diffDaysFromToday(d) ?: return "接诊日期异常，暂不能修改"
+        if (diff !in -7..0) return "只能修改最近 7 天内的接诊日期"
+        return null
     }
 
 /** 新增弹层的两种模式：搜已有顾客 / 建新顾客。 */

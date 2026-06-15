@@ -408,6 +408,10 @@ interface ConsultantApi {
     @POST("api/report_view/enter")
     suspend fun reportViewEnter(@Body body: ReportViewBody): Response<SimpleResult>
 
+    /** 上报章节展开 / 停留时长，喂运营看板的「展开章节」「总时长」。 */
+    @POST("api/report_view/part")
+    suspend fun reportViewPart(@Body body: ReportViewPartBody): Response<SimpleResult>
+
     // ───────────── 提醒 ─────────────
 
     @GET("api/consultant/reminders")

@@ -320,6 +320,10 @@ class ConsultantRepository(
     suspend fun reportViewEnter(sessionId: Long): ApiResult<SimpleResult> =
         call { api.reportViewEnter(ReportViewBody(sessionId = sessionId)) }
 
+    /** 上报章节展开/停留时长（运营看板埋点）。失败静默。 */
+    suspend fun reportViewPart(sessionId: Long, partKey: String, event: String, durationMs: Long = 0): ApiResult<SimpleResult> =
+        call { api.reportViewPart(ReportViewPartBody(sessionId, partKey, event, durationMs)) }
+
     // ───────────── 提醒 ─────────────
 
     suspend fun reminders(): ApiResult<RemindersResponse> = call { api.reminders() }
