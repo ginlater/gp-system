@@ -186,6 +186,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private volatile boolean waitingForFile = false;      // 在等文件列表（定位大小/确认存在）
     private volatile int fileListAttempts = 0;
     private static final int MAX_FILELIST_ATTEMPTS = 4;
+    // 连着这么多轮都收到完整(非空)笔列表却找不到这个文件名 → 判定文件根本不在笔上(多半手机/笔时钟偏移命名对不上)，
+    // 不再傻等 2 小时，直接放弃 + 取消占位(badge 清)。真音频在笔上(名字不同)可走「从陪伴笔同步」手动重导。
+    private static final int ABSENT_FROM_LIST_GIVEUP = 3;
     private static final int MAX_DOWNLOAD_REQUEUES = 200;
     private static final long FAIL_GIVEUP_MS = 2 * 60 * 60 * 1000L;
     private static final long STALE_GIVEUP_MS = 2 * 60 * 60 * 1000L;   // ★v24:僵尸任务按入队龄直接清
@@ -1322,7 +1325,15 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 Log.w(TAG, "后台：未定位文件(第" + fileListAttempts + "次) 找=" + task.fileName + " 笔列表[" + files.size() + "]=" + sb);
                 main.postDelayed(() -> { if (waitingForFile) requestFileListInternal(); }, 2000);
             } else {
-                requeueDownloadTask(task, "未在笔列表找到");
+                // 整份列表(非空)收齐仍没这个名字、且已连试好几轮 → 文件不在笔上(疑时钟偏移命名不符)，
+                // 直接放弃别再死等 2h；workerTaskFailed(drop) 会取消占位 + persist 移除，重启不再复活。
+                boolean penGaveRealList = files != null && !files.isEmpty();
+                if (penGaveRealList && task.downloadRequeues >= ABSENT_FROM_LIST_GIVEUP) {
+                    penLog("★文件名不在笔列表(疑时钟偏移),放弃补传并取消占位,可从陪伴笔同步重导 " + task.fileName);
+                    workerTaskFailed(task, "文件不在笔列表(疑时钟偏移)", true);
+                } else {
+                    requeueDownloadTask(task, "未在笔列表找到");
+                }
             }
             return;
         }
@@ -1684,6 +1695,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         main.post(() -> {
             if (drop) {
                 uploadQueue.remove(task);
+                // ★放弃必须落盘:否则 pending_dl 里还留着这条,下次启动 loadPendingQueue 又把它捞回来重试,
+                //   给不掉的"幽灵"任务会让首页"N段后台同步中"永远清不掉(跨重启复活)。
+                persistPendingQueue();
                 if (task.placeholderId > 0) {
                     final long pid = task.placeholderId;
                     final String phCancelUrl = placeholderUrlFrom(task.uploadUrl) + "/cancel";
