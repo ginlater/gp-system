@@ -91,9 +91,15 @@ class SessionPreviewViewModel(
         /** 换绑弹层。 */
         val rebindSheet: RebindSheet = RebindSheet(),
     ) {
-        /** 是否可改动接诊包片段（加入/移除/换绑/退回）：未锁 + 非分析中。 */
-        val editable: Boolean get() = !locked && phase != AnalysisPhase.Running
-        val canStart: Boolean get() = editable && bound.isNotEmpty()
+        /**
+         * 是否可改动接诊包片段（加入/移除/换绑/退回）：只要不在「分析进行中」就允许。
+         * 不再卡 locked——locked 只是"分析跑过/跑着"的标记，已完成/已失败/已中断的包仍应能退回换绑
+         * (后端 unbind/rebind 本就允许且会把原报告作废为 outdated)，否则一旦 locked 残留就永久锁死。
+         */
+        val editable: Boolean get() = phase != AnalysisPhase.Running
+        /** 「开始/重新分析」按钮可点：有片段 + 非分析中 + 非已完成（已完成只给「查看报告」）。 */
+        val canStart: Boolean get() = bound.isNotEmpty() &&
+            phase != AnalysisPhase.Running && phase != AnalysisPhase.Done
         val canCancel: Boolean get() = phase == AnalysisPhase.Running
 
         /** 11 任务进度的派生快捷取值（缺省兜底）。 */
@@ -113,18 +119,24 @@ class SessionPreviewViewModel(
             get() = bound.isNotEmpty() && bound.all { it.asrStatus == "done" }
 
         /**
-         * 触发分析前若仍有阻塞，返回原因码（对齐后端 reason）。null=可触发。
+         * 触发分析前的【硬阻塞】原因码（对齐后端 reason）。null=可触发。
          *  - no_recording：接诊包内无片段
          *  - speaker_unconfirmed：有说话人警告未确认
-         *  - asr_not_done：尚有片段在识别中/失败
+         * 注意：「识别未完成」不再是硬阻塞——点开始分析后端会自动排队、识别完自动跑(见 asrStillRunning)。
          */
         val blockReason: String?
             get() = when {
                 bound.isEmpty() -> "no_recording"
                 speakerUnconfirmed.isNotEmpty() -> "speaker_unconfirmed"
-                !allAsrDone -> "asr_not_done"
                 else -> null
             }
+
+        /**
+         * 软提示（不阻塞开始）：还有片段在识别中。点「开始分析」后端会标 queued、
+         * 识别完最后一段自动开始 DeepSeek 分析（无需顾问回来再点）。
+         */
+        val asrStillRunning: Boolean
+            get() = bound.isNotEmpty() && !allAsrDone && speakerUnconfirmed.isEmpty()
     }
 
     private val _state = MutableStateFlow(UiState())
@@ -496,6 +508,8 @@ class SessionPreviewViewModel(
     companion object {
         /** 后端 reason 码 → 顾问可读文案（点 5）。 */
         fun reasonText(code: String?): String = when (code) {
+            // 软提示（不阻塞）：识别中也能点开始分析，后端会等识别完自动跑
+            "asr_autostart" -> "部分片段还在识别中，点「开始分析」后会自动等识别完成再分析，无需再回来点。"
             "asr_not_done" -> "还有片段在识别中，识别完成后才能开始分析。"
             "speaker_unconfirmed" -> "有片段提示说话人异常，请先在该片段上「确认说话人」再开始分析。"
             "no_recording" -> "接诊包内还没有陪伴片段，请先加入或去待整理绑定。"

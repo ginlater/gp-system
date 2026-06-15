@@ -262,15 +262,11 @@ private fun PreviewBody(
         }
     }
 
-    // 锁定/进行中提示
-    if (state.locked || running) {
-        ClayBanner(
-            text = when {
-                running -> "分析进行中，接诊包已锁定，无法再修改片段。"
-                phase == SessionPreviewViewModel.AnalysisPhase.Done -> "本接诊包已完成分析并锁定。"
-                else -> "接诊包已锁定，如需修改请联系管理员。"
-            },
-        )
+    // 进行中提示（只有真在分析时才锁，不再因 locked 残留把已完成/已中断的包说成"锁定·联系管理员"）
+    if (running) {
+        ClayBanner(text = "分析进行中，接诊包已锁定，无法再修改片段。")
+    } else if (phase == SessionPreviewViewModel.AnalysisPhase.Done) {
+        ClayBanner(text = "本接诊包已完成分析。如需调整片段（退回 / 换绑）将作废原报告，可重新分析。")
     }
 
     // 录音有变更（outdated）：单独提示可重跑，不并进「待开始分析」
@@ -366,10 +362,11 @@ private fun PreviewBody(
                 enabled = state.canStart && !state.submitting,
                 modifier = Modifier.fillMaxWidth(),
             )
-            // 触发前置条件未满足时的就地原因反馈（点 5：asr_not_done / speaker_unconfirmed / no_recording）
-            state.blockReason?.let { code ->
-                BlockReasonHint(code = code)
-            }
+            // 就地原因反馈：硬阻塞(speaker_unconfirmed / no_recording)优先；
+            // 否则若识别中给软提示(点开始分析后自动等识别完再跑)。
+            val hintCode = state.blockReason
+                ?: if (state.asrStillRunning) "asr_autostart" else null
+            hintCode?.let { BlockReasonHint(code = it) }
         }
     }
 }
