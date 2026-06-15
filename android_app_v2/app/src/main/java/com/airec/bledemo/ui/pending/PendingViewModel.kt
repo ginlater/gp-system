@@ -57,8 +57,12 @@ data class PenSyncUiState(
     val pageRows: List<PenSyncRow> get() = rows.drop((page - 1) * PEN_SYNC_PAGE_SIZE).take(PEN_SYNC_PAGE_SIZE)
 }
 
-/** 「从陪伴笔同步」每页条数（机身片段多时分页，避免一屏塞不下/显示不全）。 */
-const val PEN_SYNC_PAGE_SIZE = 8
+/**
+ * 「从陪伴笔同步」每页条数。弹窗里（全选 + 本页若干段 + 翻页器 + 导入按钮）必须一屏装得下，
+ * 因为 ModalBottomSheet 对自定义内容不可靠地滚动（会吞掉滑动手势）。每页 4 段刚好留出翻页器和
+ * 导入按钮的可见空间，机身片段多时翻页看，避免"显示不全 / 翻页器掉屏外"。
+ */
+const val PEN_SYNC_PAGE_SIZE = 4
 
 /**
  * 一条 toast（对应 warm_2 .toast）：文案 + 可选语义图标 + 是否危险态。
