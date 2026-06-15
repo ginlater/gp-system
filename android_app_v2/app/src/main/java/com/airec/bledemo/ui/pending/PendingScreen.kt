@@ -921,6 +921,9 @@ private fun PenSyncSheet(
         onDismiss = onDismiss,
         title = "陪伴笔机身记录",
         subtitle = "以下是陪伴笔本地保存、尚未导入的片段，勾选后导入到「待整理」去绑定顾客。",
+        // 内容(全选+一页8段+翻页+导入钮)会超出弹窗高度 → 必须可滚动，否则下半截被截、
+        // 翻页和导入按钮掉到屏幕外 = 用户看到的"没有分页 / 往下划不动"。
+        scrollable = true,
     ) {
         when {
             state.loading -> {

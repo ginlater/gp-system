@@ -5060,7 +5060,8 @@ def login():
                 return redirect(nxt)
             if row["role"] in ("consultant", "store_manager"):
                 return redirect(url_for("consultant_page"))
-            return redirect(url_for("index"))
+            # 管理员/超管：直接进新版管理后台（美丽档案已并入其中，不再走旧接诊列表页）
+            return redirect(url_for("admin_page"))
         error = "用户名或密码错误"
     return render_template("login.html", error=error)
 
@@ -5081,12 +5082,12 @@ def logout():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.37"
+APP_V2_VERSION_NAME = "2.0.38"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 38   # = build.gradle versionCode（2.0.19）
+APP_V2_LATEST_VERSION_CODE = 39   # = build.gradle versionCode（2.0.19）
 APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
 APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
@@ -5243,10 +5244,13 @@ def index():
 @app.route("/admin")
 @manager_required
 def admin_page():
+    # 新版：默认进「经营总览」；各模块走 /admin/<group>/<page>
     return render_template(
         "admin.html",
         username=session.get("username"),
         role=session.get("role"),
+        page="overview",
+        page_title="经营总览",
     )
 
 
@@ -5266,6 +5270,7 @@ ADMIN_V2_PAGES = {
     "staff/employees": "员工管理",
     "staff/stores": "门店管理",
     "staff/admins": "管理员账号",
+    "staff/companies": "公司管理",
     "data/tag-dict": "标签词典",
     "data/tag-stats": "标签统计",
     "data/customers": "顾客管理",
@@ -5281,7 +5286,7 @@ def admin_v2_page(group, page=None):
     if key not in ADMIN_V2_PAGES:
         abort(404)
     return render_template(
-        "admin_v2.html",
+        "admin.html",
         username=session.get("username"),
         role=session.get("role"),
         page=key,
