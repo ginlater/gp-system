@@ -5174,14 +5174,13 @@ def download_page_v2():
         available=V2_APK_PATH.exists(),
         app_label="美丽陪伴",
         logo_char="美",
-        apk_href=url_for("download_apk_v2", v=APP_V2_VERSION_NAME),
+        apk_href=url_for("download_apk_v2_versioned", ver=f"v{APP_V2_VERSION_NAME}"),
         apk_version=APP_V2_VERSION_NAME,
     )
 
 
-@app.route("/download/v2.apk")
-def download_apk_v2():
-    """v2 原生包直接下载（com.aibeautyfulwomen.gongpai.v2）。无需登录，与 v1 包并存不顶包。"""
+def _serve_v2_apk():
+    """发当前最新 v2 APK（带 no-store 强不缓存 + 中文文件名）。给下面几个下载路由共用。"""
     if not V2_APK_PATH.exists():
         abort(404)
     resp = send_file(
@@ -5189,7 +5188,8 @@ def download_apk_v2():
         mimetype="application/vnd.android.package-archive",
         max_age=0,
     )
-    resp.headers["Cache-Control"] = "no-cache"
+    # no-store 比 no-cache 更狠：连缓存副本都不许存（躲微信/浏览器"该文件已下载"）
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     fallback_name = f"meili-v2-{APP_V2_VERSION_NAME}.apk"
     download_name = f"美丽陪伴-{APP_V2_VERSION_NAME}.apk"
     resp.headers["Content-Disposition"] = (
@@ -5197,6 +5197,19 @@ def download_apk_v2():
         f"filename*=UTF-8''{quote(download_name)}"
     )
     return resp
+
+
+@app.route("/download/v2.apk")
+def download_apk_v2():
+    """v2 原生包直接下载（com.aibeautyfulwomen.gongpai.v2）。无需登录，与 v1 包并存不顶包。"""
+    return _serve_v2_apk()
+
+
+@app.route("/downloadv2/<ver>")
+def download_apk_v2_versioned(ver):
+    """带版本号的下载链接，如 /downloadv2/v2.0.41。每次发版 URL 都不一样 → 浏览器/微信/下载管理器
+    不会再按"同一个 URL 已下载过"给旧文件。ver 只用来让 URL 唯一，不校验，永远发当前最新 APK。"""
+    return _serve_v2_apk()
 
 
 @app.route("/api/app/version")
@@ -5222,7 +5235,8 @@ def app_version_v2():
         "latestVersionCode": APP_V2_LATEST_VERSION_CODE,
         "latestVersionName": APP_V2_VERSION_NAME,
         "minVersionCode": APP_V2_MIN_VERSION_CODE,
-        "apkUrl": f"/download/v2.apk?v={APP_V2_LATEST_VERSION_CODE}",
+        # 带版本号的唯一路径，每版都不同 → 彻底躲开缓存（旧的 /download/v2.apk 仍可用，向后兼容）
+        "apkUrl": f"/downloadv2/v{APP_V2_VERSION_NAME}",
         "pageUrl": "/download/v2",
         "updateNote": APP_V2_UPDATE_NOTE,
     })
