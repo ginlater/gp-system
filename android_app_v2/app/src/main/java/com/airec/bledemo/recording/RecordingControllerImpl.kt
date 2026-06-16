@@ -101,8 +101,9 @@ class RecordingControllerImpl(
             st
         }
         st is RecordingState.Recording && !st.starting ->
-            // 已知真实时长(用户主动开 / 笔回报过 / 本帧 durSec 已非0) → 同步好；否则=重连占位0=同步中。
-            st.copy(timeSynced = sessionStartedByUser || penTimeSynced || st.durationSec > 0)
+            // 手机麦时长永远本地真实自走（ViewModel 墙钟），不存在「同步中」——只有陪伴笔重连到「已在录」才可能未同步。
+            // 已知真实时长(非笔 / 用户主动开 / 笔回报过 / 本帧 durSec 已非0) → 同步好；否则=笔重连占位0=同步中。
+            st.copy(timeSynced = st.source != CompanionSource.Pen || sessionStartedByUser || penTimeSynced || st.durationSec > 0)
         else -> st
     }
 
@@ -332,7 +333,11 @@ class RecordingControllerImpl(
     override fun startCompanion(source: CompanionSource) {
         currentSource = source
         when (source) {
-            CompanionSource.Phone -> startPhoneMic()
+            CompanionSource.Phone -> {
+                sessionStartedByUser = true   // 手机麦由用户主动开：时长从 0 真实自走，永不进入「同步中」
+                penTimeSynced = false
+                startPhoneMic()
+            }
             CompanionSource.Pen -> {
                 sessionStartedByUser = true   // 用户主动开录：时长从 0 真实自走，不进入「同步中」
                 penTimeSynced = false

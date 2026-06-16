@@ -45,6 +45,135 @@ import com.airec.bledemo.designsystem.MeiliPalette
 import com.airec.bledemo.designsystem.MeiliShapes
 
 /**
+ * 试听条 .audio：圆形播放钮 + 进度条 + 当前/总时长。还原 warm_2 的 .audio / .playbtn / .bar / .tt。
+ * 试听为「全程」无 60s 上限——进度按真实音频时长走。
+ *
+ * @param playing 是否正在播放（true 时播放钮可视为暂停态，仍用 play 图标语义保持简洁）
+ * @param progress 0f..1f 播放进度
+ * @param positionLabel 当前位置 mm:ss
+ * @param durationLabel 总时长 mm:ss
+ * @param enabled 是否可试听（同步中占位 audio_url 为空时 false）
+ */
+@Composable
+fun AudioPreviewBar(
+    playing: Boolean,
+    progress: Float,
+    positionLabel: String,
+    durationLabel: String,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    onSeek: (Float) -> Unit = {},
+    showButton: Boolean = true,
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth().padding(vertical = 12.dp),
+        shape = MeiliShapes.Sm,
+        color = MeiliPalette.SurfaceSoft,
+        border = BorderStroke(Dimens.BorderThin, MeiliPalette.Line),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            // showButton=false：只渲染进度轨 + 时长（播放钮在外面跟服务日期并排，见 PreviewPlayDot）。
+            if (showButton) {
+                val interaction = remember { MutableInteractionSource() }
+                val pressed by interaction.collectIsPressedAsState()
+                Surface(
+                    onClick = onToggle,
+                    enabled = enabled,
+                    interactionSource = interaction,
+                    shape = MeiliShapes.Pill,
+                    color = MeiliPalette.Clay,
+                    contentColor = MeiliPalette.White,
+                    modifier = Modifier
+                        .size(Dimens.PlayButton)
+                        .scale(if (pressed) 0.94f else 1f),
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        if (playing) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                                repeat(2) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(width = 3.5.dp, height = 14.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(MeiliPalette.White),
+                                    )
+                                }
+                            }
+                        } else {
+                            Icon(
+                                imageVector = MeiliIcons.Play,
+                                contentDescription = "试听",
+                                tint = MeiliPalette.White,
+                                modifier = Modifier.size(17.dp),
+                            )
+                        }
+                    }
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                // 进度轨：可点/拖跳播。命中区加高到 22dp 便于手指拖；横向拖动 change.consume() 掉，
+                // 避免被外层 Pager 误判成切 tab（视觉轨道仍 7dp，居中）。
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(22.dp)
+                        .padding(bottom = 2.dp)
+                        .then(
+                            if (enabled) {
+                                Modifier
+                                    .pointerInput(Unit) {
+                                        detectTapGestures { off ->
+                                            val w = size.width.toFloat()
+                                            if (w > 0f) onSeek((off.x / w).coerceIn(0f, 1f))
+                                        }
+                                    }
+                                    .pointerInput(Unit) {
+                                        detectHorizontalDragGestures { change, _ ->
+                                            change.consume() // 关键：吃掉横向拖，Pager 不再误判切 tab
+                                            val w = size.width.toFloat()
+                                            if (w > 0f) onSeek((change.position.x / w).coerceIn(0f, 1f))
+                                        }
+                                    }
+                            } else {
+                                Modifier
+                            },
+                        ),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(Dimens.TrackHeight)
+                            .clip(MeiliShapes.Pill)
+                            .background(MeiliPalette.Line),
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                .height(Dimens.TrackHeight)
+                                .clip(MeiliShapes.Pill)
+                                .background(MeiliPalette.TrackGradient),
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(positionLabel, style = MaterialTheme.typography.labelSmall, color = MeiliPalette.Ink3)
+                    Text(durationLabel, style = MaterialTheme.typography.labelSmall, color = MeiliPalette.Ink3)
+                }
+            }
+        }
+    }
+}
+
+/**
  * 提示 banner（对应 warm_2 .banner.{info|warn|danger|clay}）：左侧线性图标 + 多行文案，
  * 可选下划线行动文字（[actionText] + [onAction]）。
  */
