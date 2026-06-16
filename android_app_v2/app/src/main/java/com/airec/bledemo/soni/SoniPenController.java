@@ -204,6 +204,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private static final long FILE_KEEP_MS = 30L * 24 * 3600 * 1000;
     private volatile boolean pendingCleanup = false;
     private volatile boolean pendingSyncList = false;
+    private volatile boolean autoRetryScan = false;   // 点"重试"触发的重扫:回包时自动把未传段入队补传
 
     // ============ 下载（断点续传） ============
     private static final class DownloadState {
@@ -1348,6 +1349,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private void onFileListComplete(List<PenFileEntry> files) {
         if (pendingCleanup) { pendingCleanup = false; cleanupOldFiles(files); }
         if (pendingSyncList) { pendingSyncList = false; deliverPenFileList(files); }
+        if (autoRetryScan) { autoRetryScan = false; enqueueUnuploadedForRetry(files); }
         final UploadTask task = currentTask;
         if (!waitingForFile || task == null) return;
         PenFileEntry target = null;
@@ -1790,12 +1792,53 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     public void retryPenUploads() {
         main.post(() -> {
+            // ① 清"没保存成功"计数：这次重新尝试，badge 即时更新（成不成由后续上传决定）。
+            failedCount = 0;
+            // ② 队列里还在的任务：清退避，立刻重推。
             materializeRestored();
             for (UploadTask t : uploadQueue) if (t != null) { t.downloadRequeues = 0; t.nextAttemptWallMs = 0; }
             Log.d(TAG, "手动重试待补传 队列=" + uploadQueue.size());
             penLog("★手动重试待补传 队列=" + uploadQueue.size());
+            // ③ 关键：失败的段多半【已从队列丢了】(给不掉的会drop)、且【音频还在笔上】→
+            //    重扫笔机身列表，把"近6小时内、还没传上来"的段重新入队补传。这才是"点了重试真的开始同步"。
+            if (linkUp && cookie != null && uploadUrl != null) {
+                autoRetryScan = true;
+                requestFileListInternal();
+            }
+            notifyPending();   // 立刻把 failedCount=0 推给 UI
             kickWorker();
         });
+    }
+
+    /** 重试时重扫到的笔列表：把近 6 小时内、还没传上来、也不在队里的段重新入队补传（音频在笔上）。 */
+    private void enqueueUnuploadedForRetry(List<PenFileEntry> files) {
+        if (files == null || cookie == null || uploadUrl == null) return;
+        List<UploadTask> added = new ArrayList<>();
+        for (PenFileEntry f : files) {
+            if (f == null || TextUtils.isEmpty(f.name)) continue;
+            if (uploadedFileNames.contains(f.name)) continue;   // 已传过
+            if (isQueuedByName(f.name)) continue;               // 已在队
+            if (isStaleRecordingFile(f.name)) continue;         // 超6小时的老段不自动抓(避免重导一堆历史)
+            long startMs = parseFileTimestamp(f.name);
+            UploadTask t = new UploadTask(f.name, cookie, uploadUrl, penSn(), f.timeSec, startMs, true);
+            t.firstSeenMs = System.currentTimeMillis();
+            uploadQueue.add(t);
+            added.add(t);
+            penLog("★重试:重扫到未传段,入队补传 " + f.name);
+        }
+        if (!added.isEmpty()) {
+            final String phUrl = placeholderUrlFrom(uploadUrl);
+            for (final UploadTask t : added) {
+                worker.submit(() -> {
+                    long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs);
+                    if (pid > 0) { t.placeholderId = pid; if (listener != null) main.post(listener::onPenPlaceholderCreated); }
+                });
+            }
+            notifyPending();
+            main.postDelayed(this::kickWorker, 800);
+        } else {
+            penLog("★重试:笔上没有近6小时未传的段(可能已全传上或音频不在笔上)");
+        }
     }
 
     private void notifyPending() {
