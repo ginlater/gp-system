@@ -118,35 +118,6 @@ fun AdviceBlock(
     }
 }
 
-/** .tag-lbl：小圆角标签头（带图标），蜜色或玫瑰色。 */
-@Composable
-fun TagLabel(
-    text: String,
-    icon: ImageVector,
-    modifier: Modifier = Modifier,
-    rose: Boolean = false,
-) {
-    val bg = if (rose) MeiliPalette.RoseSoft else MeiliPalette.HoneySoft
-    val fg = if (rose) MeiliPalette.RoseText else MeiliPalette.HoneyText
-    Surface(shape = MeiliShapes.Pill, color = bg, contentColor = fg, modifier = modifier) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(13.dp))
-            Text(
-                text,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.sp,
-                ),
-            )
-        }
-    }
-}
-
 /** .sagebox：鼠尾草 tint 块（综合判断/一句话总结）。可传 dark=true → 深墨底白字。 */
 @Composable
 fun SageBox(text: String, modifier: Modifier = Modifier, dark: Boolean = false) {
@@ -264,12 +235,6 @@ fun KvRow(key: String, value: String, valueColor: Color, showDivider: Boolean = 
             )
         }
     }
-}
-
-/** 报告体内简单段落（标题 + 正文）。 */
-@Composable
-fun BodyText(text: String, modifier: Modifier = Modifier, color: Color = MeiliPalette.Ink) {
-    Text(text, style = MaterialTheme.typography.bodyMedium, color = color, modifier = modifier)
 }
 
 /** smallnote 小灰注。 */

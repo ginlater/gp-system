@@ -29,8 +29,6 @@ class ConsultantRepository(
 
     suspend fun me(): ApiResult<Me> = call { api.me() }
 
-    suspend fun appVersion(): ApiResult<AppVersion> = call { api.appVersion() }
-
     suspend fun appVersionV2(): ApiResult<AppVersion> = call { api.appVersionV2() }
 
     // ───────────── 上传 / 占位 ─────────────
@@ -92,8 +90,6 @@ class ConsultantRepository(
     // ───────────── 陪伴笔 ─────────────
 
     suspend fun penBinding(): ApiResult<PenBinding> = call { api.penBinding() }
-
-    suspend fun penReportSn(sn: String): ApiResult<PenSnReport> = call { api.penReportSn(sn) }
 
     suspend fun penSyncPreview(items: List<PenSyncQueryItem>): ApiResult<PenSyncPreview> =
         call { api.penSyncPreview(PenSyncPreviewBody(items)) }
@@ -162,9 +158,6 @@ class ConsultantRepository(
 
     suspend fun customersSearch(q: String? = null): ApiResult<List<Customer>> =
         call { api.customersSearch(q) }.map { it.customers ?: emptyList() }
-
-    suspend fun customerRecordings(customer: String): ApiResult<List<CustomerRecordingsGroup>> =
-        call { api.customerRecordings(customer) }.map { it.groups ?: emptyList() }
 
     /** 美丽档案：基本信息 + 累积标签 + 服务时间线（range: all|30|90|180|365）。 */
     suspend fun customerProfile(id: Long, range: String = "all"): ApiResult<CustomerProfileResponse> =
@@ -262,14 +255,6 @@ class ConsultantRepository(
     /** 重新/补跑整个会话分析（后端自动判定补跑 vs 全量）。 */
     suspend fun analyzeSession(sid: Long, model: String? = null): ApiResult<SimpleResult> =
         call { api.analyzeSession(sid, AnalyzeBody(model)) }
-
-    /** 顾问端按"顾客+日期段"批量触发分析。endDate 缺省=startDate。 */
-    suspend fun consultantAnalyze(
-        customer: String,
-        startDate: String,
-        endDate: String? = null,
-    ): ApiResult<ConsultantAnalyzeResult> =
-        call { api.consultantAnalyze(ConsultantAnalyzeBody(customer, startDate, endDate)) }
 
     // ───────────── 点评（evaluation）─────────────
 

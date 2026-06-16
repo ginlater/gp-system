@@ -110,16 +110,6 @@ data class AnalyzeBody(
 )
 
 /**
- * POST /api/consultant/analyze（顾问端按"顾客+日期段"批量触发分析）。
- * webapp.py 读 customer / start_date / end_date（end_date 缺省=start_date）。
- */
-data class ConsultantAnalyzeBody(
-    @Json(name = "customer") val customer: String,
-    @Json(name = "start_date") val startDate: String,
-    @Json(name = "end_date") val endDate: String? = null,
-)
-
-/**
  * POST /api/admin/recordings/<rid>/split（按秒数把录音切成两段）。
  * webapp.py 读 data.get("at_seconds")（float，秒）。注意：该端点 @manager_required，
  * 仅店长/管理员可调；顾问端通常用不到，放此仅为数据层完整。

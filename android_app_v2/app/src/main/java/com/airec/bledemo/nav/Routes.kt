@@ -26,23 +26,6 @@ object Routes {
      */
     const val Main = "main"
 
-    // ============ 底部导航 4 tab（Pager 页，非独立目的地；常量保留作页序标识） ============
-
-    /** 陪伴首页：大「开启陪伴」圆钮 + 来源切换 + 陪伴笔状态卡。 */
-    const val Home = "home"
-
-    /** 今日接诊：今日接诊列表。 */
-    const val Reception = "reception"
-
-    /** 待整理：未绑定陪伴片段列表。 */
-    const val Pending = "pending"
-
-    /** 报告：顾客接诊分析报告列表（原「档案」，方案A 改名 + 精简行）。 */
-    const val Archive = "archive"
-
-    /** 客户：顾客搜索 → 美丽档案详情（方案A 新增 tab）。 */
-    const val Customer = "customer"
-
     // ============ 栈内次级页 ============
 
     /** 提醒。 */

@@ -35,10 +35,6 @@ interface ConsultantApi {
     @GET("api/me")
     suspend fun me(): Response<Me>
 
-    /** 无需登录。 */
-    @GET("api/app/version")
-    suspend fun appVersion(): Response<AppVersion>
-
     /** v2 原生包独立版本检查（启动提示更新）。无需登录。 */
     @GET("api/app/v2/version")
     suspend fun appVersionV2(): Response<AppVersion>
@@ -84,13 +80,6 @@ interface ConsultantApi {
 
     @GET("api/consultant/pen/binding")
     suspend fun penBinding(): Response<PenBinding>
-
-    /** 一连上陪伴笔就上报 SN，拿 allow/deny 决策。 */
-    @FormUrlEncoded
-    @POST("api/consultant/pen/report-sn")
-    suspend fun penReportSn(
-        @Field("sn") sn: String,
-    ): Response<PenSnReport>
 
     /** "从陪伴笔同步"：给机身片段列表，返回每条 uploaded/deleted/new。 */
     @POST("api/consultant/pen/sync-preview")
@@ -202,12 +191,6 @@ interface ConsultantApi {
     suspend fun customersSearch(
         @Query("q") q: String? = null,
     ): Response<CustomerSearchResponse>
-
-    /** 某顾客名下所有片段，按服务日期分组。 */
-    @GET("api/consultant/customer_recordings")
-    suspend fun customerRecordings(
-        @Query("customer") customer: String,
-    ): Response<CustomerRecordingsResponse>
 
     /** 美丽档案：顾客基本信息 + 累积标签 + 服务时间线。range: all|30|90|180|365。 */
     @GET("api/admin/customer_profile")
@@ -337,14 +320,6 @@ interface ConsultantApi {
     suspend fun deleteEvaluation(
         @Path("eid") eid: Long,
     ): Response<SimpleResult>
-
-    // ───────────── 顾问端批量分析 ─────────────
-
-    /** 顾问端按"顾客+日期段"批量触发分析。返回 {ok, session_ids, skipped}。 */
-    @POST("api/consultant/analyze")
-    suspend fun consultantAnalyze(
-        @Body body: ConsultantAnalyzeBody,
-    ): Response<ConsultantAnalyzeResult>
 
     /** PART 10 动态顾客标签（range: all|30|90|180|365）。 */
     @GET("api/session/{sid}/customer_tags")

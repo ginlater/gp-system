@@ -56,18 +56,6 @@ data class PenBinding(
     @Json(name = "pen_sn") val penSn: String? = null,
 )
 
-/** POST /api/consultant/pen/report-sn 响应。decision: allow | deny。 */
-data class PenSnReport(
-    @Json(name = "ok") val ok: Boolean? = null,
-    @Json(name = "bound_sn") val boundSn: String? = null,
-    @Json(name = "match") val match: Boolean? = null,
-    @Json(name = "decision") val decision: String? = null,   // allow | deny
-    @Json(name = "reason") val reason: String? = null,       // my_pen | free | have_other_binding | bound_other
-    @Json(name = "message") val message: String? = null,     // deny 时给 App 弹的话
-) {
-    val allowed: Boolean get() = decision == "allow"
-}
-
 /** POST /api/consultant/pen/sync-preview 单条机身片段的同步状态。 */
 data class PenSyncItem(
     @Json(name = "name") val name: String? = null,
@@ -270,16 +258,6 @@ data class SessionPreview(
     @Json(name = "error") val error: String? = null,
 )
 
-/** GET /api/consultant/customer_recordings → groups[]（按服务日期分组）。 */
-data class CustomerRecordingsGroup(
-    @Json(name = "service_date") val serviceDate: String? = null,
-    @Json(name = "recordings") val recordings: List<PreviewRecording>? = null,
-)
-
-data class CustomerRecordingsResponse(
-    @Json(name = "groups") val groups: List<CustomerRecordingsGroup>? = null,
-)
-
 // ─────────────────────────── 提醒（reminders）───────────────────────────
 
 /** GET /api/consultant/reminders → items[]。scope: personal | escalation。 */
@@ -330,17 +308,6 @@ data class EvaluateResult(
 /** GET /api/session/<sid>/evaluations 响应（点评列表，倒序）。 */
 data class EvaluationsResponse(
     @Json(name = "evaluations") val evaluations: List<Evaluation>? = null,
-)
-
-/**
- * POST /api/consultant/analyze 响应：{ok, session_ids:[...], skipped:[...]}。
- * session_ids = 实际触发分析的会话；skipped = 已是最新分析跳过的会话。
- */
-data class ConsultantAnalyzeResult(
-    @Json(name = "ok") val ok: Boolean? = null,
-    @Json(name = "error") val error: String? = null,
-    @Json(name = "session_ids") val sessionIds: List<Long>? = null,
-    @Json(name = "skipped") val skipped: List<Long>? = null,
 )
 
 /** 大量 POST 端点统一返回 {ok / error / ...}。可空兜底。 */

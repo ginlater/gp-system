@@ -249,33 +249,6 @@ fun Part02Persona(persona: Persona?) {
     }
 }
 
-// ─────────────────────────── PART 03 ───────────────────────────
-
-@Composable
-fun Part03RootCause(rootCause: RootCause?) {
-    Collapsible(title = "接诊失分根因定位", numberBadge = "03", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
-        if (rootCause == null) {
-            EmptyPartNote()
-            return@Collapsible
-        }
-        rootCause.headline?.let {
-            ReportBanner(it, BannerKind.Danger, MeiliIcons.Warn, modifier = Modifier.padding(bottom = 11.dp))
-        }
-        val prod = rootCause.productDimension?.joinToString("、").orEmpty()
-        val prob = rootCause.problemDimension?.joinToString("、").orEmpty()
-        if (prod.isNotEmpty() || prob.isNotEmpty()) {
-            TwoColBoxes(
-                left = ColBoxData("产品维度（师做的）", MeiliIcons.Doc, MeiliPalette.SageDeep, prod.ifEmpty { "—" }),
-                right = ColBoxData("问题维度（顾客要听的）", MeiliIcons.Heart, MeiliPalette.ClayDeep, prob.ifEmpty { "—" }),
-                modifier = Modifier.padding(vertical = 11.dp),
-            )
-        }
-        rootCause.gapNote?.let {
-            AdviceBlock(text = it, leadBold = "差距的本质：", accent = MeiliPalette.Honey)
-        }
-    }
-}
-
 // ─────────────────────────── PART 04 ───────────────────────────
 
 @Composable
@@ -681,56 +654,6 @@ private fun CompetitorCard(cp: Competitor) {
             }
             cp.customerQuote?.let { CapRow("顾客原话", it, valueColor = MeiliPalette.Ink) }
             cp.competitorLearn?.let { CapRow("顾问需学习", it, valueColor = MeiliPalette.Ink) }
-        }
-    }
-}
-
-// ─────────────────────────── PART 10 ───────────────────────────
-
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-fun Part10Tags(reportTags: List<CustomerTag>?, dynamic: CustomerTagsResponse?) {
-    Collapsible(title = "顾客标签 · 画像积累", numberBadge = "10", initiallyOpen = false, collapsedHint = "点击展开", modifier = Modifier.padding(bottom = partGap)) {
-        val current = dynamic?.currentTags
-        val history = dynamic?.history ?: reportTags
-        val hasCurrent = !current.isNullOrEmpty()
-        val hasHistory = !history.isNullOrEmpty()
-        if (!hasCurrent && !hasHistory) {
-            EmptyPartNote()
-            return@Collapsible
-        }
-        if (hasCurrent) {
-            SectionLabel("本次新增", icon = MeiliIcons.Star, modifier = Modifier.padding(bottom = 9.dp))
-            androidx.compose.foundation.layout.FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                current!!.forEach { t -> TagChip(text = (t.tag.orEmpty()) + if (t.isNew == true) " · 新增" else "", isNew = t.isNew == true) }
-            }
-        }
-        if (hasHistory) {
-            SectionLabel("历次累积（×n = 有 n 次陪伴提到）", icon = MeiliIcons.Album, modifier = Modifier.padding(top = if (hasCurrent) 16.dp else 0.dp, bottom = 9.dp))
-            androidx.compose.foundation.layout.FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                history!!.forEach { t -> TagChip(text = t.tag.orEmpty(), count = t.count) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TagChip(text: String, isNew: Boolean = false, count: Int? = null) {
-    val bg = if (isNew) MeiliPalette.LeafSoft else MeiliPalette.ClayTint
-    val fg = if (isNew) MeiliPalette.LeafText else MeiliPalette.ClayDeep
-    val border = if (isNew) MeiliPalette.LeafLine else MeiliPalette.ClaySoft
-    Surface(shape = MeiliShapes.Pill, color = bg, contentColor = fg, border = BorderStroke(Dimens.BorderThin, border)) {
-        Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(text, style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold), color = fg)
-            if (count != null && count > 0) {
-                Text(" ×$count", style = MaterialTheme.typography.labelSmall, color = MeiliPalette.Ink3, modifier = Modifier.padding(start = 4.dp))
-            }
         }
     }
 }

@@ -150,19 +150,6 @@ def md_inline(text):
     return s
 
 
-_CHN_NUMS = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十']
-
-
-@app.template_filter('chinese_num')
-def chinese_num(n):
-    n = int(n)
-    if 0 <= n <= 10:
-        return _CHN_NUMS[n]
-    if 11 <= n <= 19:
-        return '十' + _CHN_NUMS[n - 10]
-    return str(n)
-
-
 # ============ SQLite ============
 # 写队列：一个专用线程串行消费所有写操作，避免高并发时多线程竞争写锁。
 # 每条写任务是 (sql, params, future)；future=None 表示 fire-and-forget。
@@ -398,14 +385,6 @@ CREATE TABLE IF NOT EXISTS login_log (
 );
 CREATE INDEX IF NOT EXISTS idx_login_log_company ON login_log(company_id, id);
 """
-
-
-def get_db():
-    if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH, check_same_thread=False)
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
-    return g.db
 
 
 @app.teardown_appcontext
@@ -3803,29 +3782,6 @@ def reconcile_task_status_from_result(session_id):
             )
 
 
-def save_task_result(session_id, task_id, result):
-    """把任务输出合并写入 analysis_result JSON 的对应字段。
-    仅更新该任务声明的 result_keys，不动其它字段。"""
-    row = db_fetchone("SELECT analysis_result FROM sessions WHERE id=?", (session_id,))
-    try:
-        cur = json.loads(row["analysis_result"]) if row and row["analysis_result"] else {}
-    except (json.JSONDecodeError, TypeError):
-        cur = {}
-
-    task = TASK_REGISTRY[task_id]
-    for key in task["result_keys"]:
-        if key in result:
-            cur[key] = result[key]
-
-    if task_id == "T5" and "scoring" in cur:
-        recalc_scoring(cur["scoring"])
-
-    db_write(
-        "UPDATE sessions SET analysis_result=? WHERE id=?",
-        (json.dumps(cur, ensure_ascii=False), session_id),
-    )
-
-
 def get_missing_tasks(session_id):
     """返回未完成（status != 'done'）的任务 id 列表，按 TASK_REGISTRY 顺序。"""
     ts = get_task_status(session_id)
@@ -4690,208 +4646,6 @@ def scan_oss_bucket():
     return added
 
 
-# ============ 分析文本解析（纯正则，不调 LLM）============
-
-def _strip_l_codes(s):
-    """剥离所有 L 编号知识库引用：[L0001]、【L0001/L0008】、（违反L0001）、命中L0001/L0002 等"""
-    if not s:
-        return s
-    # 中英方括号：[L0001] [L0001/L0002] 【L0001】【L0001/L0002】
-    s = re.sub(r'[\[【]\s*L\d+(?:\s*[/／、]\s*L\d+)*\s*[\]】]', '', s)
-    # 圆括号（中英）内含 L code：(违反L0002精神) （命中L0072/L0150）
-    s = re.sub(r'[（(][^）)\n]*L\d+[^）)\n]*[）)]', '', s)
-    # 破折号引出 L 码到句末：——L0108/L0274 是本次最大短板
-    s = re.sub(r'[—–]{1,2}\s*L\d+(?:\s*[/／、]\s*L\d+)*[^。\n]*', '', s)
-    # 关键词 + L 码 + 后续修饰到下一个标点：，命中L0072/L0150 这条逻辑
-    s = re.sub(
-        r'[，、,；;]?\s*(?:命中|违反|参考|对应|引用|遵循)\s*L\d+(?:\s*[/／、]\s*L\d+)*[^，。；！？\n]*',
-        '', s)
-    # 兜底：残留的裸 L 码（如 L0089）以及斜杠连号 L0087/L0081
-    s = re.sub(r'(?<![A-Za-z0-9])L\d{3,4}(?:\s*[/／、]\s*L\d{3,4})*', '', s)
-    # 收尾：清掉空的括号壳与多余空格
-    s = re.sub(r'[（(]\s*[）)]|[\[【]\s*[\]】]', '', s)
-    s = re.sub(r'[ \t]+', ' ', s)
-    return s.strip()
-
-
-def _clean(s):
-    s = _strip_l_codes(s)
-    s = re.sub(r'[ \t]+', ' ', s).strip()
-    return s
-
-
-def _extract_timestamps(s):
-    """提取 '段N [XXXs-YYYs]' 等多种格式 → [{segment, startSec, endSec}]
-
-    兼容：段1 [XXs-YYs]、段1的[XXs-YYs]、段1的 [XXs - YYs]、【录音段1的 0.64s-5.20s】、段1，XXs~YYs
-    """
-    pat = re.compile(
-        r'段\s*(\d+)[^\d\n]{0,8}?'
-        r'(\d+(?:\.\d+)?)\s*s\s*[-–~至到]\s*(\d+(?:\.\d+)?)\s*s'
-    )
-    return [
-        {'segment': int(m.group(1)),
-         'startSec': float(m.group(2)),
-         'endSec': float(m.group(3))}
-        for m in pat.finditer(s)
-    ]
-
-
-def parse_analysis(text):
-    """把 AI 分析 Markdown 拆解为结构化 dict，纯字符串/正则处理，不调 LLM。"""
-    result = {
-        'overall': '',
-        'strengths': [],
-        'weaknesses': [],
-        'stageCheck': {'before': [], 'during': [], 'after': []},
-        'keySuggestions': [],
-    }
-    if not text:
-        return result
-
-    # 按 ## 分节
-    parts = re.split(r'\n## ', '\n' + text)
-    for part in parts:
-        if not part.strip():
-            continue
-        nl = part.find('\n')
-        if nl == -1:
-            continue
-        title = part[:nl].strip()
-        body = part[nl + 1:].strip()
-
-        # ── 总体评价 ──
-        if '总体评价' in title:
-            result['overall'] = _clean(body)
-
-        # ── 做得好的点 ──
-        elif '做得好' in title:
-            for item in re.split(r'\n-\s+', '\n' + body):
-                item = item.strip().lstrip('- ')
-                if not item:
-                    continue
-                m = re.match(r'\*\*(.*?)\*\*[：:](.*)', item, re.DOTALL)
-                if m:
-                    raw_title = m.group(1)
-                    raw_content = m.group(2).strip()
-                    result['strengths'].append({
-                        'title': _clean(raw_title),
-                        'content': _clean(raw_content),
-                        'timestamps': _extract_timestamps(raw_content),
-                    })
-
-        # ── 做错/遗漏 ──
-        elif '做错' in title or '遗漏' in title:
-            # 兼容两种格式：
-            #   V3: `### 1. **[L...] 标题**\n - **位置**:...\n - **影响**:...\n - **正确做法**:...`
-            #   V4: `- **[L...] 标题**：内容 **影响**：x **正确做法**：x`（全部内联）
-            # 顶层入口标记 = `### N. ` 或 `- ` 后紧跟 `**[L或【L`（带 L 码的标题）
-            entry_split = re.compile(
-                r'(?:^|\n)(?:###\s*\d*\.?\s*|-\s+)(?=\*\*\s*[\[【]\s*L\d+)'
-            )
-            chunks = entry_split.split(body)
-
-            def _extract_inline_field(field_pat, text):
-                m = re.search(
-                    rf'\*\*\s*(?:{field_pat})\s*\*\*\s*[：:]\s*'
-                    r'(.*?)(?=\*\*\s*(?:影响|风险|正确做法|位置)\s*\*\*\s*[：:]|\Z)',
-                    text, re.DOTALL,
-                )
-                return _clean(m.group(1)) if m else ''
-
-            for chunk in chunks:
-                chunk = chunk.strip()
-                if not chunk.startswith('**'):
-                    continue
-                m = re.match(r'\*\*(.*?)\*\*\s*[：:]\s*(.*)', chunk, re.DOTALL)
-                if not m:
-                    continue
-                raw_title = m.group(1)
-                rest = m.group(2)
-                # 第一个子字段之前的部分 → problem（V4 内联）
-                first_field = re.search(
-                    r'\*\*\s*(?:影响|风险|位置|正确做法)\s*\*\*\s*[：:]', rest,
-                )
-                inline_problem = rest[:first_field.start()] if first_field else rest
-                risk = _extract_inline_field('影响|风险', rest)
-                correct = _extract_inline_field('正确做法', rest)
-                position = _extract_inline_field('位置', rest)
-                # V3 格式有 **位置** 字段；V4 没有，把开头描述当作 problem
-                problem = position or _clean(inline_problem)
-                result['weaknesses'].append({
-                    'title': _clean(raw_title),
-                    'problem': problem,
-                    'risk': risk,
-                    'correctAction': correct,
-                    'timestamps': _extract_timestamps(chunk),
-                })
-
-        # ── 阶段流程检查 ──
-        elif '阶段流程' in title or '阶段' in title:
-            key_map = {'进房前': 'before', '房中': 'during', '房后': 'after'}
-            # 兼容两种格式：
-            #   V3: `### 进房前\n - ✅ x\n - ❌ y\n - ⚠️ z`
-            #   V4: `- **进房前**：xxx 叙述段落...\n- **房中**：...`
-            stage_split = re.compile(
-                r'(?:^|\n)(?:###\s*|-\s+\*\*\s*)(?=进房前|房中|房后)'
-            )
-            for stage_chunk in stage_split.split(body):
-                if not stage_chunk.strip():
-                    continue
-                # 取首行作为阶段标题，余下作为内容
-                first_nl = stage_chunk.find('\n')
-                head = stage_chunk[:first_nl] if first_nl != -1 else stage_chunk
-                stage_body = stage_chunk[first_nl + 1:] if first_nl != -1 else ''
-                # V4 头部形如 `进房前**（...）：内容...`，截到第一个 ** 或 ：
-                key = next((v for k, v in key_map.items() if k in head), None)
-                if not key:
-                    continue
-                # V4 情况：head 后半段已经包含正文，把它合并回 stage_body
-                # 兼容 `进房前**：xxx` 和 `进房前**（注解）：xxx` 两种
-                tail_match = re.search(
-                    r'\*\*\s*(?:[（(][^）)\n]*[）)])?\s*[：:]\s*(.*)',
-                    head, re.DOTALL,
-                )
-                if tail_match:
-                    stage_body = (tail_match.group(1) + '\n' + stage_body).strip()
-                items = []
-                # 先尝试按 ✅/❌/⚠️ 解析（V3）
-                for line in stage_body.splitlines():
-                    line = line.strip().lstrip('- ')
-                    if not line:
-                        continue
-                    if line.startswith('✅'):
-                        items.append({'type': 'good', 'text': _clean(line[1:])})
-                    elif line.startswith('❌'):
-                        items.append({'type': 'bad',  'text': _clean(line[1:])})
-                    elif line.startswith('⚠️'):
-                        items.append({'type': 'warn', 'text': _clean(line[2:])})
-                # 没有标记 → V4 叙述段落，按句号切分为多条 'warn' 项
-                if not items and stage_body.strip():
-                    clean_text = _clean(stage_body.replace('\n', ' '))
-                    for sent in re.split(r'(?<=[。！？])\s*', clean_text):
-                        sent = sent.strip()
-                        if len(sent) >= 4:
-                            items.append({'type': 'warn', 'text': sent})
-                result['stageCheck'][key] = items
-
-        # ── 关键改进建议 ──
-        elif '建议' in title:
-            for item in re.split(r'\n\d+\.\s+', '\n' + body):
-                item = item.strip()
-                if not item:
-                    continue
-                m = re.match(r'\*\*(.*?)\*\*[：:](.*)', item, re.DOTALL)
-                if m:
-                    result['keySuggestions'].append({
-                        'title': _clean(m.group(1)),
-                        'body':  _clean(m.group(2)),
-                        'timestamps': _extract_timestamps(m.group(2)),
-                    })
-
-    return result
-
-
 # ============ 认证 ============
 def login_required(f):
     @wraps(f)
@@ -4915,15 +4669,6 @@ def current_user():
         "SELECT id, username, role, company_id, advisor_name, employee_id, phone, store_id FROM users WHERE id=?",
         (uid,),
     )
-
-
-def current_company_id():
-    u = current_user()
-    return u["company_id"] if u else None
-
-
-def current_store_id():
-    return session.get("store_id")
 
 
 def store_scope_sql(col="s.store_id", allow_filter=True):

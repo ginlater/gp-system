@@ -302,15 +302,6 @@ object MeiliIcons {
         }
     }
 
-    /** 更多：三点。 */
-    val More: ImageVector by lazy {
-        stroke("ic_more") {
-            circle(5.5f, 12f, 1.2f)
-            circle(12f, 12f, 1.2f)
-            circle(18.5f, 12f, 1.2f)
-        }
-    }
-
     /** 关闭：✕ 两条对角线（弹层/面板右上角收起用）。 */
     val Close: ImageVector by lazy {
         stroke("ic_close") {
@@ -547,30 +538,6 @@ object MeiliIcons {
             arcToRelative(4f, 4f, 0f, false, true, 6f, 0f)
             circle(12f, 19f, 0.5f)
         }
-    }
-
-    /** 电池（带电量实心块）。 */
-    val Battery: ImageVector by lazy {
-        mixed(
-            name = "ic_battery",
-            strokePart = {
-                roundRect(3f, 8f, 16f, 8f, 2f)
-                moveTo(21f, 11f); verticalLineTo(13f)
-            },
-            fillPart = {
-                // rx 1 的电量块 5,10 9×4
-                moveTo(6f, 10f)
-                lineTo(13f, 10f)
-                arcToRelative(1f, 1f, 0f, false, true, 1f, 1f)
-                verticalLineTo(13f)
-                arcToRelative(1f, 1f, 0f, false, true, -1f, 1f)
-                lineTo(6f, 14f)
-                arcToRelative(1f, 1f, 0f, false, true, -1f, -1f)
-                verticalLineTo(11f)
-                arcToRelative(1f, 1f, 0f, false, true, 1f, -1f)
-                close()
-            },
-        )
     }
 
     /** 皮肤/主题：调色板。 */

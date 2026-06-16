@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
  *  - 持有本机已安装版本（versionName / versionCode）——由 Screen 从 PackageManager 读出后经 [setInstalledVersion] 注入
  *    （AGP buildConfig 未开启，BuildConfig.VERSION_NAME 不可用；强制升级判定本就要比对"已安装"版本）。
  *  - 拉陪伴师信息 [ConsultantRepository.me]（advisor_name / role / 门店等）。
- *  - 拉后端版本 [ConsultantRepository.appVersion]：本机 versionCode < minVersionCode → 标记【强制升级】。
+ *  - 拉后端版本 [ConsultantRepository.appVersionV2]：本机 versionCode < minVersionCode → 标记【强制升级】。
  *  - 退出登录 [AuthManager.logout]（先调 /logout 再清本地 Cookie，失败也清本地），完成后回调上层切回登录。
  *
  * 取实例：Composable 里 `viewModel()` 默认无参构造即可（repo/auth 取 NetworkModule 默认）。
