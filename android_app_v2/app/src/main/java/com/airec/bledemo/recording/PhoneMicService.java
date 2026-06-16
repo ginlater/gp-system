@@ -89,8 +89,14 @@ public class PhoneMicService extends Service {
             recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
             recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            recorder.setAudioSamplingRate(44100);
-            recorder.setAudioEncodingBitRate(96000);
+            // 问题 #4：语音场景单声道 16kHz / 32kbps 足够清晰且利于 ASR，文件比 44.1kHz 立体声小约 6 倍（弱网更易传成）。
+            recorder.setAudioChannels(1);
+            recorder.setAudioSamplingRate(16000);
+            recorder.setAudioEncodingBitRate(32000);
+            // 问题 #1：录音中途麦被抢占 / 编码器出错不再静默坏掉——装回调，出错即兜底通知顾问 + 保留已录文件供补传。
+            recorder.setOnErrorListener((mr, what, extra) -> onRecorderError(what, extra));
+            recorder.setOnInfoListener((mr, what, extra) ->
+                    Log.w(TAG, "MediaRecorder info what=" + what + " extra=" + extra));
             recorder.setOutputFile(currentFile.getAbsolutePath());
             recorder.prepare();
             recorder.start();
@@ -115,23 +121,32 @@ public class PhoneMicService extends Service {
         }
         final int durSec = elapsedSec();
         recording = false;
+        boolean stopOk = true;
         try {
             recorder.stop();
         } catch (Exception e) {
-            // stop() 在录音过短/异常时可能抛错，文件可能不可用
+            // 问题 #2：stop() 在录音过短/异常时可能抛错。不再直接丢文件——
+            // 文件里已写入的音频数据仍可能被服务端 ffmpeg 恢复，尽力上传；真不行也留着等补传扫描。
             Log.e(TAG, "recorder.stop failed", e);
-            safeReleaseRecorder();
+            stopOk = false;
+        }
+        safeReleaseRecorder();
+
+        final File file = currentFile;
+        if (file == null || !file.exists() || file.length() <= 1024) {
             broadcast(STATE_ERROR, "录音过短或失败，请重试", 0, -1);
             stopForeground(true);
             stopSelf();
             return;
         }
-        safeReleaseRecorder();
+        if (!stopOk) Log.w(TAG, "stop 失败但文件有内容(" + file.length() + "B)，尽力上传");
+        uploadAndFinish(file, durSec, cookie);
+    }
 
-        final File file = currentFile;
+    /** 后台线程上传并收尾：成功删文件，失败保留(供回前台补传扫描重试)。stop 正常/异常都走这。 */
+    private void uploadAndFinish(final File file, final int durSec, final String cookie) {
         uploading = true;
         broadcast(STATE_UPLOADING, "上传中…", durSec, -1);
-
         new Thread(() -> {
             Uploader.Result r = Uploader.upload(file, durSec, cookie, uploadUrl);
             uploading = false;
@@ -139,12 +154,26 @@ public class PhoneMicService extends Service {
                 broadcast(STATE_IDLE, "已上传，请选择顾客", durSec, r.recordingId);
                 if (file != null) file.delete();
             } else {
-                // 上传失败：保留本地文件，避免丢录音
+                // 上传失败：保留本地文件，避免丢录音（401 文案已含「请重新登录」，回前台补传扫描会重试）。
                 broadcast(STATE_ERROR, "上传失败：" + r.error, durSec, -1);
             }
             stopForeground(true);
             stopSelf();
         }, "rec-upload").start();
+    }
+
+    /** 问题 #1：MediaRecorder 运行期出错回调（麦被抢占/编码器挂）。停录、保留已录文件供补传、通知顾问。 */
+    private void onRecorderError(int what, int extra) {
+        Log.e(TAG, "MediaRecorder error what=" + what + " extra=" + extra);
+        if (!recording) return;
+        recording = false;
+        final int durSec = elapsedSec();
+        try { recorder.stop(); } catch (Exception ignored) {}   // 尽量写出文件尾(moov)，失败也保留文件
+        safeReleaseRecorder();
+        // 文件保留不删：回前台补传扫描(retryLeftoverPhoneMic)会尝试上传。
+        broadcast(STATE_ERROR, "录音中断（麦克风可能被其他应用占用），已尽力保存，请重试", durSec, -1);
+        stopForeground(true);
+        stopSelf();
     }
 
     private int elapsedSec() {

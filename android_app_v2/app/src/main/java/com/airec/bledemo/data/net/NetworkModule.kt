@@ -23,6 +23,9 @@ object NetworkModule {
 
     const val BASE_URL = "https://gp.aibeautyfulwomen.com/"
 
+    /** 接诊上传地址（手机麦 + 录音笔补传共用）的单一事实源：base + api/consultant/upload。 */
+    val uploadUrl: String get() = BASE_URL.trimEnd('/') + "/api/consultant/upload"
+
     @Volatile
     private var initialized = false
 

@@ -19,9 +19,6 @@ object RecordingModule {
 
     private const val TAG = "RecordingModule"
 
-    // 与 ConsultantActivity.uploadUrlFor(START_URL) 完全一致：base 去掉 /consultant 再拼 /api/consultant/upload。
-    private const val UPLOAD_URL = "https://gp.aibeautyfulwomen.com/api/consultant/upload"
-
     @Volatile
     private var impl: RecordingControllerImpl? = null
 
@@ -53,7 +50,9 @@ object RecordingModule {
             ""
         }
         if (cookie.isNotEmpty()) {
-            c.setUploadContext(cookie, UPLOAD_URL)
+            c.setUploadContext(cookie, NetworkModule.uploadUrl)
+            // 顺手扫一次手机麦遗留(进程被杀/上传失败残留)，带最新 Cookie 尽力补传。
+            c.retryLeftoverPhoneMic()
         }
     }
 

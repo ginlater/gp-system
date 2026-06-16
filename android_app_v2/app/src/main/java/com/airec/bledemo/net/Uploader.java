@@ -95,7 +95,8 @@ public final class Uploader {
             conn.setDoOutput(true);
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(30000);
-            conn.setReadTimeout(120000);
+            // 问题 #4：弱网下大文件(长录音/录音笔几十 MB)上传慢，120s 偏短易超时丢传，放宽到 5 分钟。
+            conn.setReadTimeout(300000);
             conn.setRequestProperty("Connection", "keep-alive");
             conn.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
             if (cookie != null && !cookie.isEmpty()) {

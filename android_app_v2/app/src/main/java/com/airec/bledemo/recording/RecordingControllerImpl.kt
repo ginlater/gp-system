@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.airec.bledemo.net.Uploader
 import com.airec.bledemo.soni.SoniPenController
 import com.airec.bledemo.soni.SoniScanActivity
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -79,9 +80,11 @@ class RecordingControllerImpl(
 
     @Volatile private var cookie: String? = null
 
-    // TODO(集成): 真实上传 URL 应由集成层从 base + "/api/consultant/upload" 拼好后 setUploadContext 注入。
-    //  这里给一个与现有后端一致的默认值兜底，避免未注入时崩；集成时务必覆盖成会话级的真实值。
-    @Volatile private var uploadUrl: String? = DEFAULT_UPLOAD_URL
+    // 上传 URL 单一事实源在 [NetworkModule.uploadUrl]；这里取它作默认兜底，登录后 setUploadContext 再覆盖会话级。
+    @Volatile private var uploadUrl: String? = com.airec.bledemo.data.net.NetworkModule.uploadUrl
+
+    // 手机麦遗留补传扫描的并发护栏（回前台会多次触发 refreshUploadContext，避免重入并发补传）。
+    @Volatile private var phoneMicScanning = false
 
     // ============ 当前来源（仅用于 Recording 态打标，引擎本身以镜像为准） ============
 
@@ -472,6 +475,70 @@ class RecordingControllerImpl(
         penController.onNetworkAvailable()
     }
 
+    /**
+     * 手机麦遗留补传扫描（对齐陪伴笔的扫描补传）：进程被系统杀（vivo 划后台）或上传失败时，
+     * `rec_*.m4a` 会留在 filesDir/recordings 无人回收。回前台 / 进首页(refreshUploadContext)时调一次，
+     * 带最新 Cookie 尽力补传，成功即删；并主动提示顾问有几段未同步（问题 #3/#5）。
+     *
+     * 安全护栏：① 正在手机麦录音/上传时不扫（别动正在写的文件）；② 跳过 20s 内改过的文件（可能正被写）；
+     * ③ 401/拒绝=永久失败，保留文件 + 提示重新登录后停止（问题 #7）。
+     */
+    fun retryLeftoverPhoneMic() {
+        val url = uploadUrl ?: return
+        val ck = cookie ?: return
+        if (ck.isEmpty()) return
+        // 正在手机麦录音/上传 → 不扫，避免碰当前文件。
+        val st = _state.value
+        if (st is RecordingState.Recording || st is RecordingState.Uploading) return
+        if (phoneMicScanning) return
+        phoneMicScanning = true
+        kotlin.concurrent.thread(name = "phonemic-retry", isDaemon = true) {
+            try {
+                val dir = java.io.File(appCtx.filesDir, "recordings")
+                val files = dir.listFiles { f ->
+                    f.isFile && f.name.startsWith("rec_") && f.name.endsWith(".m4a")
+                } ?: return@thread
+                val now = System.currentTimeMillis()
+                // >1KB 且 20s 内没改过（不是正被写的当前录音）才算遗留。
+                val stale = files.filter { it.length() > 1024L && now - it.lastModified() > 20_000L }
+                    .sortedBy { it.lastModified() }
+                if (stale.isEmpty()) return@thread
+                _penEvents.tryEmit("检测到 ${stale.size} 段未同步的录音，正在自动补传…")
+                var failed = 0
+                for (f in stale) {
+                    val durSec = runCatching {
+                        val mmr = android.media.MediaMetadataRetriever()
+                        mmr.setDataSource(f.absolutePath)
+                        val ms = mmr.extractMetadata(
+                            android.media.MediaMetadataRetriever.METADATA_KEY_DURATION,
+                        )?.toLongOrNull() ?: 0L
+                        mmr.release()
+                        (ms / 1000L).toInt()
+                    }.getOrDefault(0)
+                    val r = Uploader.upload(f, durSec, ck, url)
+                    when {
+                        r.ok -> f.delete()
+                        !r.transientFail -> {
+                            // 401/拒绝等永久失败：保留文件，提示后停止本轮（重试也没用）。
+                            _penEvents.tryEmit(r.error ?: "补传失败，请重新登录后重试")
+                            return@thread
+                        }
+                        else -> failed++
+                    }
+                }
+                if (failed > 0) {
+                    _penEvents.tryEmit("还有 $failed 段录音没传成功，请保持网络畅通，回到首页会自动重试")
+                } else {
+                    _penListChanged.tryEmit(Unit)   // 有补传成功 → 刷新待整理
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "retryLeftoverPhoneMic 失败: ${t.message}")
+            } finally {
+                phoneMicScanning = false
+            }
+        }
+    }
+
     override fun autoConnectPen(savedMac: String?) {
         if (savedMac.isNullOrEmpty()) return
         penController.autoConnect(savedMac)
@@ -583,10 +650,6 @@ class RecordingControllerImpl(
 
     companion object {
         private const val TAG = "RecordingController"
-
-        // TODO(集成): 临时默认上传地址（与现有后端一致）。集成层应在登录后用会话级 URL 覆盖。
-        private const val DEFAULT_UPLOAD_URL =
-            "https://gp.aibeautyfulwomen.com/api/consultant/upload"
 
         // 「连上后自动开录」兜底超时：连上+真开录全程的上限（对齐旧宿主 4s 兜底，放宽到 8s 容握手）。
         private const val PENDING_CONNECT_TIMEOUT_MS = 8000L
