@@ -58,6 +58,14 @@ interface ConsultantApi {
         @PartMap fields: Map<String, @JvmSuppressWildcards okhttp3.RequestBody>,
     ): Response<UploadResult>
 
+    /** 上传运行诊断：meta(设备/版本/笔状态 JSON) + penlog/last_result 日志文件，给工程师远程排查陪伴笔问题。 */
+    @Multipart
+    @POST("api/consultant/diag/upload")
+    suspend fun uploadDiag(
+        @PartMap fields: Map<String, @JvmSuppressWildcards okhttp3.RequestBody>,
+        @Part files: List<MultipartBody.Part>,
+    ): Response<SimpleResult>
+
     /** 结束陪伴时先建 processing 占位行（recorded_at 可选，表单字段）。 */
     @FormUrlEncoded
     @POST("api/consultant/placeholder")

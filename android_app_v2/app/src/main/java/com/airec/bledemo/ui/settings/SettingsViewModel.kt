@@ -92,6 +92,20 @@ class SettingsViewModel(
         }
     }
 
+    /** 上传运行诊断：把笔的运行日志 + 设备/版本/笔状态发给工程师远程排查。 */
+    fun uploadDiag() {
+        if (_state.value.diagUploading) return
+        _state.update { it.copy(diagUploading = true, diagResult = null) }
+        viewModelScope.launch {
+            val pc = com.airec.bledemo.soni.SoniPenController.instance()
+            val meta = pc?.diagMetaJson() ?: "{}"
+            when (val r = repo.uploadDiag(meta, pc?.diagPenlogFile(), pc?.diagLastResultFile())) {
+                is ApiResult.Success -> _state.update { it.copy(diagUploading = false, diagResult = "已上传，工程师可远程查看 ✅") }
+                is ApiResult.Failure -> _state.update { it.copy(diagUploading = false, diagResult = r.message ?: "上传失败，请重试") }
+            }
+        }
+    }
+
     /** 退出登录。完成后触发 [onDone]（上层把导航起点切回登录）。 */
     fun logout(onDone: () -> Unit) {
         if (_state.value.loggingOut) return
@@ -127,6 +141,8 @@ data class SettingsUiState(
     val mustUpgrade: Boolean = false,
     val updateAvailable: Boolean = false,
     val loggingOut: Boolean = false,
+    val diagUploading: Boolean = false,
+    val diagResult: String? = null,
 ) {
     /** 顶部展示用陪伴师名；缺省退回用户名。 */
     val displayName: String

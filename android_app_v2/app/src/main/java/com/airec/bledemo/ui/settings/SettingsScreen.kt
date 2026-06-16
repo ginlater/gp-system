@@ -143,6 +143,7 @@ fun SettingsScreen(
                 state = state,
                 onUpdate = openUpdate,
                 onCheck = { viewModel.checkVersion() },
+                onUploadDiag = { viewModel.uploadDiag() },
             )
             Spacer(Modifier.height(Dimens.S6))
 
@@ -427,6 +428,7 @@ private fun AboutCard(
     state: SettingsUiState,
     onUpdate: () -> Unit,
     onCheck: () -> Unit,
+    onUploadDiag: () -> Unit,
 ) {
     val hasUpdate = state.updateAvailable || state.mustUpgrade
     MeiliCard {
@@ -476,6 +478,34 @@ private fun AboutCard(
                     size = MeiliButtonSize.Xs,
                 )
             }
+        }
+        // 上传运行诊断行：陪伴笔出问题时一键把运行日志发给工程师远程排查
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "上传运行诊断",
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.5f.sp),
+                    color = MeiliPalette.Ink,
+                )
+                Text(
+                    text = state.diagResult ?: "陪伴笔遇到问题时，一键把运行日志发给工程师远程排查",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5f.sp),
+                    color = MeiliPalette.Ink3,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            GhostButton(
+                text = if (state.diagUploading) "上传中" else "上传",
+                onClick = onUploadDiag,
+                enabled = !state.diagUploading,
+                size = MeiliButtonSize.Xs,
+            )
         }
     }
 }
@@ -705,7 +735,7 @@ private fun SettingsPreviewBody(state: SettingsUiState) {
             Spacer(Modifier.height(Dimens.CardGap))
             SectionLabel("关于美丽陪伴", icon = MeiliIcons.Info)
             Spacer(Modifier.height(9.dp))
-            AboutCard(state = state, onUpdate = {}, onCheck = {})
+            AboutCard(state = state, onUpdate = {}, onCheck = {}, onUploadDiag = {})
             Spacer(Modifier.height(Dimens.S6))
             GhostButton("退出登录", {}, icon = MeiliIcons.Lock, modifier = Modifier.fillMaxWidth())
         }

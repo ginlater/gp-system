@@ -2084,6 +2084,40 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     /** 当前电量（cmd=6 缓存；"110"=充电中；空=未知）。 */
     public String batteryPercent() { return batteryPct; }
 
+    // ============ 运行诊断（上传给工程师远程排查） ============
+
+    /** 笔事件流水日志文件（penLog 写的，和 v1 同路径）。 */
+    public java.io.File diagPenlogFile() {
+        java.io.File root = appCtx == null ? null : appCtx.getExternalFilesDir(null);
+        return root == null ? null : new java.io.File(new java.io.File(root, "stream_ops"), "penlog.txt");
+    }
+
+    /** 最近上传/探针结果文件（writeProbeStatus 写的）。 */
+    public java.io.File diagLastResultFile() {
+        java.io.File root = appCtx == null ? null : appCtx.getExternalFilesDir(null);
+        return root == null ? null : new java.io.File(new java.io.File(root, "stream_ops"), "last_result.txt");
+    }
+
+    /** 设备/版本/笔状态 meta JSON（对齐 v1 buildDiagMeta；声云无 rssi，故省略）。 */
+    public String diagMetaJson() {
+        try {
+            org.json.JSONObject o = new org.json.JSONObject();
+            o.put("model", android.os.Build.MODEL);
+            o.put("brand", android.os.Build.BRAND);
+            o.put("android", android.os.Build.VERSION.RELEASE);
+            o.put("sdk", android.os.Build.VERSION.SDK_INT);
+            if (appCtx != null) {
+                try { o.put("appVersion", appCtx.getPackageManager()
+                        .getPackageInfo(appCtx.getPackageName(), 0).versionName); } catch (Exception ignore) {}
+            }
+            o.put("penConnected", isPenAlive());
+            o.put("pending", pendingCount() + "," + pendingFailedCount());
+            o.put("battery", batteryPct);
+            o.put("ts", System.currentTimeMillis());
+            return o.toString();
+        } catch (Exception e) { return "{}"; }
+    }
+
     /** 解析当前缓存电量 → 推给首页显示（percent 0–100；声云充电时 cbc 形如 1xx，百位=充电标记）。 */
     private void notifyBatteryToUi() {
         if (listener == null) return;

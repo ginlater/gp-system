@@ -68,6 +68,21 @@ class ConsultantRepository(
         api.upload(part, fields)
     }
 
+    /** 上传运行诊断：meta JSON + penlog/last_result 日志文件（文件不存在/为空则跳过）。 */
+    suspend fun uploadDiag(meta: String, penlog: File?, lastResult: File?): ApiResult<SimpleResult> = call {
+        val fields = HashMap<String, RequestBody>()
+        fields["meta"] = meta.toRequestBody(TEXT)
+        val parts = ArrayList<MultipartBody.Part>()
+        fun addFile(field: String, f: File?) {
+            if (f != null && f.exists() && f.length() > 0L) {
+                parts += MultipartBody.Part.createFormData(field, "$field.txt", f.asRequestBody(TEXT))
+            }
+        }
+        addFile("penlog", penlog)
+        addFile("last_result", lastResult)
+        api.uploadDiag(fields, parts)
+    }
+
     suspend fun createPlaceholder(recordedAt: String? = null): ApiResult<PlaceholderResult> =
         call { api.createPlaceholder(recordedAt) }
 
