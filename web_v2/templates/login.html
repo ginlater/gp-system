@@ -3,32 +3,70 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>登录 · 工牌接诊分析系统</title>
+<title>登录 · 美丽陪伴</title>
 <style>
+:root{
+  --jade:#5E9B7E; --jade-deep:#3F7D62; --gold:#C6A56B;
+  --ink:#2E2A26; --muted:#9A9087; --line:#EBE2D6; --rose:#C97B6E;
+  --card:#FFFDFA;
+  --serif:"Songti SC","STSong","Noto Serif SC",serif;
+  --sans:"PingFang SC","Noto Sans SC",system-ui,-apple-system,sans-serif;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:#f4f6f9;display:flex;align-items:center;justify-content:center;min-height:100vh;padding:16px}
-.box{background:#fff;border:1px solid #d5dce8;border-radius:6px;padding:36px 40px;width:100%;max-width:360px;box-shadow:0 4px 20px rgba(0,0,0,.04)}
-@media (max-width:480px){.box{padding:28px 22px}input,button{font-size:16px !important}}
-h1{font-size:18px;color:#1c3461;margin-bottom:6px}
-.sub{font-size:12px;color:#8a95a3;margin-bottom:24px}
-label{display:block;font-size:12px;color:#4a5568;margin:14px 0 6px}
-input{width:100%;border:1px solid #d5dce8;border-radius:4px;padding:9px 12px;font-size:14px;font-family:inherit;outline:none}
-input:focus{border-color:#4a90d9}
-button{width:100%;margin-top:22px;background:#1c3461;color:#fff;border:none;border-radius:4px;padding:10px;font-size:14px;font-family:inherit;cursor:pointer}
-button:hover{background:#2d5594}
-.err{margin-top:12px;font-size:12px;color:#e74c3c}
+body{
+  font-family:var(--sans);color:var(--ink);min-height:100vh;padding:20px;
+  display:flex;align-items:center;justify-content:center;
+  background:
+    radial-gradient(60% 50% at 18% 8%, rgba(94,155,126,.12) 0, transparent 60%),
+    radial-gradient(55% 45% at 88% 92%, rgba(198,165,107,.12) 0, transparent 60%),
+    linear-gradient(150deg,#F6F1EA 0%, #F1EAE0 100%);
+}
+.box{
+  position:relative;background:var(--card);border:1px solid var(--line);
+  border-radius:22px;padding:40px 38px 36px;width:100%;max-width:380px;
+  box-shadow:0 20px 50px rgba(74,55,32,.10), 0 4px 12px rgba(74,55,32,.05);
+}
+.emblem{
+  width:54px;height:54px;border-radius:16px;margin:0 auto 18px;
+  background:linear-gradient(135deg,var(--jade),var(--gold));
+  display:flex;align-items:center;justify-content:center;
+  font-family:var(--serif);font-size:28px;color:#fff;
+  box-shadow:0 8px 20px rgba(94,155,126,.35);
+}
+h1{font-family:var(--serif);font-size:25px;letter-spacing:4px;color:var(--ink);text-align:center;font-weight:600}
+.sub{font-size:12.5px;color:var(--muted);text-align:center;letter-spacing:1px;margin-top:6px;margin-bottom:28px}
+label{display:block;font-size:12.5px;color:var(--muted);margin:16px 0 7px;letter-spacing:.5px}
+input{
+  width:100%;border:1px solid var(--line);border-radius:11px;padding:11px 14px;
+  font-size:14.5px;font-family:inherit;outline:none;background:#fff;color:var(--ink);
+  transition:border-color .15s, box-shadow .15s;
+}
+input:focus{border-color:var(--jade);box-shadow:0 0 0 3px rgba(94,155,126,.12)}
+input::placeholder{color:#c3bcb1}
+button{
+  width:100%;margin-top:26px;border:none;border-radius:12px;padding:12px;
+  font-size:15px;font-family:inherit;cursor:pointer;letter-spacing:2px;color:#fff;
+  background:linear-gradient(135deg,var(--jade),var(--jade-deep));
+  box-shadow:0 8px 20px rgba(63,125,98,.28);transition:filter .15s, transform .05s;
+}
+button:hover{filter:brightness(1.05)}
+button:active{transform:translateY(1px)}
+.err{margin-top:14px;font-size:12.5px;color:var(--rose);text-align:center}
+.foot{margin-top:22px;text-align:center;font-size:11px;color:#c3bcb1;letter-spacing:1px}
 </style>
 </head>
 <body>
 <form class="box" method="post">
-  <h1>工牌接诊分析系统</h1>
-  <div class="sub">请登录</div>
+  <div class="emblem">玉</div>
+  <h1>美丽陪伴</h1>
+  <div class="sub">美业陪伴 · 接诊分析系统</div>
   <label>手机号 / 用户名</label>
   <input name="username" required autofocus placeholder="顾问请填手机号">
   <label>密码</label>
-  <input name="password" type="password" required>
-  <button type="submit">登录</button>
+  <input name="password" type="password" required placeholder="请输入密码">
+  <button type="submit">登 录</button>
   {% if error %}<div class="err">{{ error }}</div>{% endif %}
+  <div class="foot">员工与管理员均可登录</div>
 </form>
 </body>
 </html>
