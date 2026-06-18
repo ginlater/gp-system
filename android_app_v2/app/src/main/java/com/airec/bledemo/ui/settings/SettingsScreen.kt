@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -507,6 +508,38 @@ private fun AboutCard(
                 size = MeiliButtonSize.Xs,
             )
         }
+        // 隐私政策 / 用户协议入口（合规：App 内须有可随时查看隐私政策的入口）
+        val uriHandler = LocalUriHandler.current
+        val base = com.airec.bledemo.data.net.NetworkModule.BASE_URL.trimEnd('/')
+        PolicyRow("隐私政策", "了解我们如何收集与使用信息") { uriHandler.openUri("$base/privacy-policy") }
+        PolicyRow("用户协议", "使用美丽陪伴的服务条款") { uriHandler.openUri("$base/terms-of-service") }
+    }
+}
+
+/** 关于卡内的「隐私政策 / 用户协议」行：右侧「查看」点开公网政策页。 */
+@Composable
+private fun PolicyRow(title: String, sub: String, onOpen: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold, fontSize = 13.5f.sp),
+                color = MeiliPalette.Ink,
+            )
+            Text(
+                sub,
+                style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5f.sp),
+                color = MeiliPalette.Ink3,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        GhostButton(text = "查看", onClick = onOpen, size = MeiliButtonSize.Xs)
     }
 }
 

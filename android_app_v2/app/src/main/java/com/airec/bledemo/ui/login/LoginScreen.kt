@@ -13,11 +13,15 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
@@ -28,6 +32,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,10 +42,15 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -51,6 +63,7 @@ import com.airec.bledemo.designsystem.MeiliTheme
 import com.airec.bledemo.designsystem.MeiliIcons
 import com.airec.bledemo.designsystem.components.MeiliCard
 import com.airec.bledemo.designsystem.components.PrimaryButton
+import com.airec.bledemo.data.net.NetworkModule
 
 /**
  * 登录（SPEC §4.1 / warm_2 #login）。
@@ -75,6 +88,13 @@ fun LoginScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val keyboard = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
+    val uriHandler = LocalUriHandler.current
+
+    // 隐私合规（vivo 等应用商店要求）：默认【不勾选】同意，未勾选不可登录；政策链接可点开。
+    var agreed by rememberSaveable { mutableStateOf(false) }
+    val base = NetworkModule.BASE_URL.trimEnd('/')
+    val privacyUrl = "$base/privacy-policy"
+    val termsUrl = "$base/terms-of-service"
 
     // 登录成功一次性信号：消费后回调上层切导航。
     LaunchedEffect(state.loggedIn) {
@@ -168,7 +188,7 @@ fun LoginScreen(
                         keyboardType = KeyboardType.Password,
                         imeAction = ImeAction.Done,
                     ),
-                    keyboardActions = KeyboardActions(onDone = { viewModel.login() }),
+                    keyboardActions = KeyboardActions(onDone = { if (agreed) viewModel.login() }),
                     isPassword = true,
                 )
 
@@ -189,7 +209,8 @@ fun LoginScreen(
                         text = if (state.loading) "登录中…" else "登 录",
                         onClick = { viewModel.login() },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = state.canSubmit,
+                        // 未勾选「同意隐私政策」不可登录（合规要求：不默认同意、需用户主动勾选）
+                        enabled = state.canSubmit && agreed,
                     )
                     if (state.loading) {
                         CircularProgressIndicator(
@@ -203,15 +224,44 @@ fun LoginScreen(
                     }
                 }
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
 
-                Text(
-                    text = "登录即代表同意《服务协议》与《隐私政策》",
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal),
-                    color = MeiliPalette.Ink3,
-                    textAlign = TextAlign.Center,
+                // ---- 隐私合规：默认【不勾选】的同意框 + 可点开的政策链接（不勾选不可登录） ----
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = agreed,
+                        onCheckedChange = { agreed = it },
+                        modifier = Modifier.size(22.dp),
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = MeiliPalette.Clay,
+                            uncheckedColor = MeiliPalette.Ink3,
+                            checkmarkColor = MeiliPalette.White,
+                        ),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    val consent = buildAnnotatedString {
+                        append("我已阅读并同意")
+                        pushStringAnnotation("url", privacyUrl)
+                        withStyle(SpanStyle(color = MeiliPalette.ClayDeep, fontWeight = FontWeight.Bold)) { append("《隐私政策》") }
+                        pop()
+                        append("和")
+                        pushStringAnnotation("url", termsUrl)
+                        withStyle(SpanStyle(color = MeiliPalette.ClayDeep, fontWeight = FontWeight.Bold)) { append("《用户协议》") }
+                        pop()
+                    }
+                    ClickableText(
+                        text = consent,
+                        style = MaterialTheme.typography.labelSmall.copy(color = MeiliPalette.Ink2, lineHeight = 18.sp),
+                        onClick = { offset ->
+                            consent.getStringAnnotations("url", offset, offset).firstOrNull()?.let {
+                                uriHandler.openUri(it.item)
+                            }
+                        },
+                    )
+                }
             }
 
             Spacer(Modifier.height(12.dp))
