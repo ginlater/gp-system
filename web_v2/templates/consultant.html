@@ -174,40 +174,47 @@ body.skin-cute .reception-card .name{color:#d96ba8}
 body.skin-cute .dlg{border-radius:18px}
 </style>
 <style>
-/* ===== 暖玉柔光 · 高级简洁版（仅默认专业皮肤；萌系皮肤 body.skin-cute 完全不受影响）===== */
-body:not(.skin-cute){
-  --navy:#3F7D62; --blue:#5E9B7E; --border:#EBE2D6; --bg-light:#F3ECE3;
-  --text-mid:#5b534a; --text-mute:#9A9087;
-  background:#F4EEE6; color:#2E2A26;
+/* ===== 统一暖玉柔光：保留「陪伴」皮肤(给陪伴文案/无录音字)，但把它从粉色重新上成暖玉色；
+   去掉皮肤切换钮 + 飘浮 emoji，做成高级简洁大方的单一风格 ===== */
+.skin-toggle{display:none!important}
+body.skin-cute .float-decor{display:none!important}
+body.skin-cute{
+  background:#F4EEE6!important; color:#2E2A26;
+  --navy:#3F7D62; --blue:#5E9B7E; --border:#EBE2D6; --bg-light:#F3ECE3; --text-mid:#5b534a; --text-mute:#9A9087;
   font-family:"PingFang SC","Noto Sans SC",system-ui,-apple-system,sans-serif;
 }
-body:not(.skin-cute) .header-title{font-family:"Songti SC","STSong","Noto Serif SC",serif;font-size:22px;letter-spacing:2px;color:#2E2A26}
-body:not(.skin-cute) .header-user a{color:#3F7D62 !important;text-decoration:none}
-body:not(.skin-cute) .skin-toggle{border-radius:999px;border-color:var(--border);color:#9A9087}
-body:not(.skin-cute) .card{background:#FFFDFA;border:1px solid var(--border);border-radius:16px;box-shadow:0 8px 28px rgba(74,55,32,.07),0 2px 6px rgba(74,55,32,.04)}
-body:not(.skin-cute) .card h3{font-family:"Songti SC","STSong",serif;font-weight:500;color:#2E2A26}
-body:not(.skin-cute) .btn{background:#3F7D62;border-radius:10px}
-body:not(.skin-cute) .btn.sec{background:#FFFDFA;color:#3F7D62;border:1px solid var(--border)}
-body:not(.skin-cute) .btn.danger{background:#C97B6E}
-body:not(.skin-cute) .btn.big{border-radius:999px;background:linear-gradient(135deg,#5E9B7E,#3F7D62);box-shadow:0 8px 22px rgba(63,125,98,.30)}
-body:not(.skin-cute) .rec-timer{color:#3F7D62;font-family:"Songti SC","STSong",serif}
-body:not(.skin-cute) .tbl{border:1px solid var(--border);border-radius:12px;overflow:hidden}
-body:not(.skin-cute) .tbl th{background:#3F7D62;color:#fff}
-body:not(.skin-cute) .tag{background:#EAF2EC;color:#3F7D62}
-body:not(.skin-cute) .tag.done{background:#E7F0EA;color:#3F7D62}
-body:not(.skin-cute) .tag.running{background:#F6ECDD;color:#B0792F}
-body:not(.skin-cute) .tag.failed{background:#F7E6E2;color:#C97B6E}
-body:not(.skin-cute) .row input,body:not(.skin-cute) .row select{border:1px solid var(--border);border-radius:10px;background:#FFFDFA}
-body:not(.skin-cute) .row input:focus{border-color:#5E9B7E}
-body:not(.skin-cute) .list-entry{background:linear-gradient(135deg,#5E9B7E,#3F7D62);box-shadow:0 6px 18px rgba(63,125,98,.25);border-radius:14px}
-body:not(.skin-cute) .list-entry.bottom{background:linear-gradient(135deg,#C6A56B,#B0894D);box-shadow:0 6px 18px rgba(176,137,77,.25)}
-body:not(.skin-cute) .reception-card{background:#FFFDFA;border:1px solid var(--border);border-radius:14px}
-body:not(.skin-cute) .reception-card .name{color:#2E2A26}
-body:not(.skin-cute) .seg button.active{background:#3F7D62;color:#fff}
-body:not(.skin-cute) .dlg{border-radius:16px}
+body.skin-cute::before{content:none!important;display:none!important}
+body.skin-cute .header-title{color:#2E2A26;font-family:"Songti SC","STSong","Noto Serif SC",serif;letter-spacing:2px;font-size:22px}
+body.skin-cute .header-title::before{content:none!important}
+body.skin-cute .header-user{color:#9A9087}
+body.skin-cute .header-user a{color:#3F7D62!important}
+body.skin-cute .card{background:#FFFDFA;border:1px solid #EBE2D6;border-radius:16px;box-shadow:0 8px 28px rgba(74,55,32,.07),0 2px 6px rgba(74,55,32,.04)}
+body.skin-cute .card h3{color:#2E2A26;font-family:"Songti SC","STSong",serif;font-weight:500}
+body.skin-cute .btn{background:#3F7D62;border-radius:10px;box-shadow:none}
+body.skin-cute .btn.sec{background:#FFFDFA;color:#3F7D62;border:1px solid #EBE2D6}
+body.skin-cute .btn.big{background:linear-gradient(135deg,#5E9B7E,#3F7D62);border-radius:999px;box-shadow:0 8px 22px rgba(63,125,98,.30)}
+body.skin-cute .btn.big::before{content:none!important;display:none!important;animation:none!important}
+body.skin-cute .rec-timer{color:#3F7D62;font-family:"Songti SC","STSong",serif;text-shadow:none}
+body.skin-cute .rec-timer::before{content:none!important}
+body.skin-cute .rec-status{color:#9A9087}
+body.skin-cute .rec-dot{background:#C97B6E;box-shadow:none}
+body.skin-cute .tbl{border:1px solid #EBE2D6;border-radius:12px}
+body.skin-cute .tbl th{background:#3F7D62;color:#fff}
+body.skin-cute .tbl td{border-bottom:1px solid #EBE2D6}
+body.skin-cute .tag{background:#EAF2EC;color:#3F7D62}
+body.skin-cute .tag.done{background:#E7F0EA;color:#3F7D62}
+body.skin-cute .tag.running{background:#F6ECDD;color:#B0792F}
+body.skin-cute .row input,body.skin-cute .row select{border:1px solid #EBE2D6;border-radius:10px}
+body.skin-cute .row input:focus,body.skin-cute .row select:focus{border-color:#5E9B7E}
+body.skin-cute .list-entry{background:linear-gradient(135deg,#5E9B7E,#3F7D62);box-shadow:0 6px 18px rgba(63,125,98,.25);border-radius:14px}
+body.skin-cute .list-entry.bottom{background:linear-gradient(135deg,#C6A56B,#B0894D);box-shadow:0 6px 18px rgba(176,137,77,.25)}
+body.skin-cute .reception-card{background:#FFFDFA;border-color:#EBE2D6;border-radius:14px}
+body.skin-cute .reception-card .name{color:#2E2A26}
+body.skin-cute .seg button.active{background:#3F7D62;color:#fff}
+body.skin-cute .dlg{border-radius:16px}
 </style>
 </head>
-<body>
+<body class="skin-cute">
 <div class="wrap">
   <div class="header-bar">
     <div class="header-title"><span class="t-pro">接诊录音</span><span class="t-cute">美丽陪伴</span><span id="appVerTag" style="display:none;font-size:11px;font-weight:400;margin-left:8px;vertical-align:middle"></span></div>
@@ -846,7 +853,7 @@ if (IN_APP) {
   // ★必须含 idle：切到档案页又切回时，本页(WebView bfcache)残留的"录音中"计时会空走、还露出"结束录音"按钮，
   //   但录音笔其实早停了(原生 idle)。只有严格按 getState 同步(含把 UI 拉回 idle)才能避免这种"瞎录制"假象。
   window.__syncRecState = function(){
-    try { applySkin((localStorage.getItem('skin_pref_v2')) || 'cute'); } catch(e){}  // 皮肤先就绪，录音文案才不漏「录音」字
+    try { applySkin('cute'); } catch(e){}  // 统一暖玉：只用「陪伴」皮肤(无「录音」字)，不再随 localStorage 切到专业版
     try {
       var _gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
       var _realActive = (_gs === 'recording' || _gs === 'uploading' || _gs === 'starting');
@@ -1118,11 +1125,7 @@ function toggleSkin(){
   // 重新渲染未入库列表的状态标签
   if (typeof loadPending === 'function') loadPending();
 }
-(function initSkin(){
-  let s = 'cute';
-  try { s = localStorage.getItem('skin_pref_v2') || 'cute'; } catch(e){}
-  applySkin(s);
-})();
+(function initSkin(){ applySkin('cute'); })();  // 统一暖玉:固定「陪伴」皮肤,不再读取/切换
 
 // ============ 一键诊断上传（仅 App 内；老版本 App 无此桥方法则隐藏入口） ============
 window.__onDiagUploaded = function(ok, msg){

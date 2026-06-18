@@ -174,43 +174,52 @@ body.skin-cute .float-decor{
 }
 </style>
 <style>
-/* ===== 暖玉柔光 · 高级简洁版（仅默认专业皮肤；萌系皮肤 body.skin-cute 完全不受影响）===== */
-body:not(.skin-cute){
-  --navy:#3F7D62; --blue:#5E9B7E; --border:#EBE2D6; --bg-light:#F3ECE3;
-  --text-mid:#5b534a; --text-mute:#9A9087;
-  background:#F4EEE6; color:#2E2A26;
+/* ===== 统一暖玉柔光：保留「陪伴/美丽档案」皮肤(文案)，把粉色重新上成暖玉；去切换钮 + 飘浮装饰 ===== */
+.skin-toggle{display:none!important}
+.float-decor{display:none!important}
+body.skin-cute{
+  background:#F4EEE6!important;color:#2E2A26;
+  --navy:#3F7D62;--blue:#5E9B7E;--border:#EBE2D6;--bg-light:#F3ECE3;--text-mid:#5b534a;--text-mute:#9A9087;
   font-family:"PingFang SC","Noto Sans SC",system-ui,-apple-system,sans-serif;
 }
-body:not(.skin-cute) .list-wrap{max-width:1240px;padding:34px 40px 80px}
-body:not(.skin-cute) .header-bar{border-bottom:1px solid var(--border);padding-bottom:18px;margin-bottom:26px}
-body:not(.skin-cute) .header-title{font-family:"Songti SC","STSong","Noto Serif SC",serif;font-size:25px;letter-spacing:2px;color:#2E2A26;font-weight:600}
-body:not(.skin-cute) .header-user{color:#9A9087}
-body:not(.skin-cute) .header-user a{color:#3F7D62 !important;text-decoration:none}
-body:not(.skin-cute) .skin-toggle{border-radius:999px;border-color:var(--border);color:#9A9087}
-body:not(.skin-cute) .skin-toggle:hover{border-color:#5E9B7E;color:#3F7D62}
-body:not(.skin-cute) .toolbar input,body:not(.skin-cute) .toolbar select{border:1px solid var(--border);border-radius:10px;padding:9px 13px;background:#FFFDFA}
-body:not(.skin-cute) .toolbar input:focus{border-color:#5E9B7E}
-body:not(.skin-cute) .toolbar button{background:#3F7D62;border-radius:10px;padding:9px 18px}
-body:not(.skin-cute) .toolbar button.sec{background:#FFFDFA;color:#3F7D62;border:1px solid var(--border)}
-body:not(.skin-cute) .filter-pills .pill{background:#FFFDFA;border:1px solid var(--border);border-radius:999px}
-body:not(.skin-cute) .filter-pills .pill:hover{border-color:#5E9B7E;color:#3F7D62}
-body:not(.skin-cute) .filter-pills .pill.active{background:#3F7D62;border-color:#3F7D62;color:#fff}
-body:not(.skin-cute) .filter-pills .pill.active .cnt{background:rgba(255,255,255,.22)}
-body:not(.skin-cute) .sess-tbl{border:1px solid var(--border);border-radius:16px;overflow:hidden;box-shadow:0 8px 28px rgba(74,55,32,.07),0 2px 6px rgba(74,55,32,.04)}
-body:not(.skin-cute) .sess-tbl th{background:#3F7D62;color:#fff;font-weight:500;letter-spacing:.06em;padding:13px 14px}
-body:not(.skin-cute) .sess-tbl td{border-bottom:1px solid var(--border)}
-body:not(.skin-cute) .sess-tbl tr:hover td{background:#FAF5EE}
-body:not(.skin-cute) .score-cell{font-family:"Songti SC","STSong",serif;color:#3F7D62}
-body:not(.skin-cute) .pagi button{border-radius:10px;background:#FFFDFA;color:#3F7D62;border:1px solid var(--border)}
-body:not(.skin-cute) .s-done{background:#E7F0EA;color:#3F7D62}
-body:not(.skin-cute) .s-running{background:#EAF2EC;color:#3F7D62}
-body:not(.skin-cute) .s-running::before{background:#5E9B7E}
-body:not(.skin-cute) .s-pending{background:#F6ECDD;color:#B0792F}
-body:not(.skin-cute) .s-idle{background:#F0EBE3;color:#9A9087}
-body:not(.skin-cute) .s-failed{background:#F7E6E2;color:#C97B6E}
+body.skin-cute::before{content:none!important;display:none!important}
+body.skin-cute .list-wrap{max-width:1240px;padding:34px 40px 80px}
+body.skin-cute .header-title{color:#2E2A26;font-family:"Songti SC","STSong","Noto Serif SC",serif;font-size:25px;letter-spacing:2px}
+body.skin-cute .header-title::before{content:none!important}
+body.skin-cute .header-user{color:#9A9087}
+body.skin-cute .header-user a{color:#3F7D62!important}
+body.skin-cute .toolbar input{border:1px solid #EBE2D6;border-radius:10px;background:#FFFDFA}
+body.skin-cute .toolbar input:focus{border-color:#5E9B7E}
+body.skin-cute .toolbar button{background:#3F7D62;border-radius:10px;box-shadow:none}
+body.skin-cute .toolbar button.sec{background:#FFFDFA;color:#3F7D62;border:1px solid #EBE2D6;box-shadow:none}
+body.skin-cute .filter-pills .pill{background:#FFFDFA;border:1px solid #EBE2D6;color:#5b534a}
+body.skin-cute .filter-pills .pill:hover{border-color:#5E9B7E;color:#3F7D62}
+body.skin-cute .filter-pills .pill.active{background:#3F7D62;border-color:#3F7D62;color:#fff;box-shadow:none}
+body.skin-cute .filter-pills .pill .cnt{background:rgba(63,125,98,.10);color:#3F7D62}
+body.skin-cute .filter-pills .pill.active .cnt{background:rgba(255,255,255,.25);color:#fff}
+body.skin-cute .sess-tbl{background:#FFFDFA;border:1px solid #EBE2D6;border-radius:16px;overflow:hidden;box-shadow:0 8px 28px rgba(74,55,32,.07),0 2px 6px rgba(74,55,32,.04)}
+body.skin-cute .sess-tbl th{background:#3F7D62;color:#fff}
+body.skin-cute .sess-tbl td{border-bottom:1px solid #EBE2D6}
+body.skin-cute .sess-tbl tr:hover td{background:#FAF5EE}
+body.skin-cute .score-cell{color:#3F7D62;font-family:"Songti SC","STSong",serif}
+body.skin-cute .s-done{background:#E7F0EA;color:#3F7D62}
+body.skin-cute .s-running{background:#EAF2EC;color:#3F7D62}
+body.skin-cute .s-running::before{background:#5E9B7E}
+body.skin-cute .s-pending{background:#F6ECDD;color:#B0792F}
+body.skin-cute .s-idle{background:#F0EBE3;color:#9A9087}
+body.skin-cute .s-failed{background:#F7E6E2;color:#C97B6E}
+body.skin-cute .pagi button{background:#FFFDFA;color:#3F7D62;border:1px solid #EBE2D6;border-radius:10px}
+body.skin-cute #batchBar{background:linear-gradient(90deg,#EAF2EC,#F3ECE3)!important;border:1px solid #EBE2D6!important;border-radius:12px!important}
+body.skin-cute #batchBar b{color:#3F7D62!important}
+body.skin-cute #batchBar button{background:#3F7D62!important;border-radius:10px!important}
+body.skin-cute #batchBar button.sec{background:#FFFDFA!important;color:#3F7D62!important;border:1px solid #EBE2D6!important}
+@media (max-width:768px){
+  body.skin-cute .sess-tbl tr{background:#FFFDFA;border:1px solid #EBE2D6;border-radius:12px}
+  body.skin-cute .sess-tbl td:last-child a{background:#3F7D62!important;border-radius:10px}
+}
 </style>
 </head>
-<body>
+<body class="skin-cute">
 <div class="list-wrap">
   <div class="header-bar">
     <div class="header-title"><span class="t-pro">工牌接诊分析系统</span><span class="t-cute">美丽陪伴档案</span></div>
@@ -378,11 +387,7 @@ function toggleSkin(){
   try { localStorage.setItem('skin_pref_v2', next); } catch(e){}
   applySkin(next);
 }
-(function initSkin(){
-  let s = 'cute';
-  try { s = localStorage.getItem('skin_pref_v2') || 'cute'; } catch(e){}
-  applySkin(s);
-})();
+(function initSkin(){ applySkin('cute'); })();  // 统一暖玉:固定「美丽档案」皮肤,不再读取/切换
 const IS_ADMIN = (ROLE === 'admin' || ROLE === 'super');
 const selectedIds = new Set();
 let curPage = 1;
