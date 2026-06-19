@@ -267,8 +267,18 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     new java.util.concurrent.atomic.AtomicLong(SystemClock.elapsedRealtime());
             while (true) {
                 main.post(() -> lastAck.set(SystemClock.elapsedRealtime()));
+                long beforeSleep = SystemClock.elapsedRealtime();
                 try { Thread.sleep(5000); } catch (InterruptedException e) { return; }
+                long sleptMs = SystemClock.elapsedRealtime() - beforeSleep;
                 long stall = SystemClock.elapsedRealtime() - lastAck.get();
+                // ★关键：若本轮 sleep 自身远超 5s，说明整个进程被系统冻结(Doze/省电/息屏)，
+                //   守护线程和主线程是一起被冻的——这不是"主线程卡死"，是误报。重置基线、绝不自杀。
+                //   （旧逻辑一息屏就报"冻结几万秒"无谓重启，正是唐书娟日志里那批假杀。）
+                if (sleptMs > 15000) {
+                    lastAck.set(SystemClock.elapsedRealtime());
+                    continue;
+                }
+                // 真正的主线程卡死：守护线程正常醒(sleptMs≈5s)，但主线程 >20s 不应答 → 自愈重启。
                 if (stall > 20000) {
                     penLog("★主线程冻结" + (stall / 1000) + "s(疑SDK主线程BLE阻塞)→自杀重启自愈");
                     writeProbeStatus("[看门狗] 主线程冻结" + (stall / 1000) + "s → 进程自杀重启自愈");
@@ -2113,6 +2123,23 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             o.put("penConnected", isPenAlive());
             o.put("pending", pendingCount() + "," + pendingFailedCount());
             o.put("battery", batteryPct);
+            // ★后台保活授权状态（排查"被系统杀/冻结"用）：是否加了电池白名单、后台是否被限制、关键权限是否授予。
+            if (appCtx != null) {
+                try {
+                    android.os.PowerManager pm = (android.os.PowerManager) appCtx.getSystemService(android.content.Context.POWER_SERVICE);
+                    o.put("batteryWhitelist", pm != null && pm.isIgnoringBatteryOptimizations(appCtx.getPackageName()));
+                } catch (Exception ignore) {}
+                try {
+                    android.app.ActivityManager am = (android.app.ActivityManager) appCtx.getSystemService(android.content.Context.ACTIVITY_SERVICE);
+                    if (android.os.Build.VERSION.SDK_INT >= 28 && am != null) o.put("bgRestricted", am.isBackgroundRestricted());
+                } catch (Exception ignore) {}
+                try {
+                    o.put("permRecordAudio", appCtx.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED);
+                } catch (Exception ignore) {}
+                try {
+                    if (android.os.Build.VERSION.SDK_INT >= 33) o.put("permNotify", appCtx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED);
+                } catch (Exception ignore) {}
+            }
             o.put("ts", System.currentTimeMillis());
             return o.toString();
         } catch (Exception e) { return "{}"; }
