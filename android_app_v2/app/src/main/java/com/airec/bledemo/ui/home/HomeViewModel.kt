@@ -98,14 +98,8 @@ class HomeViewModel(
     private val _pendingBindRecId = MutableStateFlow<Long?>(null)
     val pendingBindRecId: StateFlow<Long?> = _pendingBindRecId.asStateFlow()
 
-    /** 用户点「现在绑定」→ 清提示（上层负责导航到绑定页）。 */
+    /** 跳转绑定页前清提示（一次性事件，避免回首页重复跳转）。 */
     fun consumeBindPrompt() { _pendingBindRecId.value = null }
-
-    /** 用户点「稍后」→ 清提示并留一条 Toast 兜底（顾问总忘绑定）。 */
-    fun dismissBindPromptLater() {
-        _pendingBindRecId.value = null
-        _toast.value = SAVED_BIND_HINT
-    }
 
     fun consumeToast() {
         _toast.value = null
@@ -431,10 +425,6 @@ class HomeViewModel(
         super.onCleared()
     }
 
-    private companion object {
-        // 录完一段（手机麦 / 陪伴笔）统一提示，样式一致：原生 Toast，提示去「待整理」绑定。
-        const val SAVED_BIND_HINT = "已保存 · 可在「待整理」绑定顾客"
-    }
 }
 
 /** 头部问候 / 身份。 */

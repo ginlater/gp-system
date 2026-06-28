@@ -93,30 +93,13 @@ fun HomeScreen(
     val toast by viewModel.toast.collectAsStateWithLifecycle()
     val pendingBindRecId by viewModel.pendingBindRecId.collectAsStateWithLifecycle()
 
-    // 录完一段 → 弹「现在绑定顾客」对话框（不必等上传完成；顾问总忘绑定，主动提示）。
-    // 「现在绑定」直达绑定页；「稍后」留一条 Toast 兜底。还有多段未绑定时附带数量提醒。
-    pendingBindRecId?.let { rid ->
-        val moreHint = receptionStats.pendingBind.let { n ->
-            if (n > 1) "　你还有 $n 段未绑定，别忘了哦。" else ""
+    // 录完一段 → 直接跳转到绑定页（不必等上传完成；强制绑定，不给「稍后」逃避，避免顾问多录几段忘绑）。
+    // 一次性事件：先消费置空（避免回首页重复跳转），再跳转。
+    LaunchedEffect(pendingBindRecId) {
+        pendingBindRecId?.let { rid ->
+            viewModel.consumeBindPrompt()
+            onBindCustomer(rid)
         }
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { viewModel.dismissBindPromptLater() },
-            icon = { Icon(MeiliIcons.Companion, contentDescription = null, tint = MeiliPalette.Clay) },
-            title = { Text("陪伴已保存") },
-            text = { Text("这段陪伴已保存，现在就可以绑定顾客（不必等上传完成），方便你接待下一位。$moreHint") },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    viewModel.consumeBindPrompt()
-                    onBindCustomer(rid)
-                }) { Text("现在绑定", color = MeiliPalette.ClayDeep, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { viewModel.dismissBindPromptLater() }) {
-                    Text("稍后", color = MeiliPalette.Ink3)
-                }
-            },
-            containerColor = MeiliPalette.Surface,
-        )
     }
 
     // 标记是否已经历过首个 onResume（首拉已覆盖，故首个 resume 不再重复联网）。
