@@ -91,29 +91,6 @@ fun HomeScreen(
     val reminderCount by viewModel.reminderCount.collectAsStateWithLifecycle()
     val receptionStats by viewModel.receptionStats.collectAsStateWithLifecycle()
     val toast by viewModel.toast.collectAsStateWithLifecycle()
-    val pendingBindRecId by viewModel.pendingBindRecId.collectAsStateWithLifecycle()
-
-    // 录完一段 → 弹「现在绑定顾客」对话框（顾问总忘绑定，主动提示；点「现在绑定」直达绑定页）。
-    pendingBindRecId?.let { rid ->
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { viewModel.consumeBindPrompt() },
-            icon = { Icon(MeiliIcons.Companion, contentDescription = null, tint = MeiliPalette.Clay) },
-            title = { Text("陪伴已保存") },
-            text = { Text("这段陪伴已保存成功。现在就绑定到顾客，方便接下来生成报告吗？") },
-            confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    viewModel.consumeBindPrompt()
-                    onBindCustomer(rid)
-                }) { Text("现在绑定", color = MeiliPalette.ClayDeep, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { viewModel.consumeBindPrompt() }) {
-                    Text("稍后", color = MeiliPalette.Ink3)
-                }
-            },
-            containerColor = MeiliPalette.Surface,
-        )
-    }
 
     // 标记是否已经历过首个 onResume（首拉已覆盖，故首个 resume 不再重复联网）。
     val resumedOnce = remember { androidx.compose.runtime.mutableStateOf(false) }
