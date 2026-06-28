@@ -94,6 +94,19 @@ class HomeViewModel(
     private val _toast = MutableStateFlow<String?>(null)
     val toast: StateFlow<String?> = _toast.asStateFlow()
 
+    // 录完一段后待提示绑定的 recordingId（>0 时 HomeScreen 弹「现在绑定顾客」对话框；可在上传完成前绑定）。
+    private val _pendingBindRecId = MutableStateFlow<Long?>(null)
+    val pendingBindRecId: StateFlow<Long?> = _pendingBindRecId.asStateFlow()
+
+    /** 用户点「现在绑定」→ 清提示（上层负责导航到绑定页）。 */
+    fun consumeBindPrompt() { _pendingBindRecId.value = null }
+
+    /** 用户点「稍后」→ 清提示并留一条 Toast 兜底（顾问总忘绑定）。 */
+    fun dismissBindPromptLater() {
+        _pendingBindRecId.value = null
+        _toast.value = SAVED_BIND_HINT
+    }
+
     fun consumeToast() {
         _toast.value = null
     }
@@ -176,7 +189,7 @@ class HomeViewModel(
                     // （旧实现按"状态里带 id"派生跳转，会导致每次回首页都被弹回绑定页 = 卡死）。
                     if (st.lastRecordingId > 0 && st.lastRecordingId != lastFinishedId) {
                         lastFinishedId = st.lastRecordingId
-                        _toast.value = SAVED_BIND_HINT
+                        // 绑定提示改由 bindPrompt 事件统一弹对话框（含手机麦/陪伴笔）；这里只刷新待整理计数。
                         loadPending()
                     }
                     // 注：错误/连接/归属等文案不再从 Idle.errorMessage 弹（会被 StateFlow 去重或随后的 Idle 覆盖吞掉），
@@ -203,10 +216,13 @@ class HomeViewModel(
         viewModelScope.launch { rc.penEvents.collect { _toast.value = it } }
         // 后台机身片段落地（补传成功/建占位）→ 刷新首页「待整理」计数（对齐旧宿主 onPenUploaded→loadPending）。
         viewModelScope.launch { rc.penListChanged.collect { loadPending() } }
-        // 一段陪伴笔录音保存成功 → 与手机麦一致地提示「已保存·可去待整理绑定」（顾问总忘绑定）。
+        // 录完一段（手机麦/陪伴笔）拿到可绑定 recordingId → 弹「现在绑定顾客」对话框（不必等上传完成）。
         viewModelScope.launch {
-            rc.recordingSaved.collect { rid ->
-                if (rid > 0) _toast.value = SAVED_BIND_HINT
+            rc.bindPrompt.collect { rid ->
+                if (rid > 0) {
+                    _pendingBindRecId.value = rid
+                    loadPending()
+                }
             }
         }
         // 来源默认：优先用持久化的上次选择；没有记录时才退回「按笔是否在线」（与 warm_2 默认选陪伴笔一致）。

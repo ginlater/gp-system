@@ -77,9 +77,9 @@ class RecordingControllerImpl(
     private val _penListChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
     override val penListChanged: SharedFlow<Unit> = _penListChanged.asSharedFlow()
 
-    // 一段录音保存成功(recordingId)→ 提示绑定顾客。
-    private val _recordingSaved = MutableSharedFlow<Long>(extraBufferCapacity = 4)
-    override val recordingSaved: SharedFlow<Long> = _recordingSaved.asSharedFlow()
+    // 录完即拿到可绑定 recordingId(占位)→ 弹绑定对话框(不必等上传)。
+    private val _bindPrompt = MutableSharedFlow<Long>(extraBufferCapacity = 4)
+    override val bindPrompt: SharedFlow<Long> = _bindPrompt.asSharedFlow()
 
     // 连接/查状态时回调上层重注上传上下文（Cookie 轮换兜底）；由 RecordingModule.init 接上。
     override var onNeedContextRefresh: (() -> Unit)? = null
@@ -253,9 +253,13 @@ class RecordingControllerImpl(
 
         override fun onPenUploaded(recordingId: Long) {
             // 一段后台上传成功 → 通知 UI 刷新「待整理」列表与首页待整理计数（对齐旧宿主 → loadPending）。
+            // 绑定提示已在「建占位时」(onPenBindPrompt)弹过，这里不再重复提示。
             _penListChanged.tryEmit(Unit)
-            // 提示顾问现在绑定顾客（避免录完忘绑）。仅真实段(recordingId>0)。
-            if (recordingId > 0) _recordingSaved.tryEmit(recordingId)
+        }
+
+        override fun onPenBindPrompt(recordingId: Long) {
+            // 一段录音刚建好占位、拿到可绑定 recordingId（不必等上传完成）→ 弹绑定对话框。
+            if (recordingId > 0) _bindPrompt.tryEmit(recordingId)
         }
 
         override fun onPenPlaceholderCreated() {
@@ -290,8 +294,16 @@ class RecordingControllerImpl(
         if (busState == PhoneMicService.STATE_ERROR && !message.isNullOrBlank()) {
             _penEvents.tryEmit(message)
         }
+        // 手机麦停录上传成功（STATE_IDLE 带 recId）→ 弹绑定对话框（手机麦上传快，几秒内出现）。
+        // 去重：同一 recId 只提示一次（attach 同步快照会重放最近 Idle）。
+        if (busState == PhoneMicService.STATE_IDLE && recId > 0 && recId != lastBusBindRecId) {
+            lastBusBindRecId = recId
+            _bindPrompt.tryEmit(recId)
+        }
         _state.value = applyTimeSync(mapBusState(busState, message, durSec, recId))
     }
+
+    @Volatile private var lastBusBindRecId: Long = -1L
 
     override fun attach() {
         RecordingBus.setListener(busListener)

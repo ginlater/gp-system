@@ -62,6 +62,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         void onPenUploaded(long recordingId);
         /** 已建占位片段(后端记录)。 */
         void onPenPlaceholderCreated();
+        /** 一段录音刚建好占位、拿到可绑定的 recordingId（录完即可绑定，不必等上传完成）→ UI 弹绑定提示。 */
+        default void onPenBindPrompt(long recordingId) {}
         /** 当前后台下载进度(0-100)。 */
         void onPenProgress(int percent);
         /** 手动"从陪伴笔同步"：机身文件列表(JSON 数组)。 */
@@ -869,7 +871,11 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (pid > 0) {
                 task.placeholderId = pid;
                 Log.d(TAG, "已建占位片段 id=" + pid);
-                if (listener != null) main.post(listener::onPenPlaceholderCreated);
+                if (listener != null) {
+                    main.post(listener::onPenPlaceholderCreated);
+                    // 录完即可绑定：拿到占位 recordingId 就提示绑定，不必等 BLE 下载/上传完成。
+                    main.post(() -> listener.onPenBindPrompt(pid));
+                }
             }
         });
         main.postDelayed(this::kickWorker, kickDelayMs);

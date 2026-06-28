@@ -4841,12 +4841,12 @@ def terms_of_service():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.58"
+APP_V2_VERSION_NAME = "2.0.59"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 59   # = build.gradle versionCode（2.0.58）
+APP_V2_LATEST_VERSION_CODE = 60   # = build.gradle versionCode（2.0.59）
 APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
 APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
@@ -9780,7 +9780,7 @@ def api_consultant_upload():
         return jsonify({"id": dup["id"], "deduped": True})
     if placeholder_id:
         prow = db_fetchone(
-            "SELECT id, uploader_user_id, upload_status FROM recordings WHERE id=?",
+            "SELECT id, uploader_user_id, upload_status, source, session_id FROM recordings WHERE id=?",
             (placeholder_id,),
         )
         if prow and prow["uploader_user_id"] == u["id"] and prow["upload_status"] == "processing":
@@ -9789,26 +9789,27 @@ def api_consultant_upload():
             except Exception as e:
                 app.logger.exception("顾问端上传 OSS 失败")
                 return jsonify({"error": _friendly_oss_error(e)}), 500
-            # 占位行建占位时已带真实 recorded_at；仅当本次上传也带了 recorded_at 才覆盖，
-            # 否则别用上传时刻 now 覆盖掉占位的真实开始时间。
-            # ★asr_status 同步置 awaiting_intake：和手机录音(ingest orphan=True)一致——
-            #   未绑定顾客前不跑 ASR(省钱)，且「待整理」里状态统一；绑定时会翻回 pending 起流水线。
-            #   只动还没跑过 ASR 的(pending)，别覆盖已在跑/已完成的。
+            # 回填后的 source：手机麦占位 → consultant-upload，笔占位 → consultant-pen。
+            new_source = "consultant-upload" if (prow["source"] or "").startswith("consultant-mic") else "consultant-pen"
+            # ★「录完先绑定、音频后到」(bind-before-upload)：若占位已被绑定(session_id 非空)，
+            #   说明顾问已提前绑好顾客，绝不能动 session_id/customer，且 asr_status 维持绑定时设的
+            #   pending(让分析能跑)；只有【未绑定】的占位回填才置 awaiting_intake(未绑定不跑ASR省钱)。
+            bound = prow["session_id"] is not None
+            asr_clause = ("asr_status" if bound
+                          else "CASE WHEN asr_status='pending' THEN 'awaiting_intake' ELSE asr_status END")
             if recorded_at_form:
                 db_write(
-                    """UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
-                       recorded_at=?, source='consultant-pen', upload_status='done',
-                       asr_status=CASE WHEN asr_status='pending' THEN 'awaiting_intake' ELSE asr_status END
+                    f"""UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
+                       recorded_at=?, source=?, upload_status='done', asr_status={asr_clause}
                        WHERE id=?""",
-                    (oss_key, len(data), dur_label, recorded_at_form, prow["id"]),
+                    (oss_key, len(data), dur_label, recorded_at_form, new_source, prow["id"]),
                 )
             else:
                 db_write(
-                    """UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
-                       source='consultant-pen', upload_status='done',
-                       asr_status=CASE WHEN asr_status='pending' THEN 'awaiting_intake' ELSE asr_status END
+                    f"""UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
+                       source=?, upload_status='done', asr_status={asr_clause}
                        WHERE id=?""",
-                    (oss_key, len(data), dur_label, prow["id"]),
+                    (oss_key, len(data), dur_label, new_source, prow["id"]),
                 )
             if truncate_note:
                 db_write("UPDATE recordings SET truncate_note=? WHERE id=?", (truncate_note, prow["id"]))
@@ -9964,16 +9965,19 @@ def api_consultant_placeholder():
     ts14 = now.strftime("%Y%m%d%H%M%S")
     # 占位 oss_key：唯一、不真传 OSS，上传完成时会被换成真 key
     placeholder_key = f"pending-uploads/{company_id}/{u['id']}/{ts14}_{_uuid.uuid4().hex[:8]}.pending"
+    # 来源标记：手机麦传 source=phone → 占位记 consultant-mic-placeholder（回填时也归手机麦）；默认笔。
+    src_kind = (request.form.get("source") or "").strip()
+    ph_source = "consultant-mic-placeholder" if src_kind == "phone" else "consultant-pen-placeholder"
     # 直接底层 INSERT，不走 ingest_recording（避免建 session / 起分析流水线）
     rid = db_write(
         """INSERT INTO recordings
            (session_id, oss_key, advisor, customer, recorded_at,
             duration_label, size_bytes, source, company_id, uploader_user_id,
-            upload_status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            upload_status, asr_status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (None, placeholder_key, advisor, None, recorded_at,
-         None, 0, "consultant-pen-placeholder", company_id, u["id"],
-         "processing", recorded_at),
+         None, 0, ph_source, company_id, u["id"],
+         "processing", "awaiting_intake", recorded_at),
     )
     return jsonify({"id": rid})
 

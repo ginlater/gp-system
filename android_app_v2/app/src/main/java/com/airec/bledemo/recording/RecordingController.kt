@@ -54,10 +54,11 @@ interface RecordingController {
     val penListChanged: SharedFlow<Unit>
 
     /**
-     * 一段陪伴录音保存成功（拿到 recordingId）→ UI 弹「现在绑定顾客」提示，避免顾问录完忘记绑定。
-     * 手机麦：停录上传成功；陪伴笔：一段后台上传成功（onPenUploaded）。携带 recordingId 供跳绑定页。
+     * 一段录音录完、已拿到可绑定的 recordingId（占位记录，**不必等上传完成**）→ UI 弹「现在绑定顾客」对话框，
+     * 避免顾问录完忘记绑定，也让顾问录完立刻绑下一位、不必等上传。
+     * 手机麦：停录即建占位；陪伴笔：建占位片段时。携带 recordingId 供直达绑定页。
      */
-    val recordingSaved: SharedFlow<Long>
+    val bindPrompt: SharedFlow<Long>
 
     /**
      * 连接成功 / 查到笔录音状态时回调，让上层（[RecordingModule]）重注最新上传上下文（会话 Cookie）。
