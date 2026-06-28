@@ -29,6 +29,10 @@ object NetworkModule {
     @Volatile
     private var initialized = false
 
+    /** Application Context（CredentialStore 等需要，init 时存）。 */
+    lateinit var appContext: Context
+        private set
+
     lateinit var cookieJar: PrefsCookieJar
         private set
 
@@ -52,6 +56,7 @@ object NetworkModule {
     fun init(context: Context) {
         if (initialized) return
 
+        appContext = context.applicationContext
         cookieJar = PrefsCookieJar(context.applicationContext)
 
         val logging = HttpLoggingInterceptor().apply {

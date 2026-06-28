@@ -6,9 +6,16 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.airec.bledemo.data.auth.AuthManager
 import com.airec.bledemo.net.Uploader
 import com.airec.bledemo.soni.SoniPenController
 import com.airec.bledemo.soni.SoniScanActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -70,6 +77,10 @@ class RecordingControllerImpl(
     private val _penListChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
     override val penListChanged: SharedFlow<Unit> = _penListChanged.asSharedFlow()
 
+    // 一段录音保存成功(recordingId)→ 提示绑定顾客。
+    private val _recordingSaved = MutableSharedFlow<Long>(extraBufferCapacity = 4)
+    override val recordingSaved: SharedFlow<Long> = _recordingSaved.asSharedFlow()
+
     // 连接/查状态时回调上层重注上传上下文（Cookie 轮换兜底）；由 RecordingModule.init 接上。
     override var onNeedContextRefresh: (() -> Unit)? = null
 
@@ -85,6 +96,32 @@ class RecordingControllerImpl(
 
     // 手机麦遗留补传扫描的并发护栏（回前台会多次触发 refreshUploadContext，避免重入并发补传）。
     @Volatile private var phoneMicScanning = false
+
+    // 上传遇 401 自动重登的并发护栏 + 后台协程作用域。
+    private val authScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var reAuthing = false
+
+    /**
+     * 上传遇 401（登录失效）→ 用本地保存的凭证悄悄重新登录，成功后刷新上传上下文（拿到新 Cookie 注回引擎，
+     * 待补传段会用新 Cookie 重试）。顾问全程无感，不再手动重登。并发护栏避免多段同时 401 时重复登录。
+     */
+    private fun reAuthOnExpired() {
+        if (reAuthing) return
+        reAuthing = true
+        authScope.launch {
+            try {
+                val ok = AuthManager().reAuthenticate()
+                if (ok) {
+                    Log.i(TAG, "401 自动重登成功 → 刷新上传上下文重试")
+                    onNeedContextRefresh?.invoke()
+                } else {
+                    Log.w(TAG, "401 自动重登失败（无凭证或被拒）")
+                }
+            } finally {
+                reAuthing = false
+            }
+        }
+    }
 
     // ============ 当前来源（仅用于 Recording 态打标，引擎本身以镜像为准） ============
 
@@ -217,6 +254,8 @@ class RecordingControllerImpl(
         override fun onPenUploaded(recordingId: Long) {
             // 一段后台上传成功 → 通知 UI 刷新「待整理」列表与首页待整理计数（对齐旧宿主 → loadPending）。
             _penListChanged.tryEmit(Unit)
+            // 提示顾问现在绑定顾客（避免录完忘绑）。仅真实段(recordingId>0)。
+            if (recordingId > 0) _recordingSaved.tryEmit(recordingId)
         }
 
         override fun onPenPlaceholderCreated() {
@@ -239,8 +278,8 @@ class RecordingControllerImpl(
 
     private val penController: SoniPenController by lazy {
         SoniPenController(appCtx, penListener).also {
-            // 上传遇 401(登录失效) → 引擎不丢段退避重试，同时回来取最新会话 Cookie 注回引擎
-            it.onAuthExpired = Runnable { onNeedContextRefresh?.invoke() }
+            // 上传遇 401(登录失效) → 引擎不丢段退避重试；这里用本地凭证自动重登拿新 Cookie 注回引擎（顾问无感）。
+            it.onAuthExpired = Runnable { reAuthOnExpired() }
         }
     }
 
@@ -515,11 +554,25 @@ class RecordingControllerImpl(
                         mmr.release()
                         (ms / 1000L).toInt()
                     }.getOrDefault(0)
-                    val r = Uploader.upload(f, durSec, ck, url)
+                    var r = Uploader.upload(f, durSec, ck, url)
+                    // 手机麦补传遇 401：先用本地凭证自动重登一次，成功就用新 Cookie 立刻重传这一段。
+                    if (!r.ok && r.error?.contains("登录已失效") == true) {
+                        val relogged = runCatching { runBlocking { AuthManager().reAuthenticate() } }.getOrDefault(false)
+                        if (relogged) {
+                            val freshCk = runCatching {
+                                val nm = com.airec.bledemo.data.net.NetworkModule
+                                nm.cookieJar.cookieHeader(nm.BASE_URL.toHttpUrl())
+                            }.getOrNull()
+                            if (!freshCk.isNullOrEmpty()) {
+                                cookie = freshCk
+                                r = Uploader.upload(f, durSec, freshCk, url)
+                            }
+                        }
+                    }
                     when {
                         r.ok -> f.delete()
                         !r.transientFail -> {
-                            // 401/拒绝等永久失败：保留文件，提示后停止本轮（重试也没用）。
+                            // 401/拒绝等永久失败（自动重登也没救回）：保留文件，提示后停止本轮。
                             _penEvents.tryEmit(r.error ?: "补传失败，请重新登录后重试")
                             return@thread
                         }

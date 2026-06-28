@@ -111,6 +111,9 @@ app = Flask(
 )
 app.secret_key = FLASK_SECRET_KEY
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1GB（支持多文件批量上传）
+# 登录有效期延长到 1 年（顾问端长期在岗，避免几小时/几天就 401 过期、上传被堵）。
+# 配合 App 端「401 自动重登」，顾问基本不再手动重新登录。
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=365)
 
 
 class PrefixMiddleware:
@@ -4838,12 +4841,12 @@ def terms_of_service():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.0.56"
+APP_V2_VERSION_NAME = "2.0.57"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 57   # = build.gradle versionCode（2.0.56）
+APP_V2_LATEST_VERSION_CODE = 58   # = build.gradle versionCode（2.0.57）
 APP_V2_MIN_VERSION_CODE = 1       # 默认不强更；要强更时抬到 LATEST
 APP_V2_UPDATE_NOTE = "建议更新到最新版，体验更顺、修复已知问题。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：

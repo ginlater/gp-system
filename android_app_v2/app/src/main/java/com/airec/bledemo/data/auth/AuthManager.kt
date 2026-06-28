@@ -17,6 +17,7 @@ import com.airec.bledemo.data.net.PrefsCookieJar
 class AuthManager(
     private val api: ConsultantApi = NetworkModule.api,
     private val cookieJar: PrefsCookieJar = NetworkModule.cookieJar,
+    private val creds: CredentialStore = CredentialStore(),
 ) {
 
     sealed class LoginResult {
@@ -45,6 +46,8 @@ class AuthManager(
                 is MeResult.Ok -> {
                     // 四类有效角色（consultant / store_manager / admin / super）一律放行；
                     // 进 App 后由 GateScreen 按 role 路由（顾问端主壳 vs 管理台）。
+                    // 保存凭证供「上传遇 401 自动重登」（顾问全程无感）。
+                    runCatching { creds.save(username.trim(), password) }
                     LoginResult.Success(meResult.me)
                 }
                 is MeResult.Unauthorized -> {
@@ -59,7 +62,7 @@ class AuthManager(
         }
     }
 
-    /** 退出登录：调用 /logout 并清空本地 Cookie（即便 /logout 失败也清本地）。 */
+    /** 退出登录：调用 /logout 并清空本地 Cookie + 凭证（即便 /logout 失败也清本地）。 */
     suspend fun logout() {
         try {
             api.logout()
@@ -67,6 +70,23 @@ class AuthManager(
             // 忽略：本地清空才是关键
         } finally {
             cookieJar.clear()
+            runCatching { creds.clear() }   // 退出登录后不再自动重登
+        }
+    }
+
+    /**
+     * 自动重登（上传遇 401 时调）：用本地保存的凭证悄悄重新登录，成功后新 Cookie 已落盘。
+     * @return true=重登成功（调用方据此刷新上传上下文并重试）；false=无凭证/失败。
+     */
+    suspend fun reAuthenticate(): Boolean {
+        val u = creds.username()?.takeIf { it.isNotBlank() } ?: return false
+        val p = creds.password()?.takeIf { it.isNotBlank() } ?: return false
+        return try {
+            val resp = api.login(u, p)
+            if (!resp.isSuccessful) return false
+            fetchMe() is MeResult.Ok
+        } catch (_: Exception) {
+            false
         }
     }
 
