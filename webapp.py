@@ -3453,6 +3453,11 @@ def _call_deepseek(model, system_prompt, user_prompt, tool=None, max_tokens=None
         payload["thinking"] = {"type": "enabled"}
         # thinking token 计入 max_tokens，预留 24K buffer
         payload["max_tokens"] = max(out_budget + 24000, 28000)
+    elif is_v4 and "tool_choice" in payload:
+        # ★根因修复：V4 默认开着 thinking，只要请求里带 tool_choice（最后一次重试会强制），
+        #   就报 HTTP 400 "Thinking mode does not support this tool_choice" → 该 part 整段失败。
+        #   仅"不下发 thinking:enabled"不够，必须显式 disabled 才能让 V4 接受 tool_choice。
+        payload["thinking"] = {"type": "disabled"}
     # trust_env=False 关键：服务器有 http_proxy=7890，DeepSeek 不能走代理
     with httpx.Client(
         trust_env=False,
@@ -4484,8 +4489,11 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         done_count = sum(1 for tid in all_task_ids
                          if ts.get(tid, {}).get("status") == "done")
         any_done = done_count > 0
-        # 只有全部任务都成功才算 done；任一失败 → failed，让用户在列表里能一眼看到
-        final_status = "done" if done_count == len(all_task_ids) else "failed"
+        # 用户体验优先：完成过半（≥50%）即算成功，不再因个别 part 失败就整体标红。
+        # （个别 part 失败多为 DeepSeek 偶发 HTTP 400，强标 failed 会让顾问误以为全部都失败、体验很差。）
+        # 仍把"完成 X/10"写进 analysis_progress，缺哪几项可追溯。
+        total_tasks = len(all_task_ids)
+        final_status = "done" if (done_count * 2 >= total_tasks and done_count > 0) else "failed"
 
         # 失败时汇总失败任务清单写入 analysis_error，便于顾问端展示具体原因
         err_msg = None
