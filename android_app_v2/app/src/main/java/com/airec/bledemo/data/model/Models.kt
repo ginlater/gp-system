@@ -26,11 +26,19 @@ data class Me(
     @Json(name = "employee_id") val employeeId: String? = null,
     @Json(name = "phone") val phone: String? = null,
     @Json(name = "store_id") val storeId: Long? = null,
+    // 顾问级录音权限（后端 0/1，缺省视为 1=开通，向后兼容）
+    @Json(name = "allow_phone_rec") val allowPhoneRec: Int? = null,
+    @Json(name = "allow_pen_rec") val allowPenRec: Int? = null,
     // /api/me 在未登录时返回 {"error":"未登录"} + 401
     @Json(name = "error") val error: String? = null,
 ) {
     val isConsultantOrManager: Boolean
         get() = role == "consultant" || role == "store_manager"
+
+    /** 是否开通手机录音（缺省=开）。 */
+    val phoneRecAllowed: Boolean get() = allowPhoneRec != 0
+    /** 是否开通蓝牙录音笔（缺省=开）。 */
+    val penRecAllowed: Boolean get() = allowPenRec != 0
 
     /** 管理台角色（管理员 / 超管）。登录后 GateScreen 据此分流到 [com.airec.bledemo.nav.Routes.AdminHome]。 */
     val isAdminOrSuper: Boolean

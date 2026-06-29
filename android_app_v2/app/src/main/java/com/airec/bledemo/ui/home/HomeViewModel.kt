@@ -89,6 +89,19 @@ class HomeViewModel(
     private val _source = MutableStateFlow(CompanionSource.Pen)
     val source: StateFlow<CompanionSource> = _source.asStateFlow()
 
+    // ───────────────────────── 顾问级录音权限（来自 /api/me，控制来源卡是否展示） ─────────────────────────
+
+    /** 录音权限：手机麦 / 陪伴笔 是否开通（默认都开，向后兼容；拉到 /api/me 后更新）。 */
+    private val _recPerm = MutableStateFlow(RecPerm())
+    val recPerm: StateFlow<RecPerm> = _recPerm.asStateFlow()
+
+    /** 据权限钳制当前来源：未开通手机→强制陪伴笔；未开通笔→强制手机。 */
+    private fun clampSource() {
+        val p = _recPerm.value
+        if (!p.phone && _source.value == CompanionSource.Phone && p.pen) _source.value = CompanionSource.Pen
+        else if (!p.pen && _source.value == CompanionSource.Pen && p.phone) _source.value = CompanionSource.Phone
+    }
+
     // ───────────────────────── 临时提示（错误/成功 toast 文案，消费后清空） ─────────────────────────
 
     private val _toast = MutableStateFlow<String?>(null)
@@ -254,6 +267,8 @@ class HomeViewModel(
             val me: Me? = auth.currentUser()
             if (me != null) {
                 isManager = me.role == "store_manager"
+                _recPerm.value = RecPerm(phone = me.phoneRecAllowed, pen = me.penRecAllowed)
+                clampSource()
                 _header.value = HomeHeader(
                     advisorName = me.advisorName?.takeIf { it.isNotBlank() }
                         ?: me.username?.takeIf { it.isNotBlank() },
@@ -332,6 +347,9 @@ class HomeViewModel(
         if (st is RecordingState.Recording || st is RecordingState.Paused || st is RecordingState.Uploading) {
             return
         }
+        // 权限守卫：未开通的来源不允许选中（双保险，UI 也不会渲染该卡）。
+        if (src == CompanionSource.Phone && !_recPerm.value.phone) { _toast.value = "未开通手机录音权限"; return }
+        if (src == CompanionSource.Pen && !_recPerm.value.pen) { _toast.value = "未开通陪伴笔权限"; return }
         _source.value = src
         controller?.saveSource(src)
         if (src == CompanionSource.Pen && controller?.isPenConnected() == false) {
@@ -357,7 +375,13 @@ class HomeViewModel(
         when (companion.value.state) {
             is RecordingState.Uploading -> Unit // 保存中：忽略（web: if(uploading)return）
             is RecordingState.Recording, is RecordingState.Paused -> rc.stopCompanion()
-            is RecordingState.Idle -> rc.startCompanion(_source.value)
+            is RecordingState.Idle -> {
+                // 权限守卫：避免极端时序下用未开通来源开录（后端也会 403 兜底）。
+                val src = _source.value
+                if (src == CompanionSource.Phone && !_recPerm.value.phone) { _toast.value = "未开通手机录音权限"; return }
+                if (src == CompanionSource.Pen && !_recPerm.value.pen) { _toast.value = "未开通陪伴笔权限"; return }
+                rc.startCompanion(src)
+            }
         }
     }
 
@@ -426,6 +450,12 @@ class HomeViewModel(
     }
 
 }
+
+/** 顾问级录音权限（来自 /api/me，控制首页来源卡是否展示）。默认都开通=向后兼容。 */
+data class RecPerm(
+    val phone: Boolean = true,
+    val pen: Boolean = true,
+)
 
 /** 头部问候 / 身份。 */
 data class HomeHeader(

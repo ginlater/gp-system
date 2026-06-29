@@ -88,6 +88,7 @@ fun HomeScreen(
     val header by viewModel.header.collectAsStateWithLifecycle()
     val companion by viewModel.companion.collectAsStateWithLifecycle()
     val source by viewModel.source.collectAsStateWithLifecycle()
+    val recPerm by viewModel.recPerm.collectAsStateWithLifecycle()
     val reminderCount by viewModel.reminderCount.collectAsStateWithLifecycle()
     val receptionStats by viewModel.receptionStats.collectAsStateWithLifecycle()
     val toast by viewModel.toast.collectAsStateWithLifecycle()
@@ -144,6 +145,7 @@ fun HomeScreen(
         header = header,
         companion = companion,
         source = source,
+        recPerm = recPerm,
         reminderCount = reminderCount,
         receptionStats = receptionStats,
         onToggleCompanion = viewModel::toggleCompanion,
@@ -162,6 +164,7 @@ private fun HomeContent(
     header: HomeHeader,
     companion: CompanionUiState,
     source: CompanionSource,
+    recPerm: RecPerm = RecPerm(),
     reminderCount: Int = 0,
     receptionStats: ReceptionStats = ReceptionStats(),
     onToggleCompanion: () -> Unit,
@@ -187,6 +190,7 @@ private fun HomeContent(
         CompanionCard(
             companion = companion,
             source = source,
+            recPerm = recPerm,
             onToggleCompanion = onToggleCompanion,
             onPickSource = onPickSource,
             onRetryUploads = onRetryUploads,
@@ -346,6 +350,7 @@ private fun IconButtonBox(
 private fun CompanionCard(
     companion: CompanionUiState,
     source: CompanionSource,
+    recPerm: RecPerm,
     onToggleCompanion: () -> Unit,
     onPickSource: (CompanionSource) -> Unit,
     onRetryUploads: () -> Unit,
@@ -384,6 +389,7 @@ private fun CompanionCard(
                 source = source,
                 penConnected = companion.penConnected,
                 penBattery = companion.penBattery,
+                recPerm = recPerm,
                 onPickSource = onPickSource,
             )
 
@@ -551,6 +557,7 @@ private fun SourceRow(
     source: CompanionSource,
     penConnected: Boolean,
     penBattery: com.airec.bledemo.recording.PenBattery?,
+    recPerm: RecPerm,
     onPickSource: (CompanionSource) -> Unit,
 ) {
     // 已连接时副标题带上电量：「已连接 · 电量78%」/ 充电时「已连接 · 充电中」；电量未知则只显示已连接。
@@ -561,25 +568,32 @@ private fun SourceRow(
             else -> "已连接 · 电量${penBattery.percent}%"
         }
     } else "未连接"
+    // 仅展示已开通的来源卡：未开通手机录音→不显示「手机麦克风」；未开通陪伴笔→不显示「陪伴笔」。
+    // 两者都未开通时不显示来源选择（后端 upload 也会 403 兜底）。
+    if (!recPerm.phone && !recPerm.pen) return
     Row(horizontalArrangement = Arrangement.spacedBy(11.dp)) {
-        SourceCell(
-            icon = MeiliIcons.Pen,
-            title = "陪伴笔",
-            sub = penSub,
-            subDot = penConnected,
-            selected = source == CompanionSource.Pen,
-            onClick = { onPickSource(CompanionSource.Pen) },
-            modifier = Modifier.weight(1f),
-        )
-        SourceCell(
-            icon = MeiliIcons.Phone,
-            title = "手机麦克风",
-            sub = "手机采集",
-            subDot = false,
-            selected = source == CompanionSource.Phone,
-            onClick = { onPickSource(CompanionSource.Phone) },
-            modifier = Modifier.weight(1f),
-        )
+        if (recPerm.pen) {
+            SourceCell(
+                icon = MeiliIcons.Pen,
+                title = "陪伴笔",
+                sub = penSub,
+                subDot = penConnected,
+                selected = source == CompanionSource.Pen,
+                onClick = { onPickSource(CompanionSource.Pen) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+        if (recPerm.phone) {
+            SourceCell(
+                icon = MeiliIcons.Phone,
+                title = "手机麦克风",
+                sub = "手机采集",
+                subDot = false,
+                selected = source == CompanionSource.Phone,
+                onClick = { onPickSource(CompanionSource.Phone) },
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 
