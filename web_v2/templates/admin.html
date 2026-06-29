@@ -301,6 +301,8 @@ a{text-decoration:none}
           <option value="consultant">顾问</option>
           <option value="store_manager">店长</option>
         </select>
+        <label style="font-size:13px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="cAllowPhone" checked>手机录音</label>
+        <label style="font-size:13px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" id="cAllowPen" checked>录音笔</label>
         <button class="btn" onclick="createConsultant()">创建</button>
       </div>
       <div class="tip">店长 = 拥有顾问的全部功能（上传/绑定/换绑接诊单），同时能看本店运营看板。</div>
@@ -316,11 +318,11 @@ a{text-decoration:none}
       </div>
       <table class="tbl">
         <thead><tr>
-          <th>姓名</th><th>角色</th><th>门店</th><th>工号</th><th>用户名</th><th>手机号</th><th>绑定录音笔SN</th>
+          <th>姓名</th><th>角色</th><th>门店</th><th>工号</th><th>用户名</th><th>手机号</th><th>绑定录音笔SN</th><th>录音权限</th>
           {% if role == 'super' %}<th>公司</th>{% endif %}
           <th>操作</th>
         </tr></thead>
-        <tbody id="consBody"><tr><td colspan="9" class="muted">加载中…</td></tr></tbody>
+        <tbody id="consBody"><tr><td colspan="10" class="muted">加载中…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -961,6 +963,21 @@ function bindPenSn(uid, sn){
     body: JSON.stringify({pen_sn: sn || null}),
   }).then(r => r.json()).then(d => { if (d.error) alert(d.error); loadConsultants(); });
 }
+// ---- 录音权限（手机麦 / 录音笔，0/1）----
+// 列里两个勾选框，按当前值预勾；改动即 PATCH。缺字段(老接口)时默认开通(向后兼容)。
+function recPermCell(c){
+  const phone = (c.allow_phone_rec === 0) ? '' : 'checked';
+  const pen = (c.allow_pen_rec === 0) ? '' : 'checked';
+  return `<label style="font-size:12px;display:block"><input type="checkbox" ${phone} onchange="changeRecPerm(${c.id},'allow_phone_rec',this.checked)">手机</label>`
+    + `<label style="font-size:12px;display:block"><input type="checkbox" ${pen} onchange="changeRecPerm(${c.id},'allow_pen_rec',this.checked)">录音笔</label>`;
+}
+function changeRecPerm(uid, field, checked){
+  const body = {}; body[field] = checked ? 1 : 0;
+  fetch(BASE + '/api/admin/consultants/' + uid, {
+    method: 'PATCH', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(d => { if (d.error) { alert(d.error); loadConsultants(); } });
+}
 function loadConsultants(q) {
   // 确保门店缓存就绪（行内下拉要用）
   const ready = _storesCache.length ? Promise.resolve() : loadStores();
@@ -991,7 +1008,7 @@ function _loadConsultants(q) {
       }
     }
     if (!list.length) {
-      tb.innerHTML = '<tr><td colspan="9" class="muted">暂无员工</td></tr>';
+      tb.innerHTML = '<tr><td colspan="10" class="muted">暂无员工</td></tr>';
       return;
     }
     d.consultants = list;
@@ -1013,6 +1030,7 @@ function _loadConsultants(q) {
         <td>${c.username}</td>
         <td>${c.phone || '—'}</td>
         <td>${penSnCell(c)}</td>
+        <td>${recPermCell(c)}</td>
         ${ROLE === 'super' ? `<td>${c.company_id}</td>` : ''}
         <td>
           <button class="btn sec" onclick="resetPwd(${c.id})">重置密码</button>
@@ -1030,6 +1048,8 @@ function createConsultant() {
     password: document.getElementById('cPwd').value.trim(),
     store_id: document.getElementById('cStore').value || null,
     role: document.getElementById('cRole').value,
+    allow_phone_rec: document.getElementById('cAllowPhone').checked ? 1 : 0,
+    allow_pen_rec: document.getElementById('cAllowPen').checked ? 1 : 0,
   };
   if (!body.advisor_name || !body.employee_id || !body.password) {
     showMsg('newConsMsg', '姓名、工号、密码必填', true); return;
@@ -1042,6 +1062,8 @@ function createConsultant() {
     else {
       showMsg('newConsMsg', '已创建');
       ['cName','cEmp','cPhone','cPwd'].forEach(i => document.getElementById(i).value='');
+      document.getElementById('cAllowPhone').checked = true;
+      document.getElementById('cAllowPen').checked = true;
       loadConsultants();
     }
   });

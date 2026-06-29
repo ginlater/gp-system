@@ -548,6 +548,9 @@ const ROLE = {{ role|tojson }};
 // 仅当被 Android App 的 WebView 加载、且 AndroidBridge.isApp() 为 true 时为 true。
 // 普通浏览器里恒为 false，下面所有 IN_APP 分支都不会执行，行为 100% 不变。
 var IN_APP = !!(window.AndroidBridge && window.AndroidBridge.isApp && window.AndroidBridge.isApp());
+// 顾问级录音权限（服务端下发，0/1）。默认 1=开通，向后兼容。控制录音来源药丸是否出现。
+var ALLOW_PHONE_REC = {{ allow_phone_rec|default(1) }};
+var ALLOW_PEN_REC = {{ allow_pen_rec|default(1) }};
 
 // ============ 陪伴页顶部显示 App 版本号 + 是否最新（只在 App 内显示，浏览器不显示）============
 // 让陪伴师一眼知道自己装的是不是最新版。当前版本来自原生桥 appVersion()；最新版来自后端 /api/app/version。
@@ -575,6 +578,9 @@ try { showAppVersion(); } catch(e){}
 // 来源可切：录音笔(走完整系统的蓝牙实时流) 或 手机麦克风(PhoneMicService)。默认录音笔，选择记 localStorage。
 window.__appRecording = false;
 var appRecSource = (function(){ try { return localStorage.getItem('appRecSource')==='phone' ? 'phone' : 'pen'; } catch(e){ return 'pen'; } })();
+// 按权限钳制录音来源：未开通手机麦→强制笔；未开通笔→强制手机麦（若都没开通则保持原值，录音按钮实际不可用）。
+if (!ALLOW_PHONE_REC && ALLOW_PEN_REC) appRecSource = 'pen';
+else if (!ALLOW_PEN_REC && ALLOW_PHONE_REC) appRecSource = 'phone';
 var appTimerInt = null, appStartTs = 0;
 
 function appPenConnected(){
@@ -623,6 +629,9 @@ function appSrcPillStyle(selected){
 // 选择录音来源（pen 录音笔 / phone 手机麦）。录音/上传/启动中不让切。
 function appSetSource(src){
   if (window.__appRecording || window.uploading || window.__nativeState==='starting') return;
+  // 权限钳制：未开通的来源不允许选中
+  if (src==='phone' && !ALLOW_PHONE_REC) return;
+  if (src!=='phone' && !ALLOW_PEN_REC) return;
   appRecSource = (src==='phone') ? 'phone' : 'pen';
   try { localStorage.setItem('appRecSource', appRecSource); } catch(e){}
   appUpdateSourceRow();
@@ -641,21 +650,23 @@ function appPenDotHtml(connected){
 }
 function appUpdateSourceRow(){
   var pen = document.getElementById('appSrcPen');
-  if (!pen) return;
   var phone = document.getElementById('appSrcPhone');
+  if (!pen && !phone) return;   // 两个药丸都没渲染(权限全关)→无可更新
   var connected = appPenConnected();
   var penSel = (appRecSource === 'pen');
   // 录音笔药丸：左侧连接小圆点 + 文案；选中态由 appSrcPillStyle 高亮
-  if (isCute()) {
-    pen.innerHTML = appPenDotHtml(connected) +
-      '<span>' + (connected ? '🖊✨ 已就绪' : '🖊 小伙伴') + '</span>';
-    pen.title = connected ? '小伙伴已就绪 ✨' : '点我用小伙伴（会自动连接）💫';
-  } else {
-    pen.innerHTML = appPenDotHtml(connected) +
-      '<span>🖊 录音笔' + (penSel ? '（' + (connected ? '已连接' : '未连接') + '）' : '') + '</span>';
-    pen.title = connected ? '录音笔已连接' : '录音笔未连接，点击连接';
+  if (pen) {
+    if (isCute()) {
+      pen.innerHTML = appPenDotHtml(connected) +
+        '<span>' + (connected ? '🖊✨ 已就绪' : '🖊 小伙伴') + '</span>';
+      pen.title = connected ? '小伙伴已就绪 ✨' : '点我用小伙伴（会自动连接）💫';
+    } else {
+      pen.innerHTML = appPenDotHtml(connected) +
+        '<span>🖊 录音笔' + (penSel ? '（' + (connected ? '已连接' : '未连接') + '）' : '') + '</span>';
+      pen.title = connected ? '录音笔已连接' : '录音笔未连接，点击连接';
+    }
+    pen.style.cssText = appSrcPillStyle(penSel);
   }
-  pen.style.cssText = appSrcPillStyle(penSel);
   // 手机麦药丸
   if (phone) {
     phone.innerHTML = '<span>📱 手机</span>';
@@ -839,14 +850,23 @@ if (IN_APP) {
     // pro 下显示「录音方式：」，cute 下显示无「录音」字的含蓄文案（CSS t-pro/t-cute 控制）
     _lbl.innerHTML = '<span class="t-pro">录音方式：</span><span class="t-cute">方式 </span>';
     _lbl.style.cssText = 'font-size:13px;color:var(--text-mute,#888)';
-    var _pen = document.createElement('button');
-    _pen.id = 'appSrcPen'; _pen.type = 'button';
-    _pen.onclick = function(){ appSelectPen(); };
-    var _phone = document.createElement('button');
-    _phone.id = 'appSrcPhone'; _phone.type = 'button';
-    _phone.onclick = function(){ appSetSource('phone'); };
-    _row.appendChild(_lbl); _row.appendChild(_pen); _row.appendChild(_phone);
+    _row.appendChild(_lbl);
+    // 仅渲染已开通的来源药丸：未开通手机麦不出现「📱手机」，未开通录音笔不出现「🖊录音笔」。
+    if (ALLOW_PEN_REC) {
+      var _pen = document.createElement('button');
+      _pen.id = 'appSrcPen'; _pen.type = 'button';
+      _pen.onclick = function(){ appSelectPen(); };
+      _row.appendChild(_pen);
+    }
+    if (ALLOW_PHONE_REC) {
+      var _phone = document.createElement('button');
+      _phone.id = 'appSrcPhone'; _phone.type = 'button';
+      _phone.onclick = function(){ appSetSource('phone'); };
+      _row.appendChild(_phone);
+    }
     _area.insertBefore(_row, _recBtn);
+    // 只开通一种(或都没开通)→无需切换，隐藏整行；来源已由 appRecSource 钳定。
+    if (!(ALLOW_PEN_REC && ALLOW_PHONE_REC)) _row.style.display = 'none';
     appUpdateSourceRow();
   }
   // 把"按原生【真实】态同步本页录音 UI"封装，供首次进入 + 从「美丽档案」返回(pageshow/页面可见)复用。
