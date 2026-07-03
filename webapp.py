@@ -10350,8 +10350,6 @@ def api_consultant_rebind_candidates():
         if rec:
             rec_date = _rec_date_of(rec)
     cand_ids = _advisor_received_customer_ids(u["id"], advisor, cid)
-    if not cand_ids:
-        return jsonify({"items": [], "service_date": rec_date})
     # 当天本人 daily_reception 客人 id（用于标注 in_day）
     day_ids = set()
     if rec_date:
@@ -10360,14 +10358,29 @@ def api_consultant_rebind_candidates():
             (u["id"], rec_date),
         ):
             day_ids.add(r["customer_id"])
+    if q:
+        # ★2026-07-03 放开：有关键词时搜全公司客户库（含导入的历史顾客，与"加入今日接诊"
+        # 的 customer_lookup 范围一致）。排序：已在当日 > 本人接待过 > 其他。
+        # 选中非当日顾客后，客户端会自动补登当日接诊，绑定白名单校验可过。
+        like = f"%{q}%"
+        rows = db_fetchall(
+            """SELECT id, name, member_card, phone_tail FROM company_customers
+               WHERE company_id=? AND merged_into IS NULL
+                 AND (name LIKE ? OR member_card LIKE ? OR phone_tail LIKE ?)
+               ORDER BY id DESC LIMIT 50""",
+            (cid, like, like, like),
+        )
+        served = set(cand_ids)
+        items = [{"customer_id": r["id"], "name": r["name"], "member_card": r["member_card"],
+                  "phone_tail": r["phone_tail"], "in_day": r["id"] in day_ids} for r in rows]
+        items.sort(key=lambda x: (not x["in_day"], x["customer_id"] not in served))
+        return jsonify({"items": items, "service_date": rec_date})
+    if not cand_ids:
+        return jsonify({"items": [], "service_date": rec_date})
     qm = ",".join(["?"] * len(cand_ids))
     params = list(cand_ids)
     sql = (f"SELECT id, name, member_card, phone_tail FROM company_customers "
            f"WHERE id IN ({qm}) AND merged_into IS NULL")
-    if q:
-        like = f"%{q}%"
-        sql += " AND (name LIKE ? OR member_card LIKE ? OR phone_tail LIKE ?)"
-        params += [like, like, like]
     sql += " ORDER BY id DESC LIMIT 50"
     rows = db_fetchall(sql, tuple(params))
     items = [{"customer_id": r["id"], "name": r["name"], "member_card": r["member_card"],
@@ -12754,23 +12767,10 @@ def startup_kick():
     for s in zero_cost_failed:
         maybe_trigger_session_analysis(s["id"])
 
-    # ── 新增：触发 pending 且 ASR 全完成的 session ──
-    pending_ready = db_fetchall("""
-        SELECT s.id FROM sessions s
-        WHERE (s.analysis_status = 'pending' OR s.analysis_status IS NULL)
-          AND analysis_progress IS NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM recordings r
-            WHERE r.session_id = s.id AND r.asr_status != 'done'
-          )
-          AND EXISTS (
-            SELECT 1 FROM recordings r WHERE r.session_id = s.id
-          )
-    """)
-    if pending_ready:
-        print(f"[startup_kick] 发现 {len(pending_ready)} 个 pending+ASR就绪 session，自动触发")
-    for s in pending_ready:
-        maybe_trigger_session_analysis(s["id"])
+    # ── 已移除(2026-07-04)：原"触发 pending 且 ASR 全完成的 session"块。
+    #    产品规则=分析必须顾问手动点「开始分析」;此块导致每次重启服务把"绑了还没请求分析"
+    #    的 session 全部自动跑一遍(误出报告+白花模型调用)。真正卡队列的恢复由上面
+    #    queued/零成本失败两段负责,与本块无关。
 
     # ── 新增：0 录音却卡在 pending/queued（排队中…）的空会话 → 标记 failed「无录音」 ──
     # 根因：录音被换绑/移走后老会话变空，却仍是 pending；worker 因「无 recordings」跳过它(见上 EXISTS 守卫)，

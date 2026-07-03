@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Keychain 访问组:供 CredentialStore 存登录凭据(401 自动重登)。
+	     模拟器 ad-hoc 签名用字面值即可;真机自动签名时 $(AppIdentifierPrefix) 会补上 Team 前缀。 -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.aibeautyfulwomen.gongpai.ios</string>
+	</array>
+</dict>
+</plist>

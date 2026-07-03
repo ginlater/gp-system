@@ -1,0 +1,229 @@
+import SwiftUI
+
+/// 设置(SPEC §4.11)。android 端对应 `ui/settings/SettingsScreen.kt`。
+/// 陪伴师信息 + 主题皮肤(6 套 + 自动日夜) + 关于/版本(检查更新) + 退出登录。
+/// 注:iOS 走 App Store,android 的 APK 强制升级不适用 → 检查更新只提示。
+struct SettingsView: View {
+    @EnvironmentObject private var app: AppState
+    @ObservedObject private var theme = ThemeManager.shared
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var editNight = ThemeManager.isNightNow()
+    @State private var versionMsg: String?
+
+    private var me: Me? { app.me }
+    private var displayName: String { me?.advisorName?.nilIfBlank ?? me?.username?.nilIfBlank ?? "陪伴师" }
+    private var roleLabel: String {
+        switch me?.role {
+        case "store_manager": return "店长"
+        case "admin", "super": return "管理员"
+        default: return "陪伴师"
+        }
+    }
+    private var version: String {
+        let v = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let b = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
+        return "\(v) (\(b))"
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: MeiliMetric.cardGap) {
+                MeiliTopBar(title: "设置", onBack: { dismiss() })
+
+                SectionLabel("陪伴师", icon: MeiliIcons.profile)
+                accountCard
+
+                SectionLabel("主题皮肤", icon: MeiliIcons.palette)
+                themeCard
+
+                SectionLabel("字体大小", icon: MeiliIcons.doc)
+                fontSizeCard
+
+                SectionLabel("关于美丽陪伴", icon: MeiliIcons.info)
+                aboutCard
+
+                MeiliButton(app.me == nil ? "退出登录" : "退出登录", kind: .ghost, icon: MeiliIcons.lock, block: true) {
+                    Task { await app.logout() }
+                }
+                .padding(.top, 4)
+
+                Text("美丽陪伴 · 高端身体美容陪伴助手")
+                    .font(.sz(11)).foregroundStyle(MeiliColor.ink3)
+                    .frame(maxWidth: .infinity).padding(.top, 4)
+            }
+            .padding(.horizontal, MeiliMetric.screenH)
+            .padding(.bottom, 28)
+        }
+        .background(MeiliColor.bg)
+        .toolbar(.hidden, for: .navigationBar)
+    }
+
+    // MARK: 账号
+
+    private var accountCard: some View {
+        MeiliCard {
+            HStack(spacing: 13) {
+                MeiliAvatar(name: displayName, size: 46)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(displayName).font(.sz(16, weight: .heavy)).foregroundStyle(MeiliColor.ink)
+                    HStack(spacing: 8) {
+                        StatusPill(text: roleLabel, kind: .run, icon: MeiliIcons.profile)
+                        if let u = me?.username?.nilIfBlank { Text(u).font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3) }
+                    }
+                }
+                Spacer()
+            }
+            if let p = me?.phone?.nilIfBlank {
+                Rectangle().fill(MeiliColor.line).frame(height: 1).padding(.top, 13)
+                HStack {
+                    Text("联系电话").font(.sz(12.5)).foregroundStyle(MeiliColor.ink2)
+                    Spacer()
+                    Text(p).font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+                }
+                .padding(.top, 9)
+            }
+        }
+    }
+
+    // MARK: 主题皮肤
+
+    private var themeCard: some View {
+        MeiliCard {
+            // 自动日夜开关
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("自动日夜切换").font(.sz(13.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+                    Text("晚 18:00–早 6:00 自动用夜间皮肤").font(.sz(11)).foregroundStyle(MeiliColor.ink3)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(get: { theme.autoMode }, set: { theme.setAuto($0) }))
+                    .labelsHidden().tint(MeiliColor.clay)
+            }
+            Spacer().frame(height: 13)
+
+            if theme.autoMode {
+                HStack(spacing: 8) {
+                    segChip("☀ 白天", selected: !editNight) { editNight = false }
+                    segChip("🌙 晚上", selected: editNight) { editNight = true }
+                }
+                Text(editNight ? "夜间（18:00–6:00）用这套：" : "白天（6:00–18:00）用这套：")
+                    .font(.sz(11.5)).foregroundStyle(MeiliColor.ink3).padding(.top, 8)
+                Spacer().frame(height: 11)
+            } else {
+                Text("选一套喜欢的配色，整个 App 会跟着变。")
+                    .font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
+                Spacer().frame(height: 12)
+            }
+
+            let target = !theme.autoMode ? theme.currentId : (editNight ? theme.nightSkinId : theme.daySkinId)
+            VStack(spacing: 9) {
+                ForEach(ThemeManager.skins) { skin in
+                    skinRow(skin, selected: skin.id == target) {
+                        if !theme.autoMode { theme.apply(skin.id) }
+                        else if editNight { theme.setNightSkin(skin.id) }
+                        else { theme.setDaySkin(skin.id) }
+                    }
+                }
+            }
+        }
+    }
+
+    private func segChip(_ text: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(text).font(.sz(13, weight: .bold))
+                .foregroundStyle(selected ? MeiliColor.clayDeep : MeiliColor.ink2)
+                .frame(maxWidth: .infinity).padding(.vertical, 9)
+                .background(selected ? MeiliColor.clayTint : MeiliColor.surfaceSoft)
+                .clipShape(RoundedRectangle(cornerRadius: MeiliRadius.sm, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: MeiliRadius.sm, style: .continuous).strokeBorder(selected ? MeiliColor.clay : MeiliColor.line, lineWidth: 1.5) }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func skinRow(_ skin: ThemeManager.Skin, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(skin.bg).frame(width: 26, height: 26)
+                    Circle().fill(RadialGradient(colors: [skin.clay.mixWhite(0.3), skin.clay], center: .topLeading, startRadius: 0, endRadius: 14))
+                        .frame(width: 15, height: 15)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(skin.name).font(.sz(13.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+                    Text(skin.desc).font(.sz(11)).foregroundStyle(MeiliColor.ink3)
+                }
+                Spacer()
+                if selected { MeiliIcon(MeiliIcons.check, size: 20).foregroundStyle(MeiliColor.clayDeep) }
+            }
+            .padding(.horizontal, 13).padding(.vertical, 11)
+            .background(selected ? MeiliColor.clayTint : MeiliColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: MeiliRadius.sm, style: .continuous))
+            .overlay { RoundedRectangle(cornerRadius: MeiliRadius.sm, style: .continuous).strokeBorder(selected ? MeiliColor.clay : MeiliColor.line, lineWidth: 1.5) }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: 字体大小
+
+    private var fontSizeCard: some View {
+        MeiliCard {
+            Text("调整全 App 的文字大小，顾客报告也会跟着变大。")
+                .font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
+            Spacer().frame(height: 13)
+            HStack(spacing: 8) {
+                fontChip("小", 0.9)
+                fontChip("标准", 1.0)
+                fontChip("大", 1.15)
+                fontChip("特大", 1.3)
+            }
+            Spacer().frame(height: 14)
+            // 实时预览(用 MeiliFont,随 fontScale 变)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("预览").font(MeiliFont.label).foregroundStyle(MeiliColor.ink3)
+                Text("顾客今天的状态不错，建议下次重点跟进肩颈放松与补水护理。")
+                    .font(MeiliFont.body).foregroundStyle(MeiliColor.ink)
+            }
+            .padding(13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(MeiliColor.surfaceSoft)
+            .clipShape(RoundedRectangle(cornerRadius: MeiliRadius.sm, style: .continuous))
+        }
+    }
+
+    private func fontChip(_ label: String, _ scale: CGFloat) -> some View {
+        let selected = abs(theme.fontScale - scale) < 0.01
+        return Button { theme.setFontScale(scale) } label: {
+            Text(label).font(.sz(13, weight: .bold))
+                .foregroundStyle(selected ? MeiliColor.clayDeep : MeiliColor.ink2)
+                .frame(maxWidth: .infinity).padding(.vertical, 9)
+                .background(selected ? MeiliColor.clayTint : MeiliColor.surfaceSoft)
+                .clipShape(RoundedRectangle(cornerRadius: MeiliRadius.sm, style: .continuous))
+                .overlay { RoundedRectangle(cornerRadius: MeiliRadius.sm, style: .continuous).strokeBorder(selected ? MeiliColor.clay : MeiliColor.line, lineWidth: 1.5) }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: 关于 / 版本
+
+    private var aboutCard: some View {
+        MeiliCard {
+            HStack {
+                Text("当前版本").font(.sz(12.5)).foregroundStyle(MeiliColor.ink2)
+                Spacer()
+                Text(version).font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+            }
+            Rectangle().fill(MeiliColor.line).frame(height: 1).padding(.vertical, 11)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("检查更新").font(.sz(13.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+                    Text(versionMsg ?? "看看有没有更顺手的新版本").font(.sz(11.5)).foregroundStyle(MeiliColor.ink3)
+                }
+                Spacer()
+                MeiliButton("检查", kind: .ghost, size: .xs) {
+                    versionMsg = "已是最新版本，无需更新"   // iOS 走 App Store;暂无更高版本
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,219 @@
+import SwiftUI
+import AVFoundation
+
+/// 极简音频播放器(原始音频全程,无 60s 限制)。
+@MainActor
+final class AudioPlayer: ObservableObject {
+    @Published var playing = false
+    @Published var current: Double = 0
+    @Published var duration: Double = 0
+    @Published var ready = false
+
+    private var player: AVPlayer?
+    private var observer: Any?
+    private var loadedURL: String?
+
+    func load(_ urlString: String) {
+        guard urlString != loadedURL, let url = URL(string: urlString) else { return }
+        stop()
+        loadedURL = urlString
+        try? AVAudioSession.sharedInstance().setCategory(.playback)
+        try? AVAudioSession.sharedInstance().setActive(true)
+        let p = AVPlayer(playerItem: AVPlayerItem(url: url))
+        player = p
+        observer = p.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main
+        ) { [weak self] t in
+            guard let self else { return }
+            self.current = t.seconds.isFinite ? t.seconds : 0
+            if let d = p.currentItem?.duration.seconds, d.isFinite, d > 0 {
+                self.duration = d; self.ready = true
+            }
+        }
+    }
+
+    func toggle() {
+        guard let player else { return }
+        if playing { player.pause() } else { player.play() }
+        playing.toggle()
+    }
+
+    func seek(_ seconds: Double) {
+        player?.seek(to: CMTime(seconds: max(0, seconds), preferredTimescale: 600))
+    }
+
+    func stop() {
+        player?.pause()
+        if let observer { player?.removeTimeObserver(observer) }
+        observer = nil
+        player = nil
+        playing = false
+        current = 0
+        duration = 0
+        ready = false
+        loadedURL = nil
+    }
+}
+
+/// 列表试听用的迷你进度条:拖动跳转 + 当前/总时长。挂在正在播放的那一行下方。
+struct AuditionScrubber: View {
+    @ObservedObject var player: AudioPlayer
+    @State private var scrubbing = false
+    @State private var scrubValue = 0.0
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label(player.current)).font(.sz(10)).foregroundStyle(MeiliColor.ink3)
+                .frame(width: 36, alignment: .leading)
+            Slider(value: Binding(
+                get: { scrubbing ? scrubValue : player.current },
+                set: { scrubValue = $0 }
+            ), in: 0...max(1, player.duration), onEditingChanged: { editing in
+                scrubbing = editing
+                if !editing { player.seek(scrubValue) }
+            })
+            .tint(MeiliColor.clay)
+            Text(player.duration > 0 ? label(player.duration) : "--:--")
+                .font(.sz(10)).foregroundStyle(MeiliColor.ink3)
+                .frame(width: 36, alignment: .trailing)
+        }
+    }
+
+    private func label(_ s: Double) -> String {
+        guard s.isFinite, s >= 0 else { return "00:00" }
+        let t = Int(s); return String(format: "%02d:%02d", t / 60, t % 60)
+    }
+}
+
+/// 原始音频折叠内容:播放器(播放/暂停 + 进度条 + 时间) + 逐字转写。
+/// player 由 ReportView 持有并管理生命周期(Case 时间戳跳播共用同一实例)。
+struct AudioFoldContent: View {
+    @ObservedObject var player: AudioPlayer
+    let urlString: String?
+    let loading: Bool
+    let transcript: String?
+
+    @State private var scrubbing = false
+    @State private var scrubValue = 0.0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            playerBar
+            transcriptView
+            Text("AI 自动转写，仅供顾问复盘参考")
+                .font(.sz(10.5)).foregroundStyle(MeiliColor.ink4)
+        }
+    }
+
+    @ViewBuilder private var playerBar: some View {
+        if let _ = urlString {
+            VStack(spacing: 8) {
+                HStack(spacing: 12) {
+                    Button { player.toggle() } label: {
+                        MeiliIcon(player.playing ? MeiliIcons.warn : MeiliIcons.play, size: 18)
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(MeiliColor.primaryGradient)
+                            .clipShape(Circle())
+                    }
+                    .buttonStyle(PressScaleButtonStyle())
+                    .overlay {
+                        // play 图标用三角;暂停用两竖条(warn 占位不贴切,改画竖条)
+                        if player.playing {
+                            HStack(spacing: 4) {
+                                Capsule().fill(.white).frame(width: 4, height: 15)
+                                Capsule().fill(.white).frame(width: 4, height: 15)
+                            }
+                            .allowsHitTesting(false)
+                        }
+                    }
+
+                    Slider(value: Binding(
+                        get: { scrubbing ? scrubValue : player.current },
+                        set: { scrubValue = $0 }
+                    ), in: 0...max(1, player.duration), onEditingChanged: { editing in
+                        scrubbing = editing
+                        if !editing { player.seek(scrubValue) }
+                    })
+                    .tint(MeiliColor.clay)
+                }
+                HStack {
+                    Text(timeLabel(player.current)).font(.sz(11)).foregroundStyle(MeiliColor.ink3)
+                    Spacer()
+                    Text(player.duration > 0 ? timeLabel(player.duration) : "--:--")
+                        .font(.sz(11)).foregroundStyle(MeiliColor.ink3)
+                }
+            }
+        } else if loading {
+            HStack(spacing: 8) {
+                ProgressView().tint(MeiliColor.clay)
+                Text("正在获取音频…").font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
+            }
+        } else {
+            Text("此片段暂无可播放音频（转写与报告仍可查看）")
+                .font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
+        }
+    }
+
+    @ViewBuilder private var transcriptView: some View {
+        let lines = parseTranscript(transcript)
+        if lines.isEmpty {
+            Text("暂无逐字转写").font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, ln in
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(ln.speaker)
+                                .font(.sz(10.5, weight: .bold))
+                                .foregroundStyle(ln.isAdvisor ? MeiliColor.clayDeep : MeiliColor.sageDeep)
+                            if let t = ln.time {
+                                Text(t).font(.sz(10)).foregroundStyle(MeiliColor.ink4)
+                            }
+                        }
+                        Text(ln.text).font(MeiliFont.body).foregroundStyle(MeiliColor.ink)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(ln.isAdvisor ? MeiliColor.clayTint.opacity(0.5) : MeiliColor.surfaceSoft)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+        }
+    }
+
+    private func timeLabel(_ s: Double) -> String {
+        guard s.isFinite, s >= 0 else { return "00:00" }
+        let t = Int(s); return String(format: "%02d:%02d", t / 60, t % 60)
+    }
+}
+
+/// 转写行。
+private struct TranscriptLine { let speaker: String; let time: String?; let text: String; let isAdvisor: Bool }
+
+/// 解析 asr_transcript 文本:每行 "[5.20s - 7.60s] 说话人0: 文本"。
+private func parseTranscript(_ raw: String?) -> [TranscriptLine] {
+    guard let raw, !raw.isEmpty else { return [] }
+    var out: [TranscriptLine] = []
+    for line in raw.split(separator: "\n") {
+        let s = String(line).trimmingCharacters(in: .whitespaces)
+        if s.isEmpty { continue }
+        var time: String? = nil
+        var rest = s
+        if s.hasPrefix("["), let close = s.firstIndex(of: "]") {
+            time = String(s[s.index(after: s.startIndex)..<close])
+                .replacingOccurrences(of: "s", with: "")
+            rest = String(s[s.index(after: close)...]).trimmingCharacters(in: .whitespaces)
+        }
+        // "说话人0: 文本"
+        var speaker = "说话人"
+        var text = rest
+        if let colon = rest.range(of: "：") ?? rest.range(of: ":") {
+            speaker = String(rest[..<colon.lowerBound]).trimmingCharacters(in: .whitespaces)
+            text = String(rest[colon.upperBound...]).trimmingCharacters(in: .whitespaces)
+        }
+        let isAdvisor = speaker.contains("0")
+        out.append(TranscriptLine(speaker: speaker, time: time, text: text, isAdvisor: isAdvisor))
+    }
+    return out
+}
