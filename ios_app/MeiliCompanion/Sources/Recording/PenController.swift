@@ -63,19 +63,24 @@ final class PenController: NSObject, WindBleDelegate {
     private static let kLastMac = "pen_last_mac"
     private static let kKnownMacs = "pen_known_macs"   // 用过的所有笔(用户有多支换着用),任一支开机都自动连
 
-    /// 已知笔 MAC 集合(含历史 kLastMac,平滑迁移)。
+    /// 已知笔 MAC 集合(含历史 kLastMac,平滑迁移)。内存缓存(审计 L18:扫描期高频读盘)。
+    private var knownMacsCache: Set<String>?
     private var knownMacs: Set<String> {
+        if let c = knownMacsCache { return c }
         var s = Set(UserDefaults.standard.stringArray(forKey: Self.kKnownMacs) ?? [])
         if let last = UserDefaults.standard.string(forKey: Self.kLastMac) { s.insert(last) }
+        knownMacsCache = s
         return s
     }
     private func rememberMac(_ mac: String) {
         var s = knownMacs; s.insert(mac)
+        knownMacsCache = s
         UserDefaults.standard.set(Array(s), forKey: Self.kKnownMacs)
         UserDefaults.standard.set(mac, forKey: Self.kLastMac)
     }
     private func forgetMac(_ mac: String) {
         var s = knownMacs; s.remove(mac)
+        knownMacsCache = s
         UserDefaults.standard.set(Array(s), forKey: Self.kKnownMacs)
         if UserDefaults.standard.string(forKey: Self.kLastMac) == mac {
             UserDefaults.standard.removeObject(forKey: Self.kLastMac)
@@ -99,14 +104,20 @@ final class PenController: NSObject, WindBleDelegate {
     private var stallWork: DispatchWorkItem?
     private let stallThreshold: TimeInterval = 6
 
-    // ── 断开自动重连(对齐 android closeSuccess 按 MAC 循环扫连)──
+    // ── 断开自动重连(对齐 android closeSuccess 按 MAC 循环扫连;审计 P4 加指数退避)──
     private var reconnectWork: DispatchWorkItem?
-    private let reconnectInterval: TimeInterval = 8
+    private var reconnectDelay: TimeInterval = 8      // 8→16→32→60 封顶,verify 成功复位
+
+    // ── 连接闸门(审计 L3:防"连A期间又连B/同一支反复重连打断自己";SN-deny 按实连笔遗忘)──
+    private var connectGate = false                   // 连接尝试进行中,忽略一切 cmd1 自动连
+    private var connectGateWork: DispatchWorkItem?
+    private var lastVerifiedMac: String?              // 当前实连的笔(verify 时定格)
 
     // ── 机身下载机(两种任务共用一条下载通道:补取截断段 / 从陪伴笔同步)──
     private enum DownloadJob { case recovery, sync(PenFile) }
     private var downloadJob: DownloadJob?
-    private var pendingRecovery: (fileName: String, partial: Data, recordedAt: String?)?
+    private var downloadGen = 0   // 下载代际(审计 L12:防旧任务的延迟闭包污染新任务)
+    private var pendingRecovery: (fileName: String, partial: Data, recordedAt: String?, penMac: String?)?
     private var syncQueue: [PenFile] = []                         // 「从陪伴笔同步」待下载队列
     private var downloading = false
     private var download = Data()
@@ -133,6 +144,27 @@ final class PenController: NSObject, WindBleDelegate {
         PNode.setShowLog(true)   // 联调期打开 SDK 内部日志(经 logInfo 回调进 penlog.txt)
         PenLog.d("PenController.setup lastMac=\(UserDefaults.standard.string(forKey: Self.kLastMac) ?? "无")")
         q.async { self.loadPersistedSyncQueue() }   // 上次没传完的同步任务,连上笔自动续
+        // 系统蓝牙状态感知(审计 L4):关→停重连+精准提示;开→立即踢扫描
+        PenBluetoothWatch.shared.onStateChange = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .poweredOn:
+                self.q.async {
+                    guard !self.linkUp, !self.knownMacs.isEmpty else { return }
+                    PenLog.d("蓝牙已打开 → 立即重扫")
+                    self.reconnectDelay = 8
+                    self.pen.startSearch()
+                    self.scheduleReconnect()
+                }
+            case .poweredOff, .unauthorized:
+                self.q.async { self.stopReconnect() }
+                DispatchQueue.main.async {
+                    self.manager?.penBluetoothUnavailable(state == .unauthorized)
+                }
+            default: break
+            }
+        }
+        PenBluetoothWatch.shared.start()
     }
 
     /// 对外"真在线"判据(= android isPenAlive)。q.sync 读,避免裸读跨线程状态。
@@ -144,12 +176,35 @@ final class PenController: NSObject, WindBleDelegate {
     func startSearch() { q.async { PenLog.d("cmd→ startSearch"); self.pen.startSearch() } }
     func stopSearch() { q.async { self.pen.stopSearch() } }
     func connect(name: String, address: String?) {
-        q.async {
-            PenLog.d("cmd→ connect name=\(name) addr=\(address ?? "nil")")
-            self.connectingAddress = address
-            if !address.isNilOrEmpty { self.pen.connectDeviceAndAddress(name, address!) }
-            else { self.pen.connectDevice(name) }
+        q.async { self.attemptConnect(name: name, address: address, manual: true) }
+    }
+
+    /// 在 q 上:发起一次连接尝试(手动/自动共用)。闸门防并发:连接进行中忽略后续触发,
+    /// 10s 未 verify 自动释放;手动连接先停重连循环(审计 L6),15s 未成再自动续上。
+    private func attemptConnect(name: String, address: String?, manual: Bool) {
+        if connectGate {
+            PenLog.d("cmd→ connect 忽略(闸门:已有连接尝试进行中) name=\(name)")
+            return
         }
+        connectGate = true
+        stopReconnect()
+        PenLog.d("cmd→ connect name=\(name) addr=\(address ?? "nil") \(manual ? "手动" : "自动")")
+        connectingAddress = address
+        connectGateWork?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            guard let self, !self.verifiedConnected else { return }
+            PenLog.d("连接尝试 10s 未验证 → 释放闸门")
+            self.connectGate = false
+        }
+        connectGateWork = w
+        q.asyncAfter(deadline: .now() + 10, execute: w)
+        // 手动连接失败的兜底:15s 还没连上就恢复自动重连循环
+        q.asyncAfter(deadline: .now() + 15) { [weak self] in
+            guard let self, !self.verifiedConnected, !self.linkUp else { return }
+            self.scheduleReconnect()
+        }
+        if !address.isNilOrEmpty { pen.connectDeviceAndAddress(name, address!) }
+        else { pen.connectDevice(name) }
     }
     func syncTime() { q.async { self.pen.syncTime() } }
     func refreshStatus() { q.async { if self.linkUp { self.pen.getCBC() } } }
@@ -197,7 +252,8 @@ final class PenController: NSObject, WindBleDelegate {
     func forgetAndDisconnect() {
         q.async {
             PenLog.d("SN被拒 → 断开并遗忘该笔 \(self.connectingAddress ?? "?")")
-            if let a = self.connectingAddress, !a.isEmpty { self.forgetMac(a) }
+            // 按"当前实连的笔"遗忘(审计 L3:connectingAddress 可能已被后续尝试覆盖,忘错笔会死循环)
+            if let a = self.lastVerifiedMac ?? self.connectingAddress, !a.isEmpty { self.forgetMac(a) }
             self.stopReconnect()
             self.pen.closeConnect()
         }
@@ -223,7 +279,7 @@ final class PenController: NSObject, WindBleDelegate {
                 cancelActiveDownload(requeueSync: true)
                 deliver(old.partial, old.recordedAt, penFile: nil)
             }
-            pendingRecovery = (fn, snapshot, at)
+            pendingRecovery = (fn, snapshot, at, lastVerifiedMac)   // 记下是哪支笔的文件(审计 L9)
             DispatchQueue.main.async { self.manager?.penRecoveryStarted() }
             scheduleRecoveryDeadline()
             if linkUp { startRecoveryDownload() }   // 断连时:自动重连成功(markPenResponded)后再触发
@@ -261,10 +317,13 @@ final class PenController: NSObject, WindBleDelegate {
     private func beginDownload(_ job: DownloadJob, fileName: String) {
         downloading = true
         downloadJob = job
+        downloadGen += 1
+        let gen = downloadGen
         download.removeAll(keepingCapacity: true)
         PenLog.d("★下载开始 file=\(fileName)")
         q.asyncAfter(deadline: .now() + 2) { [weak self] in
-            guard let self, self.downloading else { return }
+            // 代际校验(审计 L12):旧任务被取消、新任务已开时,旧闭包不得发旧文件名
+            guard let self, self.downloading, self.downloadGen == gen else { return }
             self.pen.startGetFile(fileName, "0")
             self.bumpDownloadStall()
         }
@@ -299,6 +358,11 @@ final class PenController: NSObject, WindBleDelegate {
     func fetchFileList(_ completion: @escaping ([PenFile]) -> Void) {
         q.async {
             guard self.linkUp else { DispatchQueue.main.async { completion([]) }; return }
+            // 重入(审计 L14):先把上一个等待中的回调以空结果放行,别让旧 UI 卡加载态
+            if let old = self.fileListCompletion {
+                self.fileListCompletion = nil
+                DispatchQueue.main.async { old([]) }
+            }
             self.fileListEntries = []
             self.fileListCompletion = completion
             self.pen.getRecordFileList()
@@ -378,9 +442,17 @@ final class PenController: NSObject, WindBleDelegate {
     }
 
     /// 在 q 上:笔空闲且无下载在跑时,起下一个下载(补取截断段优先于同步)。
+    /// 审计 L9:补取只在"连的是原来那支笔"时启动——双笔场景向错的笔要文件必失败,
+    /// 错笔时挂起等待(总兜底 10min 到点仍会退回直传部分件),同步队列照常走。
     private func kickSync() {
         guard !downloading, !recording, linkUp else { return }
-        if pendingRecovery != nil { startRecoveryDownload(); return }
+        if let rec = pendingRecovery {
+            if rec.penMac == nil || rec.penMac == lastVerifiedMac {
+                startRecoveryDownload()
+                return
+            }
+            PenLog.d("★补取挂起:当前连的笔(\(lastVerifiedMac ?? "?"))不是该文件所在笔(\(rec.penMac ?? "?"))")
+        }
         guard !syncQueue.isEmpty else { return }
         let f = syncQueue.removeFirst()
         beginDownload(.sync(f), fileName: f.name)
@@ -510,18 +582,23 @@ final class PenController: NSObject, WindBleDelegate {
 
     // MARK: - 断开自动重连(均在 q 上)
 
-    /// 断开/失联后每 8s 重新扫描;扫到上次那支(kLastMac)由 handleDeviceFound 自动连;连上即停。
+    /// 断开/失联后重新扫描;扫到已知笔由 handleDeviceFound 自动连;连上即停。
+    /// 审计 P4:指数退避 8→16→32→60s 封顶(BLE 扫描是耗电大项,笔不在身边时别整天全速扫);
+    /// 审计 L10:门槛用 knownMacs(多支笔任一支都触发),不再只认"最后一支"。
     private func scheduleReconnect() {
-        guard UserDefaults.standard.string(forKey: Self.kLastMac) != nil else { return }
+        guard !knownMacs.isEmpty else { return }
+        guard PenBluetoothWatch.shared.isPoweredOn else { return }   // 蓝牙关着,扫也白扫(L4)
         reconnectWork?.cancel()
+        let delay = reconnectDelay
+        reconnectDelay = min(60, reconnectDelay * 2)
         let w = DispatchWorkItem { [weak self] in
             guard let self, !self.linkUp else { return }
-                        PenLog.d("★自动重连:重新扫描找上次那支笔…")
+            PenLog.d("★自动重连(间隔\(Int(delay))s):重新扫描找已知的笔…")
             self.pen.startSearch()
             self.scheduleReconnect()
         }
         reconnectWork = w
-        q.asyncAfter(deadline: .now() + reconnectInterval, execute: w)
+        q.asyncAfter(deadline: .now() + delay, execute: w)
     }
     private func stopReconnect() { reconnectWork?.cancel(); reconnectWork = nil }
 
@@ -533,6 +610,10 @@ final class PenController: NSObject, WindBleDelegate {
         verifiedConnected = true
         handshakeWork?.cancel()
         stopReconnect()
+        reconnectDelay = 8                        // 退避复位
+        connectGate = false                       // 闸门释放
+        connectGateWork?.cancel()
+        lastVerifiedMac = connectingAddress       // 定格"当前实连的笔"(SN-deny 按它遗忘)
         if let a = connectingAddress, !a.isEmpty {
             rememberMac(a)   // 记住这支笔(多支都记) → 任一支开机自动连
         }
@@ -549,9 +630,15 @@ final class PenController: NSObject, WindBleDelegate {
         handshakeWork?.cancel()
         let w = DispatchWorkItem { [weak self] in
             guard let self, !self.verifiedConnected else { return }
-                        PenLog.d("★握手7s超时(无真回包)→ 判假连接、断开、报未连")
+            PenLog.d("★握手\(Int(self.handshakeTimeout))s超时(无真回包)→ 判假连接、断开、报未连、续重连")
             self.pen.closeConnect()
+            // 审计 L2:必须重置链路状态并续上重连——否则 SDK 不回 cmd2=false 时,
+            // linkUp 永久 true、重连链静默死透,"断了不自己回来"
+            self.linkUp = false
+            self.verifiedConnected = false
+            self.connectGate = false
             DispatchQueue.main.async { self.manager?.penConnected = false }
+            self.scheduleReconnect()
         }
         handshakeWork = w
         q.asyncAfter(deadline: .now() + handshakeTimeout, execute: w)
@@ -564,16 +651,19 @@ final class PenController: NSObject, WindBleDelegate {
         let w = DispatchWorkItem { [weak self] in
             guard let self, self.linkUp else { self?.stopHeartbeat(); return }
             let idle = Date().timeIntervalSince(self.lastRx)
-            // 录音中且近期有音频帧/回包 → 笔正忙着传音频,别发查询打扰它(对齐 android busy 分支),只续期。
-            if self.recording && idle < self.staleRx {
+            // 录音/下载中且近期有数据 → 笔正忙着传,别发查询打扰它(审计 L11),只续期。
+            if (self.recording || self.downloading) && idle < self.staleRx {
                 self.hbMissed = 0
                 self.scheduleHeartbeat()
                 return
             }
             if idle > self.hbInterval + 4 {
                 self.hbMissed += 1
-                if self.hbMissed >= 2 {
-                                        PenLog.d("★心跳连续2次无回包→判失联、断开、报未连、进自动重连")
+                // 审计 L5:录音中放宽到 3 次(~30s)——BLE 射频波动 20-30s 常可自愈,
+                // 主动断开会把"卡一下"升级成"断段+补取几分钟",是"容易断"的体感放大器
+                let missLimit = self.recording ? 3 : 2
+                if self.hbMissed >= missLimit {
+                    PenLog.d("★心跳连续\(self.hbMissed)次无回包→判失联、断开、报未连、进自动重连")
                     let wasRecording = self.recording
                     self.verifiedConnected = false
                     self.linkUp = false
@@ -678,8 +768,7 @@ final class PenController: NSObject, WindBleDelegate {
         DispatchQueue.main.async { self.manager?.penFound(name: name, address: address) }
         if !linkUp, knownMacs.contains(address) {
             PenLog.d("cmd1 命中已知的笔(\(address)) → 自动连接")
-            connectingAddress = address
-            pen.connectDeviceAndAddress(name, address)
+            attemptConnect(name: name, address: address, manual: false)   // 走闸门,防并发连接(L3)
         }
     }
 
@@ -701,9 +790,18 @@ final class PenController: NSObject, WindBleDelegate {
                 self.pen.getCBC()
                 self.pen.getRecordState()
             }
+            // 审计 L7:握手有效窗口仅~5s且首轮命令可能整批丢,+5s 未验证补发一轮
+            q.asyncAfter(deadline: .now() + 5) { [weak self] in
+                guard let self, self.linkUp, !self.verifiedConnected else { return }
+                PenLog.d("握手5s未验证 → 补发一轮查询")
+                self.pen.getRecordState()
+                self.pen.getSn()
+            }
             scheduleHandshakeTimeout()
         } else {
-                        PenLog.d("cmd2 断开 → 报未连、进自动重连")
+            PenLog.d("cmd2 断开 → 报未连、进自动重连")
+            connectGate = false
+            connectGateWork?.cancel()
             let wasRecording = recording
             linkUp = false
             verifiedConnected = false
@@ -747,8 +845,13 @@ final class PenController: NSObject, WindBleDelegate {
                 // 笔录音时拒绝文件传输 → 下载让路,录完再续
                 cancelActiveDownload(requeueSync: true)
                 // 记下本段机身文件名,断流时补下载的凭据(录音中才能查)
-                q.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                // 审计 L15:文件名是断流补取的唯一凭据,尽早拿 + 没拿到再补一次
+                q.asyncAfter(deadline: .now() + 0.6) { [weak self] in
                     guard let self, self.recording else { return }
+                    self.pen.getFileNameOnlyRecording()
+                }
+                q.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                    guard let self, self.recording, self.penFileName == nil else { return }
                     self.pen.getFileNameOnlyRecording()
                 }
                                 PenLog.d("cmd3 录音开始 → App 进入录音态")
@@ -876,8 +979,13 @@ final class PenController: NSObject, WindBleDelegate {
         lastFrameAt = Date()
         startStallWatch()
         cancelActiveDownload(requeueSync: true)
-        q.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+        // 审计 L15:文件名是断流补取的唯一凭据,尽早拿 + 没拿到再补一次
+        q.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self, self.recording else { return }
+            self.pen.getFileNameOnlyRecording()
+        }
+        q.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self, self.recording, self.penFileName == nil else { return }
             self.pen.getFileNameOnlyRecording()
         }
         DispatchQueue.main.async { self.manager?.penRecordingStarted() }

@@ -89,7 +89,14 @@ final class RecordingManager: ObservableObject {
     func setSource(_ s: CompanionSource) {
         guard !isLive, state != .uploading else { return }
         source = s
-        if s == .pen && !penConnected { PenController.shared.startSearch() }   // 后台找笔 + autoConnect 上次那支
+        if s == .pen && !penConnected {
+            PenController.shared.startSearch()   // 后台找笔 + autoConnect 已知的笔
+            // 审计 P4:扫描别无限开着(耗电),30s 没连上就停(自动重连循环会按退避节奏接管)
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                if !penConnected && !penScanning { PenController.shared.stopSearch() }
+            }
+        }
     }
 
     // MARK: 陪伴笔扫描/连接(扫描选笔 sheet 驱动,对齐 android SoniScanActivity)
@@ -99,17 +106,31 @@ final class RecordingManager: ObservableObject {
         penConnecting = false
         penScanning = true
         PenController.shared.startSearch()
-        // 僵尸连接提示:App 被杀后笔可能仍挂在系统蓝牙上(连着就不广播,永远扫不到)
+        // 僵尸连接检测(审计 L1):15s 无果先查"系统级已连接外设"——App 被杀后笔可能仍挂在
+        // 系统蓝牙上(连着就不广播,永远扫不到),命中给精准提示;查不到给通用提示
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 15_000_000_000)
-            if penScanning && penDevices.isEmpty && !penConnected {
-                toast = "一直搜不到？陪伴笔可能还挂在手机系统蓝牙上——把笔关机再开机后重试"
+            guard penScanning && penDevices.isEmpty && !penConnected else { return }
+            if !PenBluetoothWatch.shared.isPoweredOn {
+                toast = "手机蓝牙没有打开，请到控制中心/设置里打开蓝牙"
+            } else if let name = PenBluetoothWatch.shared.findSystemConnectedPen() {
+                toast = "「\(name)」还挂在手机系统蓝牙上（连着就不广播）——请把笔关机再开机"
+            } else {
+                toast = "一直搜不到？请确认笔已开机、在手机附近；必要时把笔关机再开机"
             }
         }
     }
     func stopPenScan() {
         penScanning = false
+        penConnecting = false   // 审计 L13:关 sheet 时清连接中状态,防常驻扫描
         PenController.shared.stopSearch()
+    }
+
+    /// 系统蓝牙不可用(审计 L4):精准提示,替代对着空气扫描。
+    func penBluetoothUnavailable(_ unauthorized: Bool) {
+        penConnected = false
+        toast = unauthorized ? "请到 设置→美丽陪伴 里允许蓝牙权限，才能连接陪伴笔"
+                             : "手机蓝牙已关闭，请打开蓝牙后陪伴笔会自动重连"
     }
     func connectPen(_ d: PenDevice) {
         penConnecting = true
