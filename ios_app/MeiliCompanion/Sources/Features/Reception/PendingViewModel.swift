@@ -131,6 +131,27 @@ final class PendingViewModel: ObservableObject {
         }
     }
 
+    /// 撤回删除申请(审批前随时可撤)。
+    func withdrawDelete(_ rid: Int) {
+        Task {
+            do {
+                _ = try await ConsultantRepo.withdrawDeleteRequest(rid)
+                RecordingManager.shared.toast = "已撤回删除申请"
+                load()
+            } catch {
+                RecordingManager.shared.toast = "撤回失败，请重试"
+            }
+        }
+    }
+
+    /// 删除申请被拒 → 点「知道了」关掉红条。
+    func dismissReject(_ rid: Int) {
+        Task {
+            _ = try? await ConsultantRepo.dismissDeleteReject(rid)
+            load()
+        }
+    }
+
     /// 删除待整理片段:后端裁决——≤5分钟直接删(deleted=true),>5分钟生成审批单(2026-07-04 用户拍板)。
     func requestDelete(_ rid: Int) {
         Task {
@@ -171,8 +192,14 @@ final class PendingViewModel: ObservableObject {
 }
 
 extension PendingRecording {
+    /// 删除申请审批中。
+    var deletePending: Bool { deleteRequestStatus == "pending" }
+    /// 删除申请被拒且还没点「知道了」。
+    var deleteRejected: Bool { deleteRequestStatus == "rejected" }
+
     /// 待整理片段状态 → (文案, pill)。
     var pendingStatus: (String, PillKind) {
+        if deletePending { return ("删除审批中", .danger) }
         if isProcessing { return ("后台同步中", .clay) }
         switch asrStatus {
         case "done": return ("待绑定", .warn)

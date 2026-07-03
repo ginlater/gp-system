@@ -112,9 +112,18 @@ struct ReceptionView: View {
                     }
                 }
                 Spacer(minLength: 6)
-                if !rec.isProcessing {
+                if rec.deletePending {
+                    MeiliButton("撤回删除申请", kind: .ghost, size: .xs) { pendingVM.withdrawDelete(rec.id) }
+                } else if !rec.isProcessing {
                     MeiliButton("删除", kind: .ghost, size: .xs) { deleteAsk = rec.id }
                     MeiliButton("绑定顾客", size: .xs, icon: MeiliIcons.link) { onBind(rec.id) }
+                }
+            }
+            // 删除申请被拒:显示拒绝理由 + 知道了
+            if rec.deleteRejected {
+                HStack(spacing: 8) {
+                    MeiliBanner(message: "删除申请被拒绝" + (rec.deleteRejectReason?.nilIfBlank.map { "：\($0)" } ?? ""), kind: .danger)
+                    MeiliButton("知道了", kind: .ghost, size: .xs) { pendingVM.dismissReject(rec.id) }
                 }
             }
             // 正在试听的这条:显示可拖动进度条,方便跳到后面听

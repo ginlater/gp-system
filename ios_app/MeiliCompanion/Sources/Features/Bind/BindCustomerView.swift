@@ -15,18 +15,28 @@ struct BindCustomerView: View {
         _vm = StateObject(wrappedValue: BindCustomerViewModel(recordingId: recordingId))
     }
 
+    private var rebinding: Bool { vm.mode == .rebinding }
+
     var body: some View {
         ScrollView {
             VStack(spacing: MeiliMetric.cardGap) {
-                MeiliTopBar(title: "绑定顾客", subtitle: vm.recLabel ?? "把这段陪伴绑定到顾客", onBack: { dismiss() })
+                MeiliTopBar(title: rebinding ? "换绑这段陪伴" : "绑定顾客",
+                            subtitle: vm.recLabel ?? (rebinding ? "只移动这一段到别的顾客，其余不受影响" : "把这段陪伴绑定到顾客"),
+                            onBack: { dismiss() })
+
+                if rebinding {
+                    MeiliBanner(message: "只移动这一段陪伴到新顾客（不是换整个顾客）。换绑后新旧接诊包会重新生成，直接生效。", kind: .warn)
+                }
 
                 Picker("", selection: $vm.existingTab) {
                     Text("选已有顾客").tag(true)
-                    Text("新增顾客").tag(false)
+                    Text(rebinding ? "新增当日顾客" : "新增顾客").tag(false)
                 }
                 .pickerStyle(.segmented)
 
                 if vm.existingTab { existingTab } else { newTab }
+
+                if rebinding { dangerArea }
             }
             .padding(.horizontal, MeiliMetric.screenH)
             .padding(.bottom, 28)
@@ -38,15 +48,59 @@ struct BindCustomerView: View {
         .onChange(of: vm.boundCustomer?.0) { _ in
             if let (cid, date) = vm.boundCustomer { onBound(cid, date); vm.boundCustomer = nil }
         }
-        .confirmationDialog("绑定到「\(vm.pendingPick?.name ?? "")」？",
+        .onChange(of: vm.unbound) { done in
+            if done { dismiss() }
+        }
+        .confirmationDialog(confirmTitle,
                             isPresented: Binding(get: { vm.pendingPick != nil }, set: { if !$0 { vm.pendingPick = nil } }),
                             titleVisibility: .visible) {
-            Button("确认绑定") { vm.confirmBind() }
+            Button(rebinding ? "确认换绑（仅这段）" : "确认绑定") { vm.confirmBind() }
             Button("取消", role: .cancel) { vm.pendingPick = nil }
         } message: {
-            if vm.pendingPick?.inDay == false { Text("将先把 TA 补登到这段陪伴当天的接诊名单，再绑定。") }
+            Text(confirmMessage)
+        }
+        .alert("退回待整理？", isPresented: $confirmUnbind) {
+            Button("取消", role: .cancel) {}
+            Button("确认退回", role: .destructive) { vm.unbind() }
+        } message: {
+            Text("这段陪伴将从当前顾客解绑、回到待整理；若已分析将作废原报告。")
         }
         .overlay(alignment: .bottom) { toastBar }
+    }
+
+    // MARK: 确认弹窗文案
+
+    private var confirmTitle: String {
+        let name = vm.pendingPick?.name ?? ""
+        return rebinding ? "换绑到「\(name)」？（仅这段）" : "绑定到「\(name)」？"
+    }
+
+    private var confirmMessage: String {
+        let needAdd = vm.pendingPick?.inDay == false
+        if rebinding {
+            var s = "只移动这一段陪伴，若原报告已分析将作废。直接生效。"
+            if needAdd { s += "将先把 TA 补登到当天接诊名单。" }
+            return s
+        }
+        return needAdd ? "将先把 TA 补登到这段陪伴当天的接诊名单，再绑定。" : "绑定后这段陪伴会进入该顾客的接诊包。"
+    }
+
+    // MARK: 危险操作(换绑模式专属)
+
+    @State private var confirmUnbind = false
+
+    private var dangerArea: some View {
+        MeiliCard {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("不想分析这一段？").font(.sz(13.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+                Text("退回待整理（从当前顾客解绑，可在那里重新绑定或删除）。")
+                    .font(.sz(11.5)).foregroundStyle(MeiliColor.ink3)
+                MeiliButton(vm.submitting ? "处理中…" : "退回待整理", kind: .ghost, size: .small, enabled: !vm.submitting) {
+                    confirmUnbind = true
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     // MARK: 选已有
@@ -99,7 +153,7 @@ struct BindCustomerView: View {
             if p.locked {
                 StatusPill(text: "已锁定", kind: .neutral)
             } else {
-                MeiliButton("绑定到这里", size: .xs, icon: MeiliIcons.link, enabled: !vm.submitting) { vm.pick(p) }
+                MeiliButton(rebinding ? "换到这里" : "绑定到这里", size: .xs, icon: MeiliIcons.link, enabled: !vm.submitting) { vm.pick(p) }
             }
         }
         .padding(.vertical, 13)

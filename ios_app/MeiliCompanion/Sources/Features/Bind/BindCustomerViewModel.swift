@@ -19,9 +19,14 @@ final class BindCustomerViewModel: ObservableObject {
         var id: Int { customerId }
     }
 
+    /// Binding=待整理片段首次绑定;Rebinding=已绑定片段换绑(自动探测:rid 不在待整理池里即已绑定)。
+    enum Mode { case binding, rebinding }
+
+    @Published var mode: Mode = .binding
     @Published var existingTab = true
     @Published var serviceDate: String?
     @Published var recLabel: String?
+    @Published var unbound = false     // 退回成功 → 页面返回
     @Published var query = ""
     @Published var picks: [Pick] = []
     @Published var searching = false
@@ -45,8 +50,12 @@ final class BindCustomerViewModel: ObservableObject {
     private func boot() {
         Task {
             if let rec = (try? await ConsultantRepo.pending())?.first(where: { $0.id == recordingId }) {
+                mode = .binding
                 serviceDate = rec.serviceDate ?? serviceDate
                 recLabel = [rec.recordedAt?.nilIfBlank, rec.durationLabel?.nilIfBlank].compactMap { $0 }.joined(separator: " · ").nilIfBlank
+            } else {
+                // 不在待整理池 = 已绑定 → 换绑模式(android 对应 boot() 的模式自动判定)
+                mode = .rebinding
             }
             loadPicks()
         }
@@ -108,14 +117,38 @@ final class BindCustomerViewModel: ObservableObject {
                 if !p.inDay {
                     _ = try await ConsultantRepo.addTodayReception(customerId: p.customerId, date: serviceDate)
                 }
-                let r = try await ConsultantRepo.bind(recordingId: recordingId, customerId: p.customerId)
+                let r: SimpleResult
+                if mode == .rebinding {
+                    // 换绑:direct_rebind 免理由免审批,只动这一段;原报告若已分析由后端标作废
+                    r = try await ConsultantRepo.directRebind(recordingId: recordingId, toCustomerId: p.customerId)
+                } else {
+                    r = try await ConsultantRepo.bind(recordingId: recordingId, customerId: p.customerId)
+                }
                 submitting = false; pendingPick = nil
                 if let e = r.error { error = e; return }
-                toast = "已绑定到\(p.name)"
+                toast = mode == .rebinding ? "已换绑到\(p.name)" : "已绑定到\(p.name)"
                 boundCustomer = (p.customerId, serviceDate ?? "")
             } catch let err {
                 submitting = false; pendingPick = nil
-                error = (err as? APIError)?.errorDescription ?? "绑定失败"
+                error = (err as? APIError)?.errorDescription ?? (mode == .rebinding ? "换绑失败" : "绑定失败")
+            }
+        }
+    }
+
+    /// 退回待整理(换绑模式专属,免理由,2026-07-04 用户拍板)。成功 → 页面返回。
+    func unbind() {
+        guard !submitting else { return }
+        submitting = true; error = nil
+        Task {
+            do {
+                let r = try await ConsultantRepo.unbindRecording(recordingId)
+                submitting = false
+                if let e = r.error { error = e; return }
+                toast = "已退回待整理"
+                unbound = true
+            } catch let err {
+                submitting = false
+                error = (err as? APIError)?.errorDescription ?? "退回失败"
             }
         }
     }

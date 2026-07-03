@@ -201,4 +201,19 @@ enum ConsultantRepo {
     static func requestDeleteRecording(_ rid: Int) async throws -> SimpleResult {
         try await api.postJSON("api/recording/\(rid)/delete-request", body: EmptyBody())
     }
+
+    /// 撤回删除申请(审批前随时可撤)。
+    static func withdrawDeleteRequest(_ rid: Int) async throws -> SimpleResult {
+        try await api.postJSON("api/recording/\(rid)/delete-request/withdraw", body: EmptyBody())
+    }
+
+    /// 删除申请被拒后点「知道了」,关闭红条提示。
+    static func dismissDeleteReject(_ rid: Int) async throws -> SimpleResult {
+        try await api.postJSON("api/recording/\(rid)/delete-request/dismiss", body: EmptyBody())
+    }
+
+    /// 退回待整理(免理由,2026-07-04 用户拍板;后端字段必填,填固定占位供审计)。
+    static func unbindRecording(_ rid: Int) async throws -> SimpleResult {
+        try await api.postJSON("api/consultant/recordings/\(rid)/unbind", body: UnbindBody(reason: "顾问端退回"))
+    }
 }
