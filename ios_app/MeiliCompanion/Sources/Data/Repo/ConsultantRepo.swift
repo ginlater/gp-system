@@ -216,4 +216,10 @@ enum ConsultantRepo {
     static func unbindRecording(_ rid: Int) async throws -> SimpleResult {
         try await api.postJSON("api/consultant/recordings/\(rid)/unbind", body: UnbindBody(reason: "顾问端退回"))
     }
+
+    /// 廉价探活:走 APIClient 的 401 自动重登通道刷新会话(上传队列 401 后调用)。
+    @discardableResult
+    static func reauthProbe() async throws -> Me {
+        try await api.get("api/me")
+    }
 }

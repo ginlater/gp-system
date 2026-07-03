@@ -29,7 +29,16 @@ enum RecordingState: Equatable { case idle, starting, recording, paused, uploadi
 final class RecordingManager: ObservableObject {
     static let shared = RecordingManager()
 
-    @Published var state: RecordingState = .idle
+    @Published var state: RecordingState = .idle {
+        didSet {
+            let live = state == .recording || state == .paused
+            // 录音中防自动锁屏(审计 B7:自动锁屏是后台风险最高频触发源)
+            UIApplication.shared.isIdleTimerDisabled = live
+            // 笔录音期间静音保活(审计 B1);手机麦有自己的会话不需要
+            if source == .pen && live { RecordKeepAlive.start() }
+            else if !live && !PenController.shared.isSyncBusy { RecordKeepAlive.stop() }
+        }
+    }
     @Published var source: CompanionSource = .phone
     @Published var elapsed: Int = 0
     @Published var pendingUploads = 0
@@ -56,6 +65,15 @@ final class RecordingManager: ObservableObject {
         PenController.shared.manager = self
         PenController.shared.setup()
         phone.onInterrupted = { [weak self] in self?.phoneInterrupted() }
+        // 上传队列回调:成功弹绑定/提示;首次失败告知已入重传队列(不再丢)
+        UploadQueue.shared.onUploaded = { [weak self] rid, prompt in
+            guard let self, prompt else { return }
+            if let rid, rid > 0 { self.bindPrompt = rid }
+            else { self.toast = "陪伴已保存，去「待整理」绑定顾客" }
+        }
+        UploadQueue.shared.onFirstFailure = { [weak self] in
+            self?.toast = "上传暂时失败，已加入重传队列，网络恢复后自动补传"
+        }
     }
 
     /// 手机麦录音被来电/Siri/闹钟中断且无法恢复 → 收尾保存已录部分,界面不再假装在录。
@@ -167,17 +185,24 @@ final class RecordingManager: ObservableObject {
     /// 笔暂停(cmd=3 state=2):计时挂起,UI 显示"陪伴已暂停"。
     func penRecordingPaused() {
         guard source == .pen, state == .recording else { return }
+        pauseBeganAt = Date()
         state = .paused
     }
     /// 笔恢复录音。
     func penRecordingResumed() {
         guard source == .pen, state == .paused else { return }
+        if let p = pauseBeganAt { pausedAccum += Date().timeIntervalSince(p) }
+        pauseBeganAt = nil
         state = .recording
     }
-    /// 镜像段计时校准:秒数=真实已录时长(从机身文件名解析的开始时刻起算)。
+    /// 镜像段计时校准:把开始时刻校准为机身文件名里的真实开始时间(墙钟派生自动正确)。
     func penElapsedCalibrated(_ seconds: Int) {
         guard source == .pen, state == .recording || state == .paused else { return }
-        if seconds > elapsed { elapsed = seconds }
+        if seconds > elapsed {
+            segStartAt = Date().addingTimeInterval(-Double(seconds))
+            pausedAccum = 0
+            elapsed = seconds
+        }
     }
 
     /// 笔上报录音停止(cmd=3 record_state=0):笔按键停时 App 同步结束(App 点击停已自行处理)。
@@ -254,14 +279,14 @@ final class RecordingManager: ObservableObject {
         }
     }
 
-    /// 「从陪伴笔同步」:单个机身文件下载完成 → 上传回填它自己的占位行。
+    /// 「从陪伴笔同步」:单个机身文件下载完成 → 上传回填它自己的占位行(不弹绑定,多段会轰炸)。
     func penSyncFileReady(fileURL: URL?, durationSec: Int, recordedAt: String?,
                           penFile: String?, sn: String?, remaining: Int) {
         let pid = penFile.flatMap { syncPlaceholders.removeValue(forKey: $0) }
         Task {
             await upload(fileURL, durationSec: durationSec, recordedAt: recordedAt,
                          contentType: "audio/ogg", penFile: penFile, sn: sn,
-                         usePlaceholder: false, explicitPlaceholderId: pid)
+                         usePlaceholder: false, explicitPlaceholderId: pid, promptBind: false)
             if remaining == 0 { toast = "陪伴笔同步完成，请到「待整理」绑定顾客" }
         }
     }
@@ -289,10 +314,12 @@ final class RecordingManager: ObservableObject {
         }
     }
 
+    /// 上传统一走落盘重传队列(后台会话,锁屏/被杀系统代传;失败自动重试,不再丢音频)。
     private func upload(_ fileURL: URL?, durationSec: Int, recordedAt: String?,
                         contentType: String = "audio/m4a",
                         penFile: String? = nil, sn: String? = nil,
-                        usePlaceholder: Bool = true, explicitPlaceholderId: Int? = nil) async {
+                        usePlaceholder: Bool = true, explicitPlaceholderId: Int? = nil,
+                        promptBind: Bool = true) async {
         let pid = explicitPlaceholderId
             ?? (usePlaceholder ? (placeholderIds.isEmpty ? nil : placeholderIds.removeFirst()) : nil)
         guard let fileURL else {
@@ -301,24 +328,10 @@ final class RecordingManager: ObservableObject {
             if let pid { try? await ConsultantRepo.cancelPlaceholder(pid) }
             return
         }
-        pendingUploads += 1
-        // 只在自己处于「保存中」时归位——同步/补取的上传可能在新一段录音进行中完成,不能踩全局状态
-        defer { pendingUploads -= 1; if state == .uploading { state = .idle } }
-        do {
-            let result = try await ConsultantRepo.uploadAudio(fileURL: fileURL, durationSec: durationSec,
-                                                              recordedAt: recordedAt, contentType: contentType,
-                                                              placeholderId: pid, penFile: penFile, sn: sn)
-            try? FileManager.default.removeItem(at: fileURL)
-            // 对齐 android v2.0.60:上传成功拿到可绑定片段 id → 直接跳绑定页(强制绑定)。
-            if let rid = result.id, rid > 0 {
-                bindPrompt = rid
-            } else {
-                toast = "陪伴已保存，去「待整理」绑定顾客"
-            }
-        } catch {
-            toast = "上传失败，可稍后在待整理重试"
-            if let pid { try? await ConsultantRepo.cancelPlaceholder(pid) }   // 清占位,不留「处理中」僵尸
-        }
+        UploadQueue.shared.enqueue(fileURL: fileURL, durationSec: durationSec, recordedAt: recordedAt,
+                                   contentType: contentType, penFile: penFile, sn: sn,
+                                   placeholderId: pid, promptBind: promptBind)
+        if state == .uploading { state = .idle }
     }
 
     // ── 触感反馈:开始/结束录制手机震动(对齐安卓) ──
@@ -332,14 +345,23 @@ final class RecordingManager: ObservableObject {
     /// 单段录音上限:录满 90 分钟自动结束并保存上传(对齐 android onPenAutoStopped)。
     private static let maxRecordSec = 90 * 60
 
+    // 计时墙钟化(审计 B4):挂起期间 Timer 停走,elapsed 若靠 +1 累加会失真、90分钟自动停失效。
+    // 改为"开始时刻墙钟差值 - 暂停累计",每次 tick(含挂起后被唤醒的补跳)都得到真实值。
+    private var segStartAt: Date?
+    private var pausedAccum: TimeInterval = 0
+    private var pauseBeganAt: Date?
+
     private func beginTimer() {
         elapsed = 0
+        segStartAt = Date()
+        pausedAccum = 0
+        pauseBeganAt = nil
         hapticRecordStart()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                guard let self, self.state == .recording else { return }
-                self.elapsed += 1
+                guard let self, self.state == .recording, let start = self.segStartAt else { return }
+                self.elapsed = max(0, Int(Date().timeIntervalSince(start) - self.pausedAccum))
                 if self.elapsed >= Self.maxRecordSec {
                     self.stop()   // 正常收尾:保存+上传,与手动停一致
                     self.toast = "已录满 90 分钟，已自动保存并结束这一段。要继续请点「开启陪伴」💛"

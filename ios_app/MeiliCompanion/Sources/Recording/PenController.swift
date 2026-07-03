@@ -34,6 +34,8 @@ final class PenController {
     func fetchFileList(_ completion: @escaping ([PenFile]) -> Void) { completion([]) }
     func startSync(files: [PenFile]) {}
     var isSyncBusy: Bool { false }
+    func appDidBecomeActive() {}
+    func appDidEnterBackground() {}
 }
 
 #else
@@ -167,6 +169,28 @@ final class PenController: NSObject, WindBleDelegate {
             if self.penFileName?.isEmpty == false { self.streamIncomplete = true }
             self.finishUpload()
         }
+    }
+
+    /// App 回前台(审计 B3/B6/L8):通知笔 + 立即状态对账——挂起期间定时器全部停走,
+    /// 笔是否已停/是否在录/是否失联,由这一次 getRecordState(cmd9) 即时校准;顺带踢下载队列。
+    func appDidBecomeActive() {
+        q.async {
+            self.pen.sendAppShowState(1)
+            if self.linkUp {
+                self.pen.getRecordState()
+                self.pen.getCBC()
+            } else if !self.knownMacs.isEmpty {
+                PenLog.d("回前台未连接 → 立即重扫")
+                self.pen.startSearch()
+                self.scheduleReconnect()
+            }
+            self.kickSync()
+        }
+    }
+
+    /// App 退后台:通知笔(固件可能依此调整心跳/缓存策略)。
+    func appDidEnterBackground() {
+        q.async { self.pen.sendAppShowState(2) }
     }
 
     /// SN 被后端拒绝(绑给了别的顾问):断开、停止重连、遗忘这支笔(只忘这一支,别的照常自动连)。

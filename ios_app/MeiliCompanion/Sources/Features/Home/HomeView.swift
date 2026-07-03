@@ -10,6 +10,7 @@ struct HomeView: View {
     var onOpenSettings: () -> Void = {}
 
     @ObservedObject private var rec = RecordingManager.shared
+    @ObservedObject private var queue = UploadQueue.shared
     @StateObject private var vm = HomeViewModel()
     @State private var showPenScan = false
 
@@ -93,7 +94,7 @@ struct HomeView: View {
                 sourceCell(.phone, icon: MeiliIcons.phone, title: "手机麦克风", sub: "手机采集", dot: false)
             }
 
-            if rec.state == .uploading || rec.pendingUploads > 0 {
+            if rec.state == .uploading || queue.pendingCount > 0 {
                 syncBadge.padding(.top, 13)
             }
         }
@@ -148,13 +149,23 @@ struct HomeView: View {
         .opacity(rec.isLive && !on ? 0.5 : 1)
     }
 
+    /// 上传状态 badge(审计 F1):失败时红字可点重试;正常时显示后台上传中。
     private var syncBadge: some View {
-        HStack(spacing: 5) {
-            MeiliIcon(MeiliIcons.sync, size: 13).foregroundStyle(MeiliColor.clayDeep)
-            Text("\(max(rec.pendingUploads, 1)) 段后台同步中…").font(.sz(11.5, weight: .bold)).foregroundStyle(MeiliColor.clayDeep)
+        Button { UploadQueue.shared.kick() } label: {
+            HStack(spacing: 5) {
+                MeiliIcon(queue.failedCount > 0 ? MeiliIcons.warn : MeiliIcons.sync, size: 13)
+                    .foregroundStyle(queue.failedCount > 0 ? MeiliColor.roseText : MeiliColor.clayDeep)
+                Text(queue.failedCount > 0
+                     ? "\(queue.failedCount) 段上传失败 · 点击重试"
+                     : "\(max(queue.pendingCount, 1)) 段后台上传中…")
+                    .font(.sz(11.5, weight: .bold))
+                    .foregroundStyle(queue.failedCount > 0 ? MeiliColor.roseText : MeiliColor.clayDeep)
+            }
+            .padding(.horizontal, 11).padding(.vertical, 5)
+            .background(queue.failedCount > 0 ? MeiliColor.roseSoft : MeiliColor.clayTint)
+            .clipShape(Capsule())
         }
-        .padding(.horizontal, 11).padding(.vertical, 5)
-        .background(MeiliColor.clayTint).clipShape(Capsule())
+        .buttonStyle(.plain)
     }
 
     // MARK: 提醒 tile
