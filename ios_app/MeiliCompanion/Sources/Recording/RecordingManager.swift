@@ -329,6 +329,9 @@ final class RecordingManager: ObservableObject {
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
     }
 
+    /// 单段录音上限:录满 90 分钟自动结束并保存上传(对齐 android onPenAutoStopped)。
+    private static let maxRecordSec = 90 * 60
+
     private func beginTimer() {
         elapsed = 0
         hapticRecordStart()
@@ -337,6 +340,10 @@ final class RecordingManager: ObservableObject {
             Task { @MainActor in
                 guard let self, self.state == .recording else { return }
                 self.elapsed += 1
+                if self.elapsed >= Self.maxRecordSec {
+                    self.stop()   // 正常收尾:保存+上传,与手动停一致
+                    self.toast = "已录满 90 分钟，已自动保存并结束这一段。要继续请点「开启陪伴」💛"
+                }
             }
         }
     }
