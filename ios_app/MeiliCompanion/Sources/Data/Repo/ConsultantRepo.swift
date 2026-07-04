@@ -138,6 +138,12 @@ enum ConsultantRepo {
     static func reminders() async throws -> RemindersResponse {
         try await api.get("api/consultant/reminders")
     }
+
+    /// E7 方案B:打开提醒页才算已读(轮询/后台拉取不再自动置 read_at)。
+    @discardableResult
+    static func markRemindersRead() async throws -> SimpleResult {
+        try await api.postForm("api/consultant/reminders/mark_read", fields: [:])
+    }
     static func handleReminder(_ rid: Int) async throws -> SimpleResult {
         try await api.postJSON("api/manager/reminder/\(rid)/handle", body: EmptyBody())
     }

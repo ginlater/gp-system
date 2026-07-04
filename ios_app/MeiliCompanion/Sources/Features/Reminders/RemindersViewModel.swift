@@ -25,6 +25,8 @@ final class RemindersViewModel: ObservableObject {
                 let items = r.items ?? []
                 personal = items.filter { $0.scope != "escalation" }
                 escalation = items.filter { $0.scope == "escalation" }
+                // E7 方案B:店长真的打开了提醒页 → 显式上报已读(失败不打扰,下次进页再报)
+                Task { try? await ConsultantRepo.markRemindersRead() }
             } catch let err {
                 loading = false
                 error = (err as? APIError)?.errorDescription ?? "调取失败"

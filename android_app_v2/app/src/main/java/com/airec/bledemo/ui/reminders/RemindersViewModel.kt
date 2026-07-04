@@ -36,6 +36,8 @@ class RemindersViewModel(
             _state.update { it.copy(loading = true, error = null) }
             when (val r = repo.reminders()) {
                 is ApiResult.Success -> {
+                    // E7 方案B:真的打开了提醒页 → 显式上报已读(服务端已不再"拉取即已读")
+                    launch { repo.markRemindersRead() }
                     val items = r.data.items ?: emptyList()
                     val personal = items.filter { it.scope != "escalation" }
                     val escalation = items.filter { it.scope == "escalation" }

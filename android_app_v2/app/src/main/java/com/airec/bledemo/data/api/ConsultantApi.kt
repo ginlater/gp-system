@@ -400,6 +400,10 @@ interface ConsultantApi {
     @GET("api/consultant/reminders")
     suspend fun reminders(): Response<RemindersResponse>
 
+    /** E7 方案B(2026-07-04):打开提醒页才算已读——服务端已不再"拉取即已读"。 */
+    @POST("api/consultant/reminders/mark_read")
+    suspend fun markRemindersRead(): Response<SimpleResult>
+
     /** 店长"已跟进"升级项。 */
     @POST("api/manager/reminder/{rid}/handle")
     suspend fun handleReminder(

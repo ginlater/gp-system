@@ -13754,7 +13754,6 @@ def api_consultant_reminders():
                ORDER BY id DESC LIMIT 200""",
             (store_id,),
         )
-        unread_ids = []
         for r in erows:
             d = dict(r)
             d["scope"] = "escalation"
@@ -13763,19 +13762,9 @@ def api_consultant_reminders():
             d["session_id"] = d.get("ref_id")
             d["is_read"] = bool(d.get("read_at"))
             d["is_handled"] = bool(d.get("handled_at"))
-            if not d.get("read_at"):
-                unread_ids.append(d["id"])
             escalations.append(d)
-        # 店长拉取到某条升级项 → 若未读则置 read_at=now（表示已读）
-        for rid in unread_ids:
-            try:
-                db_write(
-                    "UPDATE reminder_log SET read_at=datetime('now','localtime') "
-                    "WHERE id=? AND read_at IS NULL",
-                    (rid,),
-                )
-            except Exception as _e:
-                app.logger.warning("escalation 标记已读失败 id=%s: %s", rid, _e)
+        # E7(2026-07-04 用户拍板 B):不再"拉取即已读"——App每60s轮询+后台BGTask都打这个接口,
+        # 店长手机揣兜里也会被标已读,管理端"店长已读"失真。改由提醒页打开时显式调 mark_read。
 
     items.extend(escalations)
     return jsonify({
@@ -13784,6 +13773,34 @@ def api_consultant_reminders():
         "escalation_count": len(escalations),
         "items": items,
     })
+
+
+# ---------- 店长提醒「已读」显式上报(E7 方案B:打开提醒页才算已读) ----------
+@app.route("/api/consultant/reminders/mark_read", methods=["POST"])
+@login_required
+def api_consultant_reminders_mark_read():
+    """App 提醒页打开时显式调用;轮询/后台拉取不再自动置 read_at(见 api_consultant_reminders)。
+    只动店长可见的本店未处理升级项;顾问个人提醒无已读概念(processed 即闭环),调了也无副作用。"""
+    err = _consultant_required()
+    if err:
+        return err
+    u = current_user()
+    try:
+        role = u["role"]
+        store_id = u["store_id"]
+    except Exception:
+        role, store_id = None, None
+    if role == "store_manager" and store_id is not None:
+        try:
+            db_write(
+                """UPDATE reminder_log SET read_at=datetime('now','localtime')
+                   WHERE channel='escalation' AND processed=0 AND store_id=?
+                     AND IFNULL(result,'') <> 'manager_own' AND read_at IS NULL""",
+                (store_id,),
+            )
+        except Exception as _e:
+            app.logger.warning("mark_read 失败 store=%s: %s", store_id, _e)
+    return jsonify({"ok": True})
 
 
 # ---------- 店长「已跟进」升级项 ----------

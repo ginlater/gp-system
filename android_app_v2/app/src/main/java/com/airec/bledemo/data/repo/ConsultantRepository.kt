@@ -328,6 +328,9 @@ class ConsultantRepository(
 
     suspend fun reminders(): ApiResult<RemindersResponse> = call { api.reminders() }
 
+    /** E7 方案B:提醒页打开时显式标已读。 */
+    suspend fun markRemindersRead(): ApiResult<SimpleResult> = call { api.markRemindersRead() }
+
     suspend fun handleReminder(rid: Long): ApiResult<SimpleResult> = call { api.handleReminder(rid) }
 
     // ───────────── 内部：统一调用 + 错误解析 ─────────────
