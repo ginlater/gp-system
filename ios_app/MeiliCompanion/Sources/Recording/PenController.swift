@@ -164,6 +164,7 @@ final class PenController: NSObject, WindBleDelegate {
         #endif
         PenLog.d("PenController.setup lastMac=\(UserDefaults.standard.string(forKey: Self.kLastMac) ?? "无")")
         q.async { self.loadPersistedSyncQueue() }   // 上次没传完的同步任务,连上笔自动续
+        q.async { Self.sweepOldPartials() }         // D9:清 >7天 的陈旧断点部分件
         // 系统蓝牙状态感知(审计 L4):关→停重连+精准提示;开→立即踢扫描
         PenBluetoothWatch.shared.onStateChange = { [weak self] state in
             guard let self else { return }
@@ -403,20 +404,62 @@ final class PenController: NSObject, WindBleDelegate {
     /// 不得记到新任务头上——发出 startGetFile 之前一律不收数据/不认 cmd5。
     private var downloadAccepting = false
 
-    private func beginDownload(_ job: DownloadJob, fileName: String) {
+    // ── 断点续传(D9,照抄安卓 SoniPenController 已验证的协议语义):offset=字节、40B帧对齐、
+    //    state=2(offset过大)删部分件重头、"完成但字节不够"按失败续传。部分件落盘,杀App也能续。──
+    private static let partDir: URL = {
+        let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("pen_partials", isDirectory: true)
+        try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        return d
+    }()
+    private static func partURL(_ name: String) -> URL {
+        partDir.appendingPathComponent(name.replacingOccurrences(of: "/", with: "_") + ".part")
+    }
+    private static func loadPartial(_ name: String) -> Data {
+        (try? Data(contentsOf: partURL(name))) ?? Data()
+    }
+    /// 存续传检查点(40字节帧对齐,防断点接半帧;<1帧就不值得存)。
+    private static func saveCheckpoint(_ name: String, _ data: Data) {
+        let aligned = data.prefix(data.count / 40 * 40)
+        guard aligned.count >= 40 else { clearPartial(name); return }
+        try? aligned.write(to: partURL(name))
+    }
+    private static func clearPartial(_ name: String) {
+        try? FileManager.default.removeItem(at: partURL(name))
+    }
+    /// 启动清扫:>7天的陈旧部分件(那支笔/那个文件多半不要了)。
+    private static func sweepOldPartials() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: partDir, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let cutoff = Date().addingTimeInterval(-7 * 86400)
+        for f in files where ((try? f.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast) < cutoff {
+            try? fm.removeItem(at: f)
+        }
+    }
+
+    private func beginDownload(_ job: DownloadJob, fileName: String, expectedSize: Int = 0) {
         downloading = true
         downloadJob = job
         downloadGen += 1
         downloadAccepting = false
         let gen = downloadGen
-        download.removeAll(keepingCapacity: true)
-        PenLog.d("★下载开始 file=\(fileName)")
+        // 断点续传:有部分件就从它的字节数续(40B对齐由 saveCheckpoint 保证)
+        download = Self.loadPartial(fileName)
+        if expectedSize > 0, download.count >= expectedSize {
+            PenLog.d("★部分件已收齐 \(download.count)/\(expectedSize)B → 免下载直接交付 \(fileName)")
+            switch job {
+            case .recovery: completeRecovery()
+            case .sync(let f): completeSync(f)
+            }
+            return
+        }
+        PenLog.d("★下载开始 file=\(fileName) offset=\(download.count)\(expectedSize > 0 ? "/\(expectedSize)" : "")")
         updatePenWorkKeepAlive()
         q.asyncAfter(deadline: .now() + 2) { [weak self] in
             // 代际校验(审计 L12):旧任务被取消、新任务已开时,旧闭包不得发旧文件名
             guard let self, self.downloading, self.downloadGen == gen else { return }
             self.downloadAccepting = true
-            self.pen.startGetFile(fileName, "0")
+            self.pen.startGetFile(fileName, String(self.download.count))
             self.bumpDownloadStall()
         }
     }
@@ -461,7 +504,8 @@ final class PenController: NSObject, WindBleDelegate {
         case .recovery:
             recoveryAttempts += 1
             if recoveryAttempts < 3, pendingRecovery != nil {
-                PenLog.d("★补取第\(recoveryAttempts)次失败 → 5s后重试")
+                PenLog.d("★补取第\(recoveryAttempts)次失败 → 5s后重试(已收\(download.count)B将续传)")
+                if let rec = pendingRecovery { Self.saveCheckpoint(rec.fileName, download) }   // D9
                 downloading = false
                 downloadJob = nil
                 downloadStallWork?.cancel()
@@ -476,7 +520,8 @@ final class PenController: NSObject, WindBleDelegate {
             let n = (syncAttempts[f.name] ?? 0) + 1
             syncAttempts[f.name] = n
             if n < 3 {
-                PenLog.d("★同步下载第\(n)次失败 → 5s后重试 \(f.name)")
+                PenLog.d("★同步下载第\(n)次失败 → 5s后重试 \(f.name)(已收\(download.count)B将续传)")
+                Self.saveCheckpoint(f.name, download)   // D9:下一趟按字节offset续
                 downloading = false
                 downloadJob = nil
                 downloadStallWork?.cancel()
@@ -496,6 +541,7 @@ final class PenController: NSObject, WindBleDelegate {
     /// 中止进行中的下载(录音开始让路/断线/新收尾接管)。同步任务塞回队首,补取任务保留在 pendingRecovery。
     private func cancelActiveDownload(requeueSync: Bool, sendStop: Bool = true) {
         guard downloading else { return }
+        if let n = currentDownloadFileName { Self.saveCheckpoint(n, download) }   // D9:让路/断线不弃进度
         if sendStop { pen.stopGetFile(currentDownloadFileName ?? "") }
         if requeueSync, case .sync(let f) = downloadJob, !syncQueue.contains(where: { $0.name == f.name }) {
             syncQueue.insert(f, at: 0)
@@ -652,11 +698,12 @@ final class PenController: NSObject, WindBleDelegate {
             return
         }
         let f = syncQueue.remove(at: idx)
-        beginDownload(.sync(f), fileName: f.name)
+        beginDownload(.sync(f), fileName: f.name, expectedSize: f.sizeBytes)
         persistSyncQueue()   // 在下的那个也在盘上(currentSyncFile),中途被杀不丢
     }
 
     private func completeSync(_ f: PenFile) {
+        Self.clearPartial(f.name)
         syncAttempts.removeValue(forKey: f.name)
         downloading = false
         downloadJob = nil
@@ -687,6 +734,7 @@ final class PenController: NSObject, WindBleDelegate {
     }
 
     private func failSync(_ f: PenFile) {
+        Self.saveCheckpoint(f.name, download)   // D9:留部分件,以后重新导入可从断点续
         downloading = false
         downloadJob = nil
         downloadStallWork?.cancel()
@@ -715,6 +763,7 @@ final class PenController: NSObject, WindBleDelegate {
     /// 补下载成功(cmd=5 state=0):下载件若比部分件更全就用下载件。
     private func completeRecovery() {
         guard let rec = pendingRecovery else { return }
+        Self.clearPartial(rec.fileName)
         downloading = false
         downloadJob = nil
         downloadStallWork?.cancel()
@@ -733,6 +782,7 @@ final class PenController: NSObject, WindBleDelegate {
     /// 部分件不带 pen_file,给之后可能的完整版(手动同步/重试)留入库通道。
     private func failRecovery() {
         guard let rec = pendingRecovery else { return }
+        Self.saveCheckpoint(rec.fileName, download)   // D9:留部分件,手动同步同文件时可续
         downloading = false
         downloadJob = nil
         downloadStallWork?.cancel()
@@ -1194,10 +1244,23 @@ final class PenController: NSObject, WindBleDelegate {
         case "0":
             switch downloadJob {
             case .recovery: completeRecovery()
-            case .sync(let f): completeSync(f)
+            case .sync(let f):
+                // D9(抄安卓):笔说完成但字节没收够 → 当失败重试,下一趟按 offset 续传
+                if f.sizeBytes > 0, download.count < f.sizeBytes {
+                    PenLog.d("cmd5 完成但字节不足 \(download.count)/\(f.sizeBytes) → 按失败续传")
+                    failCurrentDownload()
+                } else {
+                    completeSync(f)
+                }
             case nil: break
             }
-        case "1", "2", "3":
+        case "2":
+            // D9(抄安卓):offset 过大=部分件与机身对不上 → 删掉重头下载
+            PenLog.d("cmd5 offset过大 → 删部分件从头下载")
+            if let n = currentDownloadFileName { Self.clearPartial(n) }
+            download.removeAll(keepingCapacity: false)
+            failCurrentDownload()
+        case "1", "3":
             PenLog.d("cmd5 下载失败 state=\(st)")
             failCurrentDownload()
         default: break
