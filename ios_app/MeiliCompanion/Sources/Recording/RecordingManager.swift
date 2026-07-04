@@ -81,6 +81,7 @@ final class RecordingManager: ObservableObject {
         PenController.shared.manager = self
         PenController.shared.setup()
         phone.onInterrupted = { [weak self] in self?.phoneInterrupted() }
+        phone.onPauseGap = { [weak self] began in self?.phoneGap(began) }
         // 上传队列回调:成功弹绑定/提示;首次失败告知已入重传队列(不再丢)
         UploadQueue.shared.onUploaded = { [weak self] rid, prompt in
             guard let self, prompt else { return }
@@ -93,6 +94,17 @@ final class RecordingManager: ObservableObject {
         // 上次会话没消费掉的录音段占位 → 取消;同步占位跟随队列复活(D10)
         restoreSyncPlaceholders()
         cancelLeftoverPlaceholders()
+    }
+
+    /// B10:来电中断的静默间隙——recorder 停采但墙钟照走,不扣的话时长虚高、报告时间轴错位。
+    func phoneGap(_ began: Bool) {
+        guard source == .phone, state == .recording else { return }
+        if began {
+            if pauseBeganAt == nil { pauseBeganAt = Date() }
+        } else if let p = pauseBeganAt {
+            pausedAccum += Date().timeIntervalSince(p)
+            pauseBeganAt = nil
+        }
     }
 
     /// 手机麦录音被来电/Siri/闹钟中断且无法恢复 → 收尾保存已录部分,界面不再假装在录。

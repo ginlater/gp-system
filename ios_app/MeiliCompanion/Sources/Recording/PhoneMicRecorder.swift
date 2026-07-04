@@ -9,6 +9,7 @@ final class PhoneMicRecorder: NSObject {
     private(set) var fileURL: URL?
     /// 录音被中断(来电/Siri/闹钟…)且无法自动恢复时回调 → 上层据此收尾保存已录部分,不让界面假装还在录。
     var onInterrupted: (() -> Void)?
+    var onPauseGap: ((Bool) -> Void)?   // B10:true=中断开始 false=已恢复(时长要扣掉这段静默)
 
     /// 开始录音。completion(成功, recordedAt 'YYYY-MM-DD HH:MM:SS')。
     func start(_ completion: @escaping (Bool, String?) -> Void) {
@@ -69,12 +70,16 @@ final class PhoneMicRecorder: NSObject {
         switch type {
         case .began:
             recorder?.pause()   // 系统已停采,显式 pause 保险
+            DispatchQueue.main.async { self.onPauseGap?(true) }
         case .ended:
             let opts = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
                 .map { AVAudioSession.InterruptionOptions(rawValue: $0) } ?? []
             if opts.contains(.shouldResume), let rec = recorder {
                 try? AVAudioSession.sharedInstance().setActive(true)
-                if rec.record() { return }   // 续录成功,继续
+                if rec.record() {
+                    DispatchQueue.main.async { self.onPauseGap?(false) }
+                    return   // 续录成功,继续
+                }
             }
             // 无法恢复 → 通知上层收尾(保存已录部分,界面不再假装在录)
             DispatchQueue.main.async { self.onInterrupted?() }

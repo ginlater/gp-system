@@ -105,6 +105,7 @@ struct MainShell: View {
 
     /// 按提醒的 ref_type/ref_id 路由(在线 onReceive 与冷启动 pendingRef 共用)。
     private func routeReminderRef(_ info: [AnyHashable: Any]?) {
+        if info?["kind"] as? String == "battery" { return }   // E4:电量通知只拉起App,不硬跳提醒页
         let refType = info?["ref_type"] as? String ?? ""
         let refId = (info?["ref_id"] as? Int) ?? (info?["ref_id"] as? NSNumber)?.intValue ?? 0
         switch (refType, refId) {

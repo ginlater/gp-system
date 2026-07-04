@@ -157,7 +157,11 @@ final class PenController: NSObject, WindBleDelegate {
 
     func setup() {
         pen.delegate = self
+        #if DEBUG
         PNode.setShowLog(true)   // 联调期打开 SDK 内部日志(经 logInfo 回调进 penlog.txt)
+        #else
+        PNode.setShowLog(false)  // B13:生产关掉——按包打日志放大 CPU/IO,penlog 还长期落 SN/MAC
+        #endif
         PenLog.d("PenController.setup lastMac=\(UserDefaults.standard.string(forKey: Self.kLastMac) ?? "无")")
         q.async { self.loadPersistedSyncQueue() }   // 上次没传完的同步任务,连上笔自动续
         // 系统蓝牙状态感知(审计 L4):关→停重连+精准提示;开→立即踢扫描
@@ -204,12 +208,20 @@ final class PenController: NSObject, WindBleDelegate {
     /// 10s 未 verify 自动释放;手动连接先停重连循环(审计 L6),15s 未成再自动续上。
     private func attemptConnect(name: String, address: String?, manual: Bool) {
         if connectGate {
-            PenLog.d("cmd→ connect 忽略(闸门:已有连接尝试进行中) name=\(name)")
-            return
+            if manual {
+                // B8:手动选笔要能打断进行中的自动尝试(原来10s内静默吞掉,用户点了没反应)
+                PenLog.d("cmd→ connect 手动接管闸门(打断自动尝试) name=\(name)")
+                pen.closeConnect()
+            } else {
+                PenLog.d("cmd→ connect 忽略(闸门:已有连接尝试进行中) name=\(name)")
+                return
+            }
         }
         connectGate = true
         stopReconnect()
         PenLog.d("cmd→ connect name=\(name) addr=\(address ?? "nil") \(manual ? "手动" : "自动")")
+        // B7:切笔前掐掉旧笔的握手定时器,别让旧的7s超时闭包把新连接杀了
+        if manual { handshakeWork?.cancel() }
         // 复查 P#1:已连着 X 时手动切 Y——先断 X,否则 SDK 静默无视且闸门永久卡死
         if manual, linkUp {
             PenLog.d("已连着别的笔 → 先断开再连新选的")
@@ -246,7 +258,12 @@ final class PenController: NSObject, WindBleDelegate {
     func refreshStatus() { q.async { if self.linkUp { self.pen.getCBC() } } }
 
     /// App 点击开始:发命令给笔。真正进入录音态由 cmd=3 record_state=1 驱动(笔/App 殊途同归)。
-    func startRecord() { q.async { self.pen.startRecord() } }
+    func startRecord() {
+        q.async {
+            self.segmentLocallyInitiated = true   // B9:App发起的段,流从头就在,头部丢失检测不适用
+            self.pen.startRecord()
+        }
+    }
     /// App 点击停止:发命令给笔。结束上传由 cmd=3 record_state=0 驱动。
     func stopRecord() { q.async { self.pen.stopRecord() } }
 
@@ -424,6 +441,10 @@ final class PenController: NSObject, WindBleDelegate {
     private var penPausedAccum: TimeInterval = 0      // 复查 B5:本段累计暂停时长(墙钟扣除用)
     private var penPauseBeganAt: Date?
     private var lastDownloadDataAt = Date(timeIntervalSince1970: 0)   // 复查 D4:下载最近出数据时刻
+    // B9:头部丢失检测只对"不是当面发起"的段生效——笔机身钟慢>5s时,当面开录的干净段
+    // 不再被误判续录段而强制补取(白等几分钟);离机续录场景不受影响照样兜底
+    private var segmentLocallyInitiated = false
+    private var segmentHeadPresent = false
 
     // 复查 B2:SN↔MAC 映射——直连时 cmd2 不带地址,靠 cmd7 上报的 SN 反查是哪支笔
     private static let kSnMacMap = "pen_sn_mac_map"
@@ -1000,7 +1021,9 @@ final class PenController: NSObject, WindBleDelegate {
         let ev = str(data["event"])
                 PenLog.d("cmd8 按键 event=\(ev) → 应答 BtnBackRecord")
         switch ev {
-        case "1": pen.startBtnBackRecord()      // 笔随后回 cmd=3 state=1 → 镜像开始录音
+        case "1":
+            segmentLocallyInitiated = true      // B9:笔上按键当着手机面开录,头部完整
+            pen.startBtnBackRecord()            // 笔随后回 cmd=3 state=1 → 镜像开始录音
         case "3": pen.stopBtnBackRecord()       // 笔随后回 cmd=3 state=0 → 收尾上传
         case "5": pen.pauseBtnBackRecord()
         case "7": pen.continueBtnBackRecord()
@@ -1107,6 +1130,8 @@ final class PenController: NSObject, WindBleDelegate {
             if !recording {
                 recording = true
                 recPaused = false
+                segmentHeadPresent = segmentLocallyInitiated   // B9:定格本段"头部是否必在流里"
+                segmentLocallyInitiated = false
                 penPausedAccum = 0
                 penPauseBeganAt = nil
                 penNotRecordingCount = 0
@@ -1192,7 +1217,7 @@ final class PenController: NSObject, WindBleDelegate {
         if let at0 = Self.parseRecordedAt(from: name),
            let realStart = Self.wallClockFormatter.date(from: at0),
            let segStart = recordStartAt,
-           segStart.timeIntervalSince(realStart) > 5, !streamIncomplete {
+           segStart.timeIntervalSince(realStart) > 5, !streamIncomplete, !segmentHeadPresent {
             streamIncomplete = true
             PenLog.d("★检测到续录段(文件开始早于本段 \(Int(segStart.timeIntervalSince(realStart)))s) → 标记流不完整,收尾走补取全段")
         }
@@ -1284,6 +1309,8 @@ final class PenController: NSObject, WindBleDelegate {
         PenLog.d("cmd9 笔在录而App不在 → 镜像进入录音态(头部缺失,收尾走补下载)")
         recording = true
         recPaused = false
+        segmentHeadPresent = false        // 镜像段头部必缺
+        segmentLocallyInitiated = false
         penPausedAccum = 0
         penPauseBeganAt = nil
         finishing = false

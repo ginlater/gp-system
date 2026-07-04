@@ -19,7 +19,8 @@ enum ReminderRefresh {
     static func schedule() {
         let req = BGAppRefreshTaskRequest(identifier: taskId)
         req.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
-        try? BGTaskScheduler.shared.submit(req)
+        do { try BGTaskScheduler.shared.submit(req) }
+        catch { PenLog.d("⚠️ BG提醒任务预约失败: \(error.localizedDescription)") }   // E8:断链要有痕迹可查
     }
 
     private static func handle(_ task: BGAppRefreshTask) {
