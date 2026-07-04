@@ -850,6 +850,9 @@ final class PenController: NSObject, WindBleDelegate {
     private func tryDirectConnectSystemPen(_ why: String) {
         guard !linkUp, !connectGate else { return }
         guard PenBluetoothWatch.shared.isPoweredOn else { return }
+        // 回归修复(2026-07-04):系统蓝牙上没挂着笔就立刻退——否则(笔走远真断线的常规场景)
+        // 白占 10s 闸门,恰好把"回到范围内广播→cmd1发现→自动连"的每一轮全挡死,永远连不回
+        guard PenBluetoothWatch.shared.findSystemConnectedPen() != nil else { return }
         guard let cls = NSClassFromString("BluetoothDataManager") as? NSObject.Type else { return }
         let shareSel = Selector(("shareBluetoothDataManager"))
         let listSel = Selector(("connectByList"))
