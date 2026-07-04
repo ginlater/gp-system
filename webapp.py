@@ -9898,6 +9898,9 @@ def api_consultant_upload():
             if pen_file:
                 db_write("UPDATE recordings SET pen_file=? WHERE id=?", (pen_file, prow["id"]))
             _kick_clean_audio_async(prow["id"])  # 后台转带头 wav：校正时长 + 让试听器可显时长/拖动
+            # bind-before-upload:顾问已提前绑好(占位带 session_id),音频此刻才落地 → 立即起 ASR
+            if bound:
+                trigger_pipeline_for_recording(prow["id"])
             return jsonify({"id": prow["id"], "oss_key": oss_key})
     try:
         oss_bucket.put_object(oss_key, data)
@@ -10550,7 +10553,11 @@ def api_consultant_recording_bind(rid):
         )
     except Exception as _e:
         app.logger.warning("bind 关闭待绑定提醒失败 rid=%s: %s", rid, _e)
-    trigger_pipeline_for_recording(rid)
+    # bind-before-upload(对齐安卓):占位行音频还没落地,不提前跑 ASR(假 key 会转写失败),
+    # 等 upload 回填后由 upload 端接力触发
+    _rec_now = db_fetchone("SELECT upload_status FROM recordings WHERE id=?", (rid,))
+    if not _rec_now or _rec_now["upload_status"] != "processing":
+        trigger_pipeline_for_recording(rid)
     return jsonify({"ok": True, "session_id": sid})
 
 
@@ -12777,7 +12784,8 @@ def startup_kick():
 
     # 补跑未完成的 ASR
     pending = db_fetchall(
-        "SELECT id FROM recordings WHERE asr_status IN ('pending', 'running', 'failed')"
+        "SELECT id FROM recordings WHERE asr_status IN ('pending', 'running', 'failed') "
+        "AND IFNULL(upload_status,'')!='processing'"   # bind-before-upload 的占位行等音频落地再转
     )
     for r in pending:
         trigger_pipeline_for_recording(r["id"])

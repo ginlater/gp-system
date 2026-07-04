@@ -126,7 +126,10 @@ struct ReceptionView: View {
                 Spacer(minLength: 6)
                 if rec.deletePending {
                     MeiliButton("撤回删除申请", kind: .ghost, size: .xs) { pendingVM.withdrawDelete(rec.id) }
-                } else if !rec.isProcessing {
+                } else if rec.isProcessing {
+                    // bind-before-upload(对齐安卓):后台同步中也能先绑,音频传完自动归位到该顾客
+                    MeiliButton("绑定顾客", size: .xs, icon: MeiliIcons.link) { onBind(rec.id) }
+                } else {
                     MeiliButton("删除", kind: .ghost, size: .xs) { deleteAsk = rec.id }
                     // 超7天不可绑(用户拍板):不给绑定入口,只能删除;点了也会被服务端明话拒绝
                     if !rec.isBeyondBindWindow {

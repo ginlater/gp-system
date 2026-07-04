@@ -85,8 +85,12 @@ final class RecordingManager: ObservableObject {
         // 上传队列回调:成功弹绑定/提示;首次失败告知已入重传队列(不再丢)
         UploadQueue.shared.onUploaded = { [weak self] rid, prompt in
             guard let self, prompt else { return }
-            if let rid, rid > 0 { self.bindPrompt = rid }
-            else { self.toast = "陪伴已保存，去「待整理」绑定顾客" }
+            if let rid, rid > 0 {
+                // bind-before-upload:录完已经按占位 id 跳过绑定页 → 上传回填的是同一行,不二次弹
+                if rid != self.lastPromptedRid { self.bindPrompt = rid }
+            } else {
+                self.toast = "陪伴已保存，去「待整理」绑定顾客"
+            }
         }
         UploadQueue.shared.onFirstFailure = { [weak self] in
             self?.toast = "上传暂时失败，已加入重传队列，网络恢复后自动补传"
@@ -435,6 +439,8 @@ final class RecordingManager: ObservableObject {
         }
     }
 
+    private var lastPromptedRid = 0   // bind-before-upload:占位已跳过绑定页,上传回填同行不二次弹
+
     private func ensurePlaceholder() async {
         guard !segmentPlaceholderMade else { return }
         segmentPlaceholderMade = true
@@ -442,6 +448,10 @@ final class RecordingManager: ObservableObject {
             recordedAt: recordedAt, source: source == .phone ? "phone" : nil).id {
             placeholderIds.append(id)
             persistPlaceholders()
+            // bind-before-upload(对齐安卓):占位一到手立刻跳绑定页,不等上传/补取传完——
+            // 先绑好顾客,音频落地后服务端自动归位到该顾客并接力转写
+            lastPromptedRid = id
+            bindPrompt = id
         }
     }
 
