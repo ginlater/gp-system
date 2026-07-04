@@ -116,6 +116,11 @@ final class PenController: NSObject, WindBleDelegate {
     private var lastVerifiedMac: String?              // 当前实连的笔(verify 时定格)
     private var autoConnectSuppressed = false         // 扫描选笔 sheet 打开期间暂停自动连(用户要自己挑)
 
+    // ── 重连优先原笔(双笔场景:上一段还等着从原笔补取/镜像,连错另一支就拿不到)──
+    private var deferredFound: (name: String, address: String)?
+    private var deferredFoundWork: DispatchWorkItem?
+    private var recoveryMismatchNotified = false      // 连错笔提示只弹一次/每次连接
+
     /// 双笔场景:扫描 sheet 打开时暂停"命中已知笔自动连",让用户自己选。
     func setAutoConnectSuppressed(_ s: Bool) {
         q.async { self.autoConnectSuppressed = s }
@@ -284,11 +289,16 @@ final class PenController: NSObject, WindBleDelegate {
         let suspectTruncated = streamIncomplete || (wall >= 30 && streamSec < Int(Double(wall) * 0.6))
                 PenLog.d("收尾 wall=\(wall)s stream=\(streamSec)s incomplete=\(streamIncomplete) → \(suspectTruncated ? "疑截断,补下载" : "直传")")
         if suspectTruncated, let fn = penFileName, !fn.isEmpty {
-            // 上一段还有没救完的 → 先把它的部分件交出去,别丢
-            // (部分件不带 pen_file:带了会被后端按 (上传人,pen_file) 去重,挡住之后真正的全段)
+            // 上一段还有没救完的:
+            //  - 同一机身文件(断连→重连镜像继续→停止):新补取的全段已覆盖旧部分件,旧的直接丢弃
+            //  - 不同文件:先把旧部分件交出去,别丢(不带 pen_file,防后端去重挡住之后的全段)
             if let old = pendingRecovery {
                 cancelActiveDownload(requeueSync: true)
-                deliver(old.partial, old.recordedAt, penFile: nil)
+                if old.fileName != fn {
+                    deliver(old.partial, old.recordedAt, penFile: nil)
+                } else {
+                    PenLog.d("旧部分件与本段同文件(\(fn)) → 由新补取覆盖,不重复交付")
+                }
             }
             pendingRecovery = (fn, snapshot, at, lastVerifiedMac)   // 记下是哪支笔的文件(审计 L9)
             DispatchQueue.main.async { self.manager?.penRecoveryStarted() }
@@ -463,6 +473,14 @@ final class PenController: NSObject, WindBleDelegate {
                 return
             }
             PenLog.d("★补取挂起:当前连的笔(\(lastVerifiedMac ?? "?"))不是该文件所在笔(\(rec.penMac ?? "?"))")
+            if !recoveryMismatchNotified {
+                recoveryMismatchNotified = true
+                let pref = String((rec.penMac ?? "").replacingOccurrences(of: ":", with: "").suffix(2))
+                let cur = String((lastVerifiedMac ?? "").replacingOccurrences(of: ":", with: "").suffix(2))
+                DispatchQueue.main.async {
+                    self.manager?.toast = "当前连的是尾号\(cur)；上段录音在尾号\(pref)那支里，它开机靠近后会自动补取"
+                }
+            }
         }
         guard !syncQueue.isEmpty else { return }
         let f = syncQueue.removeFirst()
@@ -628,7 +646,11 @@ final class PenController: NSObject, WindBleDelegate {
         if let a = connectingAddress, !a.isEmpty {
             rememberMac(a)   // 记住这支笔(多支都记) → 任一支开机自动连
         }
-                PenLog.d("★verified=true 收到真回包(cmd≥3)→ 标记已连接")
+                deferredFoundWork?.cancel()
+        deferredFoundWork = nil
+        deferredFound = nil
+        recoveryMismatchNotified = false
+        PenLog.d("★verified=true 收到真回包(cmd≥3)→ 标记已连接")
         // 双笔身份:把 MAC 尾号报给 UI(两支笔都叫 CB08,不显示尾号用户不知道连的是哪支)
         let suffix = String((connectingAddress ?? "").replacingOccurrences(of: ":", with: "").suffix(2))
         DispatchQueue.main.async {
@@ -783,6 +805,28 @@ final class PenController: NSObject, WindBleDelegate {
         guard !address.isEmpty else { return }
         DispatchQueue.main.async { self.manager?.penFound(name: name, address: address) }
         if !linkUp, !autoConnectSuppressed, knownMacs.contains(address) {
+            // 有段落等着从"原笔"补取时优先它:先缓 6s 等原笔广播,别抢连另一支(双笔场景连错拿不到文件)
+            if let pref = pendingRecovery?.penMac, pref != address {
+                PenLog.d("cmd1 发现 \(address) 但补取属于 \(pref) → 暂缓6s等原笔")
+                deferredFound = (name, address)
+                if deferredFoundWork == nil {
+                    let w = DispatchWorkItem { [weak self] in
+                        guard let self else { return }
+                        self.deferredFoundWork = nil
+                        guard !self.linkUp, !self.autoConnectSuppressed,
+                              let cand = self.deferredFound else { return }
+                        PenLog.d("等原笔6s未出现 → 先连发现的 \(cand.address)")
+                        self.deferredFound = nil
+                        self.attemptConnect(name: cand.name, address: cand.address, manual: false)
+                    }
+                    deferredFoundWork = w
+                    q.asyncAfter(deadline: .now() + 6, execute: w)
+                }
+                return
+            }
+            deferredFoundWork?.cancel()
+            deferredFoundWork = nil
+            deferredFound = nil
             PenLog.d("cmd1 命中已知的笔(\(address)) → 自动连接")
             attemptConnect(name: name, address: address, manual: false)   // 走闸门,防并发连接(L3)
         }
