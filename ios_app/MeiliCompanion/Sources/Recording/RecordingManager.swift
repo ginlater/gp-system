@@ -72,6 +72,7 @@ final class RecordingManager: ObservableObject {
 
     private let phone = PhoneMicRecorder()
     private var scanStopGen = 0
+    private var penStartGen = 0
     private var timer: Timer?
     private var recordedAt: String?
 
@@ -223,6 +224,15 @@ final class RecordingManager: ObservableObject {
             guard penConnected else { toast = "请先连接陪伴笔，靠近手机后重试"; return }
             state = .starting
             PenController.shared.startRecord()   // 真正进入录音态由 cmd=3=1 → penRecordingStarted 驱动
+            // 复查 B4:笔不响应开始命令时别永远卡「开始中」(toggle 对 starting 无效,只能杀App)
+            penStartGen += 1
+            let gen = penStartGen
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                guard gen == self.penStartGen, self.state == .starting, self.source == .pen else { return }
+                self.state = .idle
+                self.toast = "陪伴笔没有响应，请确认笔在身边后重试"
+            }
         }
     }
 
@@ -240,6 +250,13 @@ final class RecordingManager: ObservableObject {
         state = .recording
         // 双笔场景:明确告诉用户是哪支在录,别对着另一支干等
         if let s = penSuffix { toast = "陪伴笔(尾号\(s))开始录制" }
+    }
+
+    /// 幂等镜像兜底(复查 B4):笔在录而 App 之前拒过镜像(手机麦占用)或卡在「开始中」——
+    /// 心跳每 8s 仍上报"笔在录",这里把空闲/等开始的 App 拉回录音态,失同步不再永久化。
+    func penMirrorRecordingIfIdle() {
+        guard state == .idle || (state == .starting && source == .pen) else { return }
+        penRecordingStarted()
     }
     /// 笔暂停(cmd=3 state=2):计时挂起,UI 显示"陪伴已暂停"。
     func penRecordingPaused() {
@@ -312,19 +329,21 @@ final class RecordingManager: ObservableObject {
             state = .uploading
             Task { await ensurePlaceholder() }
             PenController.shared.stopRecord()
-            // 兜底:5s 内笔没回停止确认(cmd=3=0)→ 用已录 opus 强制收尾,不卡「保存中」、不丢音频。
+            // 兜底:5s 没等到停止确认(cmd=3=0)→ 先问笔真停没,再决定重发停止/强制收尾
+            // (复查 B6:stopRecord 丢包时笔其实还在录,直接按停收尾会劈成部分件+复活镜像段)
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
-                if self.state == .uploading { PenController.shared.endRecordingOnDisconnect() }
+                if self.state == .uploading { PenController.shared.confirmStopOrForceFinish() }
             }
         }
     }
 
-    /// 陪伴笔录完(PenController 包好 .ogg 后回调,主线程)。
+    /// 陪伴笔录完(PenController 包好 .ogg 后回调,主线程)。truncated=诚实部分件——
+    /// D1:带标记入库(服务端记 truncate_note),之后从笔同步到完整版可自动替换,不再被去重堵死。
     func penDidFinish(fileURL: URL?, durationSec: Int, recordedAt: String?,
-                      penFile: String? = nil, sn: String? = nil) {
+                      penFile: String? = nil, sn: String? = nil, truncated: Bool = false) {
         Task { await upload(fileURL, durationSec: durationSec, recordedAt: recordedAt,
-                            contentType: "audio/ogg", penFile: penFile, sn: sn) }
+                            contentType: "audio/ogg", penFile: penFile, sn: sn, truncated: truncated) }
     }
 
     // ── 「从陪伴笔同步」占位:导入时逐段建「处理中」行(带 recorded_at),下载再久也能看到在同步谁 ──
@@ -405,7 +424,7 @@ final class RecordingManager: ObservableObject {
                         contentType: String = "audio/m4a",
                         penFile: String? = nil, sn: String? = nil,
                         usePlaceholder: Bool = true, explicitPlaceholderId: Int? = nil,
-                        promptBind: Bool = true) async {
+                        promptBind: Bool = true, truncated: Bool = false) async {
         let pid = explicitPlaceholderId
             ?? (usePlaceholder ? (placeholderIds.isEmpty ? nil : placeholderIds.removeFirst()) : nil)
         persistPlaceholders()   // 占位号交给 UploadQueue(队列自己落盘)后,从"未消费"名单移除
@@ -417,7 +436,7 @@ final class RecordingManager: ObservableObject {
         }
         UploadQueue.shared.enqueue(fileURL: fileURL, durationSec: durationSec, recordedAt: recordedAt,
                                    contentType: contentType, penFile: penFile, sn: sn,
-                                   placeholderId: pid, promptBind: promptBind)
+                                   placeholderId: pid, promptBind: promptBind, truncated: truncated)
         if state == .uploading { state = .idle }
     }
 

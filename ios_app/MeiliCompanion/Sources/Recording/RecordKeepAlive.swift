@@ -23,8 +23,12 @@ enum RecordKeepAlive {
         installObserversIfNeeded()
         if let e = engine, e.isRunning { return }
         let session = AVAudioSession.sharedInstance()
-        // mixWithOthers:不顶掉微信语音/音乐
-        try? session.setCategory(.playback, options: [.mixWithOthers])
+        // 复查 B1:手机麦在录(playAndRecord)时绝不改类目——切成 .playback 会拔掉录音输入,
+        // 手机麦从此静默丢内容;录音会话本身就是活的,引擎直接搭上去即可
+        if session.category != .playAndRecord {
+            // mixWithOthers:不顶掉微信语音/音乐
+            try? session.setCategory(.playback, options: [.mixWithOthers])
+        }
         do { try session.setActive(true) } catch {
             PenLog.d("⚠️ 保活会话激活失败: \(error.localizedDescription)")
         }
@@ -52,7 +56,10 @@ enum RecordKeepAlive {
         guard engine != nil else { return }
         engine?.stop()
         engine = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        // 复查 B1:手机麦还在录时不能把共享会话整个灭掉(那会连麦一起杀)
+        if AVAudioSession.sharedInstance().category != .playAndRecord {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
         PenLog.d("🎧 保活音频会话已停止")
     }
 

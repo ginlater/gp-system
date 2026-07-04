@@ -38,6 +38,7 @@ final class PenController {
     func appDidEnterBackground() {}
     func setAutoConnectSuppressed(_ s: Bool) {}
     func directConnectSystemPen() {}
+    func confirmStopOrForceFinish() {}
 }
 
 #else
@@ -260,6 +261,26 @@ final class PenController: NSObject, WindBleDelegate {
         }
     }
 
+    /// 停止 5s 未见 cmd3=0(RecordingManager 兜底调):先问笔真停没(cmd9)再决定——
+    /// 还在录=stopRecord 丢包 → 重发;真停了/链路无响应 → 强制收尾保已录部分。
+    /// 复查 B6:不再"笔没停却被当停"劈成部分件+复活镜像段。
+    func confirmStopOrForceFinish() {
+        q.async {
+            guard self.recording else { return }   // cmd3=0 已正常处理过
+            self.stopConfirmPending = true
+            PenLog.d("★停止5s未确认 → cmd9 问笔真停没")
+            self.pen.getRecordState()
+            self.q.asyncAfter(deadline: .now() + 3) { [weak self] in
+                guard let self, self.recording, self.stopConfirmPending else { return }
+                self.stopConfirmPending = false
+                PenLog.d("★cmd9 也无响应 → 按链路失效强制收尾")
+                self.recording = false
+                if self.penFileName?.isEmpty == false { self.streamIncomplete = true }
+                self.finishUpload()
+            }
+        }
+    }
+
     /// App 回前台(审计 B3/B6/L8):通知笔 + 立即状态对账——挂起期间定时器全部停走,
     /// 笔是否已停/是否在录/是否失联,由这一次 getRecordState(cmd9) 即时校准;顺带踢下载队列。
     func appDidBecomeActive() {
@@ -302,7 +323,9 @@ final class PenController: NSObject, WindBleDelegate {
         stopStallWatch()
         let snapshot = opus          // Data 值拷贝,后续 wrap 用快照,opus 可安全复用
         let at = recordedAt
-        let wall = recordStartAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
+        // 复查 B5:墙钟扣掉暂停时长,暂停多的干净段不再被误判"疑截断"白走几分钟补下载
+        let pauseSec = Int(penPausedAccum + (penPauseBeganAt.map { Date().timeIntervalSince($0) } ?? 0))
+        let wall = max(0, (recordStartAt.map { Int(Date().timeIntervalSince($0)) } ?? 0) - pauseSec)
         let streamSec = OggOpusWriter.seconds(snapshot.count)
         let suspectTruncated = streamIncomplete || (wall >= 30 && streamSec < Int(Double(wall) * 0.6))
                 PenLog.d("收尾 wall=\(wall)s stream=\(streamSec)s incomplete=\(streamIncomplete) → \(suspectTruncated ? "疑截断,补下载" : "直传")")
@@ -313,7 +336,7 @@ final class PenController: NSObject, WindBleDelegate {
             if let old = pendingRecovery {
                 cancelActiveDownload(requeueSync: true)
                 if old.fileName != fn {
-                    deliver(old.partial, old.recordedAt, penFile: nil)
+                    deliver(old.partial, old.recordedAt, penFile: nil, truncated: true)
                 } else {
                     PenLog.d("旧部分件与本段同文件(\(fn)) → 由新补取覆盖,不重复交付")
                 }
@@ -333,19 +356,19 @@ final class PenController: NSObject, WindBleDelegate {
     }
 
     /// 在 q 上调用:把一段裸 opus 包成 .ogg 落盘并回调上传。
-    private func deliver(_ raw: Data, _ at: String?, penFile: String?) {
+    private func deliver(_ raw: Data, _ at: String?, penFile: String?, truncated: Bool = false) {
         let snValue = sn
         guard raw.count >= 40, let ogg = OggOpusWriter.wrap(raw) else {
-            DispatchQueue.main.async { self.manager?.penDidFinish(fileURL: nil, durationSec: 0, recordedAt: at, penFile: penFile, sn: snValue) }
+            DispatchQueue.main.async { self.manager?.penDidFinish(fileURL: nil, durationSec: 0, recordedAt: at, penFile: penFile, sn: snValue, truncated: truncated) }
             return
         }
         let dur = OggOpusWriter.seconds(raw.count)
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("pen_\(Int(Date().timeIntervalSince1970))_\(raw.count).ogg")
         do {
             try ogg.write(to: url)
-            DispatchQueue.main.async { self.manager?.penDidFinish(fileURL: url, durationSec: dur, recordedAt: at, penFile: penFile, sn: snValue) }
+            DispatchQueue.main.async { self.manager?.penDidFinish(fileURL: url, durationSec: dur, recordedAt: at, penFile: penFile, sn: snValue, truncated: truncated) }
         } catch {
-            DispatchQueue.main.async { self.manager?.penDidFinish(fileURL: nil, durationSec: 0, recordedAt: at, penFile: penFile, sn: snValue) }
+            DispatchQueue.main.async { self.manager?.penDidFinish(fileURL: nil, durationSec: 0, recordedAt: at, penFile: penFile, sn: snValue, truncated: truncated) }
         }
     }
 
@@ -392,6 +415,21 @@ final class PenController: NSObject, WindBleDelegate {
     /// 当前下载失败 → 按任务类型收尾。补取(复查 P#7):一次卡死/错误不永久弃,
     /// 重试最多 3 次(每次隔 5s),最终放弃交给 10min 总兜底或次数上限。
     private var recoveryAttempts = 0
+    private var syncAttempts: [String: Int] = [:]     // 复查 D3:同步下载重试计数(按机身文件名)
+    private var stopConfirmPending = false            // 复查 B6:停止5s未确认,先问笔真停没
+    private var penPausedAccum: TimeInterval = 0      // 复查 B5:本段累计暂停时长(墙钟扣除用)
+    private var penPauseBeganAt: Date?
+    private var lastDownloadDataAt = Date(timeIntervalSince1970: 0)   // 复查 D4:下载最近出数据时刻
+
+    // 复查 B2:SN↔MAC 映射——直连时 cmd2 不带地址,靠 cmd7 上报的 SN 反查是哪支笔
+    private static let kSnMacMap = "pen_sn_mac_map"
+    private lazy var snMacMap: [String: String] =
+        (UserDefaults.standard.dictionary(forKey: Self.kSnMacMap) as? [String: String]) ?? [:]
+    private func rememberSnMac(_ sn: String, _ mac: String) {
+        guard snMacMap[sn] != mac else { return }
+        snMacMap[sn] = mac
+        UserDefaults.standard.set(snMacMap, forKey: Self.kSnMacMap)
+    }
 
     private func failCurrentDownload() {
         switch downloadJob {
@@ -408,7 +446,24 @@ final class PenController: NSObject, WindBleDelegate {
             } else {
                 failRecovery()
             }
-        case .sync(let f): failSync(f)
+        case .sync(let f):
+            // 复查 D3:同步下载也重试(≤3次)——15s 卡流一次就丢任务太脆,大文件下到90%全作废
+            let n = (syncAttempts[f.name] ?? 0) + 1
+            syncAttempts[f.name] = n
+            if n < 3 {
+                PenLog.d("★同步下载第\(n)次失败 → 5s后重试 \(f.name)")
+                downloading = false
+                downloadJob = nil
+                downloadStallWork?.cancel()
+                download.removeAll(keepingCapacity: false)
+                if !syncQueue.contains(f) { syncQueue.insert(f, at: 0) }
+                persistSyncQueue()
+                updatePenWorkKeepAlive()
+                q.asyncAfter(deadline: .now() + 5) { [weak self] in self?.kickSync() }
+            } else {
+                syncAttempts.removeValue(forKey: f.name)
+                failSync(f)
+            }
         case nil: break
         }
     }
@@ -531,7 +586,7 @@ final class PenController: NSObject, WindBleDelegate {
                 return
             }
             PenLog.d("★补取挂起:当前连的笔(\(lastVerifiedMac ?? "?"))不是该文件所在笔(\(rec.penMac ?? "?"))")
-            if !recoveryMismatchNotified {
+            if !recoveryMismatchNotified, lastVerifiedMac != nil {   // 身份未知(直连待SN反查)不弹空尾号
                 recoveryMismatchNotified = true
                 let pref = String((rec.penMac ?? "").replacingOccurrences(of: ":", with: "").suffix(2))
                 let cur = String((lastVerifiedMac ?? "").replacingOccurrences(of: ":", with: "").suffix(2))
@@ -554,6 +609,7 @@ final class PenController: NSObject, WindBleDelegate {
     }
 
     private func completeSync(_ f: PenFile) {
+        syncAttempts.removeValue(forKey: f.name)
         downloading = false
         downloadJob = nil
         downloadStallWork?.cancel()
@@ -638,20 +694,27 @@ final class PenController: NSObject, WindBleDelegate {
         updatePenWorkKeepAlive()
         q.asyncAfter(deadline: .now() + 1) { [weak self] in self?.kickSync() }
         download.removeAll(keepingCapacity: false)
-        deliver(rec.partial, rec.recordedAt, penFile: nil)
+        deliver(rec.partial, rec.recordedAt, penFile: nil, truncated: true)   // D1:标记诚实部分件
     }
 
     /// 总兜底:10 分钟内没救回来(反复断连等) → 放弃,直传部分件,不让「保存中」无限挂。
-    private func scheduleRecoveryDeadline() {
+    private func scheduleRecoveryDeadline(_ interval: TimeInterval? = nil) {
         recoveryDeadlineWork?.cancel()
         let w = DispatchWorkItem { [weak self] in
             guard let self, self.pendingRecovery != nil else { return }
-                        PenLog.d("★补下载总兜底超时 → 直传部分件")
+            // 复查 D4:到点但下载正在出数据 → 顺延续命,别把 6 分钟级大文件拦腰击杀
+            // (死传输有 15s 卡流看门狗兜,这里只管"反复断连永远救不回"的场景)
+            if self.downloading, Date().timeIntervalSince(self.lastDownloadDataAt) < 30 {
+                PenLog.d("★补取兜底到点但下载有进度 → 顺延120s")
+                self.scheduleRecoveryDeadline(120)
+                return
+            }
+            PenLog.d("★补下载总兜底超时 → 直传部分件")
             if self.downloading { self.pen.stopGetFile(self.pendingRecovery?.fileName ?? "") }
             self.failRecovery()
         }
         recoveryDeadlineWork = w
-        q.asyncAfter(deadline: .now() + recoveryDeadline, execute: w)
+        q.asyncAfter(deadline: .now() + (interval ?? recoveryDeadline), execute: w)
     }
 
     // MARK: - 卡流看门狗(均在 q 上)
@@ -698,11 +761,24 @@ final class PenController: NSObject, WindBleDelegate {
             PenLog.d("直连救援不可用(SDK 内部接口变了) 由=\(why)")
             return
         }
-        // 身份预填:cmd2 不带地址,verify 靠 connectingAddress 定格身份/尾号;
-        // 僵尸连接几乎必然是上次连的那支(就是被杀前连着的),用 lastMac 兜底
-        if connectingAddress == nil {
-            connectingAddress = UserDefaults.standard.string(forKey: Self.kLastMac)
+        // 复查 B2/B3:直连也走闸门(防与扫描自动连并发张冠李戴);身份不预填——
+        // cmd2 不带地址,真实身份等 cmd7 SN 反查(snMacMap)定格,期间按"未知笔"处理
+        connectGate = true
+        stopReconnect()
+        connectingAddress = nil
+        connectGateWork?.cancel()
+        gateGen += 1
+        let g = gateGen
+        let w = DispatchWorkItem { [weak self] in
+            guard let self, self.gateGen == g else { return }
+            if self.connectGate {
+                PenLog.d("直连10s未verify → 闸门释放,恢复重连")
+                self.connectGate = false
+                self.scheduleReconnect()
+            }
         }
+        connectGateWork = w
+        q.asyncAfter(deadline: .now() + 10, execute: w)
         PenLog.d("★直连系统已连接的笔(connectByList) 由=\(why)")
         _ = mgr.perform(listSel)
     }
@@ -851,6 +927,7 @@ final class PenController: NSObject, WindBleDelegate {
             self.lastRx = Date()
             guard self.downloading, self.downloadAccepting else { return }
             self.download.append(d)
+            self.lastDownloadDataAt = Date()
             self.bumpDownloadStall()
         }
     }
@@ -994,6 +1071,7 @@ final class PenController: NSObject, WindBleDelegate {
         case "1":
             if recording, recPaused {
                 recPaused = false
+                if let p = penPauseBeganAt { penPausedAccum += Date().timeIntervalSince(p); penPauseBeganAt = nil }
                 PenLog.d("cmd3 恢复录音")
                 lastFrameAt = Date()
                 DispatchQueue.main.async { self.manager?.penRecordingResumed() }
@@ -1002,6 +1080,8 @@ final class PenController: NSObject, WindBleDelegate {
             if !recording {
                 recording = true
                 recPaused = false
+                penPausedAccum = 0
+                penPauseBeganAt = nil
                 penNotRecordingCount = 0
                 finishing = false                          // 新一段:复位收尾哨兵
                 opus.removeAll(keepingCapacity: true)
@@ -1025,10 +1105,14 @@ final class PenController: NSObject, WindBleDelegate {
                 }
                                 PenLog.d("cmd3 录音开始 → App 进入录音态")
                 DispatchQueue.main.async { self.manager?.penRecordingStarted() }
+            } else {
+                // 复查 B4:已在录(重复 cmd3=1)→ 幂等补通知,防 manager 之前拒绝过镜像
+                DispatchQueue.main.async { self.manager?.penMirrorRecordingIfIdle() }
             }
         case "2":
             if recording, !recPaused {
                 recPaused = true
+                penPauseBeganAt = Date()
                 PenLog.d("cmd3 暂停录音")
                 DispatchQueue.main.async { self.manager?.penRecordingPaused() }
             }
@@ -1121,6 +1205,26 @@ final class PenController: NSObject, WindBleDelegate {
     private func handleRecordingStateQuery(_ data: [String: Any]?) {
         guard let data else { return }
         let rs = str(data["recordState"])
+        if stopConfirmPending {
+            stopConfirmPending = false
+            if rs == "1" {
+                PenLog.d("★停止确认:笔还在录(stop 丢包) → 重发停止")
+                pen.stopRecord()
+                q.asyncAfter(deadline: .now() + 5) { [weak self] in
+                    guard let self, self.recording else { return }
+                    PenLog.d("★重发停止仍未回 → 强制收尾")
+                    self.recording = false
+                    if self.penFileName?.isEmpty == false { self.streamIncomplete = true }
+                    self.finishUpload()
+                }
+            } else {
+                PenLog.d("★停止确认:笔已停(cmd3=0 丢了) → 收尾")
+                recording = false
+                recPaused = false
+                finishUpload()
+            }
+            return
+        }
         if rs != "1" {
             if recording && !recPaused {
                 penNotRecordingCount += 1
@@ -1141,14 +1245,20 @@ final class PenController: NSObject, WindBleDelegate {
         if recording {
             if recPaused {
                 recPaused = false
+                if let p = penPauseBeganAt { penPausedAccum += Date().timeIntervalSince(p); penPauseBeganAt = nil }
                 PenLog.d("cmd9 笔已恢复录音 → App 回录音态")
                 DispatchQueue.main.async { self.manager?.penRecordingResumed() }
+            } else {
+                // 复查 B4:manager 可能拒绝过镜像(当时手机麦在录)——空闲后幂等补通知,失同步不再永久化
+                DispatchQueue.main.async { self.manager?.penMirrorRecordingIfIdle() }
             }
             return
         }
         PenLog.d("cmd9 笔在录而App不在 → 镜像进入录音态(头部缺失,收尾走补下载)")
         recording = true
         recPaused = false
+        penPausedAccum = 0
+        penPauseBeganAt = nil
         finishing = false
         opus.removeAll(keepingCapacity: true)
         recordedAt = PhoneMicRecorder.wallClock()   // 占位;cmd11 文件名到手后校准为真实开始时刻
@@ -1183,6 +1293,18 @@ final class PenController: NSObject, WindBleDelegate {
         guard !v.isEmpty, v != "00000000" else { return }
         let isNew = (v != sn)
         sn = v
+        // 复查 B2:SN↔MAC 学习与反查——正常连接(有地址)学映射;直连(身份未知)用 SN 定格身份
+        if let mac = lastVerifiedMac, !mac.isEmpty {
+            rememberSnMac(v, mac)
+        } else if verifiedConnected, let mac = snMacMap[v], !mac.isEmpty {
+            PenLog.d("★直连身份反查:SN \(v) → \(mac)")
+            lastVerifiedMac = mac
+            connectingAddress = mac
+            rememberMac(mac)
+            let suffix = String(mac.replacingOccurrences(of: ":", with: "").suffix(2))
+            DispatchQueue.main.async { self.manager?.penSuffix = suffix.isEmpty ? nil : suffix }
+            kickSync()   // 身份定格 → 被挂起的补取/同步立刻按新身份重判
+        }
         // 上报 SN 给后端做绑定校验(准/拒决策在后端,fail-open);每支笔本次运行只报一次
         if isNew { DispatchQueue.main.async { self.manager?.penSnReported(v) } }
     }

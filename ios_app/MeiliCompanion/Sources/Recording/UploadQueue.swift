@@ -24,6 +24,7 @@ final class UploadQueue: NSObject, ObservableObject {
         var promptBind: Bool = true    // 录音段=传完弹绑定;同步导入=不弹(一次多段会轰炸)
         var attempts: Int = 0
         var nextAttemptAt: Date? = nil // 失败退避(复查 B7):到点前不自动重试
+        var truncated: Bool? = nil     // D1:诚实部分件标记(可选类型:老盘面数据无此键照常解码)
     }
 
     /// 待上传总数(含在传);attempts>0 视为"失败过"。
@@ -138,7 +139,7 @@ final class UploadQueue: NSObject, ObservableObject {
     /// 从此文件与任务都不怕 App 被杀/系统清 tmp。
     func enqueue(fileURL: URL, durationSec: Int, recordedAt: String?,
                  contentType: String, penFile: String?, sn: String?, placeholderId: Int?,
-                 promptBind: Bool = true) {
+                 promptBind: Bool = true, truncated: Bool = false) {
         let id = UUID().uuidString
         let audioName = "\(id)_\(fileURL.lastPathComponent)"
         let audioDst = Self.dir.appendingPathComponent(audioName)
@@ -157,7 +158,7 @@ final class UploadQueue: NSObject, ObservableObject {
         let item = Item(id: id, audioFile: audioName, bodyFile: bodyName,
                         durationSec: durationSec, recordedAt: recordedAt,
                         penFile: penFile, contentType: contentType, placeholderId: placeholderId,
-                        sn: sn, promptBind: promptBind)
+                        sn: sn, promptBind: promptBind, truncated: truncated ? true : nil)
         // 拼 body 失败不丢段:音频已在常驻目录,item 照记,start() 会按元数据重拼(复查 B3)
         try? Self.buildMultipartBodyFile(
             to: Self.dir.appendingPathComponent(bodyName),
@@ -201,6 +202,7 @@ final class UploadQueue: NSObject, ObservableObject {
         f["pen_file"] = item.penFile
         f["sn"] = item.sn
         if let pid = item.placeholderId { f["placeholder_id"] = String(pid) }
+        if item.truncated == true { f["truncated"] = "1" }   // D1:服务端据此记 truncate_note
         return f
     }
 
