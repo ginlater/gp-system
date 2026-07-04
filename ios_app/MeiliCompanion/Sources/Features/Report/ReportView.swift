@@ -743,6 +743,16 @@ struct TaskPanelSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .background(MeiliColor.bg)
+        // 提示要显示在面板这一层(报告页底部的 toast 会被 sheet 挡住看不见)
+        .overlay(alignment: .bottom) {
+            if let t = vm.toast {
+                Text(t).font(MeiliFont.bodySm).foregroundStyle(.white)
+                    .padding(.horizontal, 16).padding(.vertical, 11)
+                    .background(MeiliColor.inkSurface).clipShape(Capsule())
+                    .padding(.bottom, 18)
+                    .task { try? await Task.sleep(nanoseconds: 2_200_000_000); vm.toast = nil }
+            }
+        }
     }
 
     private func taskColor(_ t: AnalysisTask) -> Color {
