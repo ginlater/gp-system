@@ -100,6 +100,7 @@ struct ReceptionView: View {
 
     private func pendingRow(_ rec: PendingRecording) -> some View {
         let (label, kind) = rec.pendingStatus
+        let stale = rec.isStaleUnbound   // 非当天未绑:标红提醒(用户需求 2026-07-04)
         return VStack(spacing: 6) {
             HStack(spacing: 10) {
                 if rec.isProcessing {
@@ -108,11 +109,13 @@ struct ReceptionView: View {
                     pendingPlayButton(rec)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(rec.recordedAt?.nilIfBlank ?? "陪伴片段").font(MeiliFont.body).foregroundStyle(MeiliColor.ink).lineLimit(1)
+                    Text(rec.recordedAt?.nilIfBlank ?? "陪伴片段").font(MeiliFont.body)
+                        .foregroundStyle(stale ? MeiliColor.roseText : MeiliColor.ink).lineLimit(1)
                     HStack(spacing: 6) {
                         if let d = rec.durationLabel?.nilIfBlank {
-                            Text(d).font(.sz(11)).foregroundStyle(MeiliColor.ink3)
+                            Text(d).font(.sz(11)).foregroundStyle(stale ? MeiliColor.roseText : MeiliColor.ink3)
                         }
+                        if stale { StatusPill(text: "隔天未绑", kind: .danger) }
                         StatusPill(text: label, kind: kind)
                     }
                 }
@@ -412,6 +415,10 @@ struct PenSyncSheet: View {
     @ViewBuilder private var content: some View {
         if vm.syncUnavailable {
             emptyBox("未连接陪伴笔", "请在陪伴首页连接陪伴笔后再从机身同步")
+        } else if vm.syncRecordingBusy {
+            emptyBox("正在录音，暂不能同步", "陪伴笔录音期间无法传输机身文件，结束录音后再来导入")
+        } else if vm.syncPreviewFailed {
+            emptyBox("网络不稳，未能核对机身记录", "为避免重复导入已暂停，请检查网络后重新打开本页")
         } else if vm.syncBusy {
             VStack(spacing: 8) {
                 ProgressView().tint(MeiliColor.clay)

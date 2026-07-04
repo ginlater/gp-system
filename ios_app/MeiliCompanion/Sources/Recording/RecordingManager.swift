@@ -18,6 +18,7 @@ struct PenFile: Identifiable, Equatable, Codable {
     let durationSec: Int
     let recordedAt: String?   // 从文件名解析的录音开始时刻
     var penMac: String? = nil // 属于哪支笔(双笔场景防向错笔要文件;旧持久化数据无此键=放行)
+    var addedAt: Date? = nil  // 入队时刻(D2:>3天没传出去判过期丢弃,别永远堵着弹层/保活)
     var id: String { name }
 }
 
@@ -89,7 +90,8 @@ final class RecordingManager: ObservableObject {
         UploadQueue.shared.onFirstFailure = { [weak self] in
             self?.toast = "上传暂时失败，已加入重传队列，网络恢复后自动补传"
         }
-        // 上次会话没消费掉的占位号 → 统一取消,根治「后台同步中」僵尸行
+        // 上次会话没消费掉的录音段占位 → 取消;同步占位跟随队列复活(D10)
+        restoreSyncPlaceholders()
         cancelLeftoverPlaceholders()
     }
 
@@ -353,7 +355,8 @@ final class RecordingManager: ObservableObject {
     func registerSyncPlaceholder(for f: PenFile) async {
         guard syncPlaceholders[f.name] == nil else { return }
         syncPlaceholders[f.name] = -1   // 占坑
-        if let id = try? await ConsultantRepo.placeholder(recordedAt: f.recordedAt, source: nil).id {
+        // D6:占位带机身文件名 → 服务端预检可精确屏蔽"正在传的段",不再赌±90s时刻吻合
+        if let id = try? await ConsultantRepo.placeholder(recordedAt: f.recordedAt, source: nil, penFile: f.name).id {
             syncPlaceholders[f.name] = id
         } else {
             syncPlaceholders.removeValue(forKey: f.name)
@@ -390,12 +393,23 @@ final class RecordingManager: ObservableObject {
     // 落盘:App 被杀时未消费的占位号留在盘上,下次启动统一 cancel(死会话的段等不到上传;
     //      真音频在 UploadQueue/笔机身,不受影响)——根治「后台同步中」僵尸行。
     private static let kPendingPlaceholders = "pending_placeholder_ids"
+    private static let kSyncPlaceholders = "pen_sync_placeholders"   // 机身文件名→占位id
     private var placeholderIds: [Int] = []
     private var segmentPlaceholderMade = false   // 每段只建一个(App点停+笔回停会双触发 ensure)
 
+    /// D10:同步占位与录音段占位分账——同步任务队列被杀后会恢复续传,它们的占位必须跟着活下来,
+    /// 不能在启动时被一锅端(否则「后台同步中」行集体消失,几分钟后又冒出无占位的新行)。
     private func persistPlaceholders() {
-        let all = placeholderIds + Array(syncPlaceholders.values)
-        UserDefaults.standard.set(all, forKey: Self.kPendingPlaceholders)
+        UserDefaults.standard.set(placeholderIds, forKey: Self.kPendingPlaceholders)
+        let alive = syncPlaceholders.filter { $0.value > 0 }
+        UserDefaults.standard.set(alive, forKey: Self.kSyncPlaceholders)
+    }
+
+    /// 启动恢复:同步占位跟随持久化的同步队列复活(孤儿由服务端±5s兄弟修复+3h TTL兜底)。
+    private func restoreSyncPlaceholders() {
+        if let m = UserDefaults.standard.dictionary(forKey: Self.kSyncPlaceholders) as? [String: Int] {
+            syncPlaceholders = m.filter { $0.value > 0 }
+        }
     }
 
     /// 启动清理:上次会话没消费掉的占位号,统一取消(服务器还有 ±5s 兄弟匹配 + 2h TTL 双保险)。

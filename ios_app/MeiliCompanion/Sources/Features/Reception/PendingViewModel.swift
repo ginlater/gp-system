@@ -59,6 +59,8 @@ final class PendingViewModel: ObservableObject {
     @Published var syncLoading = false
     @Published var syncUnavailable = false
     @Published var syncBusy = false          // 有下载在跑:笔没法回答列表查询,显示"同步中"而非"暂无"
+    @Published var syncRecordingBusy = false // D7:笔正在录音,录音中笔拒绝文件传输
+    @Published var syncPreviewFailed = false // D8:预检失败,禁导入防重复
     @Published var syncRows: [PenSyncRow] = []
 
     var syncSelectedCount: Int { syncRows.filter(\.checked).count }
@@ -67,8 +69,12 @@ final class PendingViewModel: ObservableObject {
     func openPenSync() {
         syncSheet = true
         syncRows = []
+        syncPreviewFailed = false
         syncUnavailable = !PenController.shared.isConnected
         guard !syncUnavailable else { return }
+        // D7:笔录音中禁同步——录音中笔拒绝文件传输,列表查询也会超时误显示"暂无"
+        syncRecordingBusy = RecordingManager.shared.isLive && RecordingManager.shared.source == .pen
+        guard !syncRecordingBusy else { return }
         // 有同步/补取在传:笔忙着传文件回答不了列表查询(会超时空列表),直接显示"同步中"
         syncBusy = PenController.shared.isSyncBusy
         guard !syncBusy else { return }
@@ -80,14 +86,30 @@ final class PendingViewModel: ObservableObject {
 
     /// 拿到机身列表 → 后端去重预检,只留 status=new 的(已上传/已删除的不展示)。
     private func onPenFiles(_ files: [PenFile]) async {
-        let preview = try? await ConsultantRepo.penSyncPreview(files.map { ($0.name, $0.recordedAt) })
+        // D7:正在录的那个机身文件不能出现在列表(导入它=和实时流双传,还白耗几分钟下载)
+        let cur = PenController.shared.currentRecordingPenFile
+        let candidates = files.filter { $0.name != cur }
+        guard let preview = try? await ConsultantRepo.penSyncPreview(candidates.map { ($0.name, $0.recordedAt) }) else {
+            // D8:预检失败(弱网)绝不能当"全是新的"展示——那会引导用户全选重复导入
+            syncPreviewFailed = true
+            syncLoading = false
+            return
+        }
         var statusByName: [String: String] = [:]
-        for i in preview?.items ?? [] {
+        for i in preview.items ?? [] {
             if let n = i.name { statusByName[n] = i.status ?? "new" }
         }
-        syncRows = files
+        syncRows = candidates
             .filter { (statusByName[$0.name] ?? "new") == "new" }
-            .sorted { ($0.recordedAt ?? $0.name) > ($1.recordedAt ?? $1.name) }
+            .sorted {
+                // D11:时间未知的沉底(裸文件名'n'>数字会浮顶),正常按时刻倒序
+                switch ($0.recordedAt, $1.recordedAt) {
+                case let (a?, b?): return a > b
+                case (nil, _?): return false
+                case (_?, nil): return true
+                default: return $0.name > $1.name
+                }
+            }
             .map { PenSyncRow(file: $0) }   // 默认不勾选,避免误导入一堆
         syncLoading = false
     }
@@ -104,7 +126,7 @@ final class PendingViewModel: ObservableObject {
     // ── 按日期分组:点日期头一键勾选那一天(用户需求 2026-07-04)──
 
     private func dateOf(_ r: PenSyncRow) -> String {
-        String((r.file.recordedAt ?? "未知日期").prefix(10))
+        r.file.recordedAt.map { String($0.prefix(10)) } ?? "时间未知"
     }
 
     /// 分组保持 syncRows 的倒序(最近日期在上)。
@@ -196,6 +218,14 @@ extension PendingRecording {
     var deletePending: Bool { deleteRequestStatus == "pending" }
     /// 删除申请被拒且还没点「知道了」。
     var deleteRejected: Bool { deleteRequestStatus == "rejected" }
+
+    /// 非当天且尚未绑定(用户需求 2026-07-04:标红提醒顾问尽快绑定,别越攒越久)。
+    var isStaleUnbound: Bool {
+        guard !isProcessing, deleteRequestStatus != "pending" else { return false }
+        let day = recordedAt.map { String($0.prefix(10)) } ?? serviceDate
+        guard let day, !day.isEmpty else { return false }
+        return day < DateHelper.today()
+    }
 
     /// 待整理片段状态 → (文案, pill)。
     var pendingStatus: (String, PillKind) {

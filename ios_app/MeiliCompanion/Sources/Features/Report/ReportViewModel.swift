@@ -42,7 +42,37 @@ final class ReportViewModel: ObservableObject {
         if let ev = try? await ConsultantRepo.evaluations(sessionId) { evaluations = ev.evaluations ?? [] }
         if let t = try? await ConsultantRepo.sessionTasks(sessionId) { tasks = t.tasks ?? [] }
         ensureAudioURL()   // 详情就绪后懒取主片段播放地址
+        startPollingIfNeeded()   // C4:分析进行中 → 15s 自轮询,页面不再冻结在旧状态
     }
+
+    // ── C4:分析进行中报告页自轮询(15s tick;终态即停,写操作后重启)──
+    private var pollTask: Task<Void, Never>?
+
+    private var isAnalysisActive: Bool {
+        let s = displayStatus
+        return s == "running" || s == "queued"
+    }
+
+    func startPollingIfNeeded() {
+        guard isAnalysisActive, pollTask == nil else { return }
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 15_000_000_000)
+                guard let self, !Task.isCancelled else { break }
+                guard self.isAnalysisActive else { self.pollTask = nil; break }
+                let d = try? await ConsultantRepo.session(self.sessionId)
+                if let d { self.detail = d }
+                if let t = try? await ConsultantRepo.sessionTasks(self.sessionId) { self.tasks = t.tasks ?? [] }
+                if !self.isAnalysisActive {   // 刚翻到终态:补一整轮(报告正文/标签/点评)后停
+                    await self.load()
+                    self.pollTask = nil
+                    break
+                }
+            }
+        }
+    }
+
+    func stopPolling() { pollTask?.cancel(); pollTask = nil }
 
     func ensureAudioURL() {
         guard audioURL == nil, !audioURLLoading, let rec = currentRecording else { return }
@@ -107,6 +137,8 @@ final class ReportViewModel: ObservableObject {
                 opBusy = false
                 toast = "已提交重跑，正在排队…"
                 refreshTasks()
+                if let d = try? await ConsultantRepo.session(sessionId) { detail = d }
+                startPollingIfNeeded()
             } catch { opBusy = false; toast = "提交失败，请重试" }
         }
     }
@@ -120,6 +152,8 @@ final class ReportViewModel: ObservableObject {
                 opBusy = false
                 toast = "已提交补齐缺失任务"
                 refreshTasks()
+                if let d = try? await ConsultantRepo.session(sessionId) { detail = d }
+                startPollingIfNeeded()
             } catch { opBusy = false; toast = "提交失败，请重试" }
         }
     }

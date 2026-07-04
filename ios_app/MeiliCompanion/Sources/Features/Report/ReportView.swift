@@ -30,6 +30,10 @@ struct ReportView: View {
                 } else if let e = vm.error, vm.detail == nil {
                     errorCard(e)
                 } else {
+                    // C5:作废报告要当面说清,别让旧报告看着像有效的
+                    if vm.displayStatus == "outdated" {
+                        MeiliBanner(message: "陪伴片段在上次分析后有变更（新增/换绑/退回等），本报告已过期——点右上角状态标签可重新分析。", kind: .warn)
+                    }
                     // PART03(失分根因/root_cause)后端已不生成 → 从原04起整体往前挪一号
                     audioFold
                     part01; part02; part04; part05; part06
@@ -45,7 +49,7 @@ struct ReportView: View {
         .toolbar(.hidden, for: .navigationBar)
         .onAppear { vm.onAppear(); if let u = vm.audioURL { player.load(u) } }
         .onChange(of: vm.audioURL) { url in if let u = url { player.load(u) } }
-        .onDisappear { player.stop() }
+        .onDisappear { player.stop(); vm.stopPolling() }
         .sheet(isPresented: $showScoring) {
             if let sc = vm.report?.scoring { ScoringDetailSheet(scoring: sc) }
         }
@@ -589,7 +593,9 @@ struct ReportView: View {
         case "done": return ("已完成", .ok)
         case "running": return ("分析中", .run)
         case "queued": return ("排队中", .run)
-        case "failed", "stuck", "cancelled": return ("分析失败", .danger)
+        case "failed", "stuck": return ("分析失败", .danger)
+        case "cancelled": return ("已中断", .warn)
+        case "outdated": return ("报告已过期", .warn)
         default: return ("未分析", .neutral)
         }
     }

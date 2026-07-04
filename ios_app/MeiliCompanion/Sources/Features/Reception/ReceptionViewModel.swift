@@ -175,6 +175,7 @@ extension TodayReception {
         case "done": return ("已分析", .ok)
         case "running", "queued": return ("分析中", .run)
         case "failed", "stuck": return ("分析失败", .danger)
+        case "cancelled": return ("已中断分析", .warn)   // C11:原来落"待分析",与预览页文案打架
         default:
             return (recordingCount ?? 0 > 0) ? ("待分析", .warn) : ("待陪伴", .neutral)
         }

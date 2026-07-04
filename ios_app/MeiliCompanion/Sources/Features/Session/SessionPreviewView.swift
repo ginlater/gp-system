@@ -203,7 +203,8 @@ struct SessionPreviewView: View {
             Button("再想想", role: .cancel) {}
             Button("确认并开始分析") { vm.startAnalysis() }
         } message: {
-            Text("本次将分析 \(vm.bound.count) 段陪伴。")
+            // 李雪雪案帮凶:原来不显示是谁的包,测试/多开时容易替别的顾客确认了分析
+            Text("将分析「\(vm.customerName)」\(vm.serviceDate.isEmpty ? "" : " \(vm.serviceDate) ")的 \(vm.bound.count) 段陪伴，分析会锁定该接诊包直到完成。")
         }
     }
 

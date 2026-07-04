@@ -39,6 +39,7 @@ final class PenController {
     func setAutoConnectSuppressed(_ s: Bool) {}
     func directConnectSystemPen() {}
     func confirmStopOrForceFinish() {}
+    var currentRecordingPenFile: String? { nil }
 }
 
 #else
@@ -406,7 +407,10 @@ final class PenController: NSObject, WindBleDelegate {
     /// 补取/同步/等重连期间持有保活(复查 B2/B5:这些工作可长达几分钟-10分钟,
     /// 期间 App 必须活着才能自动重连+收数据;工作清空即释放,不再泄漏)。
     private func updatePenWorkKeepAlive() {
-        let need = downloading || pendingRecovery != nil || !syncQueue.isEmpty
+        // B11:只为"干得动"的工作保活——只剩别的笔的任务(原笔不在线)时不值得后台常驻放静音耗电,
+        // 原笔回来由用户打开 App 触发 kickSync 续传
+        let executableSync = syncQueue.contains { $0.penMac == nil || $0.penMac == lastVerifiedMac }
+        let need = downloading || pendingRecovery != nil || executableSync
         DispatchQueue.main.async {
             need ? RecordKeepAlive.acquire("penwork") : RecordKeepAlive.release("penwork")
         }
@@ -456,7 +460,7 @@ final class PenController: NSObject, WindBleDelegate {
                 downloadJob = nil
                 downloadStallWork?.cancel()
                 download.removeAll(keepingCapacity: false)
-                if !syncQueue.contains(f) { syncQueue.insert(f, at: 0) }
+                if !syncQueue.contains(where: { $0.name == f.name }) { syncQueue.insert(f, at: 0) }
                 persistSyncQueue()
                 updatePenWorkKeepAlive()
                 q.asyncAfter(deadline: .now() + 5) { [weak self] in self?.kickSync() }
@@ -472,7 +476,7 @@ final class PenController: NSObject, WindBleDelegate {
     private func cancelActiveDownload(requeueSync: Bool, sendStop: Bool = true) {
         guard downloading else { return }
         if sendStop { pen.stopGetFile(currentDownloadFileName ?? "") }
-        if requeueSync, case .sync(let f) = downloadJob, !syncQueue.contains(f) {
+        if requeueSync, case .sync(let f) = downloadJob, !syncQueue.contains(where: { $0.name == f.name }) {
             syncQueue.insert(f, at: 0)
         }
         downloading = false
@@ -550,23 +554,46 @@ final class PenController: NSObject, WindBleDelegate {
     /// 启动时恢复上次没传完的队列(连上笔后 kickSync 自动续)。
     private func loadPersistedSyncQueue() {
         guard let data = UserDefaults.standard.data(forKey: Self.kSyncQueue),
-              let files = try? JSONDecoder().decode([PenFile].self, from: data),
+              var files = try? JSONDecoder().decode([PenFile].self, from: data),
               !files.isEmpty else { return }
+        // D2:老数据无 addedAt → 现在补章;超3天没传出去的任务判过期丢弃(多半那支笔不用了)
+        files = files.map { f -> PenFile in
+            var x = f; if x.addedAt == nil { x.addedAt = Date() }; return x
+        }
+        let cutoff = Date().addingTimeInterval(-3 * 86400)
+        let dropped = files.filter { ($0.addedAt ?? Date()) < cutoff }
+        if !dropped.isEmpty {
+            files.removeAll { ($0.addedAt ?? Date()) < cutoff }
+            PenLog.d("★丢弃过期同步任务 \(dropped.count)个(>3天未能执行)")
+        }
         syncQueue = files
+        persistSyncQueue()
         updatePenWorkKeepAlive()
         PenLog.d("★恢复上次未完成的同步队列 \(files.count)个,连上笔后自动续传")
     }
 
     /// 是否有同步/补取下载在跑或在排队(笔忙着传文件时没法回答列表查询,弹层要显示"同步中"而非"暂无")。
+    /// D2:只算"当前这支笔干得动"的任务——别的笔的任务挂起不该把这支笔的弹层堵成永远"同步中"。
     var isSyncBusy: Bool {
-        q.sync { downloading || !syncQueue.isEmpty || pendingRecovery != nil }
+        q.sync {
+            downloading || pendingRecovery != nil
+                || syncQueue.contains { $0.penMac == nil || $0.penMac == lastVerifiedMac }
+        }
+    }
+
+    /// 笔正在录的机身文件名(D7:同步弹层要把"正在录的这段"从可导入列表里滤掉)。
+    var currentRecordingPenFile: String? {
+        q.sync { recording ? penFileName : nil }
     }
 
     /// 把选中的机身文件排队下载→包.ogg→上传(带 pen_file 去重)。补取任务优先。
     func startSync(files: [PenFile]) {
         q.async {
-            for f in files where !self.syncQueue.contains(f) && self.currentSyncFile != f {
-                self.syncQueue.append(f)
+            for f in files where !self.syncQueue.contains(where: { $0.name == f.name })
+                    && self.currentSyncFile?.name != f.name {
+                var nf = f
+                nf.addedAt = Date()   // D2:入队时刻,>3天没传出去判过期
+                self.syncQueue.append(nf)
             }
             PenLog.d("★同步排队 \(files.count)个,队列共\(self.syncQueue.count)个")
             self.persistSyncQueue()
