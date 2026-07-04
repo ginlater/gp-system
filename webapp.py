@@ -10100,11 +10100,23 @@ def api_consultant_recordings_pending():
                  AND EXISTS (
                      SELECT 1 FROM recordings d
                      WHERE d.uploader_user_id=recordings.uploader_user_id
-                       AND d.recorded_at=recordings.recorded_at
+                       AND ABS(strftime('%s',d.recorded_at)-strftime('%s',recordings.recorded_at))<=5
                        AND d.id<>recordings.id
                        AND d.upload_status='done'
                  )""",
             (u["id"],),
+        )
+        # 占位建立超过2小时仍 processing → 死会话遗留,清掉(建立时刻取 oss_key 内嵌 ts14,
+        # 不能用 created_at:占位的 created_at=recorded_at,同步老录音会被误杀)
+        _ph_cutoff = (datetime.now() - timedelta(hours=2)).strftime("%Y%m%d%H%M%S")
+        db_write(
+            """DELETE FROM recordings
+               WHERE uploader_user_id=? AND upload_status='processing' AND session_id IS NULL
+                 AND COALESCE(size_bytes,0)=0
+                 AND IFNULL(source,'') LIKE '%placeholder%'
+                 AND oss_key LIKE 'pending-uploads/%'
+                 AND substr(oss_key, length(oss_key)-30, 14) < ?""",
+            (u["id"], _ph_cutoff),
         )
     except Exception as _e:
         app.logger.warning("orphan placeholder self-heal failed: %s", _e)

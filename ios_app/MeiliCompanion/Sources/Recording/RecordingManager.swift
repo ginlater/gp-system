@@ -85,6 +85,8 @@ final class RecordingManager: ObservableObject {
         UploadQueue.shared.onFirstFailure = { [weak self] in
             self?.toast = "上传暂时失败，已加入重传队列，网络恢复后自动补传"
         }
+        // 上次会话没消费掉的占位号 → 统一取消,根治「后台同步中」僵尸行
+        cancelLeftoverPlaceholders()
     }
 
     /// 手机麦录音被来电/Siri/闹钟中断且无法恢复 → 收尾保存已录部分,界面不再假装在录。
@@ -312,18 +314,24 @@ final class RecordingManager: ObservableObject {
     // ── 「从陪伴笔同步」占位:导入时逐段建「处理中」行(带 recorded_at),下载再久也能看到在同步谁 ──
     private var syncPlaceholders: [String: Int] = [:]   // 机身文件名 → 占位 id
 
-    /// 导入选中时逐段建占位(pen 来源)。
+    /// 导入选中时逐段建占位(pen 来源)。哨兵占坑防 TOCTOU 双占位(审计 U8)。
     func registerSyncPlaceholder(for f: PenFile) async {
         guard syncPlaceholders[f.name] == nil else { return }
+        syncPlaceholders[f.name] = -1   // 占坑
         if let id = try? await ConsultantRepo.placeholder(recordedAt: f.recordedAt, source: nil).id {
             syncPlaceholders[f.name] = id
+        } else {
+            syncPlaceholders.removeValue(forKey: f.name)
         }
+        persistPlaceholders()
     }
 
     /// 「从陪伴笔同步」:单个机身文件下载完成 → 上传回填它自己的占位行(不弹绑定,多段会轰炸)。
     func penSyncFileReady(fileURL: URL?, durationSec: Int, recordedAt: String?,
                           penFile: String?, sn: String?, remaining: Int) {
-        let pid = penFile.flatMap { syncPlaceholders.removeValue(forKey: $0) }
+        let raw = penFile.flatMap { syncPlaceholders.removeValue(forKey: $0) }
+        persistPlaceholders()
+        let pid = (raw ?? 0) > 0 ? raw : nil   // 过滤 -1 哨兵
         Task {
             await upload(fileURL, durationSec: durationSec, recordedAt: recordedAt,
                          contentType: "audio/ogg", penFile: penFile, sn: sn,
@@ -334,17 +342,37 @@ final class RecordingManager: ObservableObject {
 
     /// 同步某个文件下载失败(跳过,继续其余;清掉它的占位防僵尸)。
     func penSyncFileFailed(_ name: String, remaining: Int) {
-        if let pid = syncPlaceholders.removeValue(forKey: name) {
+        if let pid = syncPlaceholders.removeValue(forKey: name), pid > 0 {
             Task { try? await ConsultantRepo.cancelPlaceholder(pid) }
         }
+        persistPlaceholders()
         toast = remaining == 0 ? "同步失败，可稍后重试" : "有片段同步失败，继续同步其余…"
     }
 
     // ── 占位链路(对齐验收清单§5:录完几秒内冒「处理中」占位,上传回填同一行,失败 cancel 防僵尸)──
     // FIFO 队列:补取段可能几分钟后才上传,期间新段先传——占位交叉消费也无碍
     // (upload 自带 recorded_at 会覆盖占位行的,最终每行数据都正确)。
+    // 落盘:App 被杀时未消费的占位号留在盘上,下次启动统一 cancel(死会话的段等不到上传;
+    //      真音频在 UploadQueue/笔机身,不受影响)——根治「后台同步中」僵尸行。
+    private static let kPendingPlaceholders = "pending_placeholder_ids"
     private var placeholderIds: [Int] = []
     private var segmentPlaceholderMade = false   // 每段只建一个(App点停+笔回停会双触发 ensure)
+
+    private func persistPlaceholders() {
+        let all = placeholderIds + Array(syncPlaceholders.values)
+        UserDefaults.standard.set(all, forKey: Self.kPendingPlaceholders)
+    }
+
+    /// 启动清理:上次会话没消费掉的占位号,统一取消(服务器还有 ±5s 兄弟匹配 + 2h TTL 双保险)。
+    func cancelLeftoverPlaceholders() {
+        let leftovers = UserDefaults.standard.array(forKey: Self.kPendingPlaceholders) as? [Int] ?? []
+        guard !leftovers.isEmpty else { return }
+        UserDefaults.standard.removeObject(forKey: Self.kPendingPlaceholders)
+        Task {
+            for pid in leftovers { _ = try? await ConsultantRepo.cancelPlaceholder(pid) }
+            PenLog.d("已清理上次会话遗留占位 \(leftovers.count) 个")
+        }
+    }
 
     private func ensurePlaceholder() async {
         guard !segmentPlaceholderMade else { return }
@@ -352,6 +380,7 @@ final class RecordingManager: ObservableObject {
         if let id = try? await ConsultantRepo.placeholder(
             recordedAt: recordedAt, source: source == .phone ? "phone" : nil).id {
             placeholderIds.append(id)
+            persistPlaceholders()
         }
     }
 
@@ -363,6 +392,7 @@ final class RecordingManager: ObservableObject {
                         promptBind: Bool = true) async {
         let pid = explicitPlaceholderId
             ?? (usePlaceholder ? (placeholderIds.isEmpty ? nil : placeholderIds.removeFirst()) : nil)
+        persistPlaceholders()   // 占位号交给 UploadQueue(队列自己落盘)后,从"未消费"名单移除
         guard let fileURL else {
             if state == .uploading { state = .idle }
             toast = "陪伴内容丢失，请重试"
