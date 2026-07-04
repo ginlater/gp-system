@@ -126,9 +126,9 @@ struct HomeView: View {
 
     private var penSub: String {
         guard rec.penConnected else { return "未连接" }
-        let who = rec.penSuffix.map { "·尾号\($0)" } ?? ""
-        if let b = rec.penBattery { return "已连接\(who) · 电量\(b)%" }
-        return "已连接\(who)"
+        // 这行只有一行宽:带尾号会把电量挤掉,电量更重要;辨认哪支笔靠扫描列表/开录toast的尾号
+        if let b = rec.penBattery { return "已连接 · 电量\(b)%" }
+        return "已连接"
     }
 
     private func sourceCell(_ s: CompanionSource, icon: MeiliGlyph, title: String, sub: String, dot: Bool) -> some View {
