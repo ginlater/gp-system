@@ -37,6 +37,7 @@ final class PenController {
     func appDidBecomeActive() {}
     func appDidEnterBackground() {}
     func setAutoConnectSuppressed(_ s: Bool) {}
+    func directConnectSystemPen() {}
 }
 
 #else
@@ -178,6 +179,11 @@ final class PenController: NSObject, WindBleDelegate {
             }
         }
         PenBluetoothWatch.shared.start()
+        // 冷启动救援:重装/被杀重开时笔可能还挂在系统蓝牙上,扫是扫不到的,直接连它
+        q.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+            guard let self, !self.knownMacs.isEmpty else { return }
+            self.tryDirectConnectSystemPen("冷启动")
+        }
     }
 
     /// 对外"真在线"判据(= android isPenAlive)。q.sync 读,避免裸读跨线程状态。
@@ -674,6 +680,36 @@ final class PenController: NSObject, WindBleDelegate {
         q.asyncAfter(deadline: .now() + 2, execute: w)
     }
 
+    // MARK: - 僵尸连接直连(均在 q 上)
+
+    /// App 被杀/重装后笔常还挂在系统蓝牙上——挂着就不广播,扫描永远搜不到("明明连着却显示未连接")。
+    /// SDK 内部类 BluetoothDataManager 有厂家遗留的死代码入口 connectByList:
+    /// retrieveConnectedPeripherals(服务AE20) → 对每个已连接外设直接 connectBluetooth:,完全绕开扫描。
+    /// 纯运行时反射调用,厂家换版本删了此方法就静默退化为无操作。
+    private func tryDirectConnectSystemPen(_ why: String) {
+        guard !linkUp, !connectGate else { return }
+        guard PenBluetoothWatch.shared.isPoweredOn else { return }
+        guard let cls = NSClassFromString("BluetoothDataManager") as? NSObject.Type else { return }
+        let shareSel = Selector(("shareBluetoothDataManager"))
+        let listSel = Selector(("connectByList"))
+        guard cls.responds(to: shareSel),
+              let mgr = cls.perform(shareSel)?.takeUnretainedValue() as? NSObject,
+              mgr.responds(to: listSel) else {
+            PenLog.d("直连救援不可用(SDK 内部接口变了) 由=\(why)")
+            return
+        }
+        // 身份预填:cmd2 不带地址,verify 靠 connectingAddress 定格身份/尾号;
+        // 僵尸连接几乎必然是上次连的那支(就是被杀前连着的),用 lastMac 兜底
+        if connectingAddress == nil {
+            connectingAddress = UserDefaults.standard.string(forKey: Self.kLastMac)
+        }
+        PenLog.d("★直连系统已连接的笔(connectByList) 由=\(why)")
+        _ = mgr.perform(listSel)
+    }
+
+    /// 扫描超时救援入口(RecordingManager 检测到笔挂在系统蓝牙上时调,绕过选笔暂停)。
+    func directConnectSystemPen() { q.async { self.tryDirectConnectSystemPen("扫描超时救援") } }
+
     // MARK: - 断开自动重连(均在 q 上)
 
     /// 断开/失联后重新扫描;扫到已知笔由 handleDeviceFound 自动连;连上即停。
@@ -692,6 +728,7 @@ final class PenController: NSObject, WindBleDelegate {
             guard !self.linkUp else { return }
             PenLog.d("★自动重连(间隔\(Int(delay))s):重新扫描找已知的笔…")
             self.reconnectDelay = min(60, self.reconnectDelay * 2)   // 真扫了一轮才加档
+            if !self.autoConnectSuppressed { self.tryDirectConnectSystemPen("重连tick") }
             self.pen.startSearch()
             self.scheduleReconnect()
         }

@@ -135,7 +135,8 @@ final class RecordingManager: ObservableObject {
             if !PenBluetoothWatch.shared.isPoweredOn {
                 toast = "手机蓝牙没有打开，请到控制中心/设置里打开蓝牙"
             } else if let name = PenBluetoothWatch.shared.findSystemConnectedPen() {
-                toast = "「\(name)」还挂在手机系统蓝牙上（连着就不广播）——请把笔关机再开机"
+                PenController.shared.directConnectSystemPen()
+                toast = "「\(name)」还挂在系统蓝牙上，正在直接连接…（10秒没反应就把笔关机再开机）"
             } else {
                 toast = "一直搜不到？请确认笔已开机、在手机附近；必要时把笔关机再开机"
             }
