@@ -53,7 +53,14 @@ struct MainShell: View {
 
                 MeiliBottomBar(selected: $tab, live: rec.isLive) {
                     rec.toggle()
-                    withAnimation { tab = 0 }
+                    // 跨页回首页也不路过中间页(同 tab 按钮的规则)
+                    if abs(tab - 0) <= 1 {
+                        withAnimation { tab = 0 }
+                    } else {
+                        var tx = Transaction()
+                        tx.disablesAnimations = true
+                        withTransaction(tx) { tab = 0 }
+                    }
                 }
 
                 // 录音引擎全局 toast(同步进度/断连补取/删除结果等,任何 tab 可见)
@@ -225,7 +232,15 @@ struct MeiliBottomBar: View {
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { selected = tab.index }
+            // 翻页式 TabView:带动画跨页切换会把中间每页都滑一遍(0→3 连滑三次,很怪)。
+            // 相邻页保留滑动动画;跨页直接跳,不路过中间页。
+            if abs(selected - tab.index) <= 1 {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { selected = tab.index }
+            } else {
+                var tx = Transaction()
+                tx.disablesAnimations = true
+                withTransaction(tx) { selected = tab.index }
+            }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: selectedNow)
     }
