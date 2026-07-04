@@ -36,6 +36,7 @@ final class PenController {
     var isSyncBusy: Bool { false }
     func appDidBecomeActive() {}
     func appDidEnterBackground() {}
+    func setAutoConnectSuppressed(_ s: Bool) {}
 }
 
 #else
@@ -111,7 +112,14 @@ final class PenController: NSObject, WindBleDelegate {
     // ── 连接闸门(审计 L3:防"连A期间又连B/同一支反复重连打断自己";SN-deny 按实连笔遗忘)──
     private var connectGate = false                   // 连接尝试进行中,忽略一切 cmd1 自动连
     private var connectGateWork: DispatchWorkItem?
+    private var gateGen = 0                           // 闸门代际:旧尝试的10s释放闭包不得碰新尝试
     private var lastVerifiedMac: String?              // 当前实连的笔(verify 时定格)
+    private var autoConnectSuppressed = false         // 扫描选笔 sheet 打开期间暂停自动连(用户要自己挑)
+
+    /// 双笔场景:扫描 sheet 打开时暂停"命中已知笔自动连",让用户自己选。
+    func setAutoConnectSuppressed(_ s: Bool) {
+        q.async { self.autoConnectSuppressed = s }
+    }
 
     // ── 机身下载机(两种任务共用一条下载通道:补取截断段 / 从陪伴笔同步)──
     private enum DownloadJob { case recovery, sync(PenFile) }
@@ -191,8 +199,11 @@ final class PenController: NSObject, WindBleDelegate {
         PenLog.d("cmd→ connect name=\(name) addr=\(address ?? "nil") \(manual ? "手动" : "自动")")
         connectingAddress = address
         connectGateWork?.cancel()
+        gateGen += 1
+        let g = gateGen
         let w = DispatchWorkItem { [weak self] in
-            guard let self, !self.verifiedConnected else { return }
+            // 代际校验:旧连接尝试的10s释放闭包不得释放新尝试的闸门
+            guard let self, self.gateGen == g, !self.verifiedConnected else { return }
             PenLog.d("连接尝试 10s 未验证 → 释放闸门")
             self.connectGate = false
         }
@@ -618,7 +629,12 @@ final class PenController: NSObject, WindBleDelegate {
             rememberMac(a)   // 记住这支笔(多支都记) → 任一支开机自动连
         }
                 PenLog.d("★verified=true 收到真回包(cmd≥3)→ 标记已连接")
-        DispatchQueue.main.async { self.manager?.penConnected = true }
+        // 双笔身份:把 MAC 尾号报给 UI(两支笔都叫 CB08,不显示尾号用户不知道连的是哪支)
+        let suffix = String((connectingAddress ?? "").replacingOccurrences(of: ":", with: "").suffix(2))
+        DispatchQueue.main.async {
+            self.manager?.penConnected = true
+            self.manager?.penSuffix = suffix.isEmpty ? nil : suffix
+        }
         startHeartbeat()
         // 重连回来:有没救完的段/没同步完的队列 → 续上(笔在录音则等录完,handleRecordState 会续)
         q.asyncAfter(deadline: .now() + 3) { [weak self] in
@@ -766,7 +782,7 @@ final class PenController: NSObject, WindBleDelegate {
         PenLog.d("cmd1 发现设备 name=\(name) addr=\(address)")
         guard !address.isEmpty else { return }
         DispatchQueue.main.async { self.manager?.penFound(name: name, address: address) }
-        if !linkUp, knownMacs.contains(address) {
+        if !linkUp, !autoConnectSuppressed, knownMacs.contains(address) {
             PenLog.d("cmd1 命中已知的笔(\(address)) → 自动连接")
             attemptConnect(name: name, address: address, manual: false)   // 走闸门,防并发连接(L3)
         }

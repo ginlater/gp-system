@@ -61,6 +61,7 @@ final class RecordingManager: ObservableObject {
     // 陪伴笔状态(由 PenController 回填;模拟器恒未连接)
     @Published var penConnected = false
     @Published var penBattery: Int?
+    @Published var penSuffix: String?   // 实连笔的 MAC 尾号(双笔都叫 CB08,靠它区分连的是哪支)
 
     // 陪伴笔扫描/选笔(扫描 sheet 驱动)
     @Published var penScanning = false
@@ -115,6 +116,7 @@ final class RecordingManager: ObservableObject {
         penDevices = []
         penConnecting = false
         penScanning = true
+        PenController.shared.setAutoConnectSuppressed(true)   // 用户要自己挑,暂停自动抢连
         PenController.shared.startSearch()
         // 僵尸连接检测(审计 L1):15s 无果先查"系统级已连接外设"——App 被杀后笔可能仍挂在
         // 系统蓝牙上(连着就不广播,永远扫不到),命中给精准提示;查不到给通用提示
@@ -133,6 +135,7 @@ final class RecordingManager: ObservableObject {
     func stopPenScan() {
         penScanning = false
         penConnecting = false   // 审计 L13:关 sheet 时清连接中状态,防常驻扫描
+        PenController.shared.setAutoConnectSuppressed(false)
         PenController.shared.stopSearch()
     }
 
@@ -145,6 +148,7 @@ final class RecordingManager: ObservableObject {
     func connectPen(_ d: PenDevice) {
         penConnecting = true
         penScanning = false
+        PenController.shared.setAutoConnectSuppressed(false)
         PenController.shared.stopSearch()
         PenController.shared.connect(name: d.name, address: d.address)
         // 9.5s 连接超时(> 握手 7s):还没真连上 → 回退重扫,让用户重试。
@@ -206,12 +210,18 @@ final class RecordingManager: ObservableObject {
 
     /// 笔上报录音开始(cmd=3 record_state=1):App 点击 or 笔上按键殊途同归 → App 进入录音态。
     func penRecordingStarted() {
-        guard state == .idle || state == .starting else { return }
+        guard state == .idle || state == .starting else {
+            // 手机麦正在录时笔又开录(双笔/误按):笔那段会独立保存,给个明白话
+            if isLive && source == .phone { toast = "陪伴笔在独立录制，那段会单独进「待整理」" }
+            return
+        }
         source = .pen
         recordedAt = PhoneMicRecorder.wallClock()
         segmentPlaceholderMade = false   // 新一段:允许再建占位
         beginTimer()
         state = .recording
+        // 双笔场景:明确告诉用户是哪支在录,别对着另一支干等
+        if let s = penSuffix { toast = "陪伴笔(尾号\(s))开始录制" }
     }
     /// 笔暂停(cmd=3 state=2):计时挂起,UI 显示"陪伴已暂停"。
     func penRecordingPaused() {

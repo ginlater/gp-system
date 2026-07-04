@@ -119,8 +119,9 @@ struct HomeView: View {
 
     private var penSub: String {
         guard rec.penConnected else { return "未连接" }
-        if let b = rec.penBattery { return "已连接 · 电量\(b)%" }
-        return "已连接"
+        let who = rec.penSuffix.map { "·尾号\($0)" } ?? ""
+        if let b = rec.penBattery { return "已连接\(who) · 电量\(b)%" }
+        return "已连接\(who)"
     }
 
     private func sourceCell(_ s: CompanionSource, icon: MeiliGlyph, title: String, sub: String, dot: Bool) -> some View {

@@ -71,7 +71,9 @@ struct PenScanSheet: View {
                     .frame(width: 44, height: 44).background(MeiliColor.clayTint)
                     .clipShape(RoundedRectangle(cornerRadius: MeiliRadius.md, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(d.name).font(MeiliFont.rowTitle).foregroundStyle(MeiliColor.ink).lineLimit(1)
+                    // 双笔同名:标题带 MAC 尾号,一眼分清哪支是哪支
+                    Text("\(d.name) · 尾号\(String(d.address.replacingOccurrences(of: ":", with: "").suffix(2)))")
+                        .font(MeiliFont.rowTitle).foregroundStyle(MeiliColor.ink).lineLimit(1)
                     Text(d.address).font(.sz(11)).foregroundStyle(MeiliColor.ink3).lineLimit(1)
                 }
                 Spacer()
