@@ -423,7 +423,7 @@ struct PenSyncSheet: View {
             VStack(spacing: 8) {
                 ProgressView().tint(MeiliColor.clay)
                 Text("正在从陪伴笔同步中…").font(MeiliFont.body).foregroundStyle(MeiliColor.ink2)
-                Text("传输期间笔无法列出机身记录，等待整理里的「后台同步中」完成后再来导入其他片段")
+                Text("传输期间笔无法列出机身记录，传完后本页会自动刷新出可导入列表")
                     .font(.sz(11)).foregroundStyle(MeiliColor.ink4)
                     .multilineTextAlignment(.center)
             }

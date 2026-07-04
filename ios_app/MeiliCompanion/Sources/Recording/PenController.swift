@@ -445,6 +445,7 @@ final class PenController: NSObject, WindBleDelegate {
         let gen = downloadGen
         // 断点续传:有部分件就从它的字节数续(40B对齐由 saveCheckpoint 保证)
         download = Self.loadPartial(fileName)
+        lastCheckpointBytes = download.count
         if expectedSize > 0, download.count >= expectedSize {
             PenLog.d("★部分件已收齐 \(download.count)/\(expectedSize)B → 免下载直接交付 \(fileName)")
             switch job {
@@ -484,6 +485,7 @@ final class PenController: NSObject, WindBleDelegate {
     private var penPausedAccum: TimeInterval = 0      // 复查 B5:本段累计暂停时长(墙钟扣除用)
     private var penPauseBeganAt: Date?
     private var lastDownloadDataAt = Date(timeIntervalSince1970: 0)   // 复查 D4:下载最近出数据时刻
+    private var lastCheckpointBytes = 0   // D9:周期存档水位(每512KB落盘一次,App被杀不丢进度)
     // B9:头部丢失检测只对"不是当面发起"的段生效——笔机身钟慢>5s时,当面开录的干净段
     // 不再被误判续录段而强制补取(白等几分钟);离机续录场景不受影响照样兜底
     private var segmentLocallyInitiated = false
@@ -1029,6 +1031,13 @@ final class PenController: NSObject, WindBleDelegate {
             guard self.downloading, self.downloadAccepting else { return }
             self.download.append(d)
             self.lastDownloadDataAt = Date()
+            // D9:每 512KB 存一次档——断线/让路有 cancel 存档,但 App 被系统杀/覆盖安装没有,
+            // 周期存档让那种情况也最多只丢最后半 MB(≈16s)进度
+            if self.download.count - self.lastCheckpointBytes >= 512 * 1024,
+               let n = self.currentDownloadFileName {
+                self.lastCheckpointBytes = self.download.count
+                Self.saveCheckpoint(n, self.download)
+            }
             self.bumpDownloadStall()
         }
     }

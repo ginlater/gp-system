@@ -68,19 +68,37 @@ final class PendingViewModel: ObservableObject {
 
     func openPenSync() {
         syncSheet = true
-        syncRows = []
+        refreshPenSync()
+    }
+
+    /// 弹层内容刷新。忙态(未连/录音中/传输中)每 2s 自查:传完/连上自动加载列表,
+    /// 不用关掉重开(此前弹层打开时查一次就定格,下载完了还永远显示"同步中")。
+    private var syncRecheckTask: Task<Void, Never>?
+
+    private func refreshPenSync() {
+        syncRecheckTask?.cancel()
         syncPreviewFailed = false
         syncUnavailable = !PenController.shared.isConnected
-        guard !syncUnavailable else { return }
+        guard !syncUnavailable else { syncRows = []; scheduleSyncRecheck(); return }
         // D7:笔录音中禁同步——录音中笔拒绝文件传输,列表查询也会超时误显示"暂无"
         syncRecordingBusy = RecordingManager.shared.isLive && RecordingManager.shared.source == .pen
-        guard !syncRecordingBusy else { return }
-        // 有同步/补取在传:笔忙着传文件回答不了列表查询(会超时空列表),直接显示"同步中"
+        guard !syncRecordingBusy else { syncRows = []; scheduleSyncRecheck(); return }
+        // 有同步/补取在传:笔忙着传文件回答不了列表查询(会超时空列表),显示"同步中"等自查
         syncBusy = PenController.shared.isSyncBusy
-        guard !syncBusy else { return }
+        guard !syncBusy else { syncRows = []; scheduleSyncRecheck(); return }
+        guard syncRows.isEmpty else { return }   // 列表已加载就别打扰用户勾选
         syncLoading = true
         PenController.shared.fetchFileList { [weak self] files in
             Task { @MainActor in await self?.onPenFiles(files) }
+        }
+    }
+
+    private func scheduleSyncRecheck() {
+        syncRecheckTask?.cancel()
+        syncRecheckTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self, !Task.isCancelled, self.syncSheet else { return }
+            self.refreshPenSync()
         }
     }
 
@@ -197,6 +215,7 @@ final class PendingViewModel: ObservableObject {
     func importSelected() {
         let sel = syncRows.filter(\.checked).map(\.file)
         guard !sel.isEmpty else { return }
+        syncRecheckTask?.cancel()
         syncSheet = false
         RecordingManager.shared.toast = "已导入 \(sel.count) 段到待整理，正在同步…"
         Task {
