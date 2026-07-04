@@ -47,7 +47,10 @@ enum RecordKeepAlive {
             PenLog.d("🎧 保活音频会话已启动(持有者: \(holders.sorted().joined(separator: ",")))")
         } catch {
             engine = nil
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            // B1 同款守卫:引擎起不来的兜底也不能把手机麦的会话整个灭掉
+            if session.category != .playAndRecord {
+                try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            }
             PenLog.d("⚠️ 保活引擎启动失败: \(error.localizedDescription)")
         }
     }
