@@ -18,6 +18,8 @@ final class HomeViewModel: ObservableObject {
     private var loaded = false
     private var reminderTimer: Timer?
 
+    deinit { reminderTimer?.invalidate() }   // 复查 B10:换肤整树重建时不留僵尸 Timer
+
     func onAppear() {
         guard !loaded else { refresh(); return }
         loaded = true

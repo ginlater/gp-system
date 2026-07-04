@@ -257,7 +257,11 @@ struct ReceptionView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
-            Button { editDateItem = item } label: { Label("修改接诊日期", systemImage: "calendar") }
+            Button {
+                // 复查 B7:先按该条当前接诊日期初始化,否则残留上一次/今天,一点确认就静默改错
+                editDatePick = DateHelper.date(from: item.serviceDate ?? vm.date) ?? Date()
+                editDateItem = item
+            } label: { Label("修改接诊日期", systemImage: "calendar") }
             Button(role: .destructive) { vm.remove(item) } label: { Label("移出今日接诊", systemImage: "trash") }
         }
     }
@@ -351,7 +355,10 @@ struct ReceptionView: View {
                 .background(MeiliColor.inkSurface).clipShape(Capsule())
                 .padding(.bottom, MeiliMetric.bottomNavInset + 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-                .task { try? await Task.sleep(nanoseconds: 1_800_000_000); vm.toast = nil }
+                .task(id: t) {
+                    try? await Task.sleep(nanoseconds: 1_800_000_000)
+                    if !Task.isCancelled { vm.toast = nil }
+                }
         }
     }
 

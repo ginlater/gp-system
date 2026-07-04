@@ -28,8 +28,10 @@ enum ReminderRefresh {
             if let r = try? await ConsultantRepo.reminders() {
                 ReminderNotifier.notifyNew(r.items ?? [])
             }
-            task.setTaskCompleted(success: true)
+            // 单点完成(复查 B8):过期时 expirationHandler 只 cancel,由这里统一收尾,
+            // 避免 setTaskCompleted 双调用触发框架断言
+            task.setTaskCompleted(success: !Task.isCancelled)
         }
-        task.expirationHandler = { work.cancel(); task.setTaskCompleted(success: false) }
+        task.expirationHandler = { work.cancel() }
     }
 }

@@ -20,8 +20,10 @@ final class UploadQueue: NSObject, ObservableObject {
         let penFile: String?
         let contentType: String
         let placeholderId: Int?
+        var sn: String? = nil          // 重拼 body 需要(复查 B3)
         var promptBind: Bool = true    // 录音段=传完弹绑定;同步导入=不弹(一次多段会轰炸)
         var attempts: Int = 0
+        var nextAttemptAt: Date? = nil // 失败退避(复查 B7):到点前不自动重试
     }
 
     /// 待上传总数(含在传);attempts>0 视为"失败过"。
@@ -51,18 +53,47 @@ final class UploadQueue: NSObject, ObservableObject {
         return URLSession(configuration: cfg, delegate: self, delegateQueue: nil)
     }()
 
+    /// 后台任务对账完成前禁止 kick(复查 B1:被杀期间系统还在代传,不对账就重发=双入库)
+    private var ready = false
+
     private override init() {
         super.init()
         load()
-        _ = session   // 冷启动即重建会话:接管上次被杀期间系统代传的任务回调
+        // 冷启动重建会话并对账:系统里还挂着的旧任务按 taskDescription(=item.id)收编进 inflight,
+        // 之后才允许 kick——否则同一段两个任务并发上传
+        session.getAllTasks { [weak self] tasks in
+            Task { @MainActor in
+                guard let self else { return }
+                for t in tasks where t.state == .running || t.state == .suspended {
+                    if let d = t.taskDescription, !d.isEmpty {
+                        self.inflight[t.taskIdentifier] = d
+                    }
+                }
+                if !self.inflight.isEmpty {
+                    PenLog.d("⬆️ 对账:接管上次会话在传任务 \(self.inflight.count) 个")
+                }
+                self.ready = true
+                self.sweepOrphanFiles()
+                self.kick()
+            }
+        }
         // 网络恢复自动补传
         monitor.pathUpdateHandler = { [weak self] path in
             guard path.status == .satisfied else { return }
             Task { @MainActor in self?.kick() }
         }
         monitor.start(queue: DispatchQueue.global(qos: .utility))
-        // 启动 3s 后首踢(等 cookie/登录就绪)
-        Task { try? await Task.sleep(nanoseconds: 3_000_000_000); kick() }
+    }
+
+    /// 启动清扫:pending_uploads 里不被 index 引用的孤儿文件(拼body失败/中途崩溃遗留)删除,
+    /// 防慢性磁盘泄漏(复查 B3)。
+    private func sweepOrphanFiles() {
+        let referenced = Set(items.flatMap { [$0.audioFile, $0.bodyFile] } + ["index.json"])
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: Self.dir.path)) ?? []
+        for f in files where !referenced.contains(f) {
+            try? FileManager.default.removeItem(at: Self.dir.appendingPathComponent(f))
+            PenLog.d("🧹 清理孤儿上传文件 \(f)")
+        }
     }
 
     // MARK: - 目录/持久化
@@ -114,29 +145,25 @@ final class UploadQueue: NSObject, ObservableObject {
         do {
             try FileManager.default.moveItem(at: fileURL, to: audioDst)
         } catch {
+            // 复查 B3:静默丢=用户以为传了。给明白话 + 清占位,音频留在原地(tmp)尽人事
             PenLog.d("⚠️ 上传入队失败(移动文件): \(error.localizedDescription)")
+            RecordingManager.shared.toast = "保存录音失败（存储空间不足？），请截图联系工程师"
+            if let pid = placeholderId {
+                Task { try? await ConsultantRepo.cancelPlaceholder(pid) }
+            }
             return
         }
         let bodyName = "\(id).body"
-        var fields: [String: String] = ["duration_sec": String(durationSec)]
-        fields["recorded_at"] = recordedAt
-        fields["pen_file"] = penFile
-        fields["sn"] = sn
-        if let pid = placeholderId { fields["placeholder_id"] = String(pid) }
-        do {
-            try Self.buildMultipartBodyFile(
-                to: Self.dir.appendingPathComponent(bodyName),
-                boundary: Self.boundary(for: id),
-                fields: fields, fileURL: audioDst,
-                fileField: "file", contentType: contentType)
-        } catch {
-            PenLog.d("⚠️ 上传入队失败(拼body): \(error.localizedDescription)")
-            return
-        }
         let item = Item(id: id, audioFile: audioName, bodyFile: bodyName,
                         durationSec: durationSec, recordedAt: recordedAt,
                         penFile: penFile, contentType: contentType, placeholderId: placeholderId,
-                        promptBind: promptBind)
+                        sn: sn, promptBind: promptBind)
+        // 拼 body 失败不丢段:音频已在常驻目录,item 照记,start() 会按元数据重拼(复查 B3)
+        try? Self.buildMultipartBodyFile(
+            to: Self.dir.appendingPathComponent(bodyName),
+            boundary: Self.boundary(for: id),
+            fields: Self.bodyFields(for: item), fileURL: audioDst,
+            fileField: "file", contentType: contentType)
         items.append(item)
         save()
         PenLog.d("⬆️ 入队上传 \(audioName) (\(items.count) 项待传)")
@@ -168,23 +195,46 @@ final class UploadQueue: NSObject, ObservableObject {
 
     // MARK: - 发送/重试
 
-    /// 踢一轮:所有不在传的项都发起(冷启动/回前台/网络恢复/手动重试调用)。
-    func kick() {
+    private static func bodyFields(for item: Item) -> [String: String?] {
+        var f: [String: String?] = ["duration_sec": String(item.durationSec)]
+        f["recorded_at"] = item.recordedAt
+        f["pen_file"] = item.penFile
+        f["sn"] = item.sn
+        if let pid = item.placeholderId { f["placeholder_id"] = String(pid) }
+        return f
+    }
+
+    /// 踢一轮:所有不在传且到了重试时间的项发起。force=手动重试(首页badge点击),无视退避。
+    func kick(force: Bool = false) {
+        guard ready else { return }
+        let now = Date()
         for item in items where !inflight.values.contains(item.id) {
+            if !force, let next = item.nextAttemptAt, next > now { continue }
+            if !force, item.attempts >= 8 { continue }   // 连败8次转手动(复查 B7,防永生重试)
             start(item)
         }
     }
 
     private func start(_ item: Item) {
         let bodyURL = Self.dir.appendingPathComponent(item.bodyFile)
-        guard FileManager.default.fileExists(atPath: bodyURL.path) else {
-            remove(item, deleteFiles: true)   // body 丢了(不应发生):清项防卡队列
-            return
+        if !FileManager.default.fileExists(atPath: bodyURL.path) {
+            // body 缺失(拼失败/被清):按元数据从音频重拼,拼不出才放弃(复查 B3/S7)
+            let audioURL = Self.dir.appendingPathComponent(item.audioFile)
+            guard FileManager.default.fileExists(atPath: audioURL.path),
+                  (try? Self.buildMultipartBodyFile(
+                      to: bodyURL, boundary: Self.boundary(for: item.id),
+                      fields: Self.bodyFields(for: item), fileURL: audioURL,
+                      fileField: "file", contentType: item.contentType)) != nil else {
+                PenLog.d("⚠️ \(item.audioFile) body 无法重建 → 放弃该项")
+                remove(item, deleteFiles: true)
+                return
+            }
         }
         var req = URLRequest(url: URL(string: "https://gp.aibeautyfulwomen.com/api/consultant/upload")!)
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(Self.boundary(for: item.id))", forHTTPHeaderField: "Content-Type")
         let task = session.uploadTask(with: req, fromFile: bodyURL)
+        task.taskDescription = item.id   // 被杀后对账/认领的钥匙(复查 B1)
         inflight[task.taskIdentifier] = item.id
         task.resume()
     }
@@ -200,9 +250,10 @@ final class UploadQueue: NSObject, ObservableObject {
 
     // MARK: - 完成处理(delegate 跳回主线程后调用)
 
-    private func finish(taskId: Int, response: HTTPURLResponse?, error: Error?) {
-        guard let itemId = inflight.removeValue(forKey: taskId),
-              let item = items.first(where: { $0.id == itemId }) else {
+    private func finish(taskId: Int, desc: String?, response: HTTPURLResponse?, error: Error?) {
+        // inflight 查不到(被杀期间系统代传完成的旧任务)→ 用 taskDescription 兜底认领(复查 B1)
+        let itemId = inflight.removeValue(forKey: taskId) ?? desc
+        guard let itemId, let item = items.first(where: { $0.id == itemId }) else {
             responseData.removeValue(forKey: taskId)
             return
         }
@@ -221,15 +272,16 @@ final class UploadQueue: NSObject, ObservableObject {
         }
 
         if status == 401 {
-            // 会话过期:静默重登一次再重试(单飞)
+            // 会话过期:静默重登一次;只有重登成功才立刻重试——失败就等退避/外部事件,
+            // 否则凭据失效时整文件无退避热循环烧流量(复查 B2)
             PenLog.d("⚠️ 上传401 → 重登后重试 \(item.audioFile)")
             markFailed(item)
             if !reauthing {
                 reauthing = true
                 Task { @MainActor in
-                    _ = try? await ConsultantRepo.reauthProbe()
+                    let ok = (try? await ConsultantRepo.reauthProbe()) != nil
                     self.reauthing = false
-                    self.kick()
+                    if ok { self.kick(force: true) }
                 }
             }
             return
@@ -243,6 +295,9 @@ final class UploadQueue: NSObject, ObservableObject {
     private func markFailed(_ item: Item) {
         if let i = items.firstIndex(where: { $0.id == item.id }) {
             items[i].attempts += 1
+            // 指数退避 30s→60→…→1h 封顶(复查 B7):5xx/断网时不再每个网络事件全量重发
+            let backoff = min(3600.0, 30.0 * pow(2.0, Double(items[i].attempts - 1)))
+            items[i].nextAttemptAt = Date().addingTimeInterval(backoff)
             save()
             if items[i].attempts == 1 { onFirstFailure?() }
         }
@@ -261,9 +316,10 @@ extension UploadQueue: URLSessionDataDelegate {
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         let tid = task.taskIdentifier
+        let desc = task.taskDescription
         let resp = task.response as? HTTPURLResponse
         Task { @MainActor in
-            UploadQueue.shared.finish(taskId: tid, response: resp, error: error)
+            UploadQueue.shared.finish(taskId: tid, desc: desc, response: resp, error: error)
         }
     }
 

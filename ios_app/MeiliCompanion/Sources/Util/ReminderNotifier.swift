@@ -71,10 +71,15 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
         completionHandler([.banner, .sound])
     }
 
+    /// 冷启动点通知:MainShell 还没建好、onReceive 还没订阅,事件会丢(复查 B1)。
+    /// 存一份 pendingRef,MainShell onAppear 时消费。
+    static var pendingRef: [AnyHashable: Any]?
+
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         let info = response.notification.request.content.userInfo
+        NotificationPresenter.pendingRef = info
         NotificationCenter.default.post(name: .meiliOpenReminderRef, object: nil, userInfo: info)
         completionHandler()
     }

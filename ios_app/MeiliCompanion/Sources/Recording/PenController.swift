@@ -202,15 +202,27 @@ final class PenController: NSObject, WindBleDelegate {
         connectGate = true
         stopReconnect()
         PenLog.d("cmd→ connect name=\(name) addr=\(address ?? "nil") \(manual ? "手动" : "自动")")
+        // 复查 P#1:已连着 X 时手动切 Y——先断 X,否则 SDK 静默无视且闸门永久卡死
+        if manual, linkUp {
+            PenLog.d("已连着别的笔 → 先断开再连新选的")
+            linkUp = false
+            verifiedConnected = false
+            stopHeartbeat()
+            pen.closeConnect()
+            DispatchQueue.main.async { self.manager?.penConnected = false }
+        }
         connectingAddress = address
         connectGateWork?.cancel()
         gateGen += 1
         let g = gateGen
         let w = DispatchWorkItem { [weak self] in
-            // 代际校验:旧连接尝试的10s释放闭包不得释放新尝试的闸门
-            guard let self, self.gateGen == g, !self.verifiedConnected else { return }
-            PenLog.d("连接尝试 10s 未验证 → 释放闸门")
-            self.connectGate = false
+            // 代际校验:旧尝试的10s释放闭包不得碰新尝试;释放本身幂等,无条件放(复查 P#1:
+            // 原先的 !verifiedConnected 守卫在"已连X再连Y"时把闸门永远锁死)
+            guard let self, self.gateGen == g else { return }
+            if self.connectGate {
+                PenLog.d("连接尝试 10s 未验证 → 释放闸门")
+                self.connectGate = false
+            }
         }
         connectGateWork = w
         q.asyncAfter(deadline: .now() + 10, execute: w)
@@ -301,12 +313,17 @@ final class PenController: NSObject, WindBleDelegate {
                 }
             }
             pendingRecovery = (fn, snapshot, at, lastVerifiedMac)   // 记下是哪支笔的文件(审计 L9)
+            recoveryAttempts = 0
+            updatePenWorkKeepAlive()
             DispatchQueue.main.async { self.manager?.penRecoveryStarted() }
             scheduleRecoveryDeadline()
             if linkUp { startRecoveryDownload() }   // 断连时:自动重连成功(markPenResponded)后再触发
             return
         }
-        deliver(snapshot, at, penFile: penFileName)
+        // 复查 P#11:干净收尾但同一机身文件还有旧补取挂着 → 本次直传不带 pen_file,
+        // 否则后端去重会把之后补取上来的更全那份挡掉
+        let collide = (pendingRecovery != nil && pendingRecovery?.fileName == penFileName)
+        deliver(snapshot, at, penFile: collide ? nil : penFileName)
     }
 
     /// 在 q 上调用:把一段裸 opus 包成 .ogg 落盘并回调上传。
@@ -335,25 +352,56 @@ final class PenController: NSObject, WindBleDelegate {
     }
 
     /// 在 q 上:起一个下载任务(补取/同步共用)。停录后笔要缓 2s 才接受文件命令。
+    /// downloadAccepting(复查 P#8):cancel→立即新下载的 2s 窗口内,旧传输的残余字节/终态
+    /// 不得记到新任务头上——发出 startGetFile 之前一律不收数据/不认 cmd5。
+    private var downloadAccepting = false
+
     private func beginDownload(_ job: DownloadJob, fileName: String) {
         downloading = true
         downloadJob = job
         downloadGen += 1
+        downloadAccepting = false
         let gen = downloadGen
         download.removeAll(keepingCapacity: true)
         PenLog.d("★下载开始 file=\(fileName)")
+        updatePenWorkKeepAlive()
         q.asyncAfter(deadline: .now() + 2) { [weak self] in
             // 代际校验(审计 L12):旧任务被取消、新任务已开时,旧闭包不得发旧文件名
             guard let self, self.downloading, self.downloadGen == gen else { return }
+            self.downloadAccepting = true
             self.pen.startGetFile(fileName, "0")
             self.bumpDownloadStall()
         }
     }
 
-    /// 当前下载失败 → 按任务类型收尾。
+    /// 补取/同步/等重连期间持有保活(复查 B2/B5:这些工作可长达几分钟-10分钟,
+    /// 期间 App 必须活着才能自动重连+收数据;工作清空即释放,不再泄漏)。
+    private func updatePenWorkKeepAlive() {
+        let need = downloading || pendingRecovery != nil || !syncQueue.isEmpty
+        DispatchQueue.main.async {
+            need ? RecordKeepAlive.acquire("penwork") : RecordKeepAlive.release("penwork")
+        }
+    }
+
+    /// 当前下载失败 → 按任务类型收尾。补取(复查 P#7):一次卡死/错误不永久弃,
+    /// 重试最多 3 次(每次隔 5s),最终放弃交给 10min 总兜底或次数上限。
+    private var recoveryAttempts = 0
+
     private func failCurrentDownload() {
         switch downloadJob {
-        case .recovery: failRecovery()
+        case .recovery:
+            recoveryAttempts += 1
+            if recoveryAttempts < 3, pendingRecovery != nil {
+                PenLog.d("★补取第\(recoveryAttempts)次失败 → 5s后重试")
+                downloading = false
+                downloadJob = nil
+                downloadStallWork?.cancel()
+                download.removeAll(keepingCapacity: false)
+                updatePenWorkKeepAlive()
+                q.asyncAfter(deadline: .now() + 5) { [weak self] in self?.kickSync() }
+            } else {
+                failRecovery()
+            }
         case .sync(let f): failSync(f)
         case nil: break
         }
@@ -371,6 +419,7 @@ final class PenController: NSObject, WindBleDelegate {
         downloadStallWork?.cancel()
         download.removeAll(keepingCapacity: false)
         persistSyncQueue()
+        updatePenWorkKeepAlive()
     }
 
     // ── 「从陪伴笔同步」──
@@ -413,7 +462,8 @@ final class PenController: NSObject, WindBleDelegate {
                 let size = intVal(e["size"]) ?? intVal(e["file_size"]) ?? 0
                 let dur = intVal(e["duration"]) ?? intVal(e["dur"]) ?? intVal(e["time"]) ?? 0
                 fileListEntries.append(PenFile(name: name, sizeBytes: size, durationSec: dur,
-                                               recordedAt: Self.parseRecordedAt(from: name)))
+                                               recordedAt: Self.parseRecordedAt(from: name),
+                                               penMac: lastVerifiedMac))   // 记住属于哪支笔(P#5)
             }
         }
         let finish = str(map["finish"])
@@ -442,6 +492,7 @@ final class PenController: NSObject, WindBleDelegate {
               let files = try? JSONDecoder().decode([PenFile].self, from: data),
               !files.isEmpty else { return }
         syncQueue = files
+        updatePenWorkKeepAlive()
         PenLog.d("★恢复上次未完成的同步队列 \(files.count)个,连上笔后自动续传")
     }
 
@@ -458,6 +509,7 @@ final class PenController: NSObject, WindBleDelegate {
             }
             PenLog.d("★同步排队 \(files.count)个,队列共\(self.syncQueue.count)个")
             self.persistSyncQueue()
+            self.updatePenWorkKeepAlive()
             self.kickSync()
         }
     }
@@ -482,8 +534,15 @@ final class PenController: NSObject, WindBleDelegate {
                 }
             }
         }
-        guard !syncQueue.isEmpty else { return }
-        let f = syncQueue.removeFirst()
+        // 复查 P#5:同步任务也认笔——只出队"属于当前这支笔"的(penMac nil=旧数据,放行),
+        // 连错笔时挂起等原笔,不再被 cmd5 state=1 打成永久失败丢任务
+        guard let idx = syncQueue.firstIndex(where: { $0.penMac == nil || $0.penMac == lastVerifiedMac }) else {
+            if !syncQueue.isEmpty {
+                PenLog.d("★同步挂起:队列 \(syncQueue.count) 个都属于别的笔,等原笔上线")
+            }
+            return
+        }
+        let f = syncQueue.remove(at: idx)
         beginDownload(.sync(f), fileName: f.name)
         persistSyncQueue()   // 在下的那个也在盘上(currentSyncFile),中途被杀不丢
     }
@@ -493,6 +552,7 @@ final class PenController: NSObject, WindBleDelegate {
         downloadJob = nil
         downloadStallWork?.cancel()
         persistSyncQueue()   // 这个下完了,从盘上去掉
+        updatePenWorkKeepAlive()
         let data = download
         download.removeAll(keepingCapacity: false)
         let remaining = syncQueue.count
@@ -521,6 +581,7 @@ final class PenController: NSObject, WindBleDelegate {
         downloadJob = nil
         downloadStallWork?.cancel()
         persistSyncQueue()   // 失败=放弃这个(可重新导入),从盘上去掉
+        updatePenWorkKeepAlive()
         download.removeAll(keepingCapacity: false)
         let remaining = syncQueue.count
         PenLog.d("★同步下载失败 \(f.name),剩余\(remaining)")
@@ -549,6 +610,8 @@ final class PenController: NSObject, WindBleDelegate {
         downloadStallWork?.cancel()
         recoveryDeadlineWork?.cancel()
         pendingRecovery = nil
+        recoveryAttempts = 0
+        updatePenWorkKeepAlive()
         q.asyncAfter(deadline: .now() + 1) { [weak self] in self?.kickSync() }
         let full = download.count > rec.partial.count ? download : rec.partial
                 PenLog.d("★补下载完成 下载=\(download.count)B 实时流=\(rec.partial.count)B → 用\(download.count > rec.partial.count ? "下载件" : "部分件")")
@@ -565,6 +628,8 @@ final class PenController: NSObject, WindBleDelegate {
         downloadStallWork?.cancel()
         recoveryDeadlineWork?.cancel()
         pendingRecovery = nil
+        recoveryAttempts = 0
+        updatePenWorkKeepAlive()
         q.asyncAfter(deadline: .now() + 1) { [weak self] in self?.kickSync() }
         download.removeAll(keepingCapacity: false)
         deliver(rec.partial, rec.recordedAt, penFile: nil)
@@ -617,12 +682,16 @@ final class PenController: NSObject, WindBleDelegate {
     private func scheduleReconnect() {
         guard !knownMacs.isEmpty else { return }
         guard PenBluetoothWatch.shared.isPoweredOn else { return }   // 蓝牙关着,扫也白扫(L4)
-        reconnectWork?.cancel()
+        // 复查 P#4:已排定就不重排不加档——原先握手超时/cmd2断开/15s兜底连环调用,
+        // 一次失败连扣三档直接 60s 慢启动("断了半天不重连")
+        guard reconnectWork == nil else { return }
         let delay = reconnectDelay
-        reconnectDelay = min(60, reconnectDelay * 2)
         let w = DispatchWorkItem { [weak self] in
-            guard let self, !self.linkUp else { return }
+            guard let self else { return }
+            self.reconnectWork = nil
+            guard !self.linkUp else { return }
             PenLog.d("★自动重连(间隔\(Int(delay))s):重新扫描找已知的笔…")
+            self.reconnectDelay = min(60, self.reconnectDelay * 2)   // 真扫了一轮才加档
             self.pen.startSearch()
             self.scheduleReconnect()
         }
@@ -711,6 +780,7 @@ final class PenController: NSObject, WindBleDelegate {
                         if wasRecording { self.manager?.penDisconnectedWhileRecording() }
                     }
                     self.stopHeartbeat()
+                    self.reconnectDelay = 8   // 新断开=新形势,退避从头算
                     self.scheduleReconnect()
                     return
                 }
@@ -737,11 +807,12 @@ final class PenController: NSObject, WindBleDelegate {
     }
 
     /// 机身文件下载数据(补下载路径):累积 + 续期下载看门狗。
+    /// downloadAccepting 守卫(复查 P#8):新任务发出 startGetFile 前,旧传输残余字节不得混入。
     func deviceFileData(_ fileData: Data!) {
         guard let d = fileData else { return }
         q.async {
             self.lastRx = Date()
-            guard self.downloading else { return }
+            guard self.downloading, self.downloadAccepting else { return }
             self.download.append(d)
             self.bumpDownloadStall()
         }
@@ -862,6 +933,7 @@ final class PenController: NSObject, WindBleDelegate {
             PenLog.d("cmd2 断开 → 报未连、进自动重连")
             connectGate = false
             connectGateWork?.cancel()
+            reconnectDelay = 8   // 新一次断开=新形势,退避从头算(复查 P#4)
             let wasRecording = recording
             linkUp = false
             verifiedConnected = false
@@ -942,7 +1014,7 @@ final class PenController: NSObject, WindBleDelegate {
 
     /// cmd=5 机身文件传输状态:0完成 4传输中 1文件不在 2offset过大 3其他停止。
     private func handleFileState(_ data: [String: Any]?) {
-        guard let data, downloading else { return }
+        guard let data, downloading, downloadAccepting else { return }   // P#8:旧传输终态不认
         let st = str(data["record_file_state"])
         switch st {
         case "4": bumpDownloadStall()             // 有进度=活着,续期看门狗
@@ -966,6 +1038,16 @@ final class PenController: NSObject, WindBleDelegate {
         if name.isEmpty { name = str(data["fileName"]) }
         guard !name.isEmpty else { return }
         penFileName = name
+        // 复查 P#2:笔离机录音→暂停→回手机旁恢复:App 当"全新一段",但机身是续写同一文件——
+        // 文件真实开始远早于本段 recordStartAt 就说明头部不在流里,必须走补取全段,
+        // 否则只传尾段还带 pen_file,之后全量件被后端去重挡掉=头部永久丢失
+        if let at0 = Self.parseRecordedAt(from: name),
+           let realStart = Self.wallClockFormatter.date(from: at0),
+           let segStart = recordStartAt,
+           segStart.timeIntervalSince(realStart) > 5, !streamIncomplete {
+            streamIncomplete = true
+            PenLog.d("★检测到续录段(文件开始早于本段 \(Int(segStart.timeIntervalSince(realStart)))s) → 标记流不完整,收尾走补取全段")
+        }
         // 文件名自带真实开始时刻(note20260703-174600.opus) → 校准 recordedAt(镜像段头部缺失时尤其重要)
         if let at = Self.parseRecordedAt(from: name) {
             recordedAt = at

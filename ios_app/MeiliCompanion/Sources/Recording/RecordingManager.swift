@@ -17,6 +17,7 @@ struct PenFile: Identifiable, Equatable, Codable {
     let sizeBytes: Int
     let durationSec: Int
     let recordedAt: String?   // 从文件名解析的录音开始时刻
+    var penMac: String? = nil // 属于哪支笔(双笔场景防向错笔要文件;旧持久化数据无此键=放行)
     var id: String { name }
 }
 
@@ -34,9 +35,10 @@ final class RecordingManager: ObservableObject {
             let live = state == .recording || state == .paused
             // 录音中防自动锁屏(审计 B7:自动锁屏是后台风险最高频触发源)
             UIApplication.shared.isIdleTimerDisabled = live
-            // 笔录音期间静音保活(审计 B1);手机麦有自己的会话不需要
-            if source == .pen && live { RecordKeepAlive.start() }
-            else if !live && !PenController.shared.isSyncBusy { RecordKeepAlive.stop() }
+            // 笔录音期间持有保活(复查 B2/B4:持有者模型,不再跨队列查 isSyncBusy;
+            // 补取/同步的保活由 PenController 以 "penwork" 持有者自行管理)
+            if source == .pen && live { RecordKeepAlive.acquire("record") }
+            else { RecordKeepAlive.release("record") }
         }
     }
     @Published var source: CompanionSource = .phone
@@ -69,6 +71,7 @@ final class RecordingManager: ObservableObject {
     @Published var penConnecting = false
 
     private let phone = PhoneMicRecorder()
+    private var scanStopGen = 0
     private var timer: Timer?
     private var recordedAt: String?
 
@@ -104,10 +107,14 @@ final class RecordingManager: ObservableObject {
         source = s
         if s == .pen && !penConnected {
             PenController.shared.startSearch()   // 后台找笔 + autoConnect 已知的笔
-            // 审计 P4:扫描别无限开着(耗电),30s 没连上就停(自动重连循环会按退避节奏接管)
+            // 审计 P4:扫描别无限开着(耗电),30s 没连上就停;代际防旧 Task 掐掉新扫描(复查 B11)
+            scanStopGen += 1
+            let gen = scanStopGen
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 30_000_000_000)
-                if !penConnected && !penScanning { PenController.shared.stopSearch() }
+                if gen == scanStopGen && !penConnected && !penScanning {
+                    PenController.shared.stopSearch()
+                }
             }
         }
     }
@@ -169,7 +176,9 @@ final class RecordingManager: ObservableObject {
     /// 不再假装在录(对齐 android resetSessionOnLinkDown 的"本段结束"路径);
     /// 重连后是干净的空闲态,用户重新开始 = 新的一段从 0 计时。
     func penDisconnectedWhileRecording() {
-        guard source == .pen, state == .recording || state == .starting else { return }
+        // 复查 P#3/B6:必须含 .paused——暂停中断连否则成僵尸会话,永远停在「已暂停」
+        guard source == .pen, state == .recording || state == .starting || state == .paused else { return }
+        if let p = pauseBeganAt { pausedAccum += Date().timeIntervalSince(p); pauseBeganAt = nil }
         stopTimer()
         elapsed = 0
         state = .uploading
@@ -194,6 +203,12 @@ final class RecordingManager: ObservableObject {
             state = .starting
             phone.start { [weak self] ok, wall in
                 guard let self else { return }
+                // 复查 S3:权限弹窗期间笔上开录会把 source 翻成 .pen——此时麦克风回调要自弃,
+                // 否则 mic 成孤儿(永不 stop、m4a 无限增长)
+                guard self.source == .phone else {
+                    if ok { self.phone.stop { _ in } }
+                    return
+                }
                 if ok {
                     self.recordedAt = wall
                     self.beginTimer()
@@ -239,12 +254,12 @@ final class RecordingManager: ObservableObject {
         state = .recording
     }
     /// 镜像段计时校准:把开始时刻校准为机身文件名里的真实开始时间(墙钟派生自动正确)。
+    /// 复查 B5:不清 pausedAccum——校准值本身是含暂停的墙钟差,已有的暂停累计不能抹。
     func penElapsedCalibrated(_ seconds: Int) {
         guard source == .pen, state == .recording || state == .paused else { return }
         if seconds > elapsed {
             segStartAt = Date().addingTimeInterval(-Double(seconds))
-            pausedAccum = 0
-            elapsed = seconds
+            elapsed = max(0, seconds - Int(pausedAccum))
         }
     }
 

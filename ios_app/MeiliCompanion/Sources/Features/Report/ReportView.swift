@@ -79,7 +79,10 @@ struct ReportView: View {
                 .padding(.horizontal, 16).padding(.vertical, 11)
                 .background(MeiliColor.inkSurface).clipShape(Capsule())
                 .padding(.bottom, 24)
-                .task { try? await Task.sleep(nanoseconds: 2_200_000_000); vm.toast = nil }
+                .task(id: t) {
+                    try? await Task.sleep(nanoseconds: 2_200_000_000)
+                    if !Task.isCancelled { vm.toast = nil }
+                }
         }
     }
 
@@ -750,7 +753,10 @@ struct TaskPanelSheet: View {
                     .padding(.horizontal, 16).padding(.vertical, 11)
                     .background(MeiliColor.inkSurface).clipShape(Capsule())
                     .padding(.bottom, 18)
-                    .task { try? await Task.sleep(nanoseconds: 2_200_000_000); vm.toast = nil }
+                    .task(id: t) {
+                        try? await Task.sleep(nanoseconds: 2_200_000_000)
+                        if !Task.isCancelled { vm.toast = nil }
+                    }
             }
         }
     }

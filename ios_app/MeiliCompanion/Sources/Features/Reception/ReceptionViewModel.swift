@@ -61,6 +61,8 @@ final class ReceptionViewModel: ObservableObject {
     // ── 自动刷新(F6,对齐 android:看"今天"时每 20s 静默刷新,分析状态不用手动重进)──
     private var autoTimer: Timer?
 
+    deinit { autoTimer?.invalidate() }   // 复查 B10:VM 释放不留僵尸 Timer
+
     func startAutoRefresh() {
         stopAutoRefresh()
         autoTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in

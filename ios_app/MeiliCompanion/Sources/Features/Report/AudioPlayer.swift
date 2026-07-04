@@ -13,12 +13,22 @@ final class AudioPlayer: ObservableObject {
     private var observer: Any?
     private var loadedURL: String?
 
+    deinit {   // 复查 S4:onDisappear 未触发的销毁路径(换肤重建等)也要拆 observer↔player 互持
+        if let observer { player?.removeTimeObserver(observer) }
+        player?.pause()
+    }
+
     func load(_ urlString: String) {
         guard urlString != loadedURL, let url = URL(string: urlString) else { return }
         stop()
         loadedURL = urlString
-        try? AVAudioSession.sharedInstance().setCategory(.playback)
-        try? AVAudioSession.sharedInstance().setActive(true)
+        // 复查 B3/B4:手机麦录音中绝不动会话(独占 .playback 会拆掉录音输入,静默丢录音);
+        // 其他时候也带 mixWithOthers,不顶掉微信语音/保活会话
+        let m = RecordingManager.shared
+        if !(m.isLive && m.source == .phone) {
+            try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.mixWithOthers])
+            try? AVAudioSession.sharedInstance().setActive(true)
+        }
         let p = AVPlayer(playerItem: AVPlayerItem(url: url))
         player = p
         observer = p.addPeriodicTimeObserver(

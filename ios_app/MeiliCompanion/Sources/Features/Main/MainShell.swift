@@ -64,12 +64,16 @@ struct MainShell: View {
                 }
 
                 // 录音引擎全局 toast(同步进度/断连补取/删除结果等,任何 tab 可见)
+                // .task(id:) + isCancelled 判断(复查 B9):内容变化重启计时,视图移除不误清
                 if let t = rec.toast {
                     Text(t).font(MeiliFont.bodySm).foregroundStyle(.white)
                         .padding(.horizontal, 16).padding(.vertical, 11)
                         .background(MeiliColor.inkSurface).clipShape(Capsule())
                         .padding(.bottom, MeiliMetric.bottomNavInset + 8)
-                        .task { try? await Task.sleep(nanoseconds: 2_600_000_000); rec.toast = nil }
+                        .task(id: t) {
+                            try? await Task.sleep(nanoseconds: 2_600_000_000)
+                            if !Task.isCancelled { rec.toast = nil }
+                        }
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -85,18 +89,31 @@ struct MainShell: View {
             }
             // 点提醒通知直达对应页(F5):report→报告,recording→绑定,其余→提醒列表
             .onReceive(NotificationCenter.default.publisher(for: .meiliOpenReminderRef)) { note in
-                let refType = note.userInfo?["ref_type"] as? String ?? ""
-                let refId = note.userInfo?["ref_id"] as? Int ?? 0
-                switch (refType, refId) {
-                case ("session", let id) where id > 0, ("report", let id) where id > 0:
-                    path.append(AppRoute.report(id))
-                case ("recording", let id) where id > 0:
-                    path.append(AppRoute.bind(id))
-                default:
-                    path.append(AppRoute.reminders)
+                NotificationPresenter.pendingRef = nil   // 已在线消费,清掉冷启动暂存
+                routeReminderRef(note.userInfo)
+            }
+            // 冷启动点通知拉起:didReceive 早于本视图订阅,事件存在 pendingRef 里(复查 B1)
+            .onAppear {
+                if let ref = NotificationPresenter.pendingRef {
+                    NotificationPresenter.pendingRef = nil
+                    routeReminderRef(ref)
                 }
             }
             .onAppear(perform: deepLinkIfNeeded)
+        }
+    }
+
+    /// 按提醒的 ref_type/ref_id 路由(在线 onReceive 与冷启动 pendingRef 共用)。
+    private func routeReminderRef(_ info: [AnyHashable: Any]?) {
+        let refType = info?["ref_type"] as? String ?? ""
+        let refId = (info?["ref_id"] as? Int) ?? (info?["ref_id"] as? NSNumber)?.intValue ?? 0
+        switch (refType, refId) {
+        case ("session", let id) where id > 0, ("report", let id) where id > 0:
+            path.append(AppRoute.report(id))
+        case ("recording", let id) where id > 0:
+            path.append(AppRoute.bind(id))
+        default:
+            path.append(AppRoute.reminders)
         }
     }
 

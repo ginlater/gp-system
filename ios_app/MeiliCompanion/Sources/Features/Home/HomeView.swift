@@ -97,9 +97,16 @@ struct HomeView: View {
                 }
             }
             .onAppear {
-                // 只开一种权限时,把来源钉到可用的那个
-                if me.allowPenRec == 0 && rec.source == .pen { rec.setSource(.phone) }
-                if me.allowPhoneRec == 0 && rec.source == .phone { rec.setSource(.pen) }
+                // 只开一种权限时,把来源钉到"已开通"的那个;双零不钉(复查 B6:原写法双零时乒乓
+                // 且每次进首页都重启一轮蓝牙扫描)
+                if me.allowPenRec == 0 && me.allowPhoneRec != 0 && rec.source == .pen { rec.setSource(.phone) }
+                if me.allowPhoneRec == 0 && me.allowPenRec != 0 && rec.source == .phone { rec.setSource(.pen) }
+            }
+            if me.allowPenRec == 0 && me.allowPhoneRec == 0 {
+                Text("该账号未开通录音权限，请联系管理员开通")
+                    .font(.sz(12)).foregroundStyle(MeiliColor.roseText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 6)
             }
 
             if rec.state == .uploading || queue.pendingCount > 0 {
@@ -160,7 +167,7 @@ struct HomeView: View {
 
     /// 上传状态 badge(审计 F1):失败时红字可点重试;正常时显示后台上传中。
     private var syncBadge: some View {
-        Button { UploadQueue.shared.kick() } label: {
+        Button { UploadQueue.shared.kick(force: true) } label: {   // 手动重试无视退避
             HStack(spacing: 5) {
                 MeiliIcon(queue.failedCount > 0 ? MeiliIcons.warn : MeiliIcons.sync, size: 13)
                     .foregroundStyle(queue.failedCount > 0 ? MeiliColor.roseText : MeiliColor.clayDeep)
