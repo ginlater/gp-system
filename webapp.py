@@ -1357,7 +1357,7 @@ def submit_analysis(session_id, signature, *args, **kwargs):
             print(f"[submit_analysis] session={session_id} 异常: {e}", flush=True)
             try:
                 db_write(
-                    """UPDATE sessions SET analysis_status='failed',
+                    """UPDATE sessions SET analysis_status='failed', locked=0,
                        analysis_error=?,
                        analysis_progress=NULL,
                        analysis_finished_at=datetime('now','localtime')
@@ -4055,7 +4055,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
     model = model or DEFAULT_MODEL
     if model not in MODEL_PROVIDER:
         db_write(
-            """UPDATE sessions SET analysis_status='failed',
+            """UPDATE sessions SET analysis_status='failed', locked=0,
                analysis_error=?, analysis_finished_at=datetime('now','localtime')
                WHERE id=?""",
             (f"不支持的模型: {model}", session_id),
@@ -4076,7 +4076,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
     )
     if not recs:
         db_write(
-            """UPDATE sessions SET analysis_status='failed',
+            """UPDATE sessions SET analysis_status='failed', locked=0,
                analysis_error='没有可分析的转录文本',
                analysis_finished_at=datetime('now','localtime') WHERE id=?""",
             (session_id,),
@@ -4516,7 +4516,9 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         elapsed = int(_t.time() - t0)
         mm, ss = divmod(elapsed, 60)
         db_write(
-            """UPDATE sessions SET analysis_status=?,
+            """UPDATE sessions SET
+               analysis_status=CASE WHEN analysis_status='outdated' THEN 'outdated' ELSE ? END,
+               locked=0,
                analysis_signature=?, analysis_model=?,
                analysis_progress=?, analysis_error=?,
                analysis_finished_at=datetime('now','localtime') WHERE id=?""",
@@ -4557,7 +4559,9 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
     except Exception as e:
         stop_heartbeat.set()
         db_write(
-            """UPDATE sessions SET analysis_status='failed', analysis_error=?,
+            """UPDATE sessions SET
+               analysis_status=CASE WHEN analysis_status='outdated' THEN 'outdated' ELSE 'failed' END,
+               locked=0, analysis_error=?,
                analysis_progress=NULL,
                analysis_finished_at=datetime('now','localtime') WHERE id=?""",
             (f"[{model}] {str(e)[:1900]}", session_id),
@@ -6268,9 +6272,14 @@ def api_session_analyze(sid):
     - 其它（outdated / 换绑后 / done 强制重跑 / 全部失败 等）→ 全量从 0 跑，
       并强制重建 shared_context。
     """
-    sess = db_fetchone("SELECT id, analysis_status FROM sessions WHERE id=?", (sid,))
+    sess = db_fetchone("SELECT id, analysis_status, analysis_started_at FROM sessions WHERE id=?", (sid,))
     if not sess:
         return jsonify({"error": "not found"}), 404
+    # 批次二 C1:防重——进行中再点会双跑双烧钱(顾问端有守卫,这里补齐)。
+    # queued 但 started_at 为空 = "等转写"态,放行(下面 C8 分支会重置它,不会双跑)。
+    if sess["analysis_status"] == "running" or (
+            sess["analysis_status"] == "queued" and sess["analysis_started_at"]):
+        return jsonify({"error": "分析正在进行中，请等待完成后再操作"}), 409
 
     data = request.get_json(silent=True) or {}
     model = (data.get("model") or "").strip() or None
@@ -6306,6 +6315,24 @@ def api_session_analyze(sid):
             "model": model or DEFAULT_MODEL,
             "mode": "only_failed",
             "tasks": targets,
+        })
+
+    # 批次二 C8:还有录音在转写 → 标 queued(转写完 autostart 自动接力)。原来标 pending 会永久卡死:
+    # autostart 只认 queued,pending+progress 被 _status_bucket 归 stuck,iOS 显示"分析失败"。
+    asr_wait_cnt = db_fetchone(
+        "SELECT COUNT(*) AS c FROM recordings WHERE session_id=? "
+        "AND asr_status IN ('pending','running','awaiting_intake')", (sid,))
+    if asr_wait_cnt and asr_wait_cnt["c"]:
+        db_write(
+            """UPDATE sessions SET analysis_status='queued', locked=1,
+               analysis_signature=NULL, analysis_error=NULL, analysis_started_at=NULL,
+               analysis_progress=? WHERE id=?""",
+            (f"⏳ 转写中（剩 {asr_wait_cnt['c']} 段），完成后自动开始分析", sid),
+        )
+        return jsonify({
+            "status": "queued", "mode": "wait_asr",
+            "progress": f"转写中（剩 {asr_wait_cnt['c']} 段），完成后自动开始分析",
+            "model": model or DEFAULT_MODEL,
         })
 
     # 全量重跑（无视 signature，并刷新 shared_context）
@@ -6489,9 +6516,13 @@ def api_task_rerun(sid, task_id):
     """单独重跑一个任务"""
     if task_id not in TASK_REGISTRY:
         return jsonify({"error": f"未知任务 {task_id}"}), 400
-    sess = db_fetchone("SELECT id FROM sessions WHERE id=?", (sid,))
+    sess = db_fetchone("SELECT id, analysis_status, analysis_started_at FROM sessions WHERE id=?", (sid,))
     if not sess:
         return jsonify({"error": "session not found"}), 404
+    # 批次二 C7:防重——整包分析进行中不许再叠一个单任务重跑(双倍烧钱)
+    if sess["analysis_status"] == "running" or (
+            sess["analysis_status"] == "queued" and sess["analysis_started_at"]):
+        return jsonify({"error": "分析正在进行中，请等完成后再重跑"}), 409
 
     data = request.get_json(silent=True) or {}
     model = (data.get("model") or "").strip() or DEFAULT_MODEL
@@ -6515,9 +6546,13 @@ def api_task_rerun(sid, task_id):
 @login_required
 def api_tasks_fill_missing(sid):
     """补跑所有缺失/失败的任务"""
-    sess = db_fetchone("SELECT id FROM sessions WHERE id=?", (sid,))
+    sess = db_fetchone("SELECT id, analysis_status, analysis_started_at FROM sessions WHERE id=?", (sid,))
     if not sess:
         return jsonify({"error": "session not found"}), 404
+    # 批次二 C7:防重(同 rerun)
+    if sess["analysis_status"] == "running" or (
+            sess["analysis_status"] == "queued" and sess["analysis_started_at"]):
+        return jsonify({"error": "分析正在进行中，请等完成后再补跑"}), 409
 
     missing = get_missing_tasks(sid)
     if not missing:
@@ -9663,7 +9698,12 @@ def _add_pen_tombstone(rec):
         uid = rec["uploader_user_id"] if "uploader_user_id" in keys else None
         pf = rec["pen_file"] if "pen_file" in keys else None
         ra = rec["recorded_at"] if "recorded_at" in keys else None
+        src = rec["source"] if "source" in keys else None
         if not uid or (not pf and not ra):
+            return
+        # 批次二 D5:无 pen_file 且非笔来源(手机麦/普通上传)不立墓碑——手机麦与笔同刻双录是
+        # 官方支持场景,删手机段不能连累同刻的笔机身段被预检判"已删"永久隐藏
+        if not pf and not (src or "").startswith("consultant-pen"):
             return
         db_write("INSERT INTO pen_tombstone (uploader_user_id, pen_file, recorded_at) VALUES (?,?,?)",
                  (uid, pf, ra))
@@ -9758,6 +9798,10 @@ def api_consultant_upload():
     if recorded_at_form is None and reported_sec > 0:
         recorded_at = (now - timedelta(seconds=reported_sec)).strftime("%Y-%m-%d %H:%M:%S")
     truncate_note = _detect_truncate_note(data, ext, reported_sec)
+    # 批次二 D1:App 明确声明这是"断流诚实部分件"(补取失败退回直传) → 落 truncate_note,
+    # 打通既有的"损坏段被完整版替换"通道——之后从笔同步到完整版,去重命中+未绑定即自动顶替
+    if not truncate_note and (request.form.get("truncated") or "").strip() in ("1", "true"):
+        truncate_note = "蓝牙断流，仅保存已录到的部分；从陪伴笔同步完整版后将自动替换"
     # ★录音笔SN：app 上传时带 sn(=getMacAddress)。存到录音上做审计，并记一条"该顾问用过此SN"供管理员绑定。
     device_sn = (request.form.get("sn") or "").strip() or None
     if device_sn:
@@ -9964,14 +10008,18 @@ def api_consultant_pen_sync_preview():
             continue
         status, eid = "new", None
         rec = db_fetchone(
-            "SELECT id FROM recordings WHERE uploader_user_id=? AND pen_file=? LIMIT 1", (u["id"], name))
+            "SELECT id, truncate_note, session_id FROM recordings WHERE uploader_user_id=? AND pen_file=? LIMIT 1", (u["id"], name))
         if not rec and ra:
             rec = db_fetchone(
-                "SELECT id FROM recordings WHERE uploader_user_id=? "
+                "SELECT id, truncate_note, session_id FROM recordings WHERE uploader_user_id=? "
                 "AND ABS(strftime('%s',recorded_at)-strftime('%s',?))<=90 "
                 "AND (source LIKE 'consultant-pen%' OR pen_file IS NOT NULL) LIMIT 1",
                 (u["id"], ra))
-        if rec:
+        if rec and rec["truncate_note"] and not rec["session_id"]:
+            # 批次二 D1:命中的是未绑定的"断流部分件" → 不标已上传,放行重新导入
+            # (upload 端去重命中会自动用完整版替换这条部分件)
+            status, eid = "new", rec["id"]
+        elif rec:
             status, eid = "uploaded", rec["id"]
         else:
             tomb = db_fetchone(
@@ -9998,6 +10046,9 @@ def api_consultant_placeholder():
     now = datetime.now()
     # ★录音真实开始时间(原生传)，用于未归档列表的服务日期/时段；没传则用现在
     recorded_at = request.form.get("recorded_at") or now.strftime("%Y-%m-%d %H:%M:%S")
+    # 批次二 D6:同步占位带机身文件名 → 预检可精确匹配"正在传的段"(不再赌 ±90s 时刻吻合,
+    # 时刻解析失败/退避超2h的段不会再以"new"重现导致重复导入)
+    ph_pen_file = (request.form.get("pen_file") or "").strip() or None
     ts14 = now.strftime("%Y%m%d%H%M%S")
     # 占位 oss_key：唯一、不真传 OSS，上传完成时会被换成真 key
     placeholder_key = f"pending-uploads/{company_id}/{u['id']}/{ts14}_{_uuid.uuid4().hex[:8]}.pending"
@@ -10016,11 +10067,11 @@ def api_consultant_placeholder():
         """INSERT INTO recordings
            (session_id, oss_key, advisor, customer, recorded_at,
             duration_label, size_bytes, source, company_id, uploader_user_id,
-            upload_status, asr_status, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            upload_status, asr_status, created_at, pen_file)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (None, placeholder_key, advisor, None, recorded_at,
          None, 0, ph_source, company_id, u["id"],
-         "processing", "awaiting_intake", recorded_at),
+         "processing", "awaiting_intake", recorded_at, ph_pen_file),
     )
     return jsonify({"id": rid})
 
@@ -11504,8 +11555,14 @@ def api_admin_recording_rebind(rid):
          to_cust["id"], to_cust["name"], reason,
          u["id"], u["advisor_name"] or u["username"]),
     )
-    # 触发新 session 分析（录音 ASR 完成后才会真正开跑）
-    maybe_trigger_session_analysis(new_sid)
+    # 批次二 C3:产品红线"分析必须手动触发"——换绑后不自动跑,只作废旧报告+解锁,
+    # 等人在界面上点(与顾问端 direct_rebind 对称)
+    db_write(
+        """UPDATE sessions SET locked=0,
+               analysis_status=CASE WHEN analysis_status IS NULL OR analysis_status='' THEN NULL ELSE 'outdated' END
+           WHERE id=?""",
+        (new_sid,),
+    )
     return jsonify({"ok": True, "new_session_id": new_sid})
 
 
@@ -12157,11 +12214,7 @@ def api_consultant_confirm_speakers(rid):
         return jsonify({"error": "无权操作他人录音"}), 403
     if action == "keep":
         db_write("UPDATE recordings SET speaker_confirmed=1 WHERE id=?", (rid,))
-        if rec["session_id"]:
-            try:
-                maybe_trigger_session_analysis(rec["session_id"])
-            except Exception as e:
-                app.logger.warning("auto-trigger after confirm failed: %s", e)
+        # 批次二 C6:产品红线"分析必须手动触发"——确认说话人只落标记,不自动开跑
         return jsonify({"ok": True})
     if action == "unbind":
         db_write(
@@ -12191,18 +12244,8 @@ def api_admin_confirm_speakers(rid):
             return jsonify({"error": "无权操作他公司录音"}), 403
     if action == "keep":
         db_write("UPDATE recordings SET speaker_confirmed=1 WHERE id=?", (rid,))
-        triggered = False
-        if rec["session_id"]:
-            try:
-                maybe_trigger_session_analysis(rec["session_id"])
-                after = db_fetchone(
-                    "SELECT analysis_status FROM sessions WHERE id=?",
-                    (rec["session_id"],),
-                )
-                triggered = after and after["analysis_status"] in ("queued", "running")
-            except Exception as e:
-                app.logger.warning("auto-trigger after confirm failed: %s", e)
-        return jsonify({"ok": True, "analysis_triggered": bool(triggered)})
+        # 批次二 C6:产品红线"分析必须手动触发"——确认说话人只落标记,不自动开跑
+        return jsonify({"ok": True, "analysis_triggered": False})
     if action == "unbind":
         db_write(
             """UPDATE recordings SET session_id=NULL, customer=NULL,
@@ -12752,14 +12795,14 @@ def startup_kick():
         done_cnt = sum(1 for tid in all_ids if ts.get(tid, {}).get("status") == "done")
         if done_cnt == len(all_ids):
             db_write(
-                """UPDATE sessions SET analysis_status='done',
+                """UPDATE sessions SET analysis_status='done', locked=0,
                    analysis_progress=? WHERE id=?""",
                 (f"完成 {done_cnt}/{len(all_ids)} 任务（启动修复）", s["id"]),
             )
             print(f"[startup_kick] session {s['id']} task 全 done，修正为 done")
         else:
             db_write(
-                """UPDATE sessions SET analysis_status='failed',
+                """UPDATE sessions SET analysis_status='failed', locked=0,
                    analysis_progress=NULL,
                    analysis_error='启动时发现状态异常（pending+排队中），请手动重跑'
                    WHERE id=?""",
@@ -12774,10 +12817,10 @@ def startup_kick():
           AND (task_status IS NULL OR task_status = '{}')
           AND analysis_error LIKE '%interpreter shutdown%'
     """)
+    # 批次二 C10:零成本失败不再自动重跑——产品红线"分析必须手动触发",
+    # 留给顾问/老板在界面手动点重新分析(自动跑=无人点按也发 LLM 调用)
     if zero_cost_failed:
-        print(f"[startup_kick] 发现 {len(zero_cost_failed)} 个零成本失败 session，自动恢复")
-    for s in zero_cost_failed:
-        maybe_trigger_session_analysis(s["id"])
+        print(f"[startup_kick] 发现 {len(zero_cost_failed)} 个零成本失败 session(留待手动重跑,不自动)")
 
     # ── 已移除(2026-07-04)：原"触发 pending 且 ASR 全完成的 session"块。
     #    产品规则=分析必须顾问手动点「开始分析」;此块导致每次重启服务把"绑了还没请求分析"
@@ -12908,7 +12951,7 @@ def task_health_check_loop():
             """)
             for s in stale:
                 db_write(
-                    """UPDATE sessions SET analysis_status='failed',
+                    """UPDATE sessions SET analysis_status='failed', locked=0,
                        analysis_error='卡在运行状态超过 30 分钟，自动标记失败',
                        analysis_progress=NULL,
                        analysis_finished_at=datetime('now','localtime')
@@ -12931,7 +12974,7 @@ def task_health_check_loop():
                                    if ts.get(tid, {}).get("status") == "done")
                     if done_cnt == len(all_ids):
                         db_write(
-                            """UPDATE sessions SET analysis_status='done',
+                            """UPDATE sessions SET analysis_status='done', locked=0,
                                analysis_progress=?,
                                analysis_finished_at=COALESCE(analysis_finished_at, datetime('now','localtime'))
                                WHERE id=?""",
@@ -12957,6 +13000,13 @@ def task_health_check_loop():
                     (r["id"],),
                 )
                 print(f"[task_health_check] recording {r['id']} ASR 卡 running 超时，标 failed")
+                # 批次二 C2:该段若属于"点过开始分析、等转写"的 queued session,不补一脚它就
+                # 永远卡「分析中」(看门狗豁免 started_at=NULL 的 queued)——强制失败后立即
+                # 检查全 session 转写是否已收尾,是则自动开跑
+                try:
+                    _maybe_autostart_analysis_after_asr(r["id"])
+                except Exception as _e:
+                    print(f"[task_health_check] stale-ASR 后 autostart 失败: {_e}")
 
             # ── 新增：processing 占位僵尸兜底（App 卸载/换机/永久离线 → 占位永远"上传中"，服务器原本无 TTL）。
             #    阈值 3h > App 端 2h 自愈窗口，只兜底 App 再也起不来的情况，不与还活着的 App 抢。
