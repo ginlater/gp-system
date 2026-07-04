@@ -20,7 +20,14 @@ enum APIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .transport(let e): return "网络异常：\(e.localizedDescription)"
-        case .http(let s, _): return "服务异常：HTTP \(s)"
+        case .http(let s, let d):
+            // 服务端业务报错(400/409 带 {"error":"..."})直接给用户看真话——
+            // 此前一律吞成"服务异常:HTTP n",隔天绑定被7天窗口拒绝时用户完全不知道原因
+            if let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+               let e = obj["error"] as? String, !e.isEmpty {
+                return e
+            }
+            return "服务异常：HTTP \(s)"
         case .decoding: return "数据解析失败"
         case .noResponse: return "无响应"
         }

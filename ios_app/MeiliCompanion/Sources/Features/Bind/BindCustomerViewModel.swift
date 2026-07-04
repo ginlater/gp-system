@@ -115,7 +115,9 @@ final class BindCustomerViewModel: ObservableObject {
         Task {
             do {
                 if !p.inDay {
-                    _ = try await ConsultantRepo.addTodayReception(customerId: p.customerId, date: serviceDate)
+                    // 尽力而为:>7天的历史段这里会被补登窗口拒,但绑定接口已会自动补登该日接诊,
+                    // 本地失败不挡绑定
+                    _ = try? await ConsultantRepo.addTodayReception(customerId: p.customerId, date: serviceDate)
                 }
                 let r: SimpleResult
                 if mode == .rebinding {

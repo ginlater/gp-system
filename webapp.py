@@ -10487,7 +10487,19 @@ def api_consultant_recording_bind(rid):
         (u["id"], customer_id, rec_date),
     )
     if not dr:
-        return jsonify({"error": "该顾客未在今日接诊列表，请先加入"}), 400
+        # 隔天/历史录音绑定(如从笔同步回来的老段子):录音本身就证明那天接待过,
+        # 自动补登该日接诊——不受接诊页手动补登 7 天窗口限制(那是防手滑,不该挡真实数据归位)。
+        # 原来这里直接 400"请先加入",老段子根本没有入口可加,绑定永远失败。
+        advisor_name_dr = u["advisor_name"] or u["username"]
+        try:
+            db_write(
+                """INSERT OR IGNORE INTO daily_reception
+                   (company_id, advisor_user_id, advisor_name, customer_id, service_date, store_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (cid, u["id"], advisor_name_dr, customer_id, rec_date, u["store_id"]),
+            )
+        except sqlite3.IntegrityError:
+            pass
     advisor = u["advisor_name"] or u["username"]
     sid = get_or_create_session(advisor, cust["name"], rec_date, company_id=cid, customer_id=customer_id)
     if not sid:
