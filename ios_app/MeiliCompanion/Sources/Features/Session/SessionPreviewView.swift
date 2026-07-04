@@ -9,7 +9,8 @@ struct SessionPreviewView: View {
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var vm: SessionPreviewViewModel
-    @StateObject private var player = AudioPlayer()
+    // 审计 P8:@State 持有不观察,播放心跳只重绘试听小钮/进度条
+    @State private var player = AudioPlayer()
     @State private var playingRid: Int?
     @State private var confirmStart = false
 
@@ -164,21 +165,7 @@ struct SessionPreviewView: View {
     }
 
     private func playButton(_ rec: PreviewRecording) -> some View {
-        let isThis = playingRid == rec.id && player.playing
-        return Button { togglePlay(rec) } label: {
-            ZStack {
-                Circle().fill(MeiliColor.clayTint).frame(width: 40, height: 40)
-                if isThis {
-                    HStack(spacing: 3) {
-                        Capsule().fill(MeiliColor.clayDeep).frame(width: 3, height: 13)
-                        Capsule().fill(MeiliColor.clayDeep).frame(width: 3, height: 13)
-                    }
-                } else {
-                    MeiliIcon(MeiliIcons.play, size: 16).foregroundStyle(MeiliColor.clayDeep)
-                }
-            }
-        }
-        .buttonStyle(PressScaleButtonStyle())
+        AuditionPlayButton(player: player, isCurrent: playingRid == rec.id) { togglePlay(rec) }
     }
 
     private func togglePlay(_ rec: PreviewRecording) {

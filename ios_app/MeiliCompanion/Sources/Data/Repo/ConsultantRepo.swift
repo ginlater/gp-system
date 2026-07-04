@@ -222,4 +222,17 @@ enum ConsultantRepo {
     static func reauthProbe() async throws -> Me {
         try await api.get("api/me")
     }
+
+    // ── 报告任务面板写操作(F2,对齐 android ReportViewModel)──
+
+    static func rerunTask(sessionId: Int, taskId: String) async throws -> SimpleResult {
+        try await api.postJSON("api/session/\(sessionId)/task/\(taskId)/rerun", body: RerunBody())
+    }
+    static func fillMissingTasks(sessionId: Int) async throws -> SimpleResult {
+        try await api.postJSON("api/session/\(sessionId)/tasks/fill-missing", body: EmptyBody())
+    }
+    /// 重新分析(后端自动判定:仅缺部分→补跑,否则全量)。
+    static func reanalyze(sessionId: Int) async throws -> SimpleResult {
+        try await api.postJSON("api/session/\(sessionId)/analyze", body: AnalyzeBody())
+    }
 }

@@ -75,8 +75,7 @@ struct HomeView: View {
                 CompactCompanionButton(live: rec.isLive, starting: rec.state == .starting,
                                        enabled: rec.state != .uploading, onTap: { rec.toggle() })
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(rec.elapsedLabel)
-                        .font(MeiliFont.serif(32)).monospacedDigit().foregroundStyle(MeiliColor.ink)
+                    ElapsedText(ticker: rec.ticker)
                     HStack(spacing: 7) {
                         if rec.isLive { Circle().fill(MeiliColor.rose).frame(width: 8, height: 8) }
                         Text(statusText).font(MeiliFont.body).foregroundStyle(MeiliColor.ink2).lineLimit(2)
@@ -284,5 +283,14 @@ private struct CompactCompanionButton: View {
         } else {
             withAnimation(.easeOut(duration: 0.3)) { pulse = false }
         }
+    }
+}
+
+/// 计时文本(独立观察 ticker;审计 P7:每秒 tick 只重绘这一个 Text)。
+struct ElapsedText: View {
+    @ObservedObject var ticker: RecordingManager.RecordTicker
+    var body: some View {
+        Text(ticker.label)
+            .font(MeiliFont.serif(32)).monospacedDigit().foregroundStyle(MeiliColor.ink)
     }
 }

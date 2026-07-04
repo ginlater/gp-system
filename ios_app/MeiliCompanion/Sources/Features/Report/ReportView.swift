@@ -6,8 +6,11 @@ struct ReportView: View {
     let sessionId: Int
     @Environment(\.dismiss) private var dismiss
     @StateObject private var vm: ReportViewModel
-    @StateObject private var player = AudioPlayer()
+    // 审计 P3:@State 持有(不观察)——播放 4Hz 心跳只重绘 PlayerBar 子视图,整页不再跟着抖
+    @State private var player = AudioPlayer()
     @State private var showScoring = false
+    @State private var showTasks = false
+    @State private var confirmReanalyze = false
     @State private var playingCase: Int? = nil
 
     init(sessionId: Int) {
@@ -45,27 +48,81 @@ struct ReportView: View {
         .sheet(isPresented: $showScoring) {
             if let sc = vm.report?.scoring { ScoringDetailSheet(scoring: sc) }
         }
+        .sheet(isPresented: $showTasks) { TaskPanelSheet(vm: vm, confirmReanalyze: $confirmReanalyze) }
+        .alert("重新分析这次陪伴？", isPresented: $confirmReanalyze) {
+            Button("再想想", role: .cancel) {}
+            Button("开始重新分析") { vm.reanalyze() }
+        } message: {
+            Text("将重跑全部分析任务，预计 2–6 分钟。完成前报告会显示「分析进行中」。")
+        }
+        .overlay(alignment: .bottom) { reportToast }
     }
 
-    // MARK: 头部状态(右上)
+    @ViewBuilder private var reportToast: some View {
+        if let t = vm.toast {
+            Text(t).font(MeiliFont.bodySm).foregroundStyle(.white)
+                .padding(.horizontal, 16).padding(.vertical, 11)
+                .background(MeiliColor.inkSurface).clipShape(Capsule())
+                .padding(.bottom, 24)
+                .task { try? await Task.sleep(nanoseconds: 2_200_000_000); vm.toast = nil }
+        }
+    }
+
+    // MARK: 头部状态(右上,点开任务面板 F2)
 
     @ViewBuilder private var headerStatus: some View {
         let (label, kind) = statusPill(vm.displayStatus)
-        VStack(alignment: .trailing, spacing: 3) {
-            StatusPill(text: label, kind: kind)
-            if vm.tasksTotal > 0 {
-                Text("\(vm.tasksDone)/\(vm.tasksTotal) 完成")
-                    .font(.sz(10, weight: .bold)).foregroundStyle(MeiliColor.ink3)
+        Button { showTasks = true } label: {
+            VStack(alignment: .trailing, spacing: 3) {
+                StatusPill(text: label, kind: kind)
+                if vm.tasksTotal > 0 {
+                    Text("\(vm.tasksDone)/\(vm.tasksTotal) 完成 ›")
+                        .font(.sz(10, weight: .bold)).foregroundStyle(MeiliColor.ink3)
+                }
             }
         }
+        .buttonStyle(.plain)
     }
 
     // MARK: 原始音频
 
     private var audioFold: some View {
         Collapsible(title: "原始音频 · 逐字转写", subtitle: "全程可听 · 陪伴师/顾客分行") {
-            AudioFoldContent(player: player, urlString: vm.audioURL,
-                             loading: vm.audioURLLoading, transcript: vm.primaryRecording?.asrTranscript)
+            VStack(alignment: .leading, spacing: 12) {
+                // 多段陪伴:分段切换(F3,原来只能听第一段)
+                if vm.recordings.count > 1 {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(vm.recordings.enumerated()), id: \.element.id) { i, r in
+                                Button {
+                                    player.stop()
+                                    vm.selectSegment(i)
+                                } label: {
+                                    VStack(spacing: 1) {
+                                        Text("第\(i + 1)段").font(.sz(11.5, weight: .bold))
+                                        if let d = r.durationLabel?.nilIfBlank {
+                                            Text(d).font(.sz(9.5))
+                                        }
+                                    }
+                                    .foregroundStyle(i == vm.segIndex ? .white : MeiliColor.clayDeep)
+                                    .padding(.horizontal, 12).padding(.vertical, 6)
+                                    .background(i == vm.segIndex ? MeiliColor.clay : MeiliColor.clayTint)
+                                    .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                // 说话人>2 警告(F4:不确认会暂缓分析,顾问当场处置)
+                if vm.needsSpeakerConfirm {
+                    MeiliBanner(message: "这段检测到超过 2 位说话人，确认无误后才会继续分析", kind: .warn)
+                    MeiliButton(vm.opBusy ? "提交中…" : "确认说话人无误", kind: .soft, size: .xs,
+                                icon: MeiliIcons.check, enabled: !vm.opBusy) { vm.confirmSpeakers() }
+                }
+                AudioFoldContent(player: player, urlString: vm.audioURL,
+                                 loading: vm.audioURLLoading, transcript: vm.currentRecording?.asrTranscript)
+            }
         }
     }
 
@@ -617,5 +674,72 @@ private struct ScoringDetailSheet: View {
             }
             .padding(12).background(bg).clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
+    }
+}
+
+// MARK: - 任务执行状态面板(F2,android 对应 ReportScreen.TaskSheet)
+
+struct TaskPanelSheet: View {
+    @ObservedObject var vm: ReportViewModel
+    @Binding var confirmReanalyze: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("任务执行状态").font(MeiliFont.cardTitle).foregroundStyle(MeiliColor.ink)
+                Spacer()
+                Text("\(vm.tasksDone) / \(vm.tasksTotal) 完成")
+                    .font(.sz(12, weight: .bold)).foregroundStyle(MeiliColor.ink3)
+            }
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(vm.tasks) { t in
+                        HStack(spacing: 10) {
+                            Circle().fill(taskColor(t)).frame(width: 8, height: 8)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(t.name ?? "任务 \(t.id)").font(MeiliFont.body).foregroundStyle(MeiliColor.ink).lineLimit(1)
+                                HStack(spacing: 6) {
+                                    Text(taskStatusText(t)).font(.sz(11)).foregroundStyle(taskColor(t))
+                                    if let e = t.error?.nilIfBlank {
+                                        Text(e).font(.sz(10.5)).foregroundStyle(MeiliColor.roseText).lineLimit(1)
+                                    }
+                                }
+                            }
+                            Spacer()
+                            if !t.isRunning {
+                                MeiliButton("重跑", kind: .ghost, size: .xs, enabled: !vm.opBusy) { vm.rerunTask(t.id) }
+                            }
+                        }
+                        .padding(.vertical, 10)
+                        Rectangle().fill(MeiliColor.lineSoft).frame(height: 1)
+                    }
+                }
+            }
+            MeiliButton(vm.opBusy ? "提交中…" : "补齐所有缺失任务", kind: .soft, block: true, enabled: !vm.opBusy) {
+                vm.fillMissing()
+            }
+            MeiliButton("重新分析（全部重跑）", kind: .ghost, block: true, enabled: !vm.opBusy) {
+                dismiss()
+                confirmReanalyze = true
+            }
+        }
+        .padding(18)
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .background(MeiliColor.bg)
+    }
+
+    private func taskColor(_ t: AnalysisTask) -> Color {
+        if t.isDone { return MeiliColor.leafText }
+        if t.isRunning { return MeiliColor.sageDeep }
+        if (t.status ?? "") == "failed" { return MeiliColor.roseText }
+        return MeiliColor.ink4
+    }
+    private func taskStatusText(_ t: AnalysisTask) -> String {
+        if t.isDone { return "已完成" }
+        if t.isRunning { return "进行中" }
+        if (t.status ?? "") == "failed" { return "失败" }
+        return "待跑"
     }
 }

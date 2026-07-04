@@ -10,7 +10,8 @@ struct ReceptionView: View {
 
     @StateObject private var vm = ReceptionViewModel()
     @StateObject private var pendingVM = PendingViewModel()
-    @StateObject private var player = AudioPlayer()
+    // 审计 P8:@State 持有不观察,播放心跳只重绘试听小钮/进度条,不再整页 4Hz 重绘
+    @State private var player = AudioPlayer()
     @State private var playingRid: Int?
     @State private var showDatePicker = false
     @State private var deleteAsk: Int?   // 待删除的片段 id(确认弹窗)
@@ -32,7 +33,7 @@ struct ReceptionView: View {
         }
         .background(MeiliColor.bg)
         .onAppear { vm.onAppear(); pendingVM.onAppear() }
-        .onDisappear { player.stop() }
+        .onDisappear { player.stop(); vm.stopAutoRefresh() }
         .sheet(isPresented: $vm.showAdd) { addSheet }
         .sheet(isPresented: $pendingVM.syncSheet) { PenSyncSheet(vm: pendingVM) }
         .alert("删除这段陪伴？", isPresented: Binding(
@@ -135,25 +136,11 @@ struct ReceptionView: View {
     }
 
     private func pendingPlayButton(_ rec: PendingRecording) -> some View {
-        let isThis = playingRid == rec.id && player.playing
-        return Button {
-            if isThis { player.toggle(); return }
+        AuditionPlayButton(player: player, isCurrent: playingRid == rec.id) {
+            if playingRid == rec.id && player.playing { player.toggle(); return }
             guard let url = rec.audioUrl?.nilIfBlank else { vm.toast = "暂无可试听的音频"; return }
             player.load(url); if !player.playing { player.toggle() }; playingRid = rec.id
-        } label: {
-            ZStack {
-                Circle().fill(MeiliColor.clayTint).frame(width: 40, height: 40)
-                if isThis {
-                    HStack(spacing: 3) {
-                        Capsule().fill(MeiliColor.clayDeep).frame(width: 3, height: 13)
-                        Capsule().fill(MeiliColor.clayDeep).frame(width: 3, height: 13)
-                    }
-                } else {
-                    MeiliIcon(MeiliIcons.play, size: 16).foregroundStyle(MeiliColor.clayDeep)
-                }
-            }
         }
-        .buttonStyle(PressScaleButtonStyle())
     }
 
     // MARK: 日期切换

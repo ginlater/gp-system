@@ -85,73 +85,56 @@ struct AuditionScrubber: View {
     }
 }
 
-/// 原始音频折叠内容:播放器(播放/暂停 + 进度条 + 时间) + 逐字转写。
-/// player 由 ReportView 持有并管理生命周期(Case 时间戳跳播共用同一实例)。
-struct AudioFoldContent: View {
+/// 列表试听圆钮(独立观察 player;审计 P8:播放心跳只重绘这个小钮,不再整页 4Hz 重绘)。
+struct AuditionPlayButton: View {
     @ObservedObject var player: AudioPlayer
+    let isCurrent: Bool
+    let onTap: () -> Void
+
+    var body: some View {
+        let isThis = isCurrent && player.playing
+        Button(action: onTap) {
+            ZStack {
+                Circle().fill(MeiliColor.clayTint).frame(width: 40, height: 40)
+                if isThis {
+                    HStack(spacing: 3) {
+                        Capsule().fill(MeiliColor.clayDeep).frame(width: 3, height: 13)
+                        Capsule().fill(MeiliColor.clayDeep).frame(width: 3, height: 13)
+                    }
+                } else {
+                    MeiliIcon(MeiliIcons.play, size: 16).foregroundStyle(MeiliColor.clayDeep)
+                }
+            }
+        }
+        .buttonStyle(PressScaleButtonStyle())
+    }
+}
+
+/// 原始音频折叠内容:播放器(播放/暂停 + 进度条 + 时间) + 逐字转写。
+/// 审计 P3:本视图**不观察** player——播放进度 4Hz 心跳只重绘 PlayerBar 小子视图,
+/// 几千行转写的解析/渲染不再每 0.25s 重来一遍。
+struct AudioFoldContent: View {
+    let player: AudioPlayer
     let urlString: String?
     let loading: Bool
     let transcript: String?
 
-    @State private var scrubbing = false
-    @State private var scrubValue = 0.0
-
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            playerBar
+            if urlString != nil {
+                PlayerBar(player: player)
+            } else if loading {
+                HStack(spacing: 8) {
+                    ProgressView().tint(MeiliColor.clay)
+                    Text("正在获取音频…").font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
+                }
+            } else {
+                Text("此片段暂无可播放音频（转写与报告仍可查看）")
+                    .font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
+            }
             transcriptView
             Text("AI 自动转写，仅供顾问复盘参考")
                 .font(.sz(10.5)).foregroundStyle(MeiliColor.ink4)
-        }
-    }
-
-    @ViewBuilder private var playerBar: some View {
-        if let _ = urlString {
-            VStack(spacing: 8) {
-                HStack(spacing: 12) {
-                    Button { player.toggle() } label: {
-                        MeiliIcon(player.playing ? MeiliIcons.warn : MeiliIcons.play, size: 18)
-                            .foregroundStyle(.white)
-                            .frame(width: 40, height: 40)
-                            .background(MeiliColor.primaryGradient)
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(PressScaleButtonStyle())
-                    .overlay {
-                        // play 图标用三角;暂停用两竖条(warn 占位不贴切,改画竖条)
-                        if player.playing {
-                            HStack(spacing: 4) {
-                                Capsule().fill(.white).frame(width: 4, height: 15)
-                                Capsule().fill(.white).frame(width: 4, height: 15)
-                            }
-                            .allowsHitTesting(false)
-                        }
-                    }
-
-                    Slider(value: Binding(
-                        get: { scrubbing ? scrubValue : player.current },
-                        set: { scrubValue = $0 }
-                    ), in: 0...max(1, player.duration), onEditingChanged: { editing in
-                        scrubbing = editing
-                        if !editing { player.seek(scrubValue) }
-                    })
-                    .tint(MeiliColor.clay)
-                }
-                HStack {
-                    Text(timeLabel(player.current)).font(.sz(11)).foregroundStyle(MeiliColor.ink3)
-                    Spacer()
-                    Text(player.duration > 0 ? timeLabel(player.duration) : "--:--")
-                        .font(.sz(11)).foregroundStyle(MeiliColor.ink3)
-                }
-            }
-        } else if loading {
-            HStack(spacing: 8) {
-                ProgressView().tint(MeiliColor.clay)
-                Text("正在获取音频…").font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
-            }
-        } else {
-            Text("此片段暂无可播放音频（转写与报告仍可查看）")
-                .font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
         }
     }
 
@@ -178,6 +161,54 @@ struct AudioFoldContent: View {
                     .background(ln.isAdvisor ? MeiliColor.clayTint.opacity(0.5) : MeiliColor.surfaceSoft)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+            }
+        }
+    }
+
+}
+
+/// 播放条(独立观察 player,4Hz 心跳只重绘这一小块)。
+struct PlayerBar: View {
+    @ObservedObject var player: AudioPlayer
+    @State private var scrubbing = false
+    @State private var scrubValue = 0.0
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                Button { player.toggle() } label: {
+                    MeiliIcon(player.playing ? MeiliIcons.warn : MeiliIcons.play, size: 18)
+                        .foregroundStyle(.white)
+                        .frame(width: 40, height: 40)
+                        .background(MeiliColor.primaryGradient)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(PressScaleButtonStyle())
+                .overlay {
+                    // play 图标用三角;暂停用两竖条(warn 占位不贴切,改画竖条)
+                    if player.playing {
+                        HStack(spacing: 4) {
+                            Capsule().fill(.white).frame(width: 4, height: 15)
+                            Capsule().fill(.white).frame(width: 4, height: 15)
+                        }
+                        .allowsHitTesting(false)
+                    }
+                }
+
+                Slider(value: Binding(
+                    get: { scrubbing ? scrubValue : player.current },
+                    set: { scrubValue = $0 }
+                ), in: 0...max(1, player.duration), onEditingChanged: { editing in
+                    scrubbing = editing
+                    if !editing { player.seek(scrubValue) }
+                })
+                .tint(MeiliColor.clay)
+            }
+            HStack {
+                Text(timeLabel(player.current)).font(.sz(11)).foregroundStyle(MeiliColor.ink3)
+                Spacer()
+                Text(player.duration > 0 ? timeLabel(player.duration) : "--:--")
+                    .font(.sz(11)).foregroundStyle(MeiliColor.ink3)
             }
         }
     }

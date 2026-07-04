@@ -40,7 +40,17 @@ final class RecordingManager: ObservableObject {
         }
     }
     @Published var source: CompanionSource = .phone
-    @Published var elapsed: Int = 0
+    /// 高频计时专用小对象(审计 P7):只有计时文本观察它,每秒 tick 不再让 MainShell 全壳重绘。
+    @MainActor final class RecordTicker: ObservableObject {
+        @Published var elapsed = 0
+        var label: String { String(format: "%02d:%02d", elapsed / 60, elapsed % 60) }
+    }
+    let ticker = RecordTicker()
+
+    var elapsed: Int {
+        get { ticker.elapsed }
+        set { ticker.elapsed = newValue }
+    }
     @Published var pendingUploads = 0
     @Published var toast: String?
 

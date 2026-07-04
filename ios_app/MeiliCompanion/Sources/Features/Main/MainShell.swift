@@ -76,6 +76,19 @@ struct MainShell: View {
                 rec.bindPrompt = nil
                 path.append(AppRoute.bind(rid))
             }
+            // 点提醒通知直达对应页(F5):report→报告,recording→绑定,其余→提醒列表
+            .onReceive(NotificationCenter.default.publisher(for: .meiliOpenReminderRef)) { note in
+                let refType = note.userInfo?["ref_type"] as? String ?? ""
+                let refId = note.userInfo?["ref_id"] as? Int ?? 0
+                switch (refType, refId) {
+                case ("session", let id) where id > 0, ("report", let id) where id > 0:
+                    path.append(AppRoute.report(id))
+                case ("recording", let id) where id > 0:
+                    path.append(AppRoute.bind(id))
+                default:
+                    path.append(AppRoute.reminders)
+                }
+            }
             .onAppear(perform: deepLinkIfNeeded)
         }
     }

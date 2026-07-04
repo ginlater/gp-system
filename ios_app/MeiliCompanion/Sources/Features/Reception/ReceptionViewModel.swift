@@ -52,9 +52,33 @@ final class ReceptionViewModel: ObservableObject {
     }
 
     func onAppear() {
+        startAutoRefresh()
         guard !loaded else { return }
         loaded = true
         refresh()
+    }
+
+    // ── 自动刷新(F6,对齐 android:看"今天"时每 20s 静默刷新,分析状态不用手动重进)──
+    private var autoTimer: Timer?
+
+    func startAutoRefresh() {
+        stopAutoRefresh()
+        autoTimer = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isToday else { return }
+                self.silentRefresh()
+            }
+        }
+    }
+    func stopAutoRefresh() { autoTimer?.invalidate(); autoTimer = nil }
+
+    /// 静默刷新:不动 loading 标志,列表原地更新。
+    private func silentRefresh() {
+        Task {
+            if let r = try? await ConsultantRepo.todayReception(date) {
+                items = r.items ?? []
+            }
+        }
     }
 
     func refresh() {
