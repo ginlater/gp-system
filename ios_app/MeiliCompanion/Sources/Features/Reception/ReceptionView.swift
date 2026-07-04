@@ -115,7 +115,11 @@ struct ReceptionView: View {
                         if let d = rec.durationLabel?.nilIfBlank {
                             Text(d).font(.sz(11)).foregroundStyle(stale ? MeiliColor.roseText : MeiliColor.ink3)
                         }
-                        if stale { StatusPill(text: "隔天未绑", kind: .danger) }
+                        if rec.isBeyondBindWindow {
+                            StatusPill(text: "超7天不可绑", kind: .danger)
+                        } else if stale {
+                            StatusPill(text: "隔天未绑", kind: .danger)
+                        }
                         StatusPill(text: label, kind: kind)
                     }
                 }
@@ -124,7 +128,10 @@ struct ReceptionView: View {
                     MeiliButton("撤回删除申请", kind: .ghost, size: .xs) { pendingVM.withdrawDelete(rec.id) }
                 } else if !rec.isProcessing {
                     MeiliButton("删除", kind: .ghost, size: .xs) { deleteAsk = rec.id }
-                    MeiliButton("绑定顾客", size: .xs, icon: MeiliIcons.link) { onBind(rec.id) }
+                    // 超7天不可绑(用户拍板):不给绑定入口,只能删除;点了也会被服务端明话拒绝
+                    if !rec.isBeyondBindWindow {
+                        MeiliButton("绑定顾客", size: .xs, icon: MeiliIcons.link) { onBind(rec.id) }
+                    }
                 }
             }
             // 删除申请被拒:显示拒绝理由 + 知道了

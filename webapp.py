@@ -10487,9 +10487,14 @@ def api_consultant_recording_bind(rid):
         (u["id"], customer_id, rec_date),
     )
     if not dr:
-        # 隔天/历史录音绑定(如从笔同步回来的老段子):录音本身就证明那天接待过,
-        # 自动补登该日接诊——不受接诊页手动补登 7 天窗口限制(那是防手滑,不该挡真实数据归位)。
-        # 原来这里直接 400"请先加入",老段子根本没有入口可加,绑定永远失败。
+        # 用户拍板(2026-07-04):超过 7 天的陪伴不允许再绑定(与接诊补登窗口一致),给明白话;
+        # 7 天内的隔天段自动补登该日接诊(录音本身证明那天接待过,不用用户手动加)
+        try:
+            _gap = (_parse_ymd(_today_str()) - _parse_ymd(rec_date)).days
+        except Exception:
+            _gap = 0
+        if _gap > BACKFILL_DAYS_BACK:
+            return jsonify({"error": f"该陪伴录制于 {rec_date}，已超过 {BACKFILL_DAYS_BACK} 天，无法再绑定顾客"}), 400
         advisor_name_dr = u["advisor_name"] or u["username"]
         try:
             db_write(

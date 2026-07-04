@@ -238,6 +238,15 @@ extension PendingRecording {
     /// 删除申请被拒且还没点「知道了」。
     var deleteRejected: Bool { deleteRequestStatus == "rejected" }
 
+    /// 超过绑定窗口(7天,用户拍板 2026-07-04):不允许再绑定,只能删除。
+    var isBeyondBindWindow: Bool {
+        guard !isProcessing else { return false }
+        let day = recordedAt.map { String($0.prefix(10)) } ?? serviceDate
+        guard let day, !day.isEmpty,
+              let minDay = DateHelper.addDays(DateHelper.today(), -7) else { return false }
+        return day < minDay
+    }
+
     /// 非当天且尚未绑定(用户需求 2026-07-04:标红提醒顾问尽快绑定,别越攒越久)。
     var isStaleUnbound: Bool {
         guard !isProcessing, deleteRequestStatus != "pending" else { return false }
