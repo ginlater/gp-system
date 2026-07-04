@@ -18,6 +18,8 @@ struct Me: Decodable {
     var employeeId: String?
     var phone: String?
     var storeId: Int?
+    var allowPhoneRec: Int?      // 录音来源权限门控(F8):0=未开通手机麦
+    var allowPenRec: Int?        // 0=未开通陪伴笔
     var error: String?   // 未登录时 {"error":"未登录"} + 401
 
     var isConsultantOrManager: Bool { role == "consultant" || role == "store_manager" }

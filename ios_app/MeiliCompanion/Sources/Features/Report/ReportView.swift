@@ -35,6 +35,7 @@ struct ReportView: View {
                     part01; part02; part04; part05; part06
                     part07; part08; part09; part11
                     evaluationsSection
+                    deleteRequestArea
                 }
             }
             .padding(.horizontal, MeiliMetric.screenH)
@@ -56,6 +57,20 @@ struct ReportView: View {
             Text("将重跑全部分析任务，预计 2–6 分钟。完成前报告会显示「分析进行中」。")
         }
         .overlay(alignment: .bottom) { reportToast }
+    }
+
+    // MARK: 删除申请(F9,session 级:整次陪伴不想要了)
+
+    @State private var confirmDeleteSession = false
+
+    private var deleteRequestArea: some View {
+        MeiliButton("申请删除本次陪伴", kind: .ghost, block: true) { confirmDeleteSession = true }
+            .alert("申请删除本次陪伴？", isPresented: $confirmDeleteSession) {
+                Button("取消", role: .cancel) {}
+                Button("提交删除申请", role: .destructive) { vm.requestDeleteSession() }
+            } message: {
+                Text("提交后等待管理员审批；删除不可恢复。")
+            }
     }
 
     @ViewBuilder private var reportToast: some View {

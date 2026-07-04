@@ -87,10 +87,19 @@ struct HomeView: View {
             Rectangle().fill(MeiliColor.lineSoft).frame(height: 1).padding(.vertical, 15)
 
             SectionLabel("陪伴设备", icon: MeiliIcons.wifi).padding(.bottom, 9)
-            // 点1:陪伴笔在左、手机在右
+            // 点1:陪伴笔在左、手机在右;按账号权限门控(F8:只显示开通的来源,后端 403 只是兜底)
             HStack(spacing: 11) {
-                sourceCell(.pen, icon: MeiliIcons.pen, title: "陪伴笔", sub: penSub, dot: rec.penConnected)
-                sourceCell(.phone, icon: MeiliIcons.phone, title: "手机麦克风", sub: "手机采集", dot: false)
+                if me.allowPenRec != 0 {
+                    sourceCell(.pen, icon: MeiliIcons.pen, title: "陪伴笔", sub: penSub, dot: rec.penConnected)
+                }
+                if me.allowPhoneRec != 0 {
+                    sourceCell(.phone, icon: MeiliIcons.phone, title: "手机麦克风", sub: "手机采集", dot: false)
+                }
+            }
+            .onAppear {
+                // 只开一种权限时,把来源钉到可用的那个
+                if me.allowPenRec == 0 && rec.source == .pen { rec.setSource(.phone) }
+                if me.allowPhoneRec == 0 && rec.source == .phone { rec.setSource(.pen) }
             }
 
             if rec.state == .uploading || queue.pendingCount > 0 {

@@ -96,6 +96,18 @@ enum ConsultantRepo {
     static func removeTodayReception(_ drId: Int) async throws -> SimpleResult {
         try await api.delete("api/consultant/today_reception/\(drId)")
     }
+    /// 单条改接诊日期(F7,补登纠错)。
+    static func changeReceptionDate(_ drId: Int, date: String) async throws -> SimpleResult {
+        try await api.sendJSON("api/consultant/today_reception/\(drId)/date", method: "PATCH",
+                               body: ChangeDateBody(date: date))
+    }
+
+    /// 一键诊断上传(F11):penlog + 设备信息,给工程师远程排障(不用连电脑)。
+    static func uploadDiag(penlogURL: URL, meta: String) async throws -> SimpleResult {
+        try await api.uploadMultipart("api/consultant/diag/upload", fileURL: penlogURL,
+                                      fileField: "penlog", contentType: "text/plain",
+                                      fields: ["meta": meta])
+    }
 
     // ── 绑定候选 / 新增当日顾客 ──
 

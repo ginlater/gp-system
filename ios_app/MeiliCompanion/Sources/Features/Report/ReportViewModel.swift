@@ -137,6 +137,19 @@ final class ReportViewModel: ObservableObject {
         }
     }
 
+    /// 申请删除本次陪伴(F9,session 级,走管理员审批)。
+    func requestDeleteSession() {
+        guard !opBusy else { return }
+        opBusy = true
+        Task {
+            do {
+                let r = try await ConsultantRepo.sessionDeleteRequest(sessionId: sessionId, reason: nil)
+                opBusy = false
+                toast = r.error ?? "已提交删除申请，等待管理员审批"
+            } catch { opBusy = false; toast = "提交失败，请重试" }
+        }
+    }
+
     private func refreshTasks() {
         Task {
             try? await Task.sleep(nanoseconds: 1_500_000_000)

@@ -10,6 +10,8 @@ struct SettingsView: View {
 
     @State private var editNight = ThemeManager.isNightNow()
     @State private var versionMsg: String?
+    @State private var diagMsg: String?
+    @State private var diagBusy = false
 
     private var me: Me? { app.me }
     private var displayName: String { me?.advisorName?.nilIfBlank ?? me?.username?.nilIfBlank ?? "陪伴师" }
@@ -223,6 +225,41 @@ struct SettingsView: View {
                 MeiliButton("检查", kind: .ghost, size: .xs) {
                     versionMsg = "已是最新版本，无需更新"   // iOS 走 App Store;暂无更高版本
                 }
+            }
+            Rectangle().fill(MeiliColor.line).frame(height: 1).padding(.vertical, 11)
+            // 一键诊断上传(F11):penlog+设备信息直达工程师,不用连电脑
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("上传诊断日志").font(.sz(13.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+                    Text(diagMsg ?? "遇到陪伴笔问题时点这个，日志直达工程师").font(.sz(11.5)).foregroundStyle(MeiliColor.ink3)
+                }
+                Spacer()
+                MeiliButton(diagBusy ? "上传中…" : "上传", kind: .ghost, size: .xs, enabled: !diagBusy) {
+                    uploadDiag()
+                }
+            }
+        }
+    }
+
+    private func uploadDiag() {
+        diagBusy = true
+        Task {
+            defer { diagBusy = false }
+            let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            let penlog = docs.appendingPathComponent("penlog.txt")
+            guard FileManager.default.fileExists(atPath: penlog.path) else {
+                diagMsg = "暂无日志可上传"
+                return
+            }
+            let model = UIDevice.current.model
+            let sys = UIDevice.current.systemVersion
+            let app = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+            let meta = "{\"platform\":\"ios\",\"model\":\"\(model)\",\"system\":\"\(sys)\",\"app\":\"\(app)\"}"
+            do {
+                _ = try await ConsultantRepo.uploadDiag(penlogURL: penlog, meta: meta)
+                diagMsg = "已上传，工程师可远程查看"
+            } catch {
+                diagMsg = "上传失败，请检查网络后重试"
             }
         }
     }

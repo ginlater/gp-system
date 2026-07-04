@@ -15,6 +15,8 @@ struct ReceptionView: View {
     @State private var playingRid: Int?
     @State private var showDatePicker = false
     @State private var deleteAsk: Int?   // 待删除的片段 id(确认弹窗)
+    @State private var editDateItem: TodayReception?   // 改接诊日期(F7)
+    @State private var editDatePick = Date()
 
     var body: some View {
         ScrollView {
@@ -36,6 +38,8 @@ struct ReceptionView: View {
         .onDisappear { player.stop(); vm.stopAutoRefresh() }
         .sheet(isPresented: $vm.showAdd) { addSheet }
         .sheet(isPresented: $pendingVM.syncSheet) { PenSyncSheet(vm: pendingVM) }
+        .sheet(isPresented: Binding(get: { editDateItem != nil },
+                                    set: { if !$0 { editDateItem = nil } })) { editDateSheet }
         .alert("删除这段陪伴？", isPresented: Binding(
             get: { deleteAsk != nil },
             set: { if !$0 { deleteAsk = nil } })) {
@@ -253,6 +257,7 @@ struct ReceptionView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            Button { editDateItem = item } label: { Label("修改接诊日期", systemImage: "calendar") }
             Button(role: .destructive) { vm.remove(item) } label: { Label("移出今日接诊", systemImage: "trash") }
         }
     }
@@ -490,5 +495,42 @@ struct PenSyncSheet: View {
             Text(sub).font(.sz(11)).foregroundStyle(MeiliColor.ink4)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 30)
+    }
+}
+
+// MARK: - 修改接诊日期(F7,补登纠错;android 对应 openEditDate/confirmEditDate)
+
+extension ReceptionView {
+    @ViewBuilder var editDateSheet: some View {
+        VStack(spacing: 14) {
+            Text("修改接诊日期").font(MeiliFont.sheetH3).foregroundStyle(MeiliColor.ink)
+            if let item = editDateItem {
+                Text(item.name ?? "该顾客").font(MeiliFont.body).foregroundStyle(MeiliColor.ink2)
+            }
+            DatePicker("", selection: $editDatePick, in: ...Date(), displayedComponents: .date)
+                .datePickerStyle(.graphical)
+                .tint(MeiliColor.clay)
+            MeiliButton("确认修改", block: true) {
+                guard let item = editDateItem else { return }
+                let f = DateFormatter()
+                f.dateFormat = "yyyy-MM-dd"
+                f.locale = Locale(identifier: "en_US_POSIX")
+                let d = f.string(from: editDatePick)
+                editDateItem = nil
+                Task {
+                    do {
+                        let r = try await ConsultantRepo.changeReceptionDate(item.id, date: d)
+                        vm.toast = r.error ?? "已改到 \(d)"
+                        vm.refresh()
+                    } catch {
+                        vm.toast = "修改失败，请重试"
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .background(MeiliColor.bg)
     }
 }
