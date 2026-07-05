@@ -44,3 +44,10 @@ ios_app/MeiliCompanion/build/
 ios_app/MeiliCompanion/build_dev/
 ios_app/MeiliCompanion/MeiliCompanion.xcodeproj/
 .DS_Store
+
+# 运行时/本机文件（2026-07-05 从追踪中除名：曾被误提交，导致服务器 git pull 永远失败）
+recordings.db-shm
+recordings.db-wal
+__pycache__/
+.claude/settings.local.json
+output/.DS_Store
