@@ -47,6 +47,7 @@ public class PhoneMicService extends Service {
     public static final String STATE_ERROR     = "error";
 
     private static final int NOTIFICATION_ID = 5206;
+    private static final int MAX_REC_MS = 90 * 60 * 1000;   // C4:手机麦单段最长90分钟(对齐笔),防忘停录到没电
     private static final String CHANNEL_ID = "rec_channel";
 
     private MediaRecorder recorder;
@@ -97,8 +98,8 @@ public class PhoneMicService extends Service {
             recorder.setAudioEncodingBitRate(32000);
             // 问题 #1：录音中途麦被抢占 / 编码器出错不再静默坏掉——装回调，出错即兜底通知顾问 + 保留已录文件供补传。
             recorder.setOnErrorListener((mr, what, extra) -> onRecorderError(what, extra));
-            recorder.setOnInfoListener((mr, what, extra) ->
-                    Log.w(TAG, "MediaRecorder info what=" + what + " extra=" + extra));
+            recorder.setOnInfoListener((mr, what, extra) -> onRecorderInfo(what, extra));
+            recorder.setMaxDuration(MAX_REC_MS);   // C4:到点触发 onInfo→自动停录保存
             recorder.setOutputFile(currentFile.getAbsolutePath());
             recorder.prepare();
             recorder.start();
@@ -176,6 +177,24 @@ public class PhoneMicService extends Service {
         broadcast(STATE_ERROR, "录音中断（麦克风可能被其他应用占用），已尽力保存，请重试", durSec, -1);
         stopForeground(true);
         stopSelf();
+    }
+
+    /** C4:录满90分钟 MediaRecorder 自动停(MAX_DURATION_REACHED)→保存已录,留补传扫描上传,提示可继续。 */
+    private void onRecorderInfo(int what, int extra) {
+        if (what == MediaRecorder.MEDIA_RECORDER_INFO_MAX_DURATION_REACHED) {
+            Log.w(TAG, "手机麦录满90分钟 → 自动停录保存");
+            if (!recording) return;
+            recording = false;
+            final int durSec = elapsedSec();
+            try { recorder.stop(); } catch (Exception ignored) {}
+            safeReleaseRecorder();
+            // 文件保留,回前台 retryLeftoverPhoneMic 补传(与 onRecorderError 同路径)
+            broadcast(STATE_ERROR, "已录满 90 分钟，已自动保存，请到「待整理」查看；要继续请重新开始录制", durSec, -1);
+            stopForeground(true);
+            stopSelf();
+        } else {
+            Log.w(TAG, "MediaRecorder info what=" + what + " extra=" + extra);
+        }
     }
 
     private int elapsedSec() {

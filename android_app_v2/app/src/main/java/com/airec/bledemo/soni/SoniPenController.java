@@ -167,6 +167,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     //   笔没报时退回 elapsedSec()（startElapsedMs 为 0 时它返回 0，不会像旧 V1 那样用墙钟算出天文数字误触发）。
     private static final int MAX_REC_SEC = 90 * 60;
     private volatile boolean autoStoppedAt90 = false;   // 本段是否已触发90分钟自动结束(防重复)
+    private volatile int stopConfirmGen = -1;           // B2:停止确认中的会话代际(-1=无)
+    private volatile int stopConfirmRetries = 0;
     private volatile boolean healthWatchdogArmed = false;
     private static final long RECONNECT_RECORDING_GRACE_MS = 25000;
 
@@ -469,6 +471,18 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 if (st == android.bluetooth.BluetoothAdapter.STATE_ON && autoReconnectOn && !linkUp) {
                     reconnectAttempts = 0;
                     scheduleReconnect(1500);
+                } else if (st == android.bluetooth.BluetoothAdapter.STATE_OFF
+                        || st == android.bluetooth.BluetoothAdapter.STATE_TURNING_OFF) {
+                    // B1:蓝牙关了→SDK可能发不出cmd2断开(btReady=false连closeConnect都跳),强制清理,
+                    //   否则linkUp残留true,重开蓝牙STATE_ON因!linkUp不成立→永不重连(死链到杀进程)
+                    if (linkUp || verifiedConnected) {
+                        penLog("★蓝牙关闭→强制清理连接态(防linkUp残留死链)");
+                        linkUp = false; verifiedConnected = false;
+                        stopHeartbeat();
+                        if (listener != null) main.post(() -> listener.onPenConnected(false));
+                        connKeepAlive(false);
+                        resetSessionOnLinkDown();
+                    }
                 }
             }
         };
@@ -510,8 +524,10 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (!verifiedConnected) {
                 Log.w(TAG, "连上但笔无回包 → 判定假连接，断开");
                 penLog("★握手超时(无真回包)→判假连接、主动断开");
+                linkUp = false;   // B1:自置linkUp,不等SDK cmd2(可能不来)→否则重连永不触发
                 if (btReady()) { try { PNote.closeConnect(); } catch (Throwable ignore) {} } else penLog("跳过closeConnect:蓝牙未就绪");
                 if (listener != null) main.post(() -> listener.onPenConnected(false));
+                if (autoReconnectOn) scheduleReconnect(3000);
             }
         }
     };
@@ -532,11 +548,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     Log.w(TAG, "笔失联 → 断开，连接指示如实改未连接");
                     penLog("★心跳连续2次未回→判失联、主动断开");
                     verifiedConnected = false;
+                    linkUp = false;   // B1:自置linkUp,SDK漏发cmd2时也能重连(否则linkUp永久true死链)
                     if (btReady()) { try { PNote.closeConnect(); } catch (Throwable ignore) {} } else penLog("跳过closeConnect:蓝牙未就绪");
                     if (listener != null) main.post(() -> listener.onPenConnected(false));
                     connKeepAlive(false);   // ★失联 → 去抖90s后撤连接级保活(其间重连成功会取消)
                     resetSessionOnLinkDown();
                     stopHeartbeat();
+                    if (autoReconnectOn) { reconnectAttempts = 0; scheduleReconnect(3000); }
                     return;
                 }
             } else {
@@ -763,8 +781,19 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         }
         main.postDelayed(() -> {
             if (sessionActive && sessionGen == genAtStop) {
-                Log.w(TAG, "stopRecord 后笔未回停止帧，兜底收尾入队 gen=" + genAtStop);
-                finishSessionEnqueue(fnAtStop, durAtStop, startWallAtStop);
+                // B2:停止4s没回停止帧→先cmd9确认笔真停没(丢包时笔还在录),别直接假收尾劈成两段
+                Log.w(TAG, "stopRecord 后笔未回停止帧，先cmd9确认 gen=" + genAtStop);
+                penLog("★停止4s未回→cmd9确认真停");
+                stopConfirmGen = genAtStop; stopConfirmRetries = 0;
+                if (btReady()) { try { PNote.getRecordState(); } catch (Throwable ignore) {} }
+                main.postDelayed(() -> {
+                    if (sessionActive && sessionGen == genAtStop) {
+                        Log.w(TAG, "cmd9确认无果→强制收尾 gen=" + genAtStop);
+                        penLog("★停止确认无果→强制收尾");
+                        stopConfirmGen = -1;
+                        finishSessionEnqueue(fnAtStop, durAtStop, startWallAtStop);
+                    }
+                }, 4000);
             }
         }, 4000);
     }
@@ -788,10 +817,12 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // ============ 会话收尾：入队后台上传，立刻回 idle ============
 
     private void finishSessionEnqueue(String fileName, int durSec, long startWallMs) {
+        stopConfirmGen = -1;   // B2:会话收尾,停止确认作废
         clearActiveSession();   // A3:会话收尾,恢复交给 uploadQueue 持久化接手
         disarmHealthWatchdog();
         main.removeCallbacks(reconnectGiveUp);
         stopRecordDurationPoll();
+        if (lastPenDurationSec > durSec) durSec = lastPenDurationSec;   // B10:接管会话durSec只算尾段,用笔实报总时长
         lastPenDurationSec = 0;
         final boolean appInit = sessionAppInitiated;
         main.removeCallbacks(streamStallWatch);
@@ -865,7 +896,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             }
             post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
         }
-        exitRecordingKeepAlive();
+        updateWorkKeepAlive();   // C1:收尾后若还有补取/上传任务→保活继续(锁屏下载不再停摆),队列空才撤
+    }
+
+    /** C1:补取/上传的几分钟也要保活(唤醒锁+FGS)——队列有活则 recOn,全清才 recOff。 */
+    private void updateWorkKeepAlive() {
+        boolean need = !uploadQueue.isEmpty() || dlState != null || workerBusy || waitingForFile;
+        if (need) enterRecordingKeepAlive(); else exitRecordingKeepAlive();
     }
 
     private void enqueuePlaceholderAndKick(final UploadTask task, final long recStart, long kickDelayMs) {
@@ -1241,8 +1278,21 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 if (wasAppStart) armHealthWatchdog();
                 if (listener != null) main.post(() -> listener.onPenRecordStatus(true));
             } else if (!TextUtils.isEmpty(fileName)) {
-                sessionFileName = fileName;
-                saveActiveSession(sessionFileName, sessionStartWallMs);   // A3:补到文件名也落盘
+                if (!TextUtils.isEmpty(sessionFileName) && !fileName.equals(sessionFileName)) {
+                    // B6:上段停止帧丢失,笔已开新段(文件名变)→先按旧名收尾旧段,防两段音频混进同一流buffer
+                    penLog("★新段文件名≠旧(" + sessionFileName + "→" + fileName + ")→收尾旧段再开新段");
+                    finishSessionEnqueue(sessionFileName, elapsedSec(), sessionStartWallMs);
+                    penRecording = true; sessionActive = true; sessionAdopted = false;
+                    enterRecordingKeepAlive(); sessionAppInitiated = false; sessionGen++; failedCount = 0;
+                    sessionFileName = fileName; sessionStartWallMs = System.currentTimeMillis();
+                    startElapsedMs = SystemClock.elapsedRealtime(); autoStoppedAt90 = false; penPaused = false;
+                    startStreamCapture(); startRecordDurationPoll(); saveActiveSession(fileName, sessionStartWallMs);
+                    post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
+                    if (listener != null) main.post(() -> listener.onPenRecordStatus(true));
+                } else {
+                    sessionFileName = fileName;
+                    saveActiveSession(sessionFileName, sessionStartWallMs);   // A3:补到文件名也落盘
+                }
             }
         } else if ("2".equals(rs)) {
             // 笔上报暂停
@@ -1286,6 +1336,14 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         if (data == null) return;
         boolean recording = "1".equals(String.valueOf(data.opt("recordState")));
         penLog("cmd9 recordState=" + (recording ? 1 : 0));
+        if (recording && sessionActive && stopConfirmGen == sessionGen) {
+            // B2:停止确认中笔仍在录=stop丢包→重发(≤2次),别让笔空录到90分钟
+            stopConfirmRetries++;
+            if (stopConfirmRetries <= 2) {
+                penLog("★停止确认:笔仍在录→重发stop #" + stopConfirmRetries);
+                if (btReady()) { try { PNote.stopRecord(); } catch (Throwable ignore) {} }
+            }
+        }
         if (recording && !sessionActive) {
             penRecording = true;
             sessionActive = true;
@@ -1878,6 +1936,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     private void notifyPending() {
         persistPendingQueue();
+        main.post(this::updateWorkKeepAlive);   // C1:队列变化即校准保活
         final int n = uploadQueue.size();
         final int f = failedCount;
         if (listener != null) main.post(() -> listener.onPenPendingChanged(n, f));
