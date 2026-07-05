@@ -4944,7 +4944,7 @@ def download_page_v2():
         updated = datetime.fromtimestamp(st.st_mtime).strftime("%Y-%m-%d")
     except OSError:
         pass
-    return render_template(
+    resp = make_response(render_template(
         "download.html",
         size_mb=size_mb,
         updated=updated,
@@ -4953,7 +4953,10 @@ def download_page_v2():
         logo_char="美",
         apk_href=url_for("download_apk_v2_versioned", ver=f"v{APP_V2_VERSION_NAME}"),
         apk_version=APP_V2_VERSION_NAME,
-    )
+    ))
+    # 落地页本身也不缓存——发新版后老链接打开的页面必须立刻指向新版下载地址
+    resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
 
 
 def _serve_v2_apk():
