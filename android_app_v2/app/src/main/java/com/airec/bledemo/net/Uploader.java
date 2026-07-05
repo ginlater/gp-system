@@ -39,8 +39,8 @@ public final class Uploader {
 
     /** 手机麦克风路径：m4a。沿用旧签名，委托给通用方法。 */
     public static Result upload(File file, int durationSec, String cookie, String uploadUrl) {
-        String name = "rec-" + System.currentTimeMillis() + ".m4a";
-        return upload(file, durationSec, cookie, uploadUrl, name, "audio/mp4");
+        String name = "rec-" + System.currentTimeMillis() + ".aac";   // A1:ADTS 流式容器
+        return upload(file, durationSec, cookie, uploadUrl, name, "audio/aac");
     }
 
     /**
@@ -72,13 +72,20 @@ public final class Uploader {
             ra = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
                     .format(new java.util.Date(recordedAtWallMs));
         }
-        return upload(file, durationSec, cookie, uploadUrl, fileName, "audio/opus", sn, placeholderId, ra, null);
+        return upload(file, durationSec, cookie, uploadUrl, fileName, "audio/opus", sn, placeholderId, ra, null, false);
     }
 
     /** 完整签名：recordedAt(可空) + penFile(录音笔机身文件名，后端去重用，可空)。 */
     public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
                                 String fileName, String mime, String sn, long placeholderId, String recordedAt,
                                 String penFile) {
+        return upload(file, durationSec, cookie, uploadUrl, fileName, mime, sn, placeholderId, recordedAt, penFile, false);
+    }
+
+    /** A2:truncated=true → 表单带 truncated=1,服务端记 truncate_note、之后机身完整版可自动替换。 */
+    public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
+                                String fileName, String mime, String sn, long placeholderId, String recordedAt,
+                                String penFile, boolean truncated) {
         if (file == null || !file.exists() || file.length() == 0) {
             return new Result(false, -1, "录音文件为空");
         }
@@ -143,6 +150,13 @@ public final class Uploader {
                     out.write(penFile.getBytes(StandardCharsets.UTF_8));
                     out.writeBytes(CRLF);
                 }
+                // A2 truncated 字段（诚实"可能不完整"标记，服务端记 note+允许完整版替换）
+                if (truncated) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"truncated\"" + CRLF + CRLF);
+                    out.write("1".getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
 
                 // file 字段
                 out.writeBytes("--" + boundary + CRLF);
@@ -170,9 +184,10 @@ public final class Uploader {
                     long id = obj.optLong("id", -1);
                     return new Result(true, id, null);
                 } catch (Exception parseErr) {
-                    // 2xx 但响应不是预期 JSON，仍按成功处理（避免重复录音），但无 id
-                    Log.w(TAG, "响应解析失败但 HTTP 成功: " + body);
-                    return new Result(true, -1, null);
+                    // A4(P0):2xx 但响应不是 JSON——多半是酒店/医院 captive-portal WiFi 返回 200 HTML。
+                    //   绝不能当成功(那样音频已删、服务端没收到、占位永挂"同步中")→ 按临时故障重试。
+                    Log.w(TAG, "2xx 但响应非 JSON(疑似 captive portal)，按临时失败重试: " + body);
+                    return new Result(false, -1, "上传响应异常，稍后自动重试", true);
                 }
             }
             if (code == 401 || code == 403) {

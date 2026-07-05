@@ -177,6 +177,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         final long startWallMs;
         final boolean appInitiated;
         volatile long placeholderId = -1;
+        volatile boolean truncatedFlag = false; // A2:诚实"可能不完整"标记,上传带 truncated=1
         volatile String localRawPath = null;   // 非空=本地已有完整裸帧文件，打包直传（不占蓝牙）
         volatile int uploadAttempts = 0;
         volatile int downloadRequeues = 0;
@@ -787,6 +788,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // ============ 会话收尾：入队后台上传，立刻回 idle ============
 
     private void finishSessionEnqueue(String fileName, int durSec, long startWallMs) {
+        clearActiveSession();   // A3:会话收尾,恢复交给 uploadQueue 持久化接手
         disarmHealthWatchdog();
         main.removeCallbacks(reconnectGiveUp);
         stopRecordDurationPoll();
@@ -805,11 +807,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         final long streamBytes = sessionStreamBytes;
         sessionStreamBuf = null; sessionStreamComplete = false;
         sessionStreamBytes = 0; sessionStreamFrames = 0;
-        // ★防截断件直传(最后一道闸)：实时流估算秒数(2000B/s) 远小于墙钟 → 疑似中途静默卡流，回落补下载
-        if (streamComplete && durSec >= 30 && streamBuf != null) {
-            int estStreamSec = (int) (streamBytes / STREAM_BYTES_PER_SEC);
-            if (estStreamSec < durSec * 0.6) {
-                Log.w(TAG, "实时流估算" + estStreamSec + "s ≪ 墙钟" + durSec + "s → 疑似截断，回落补下载");
+        // A2(P0)防截断件直传：实时流估算秒数(2000B/s)明显短于墙钟 → 中途静默丢帧,回落补下载拿机身完整版。
+        //   闸门 0.6→0.95(缺>5%就不信直传)、豁免 30s→10s(短段轻度丢帧也丢内容);机身完整版带 pen_file 是真相。
+        final int estStreamSec = (streamBuf != null && streamBytes > 0)
+                ? (int) (streamBytes / STREAM_BYTES_PER_SEC) : durSec;
+        if (streamComplete && durSec >= 10 && streamBuf != null) {
+            if (estStreamSec < durSec * 0.95) {
+                Log.w(TAG, "实时流估算" + estStreamSec + "s < 墙钟" + durSec + "s×0.95 → 疑似截断，回落补下载");
                 penLog("★疑似截断 est=" + estStreamSec + "s wall=" + durSec + "s → 回落补下载");
                 streamComplete = false;
             }
@@ -836,6 +840,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             final UploadTask task = new UploadTask(fn != null ? fn : ("stream_" + startWallMs),
                     cookie, uploadUrl, penSn(), durSec, startWallMs, appInit);
             task.localRawPath = localRaw;
+            // A2:闸门放行(est≥0.95dur)但仍略短于墙钟 → 标"可能不全",服务端记note、机身完整版可自动替换
+            if (estStreamSec < durSec) task.truncatedFlag = true;
             uploadQueue.add(task);
             Log.d(TAG, "入队【直传实时流opus】 file=" + task.fileName + " bytes=" + streamBytes + " 队列=" + uploadQueue.size());
             enqueuePlaceholderAndKick(task, startWallMs, 300);
@@ -1212,6 +1218,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 failedCount = 0;
                 sessionFileName = !TextUtils.isEmpty(fileName) ? fileName : null;
                 if (sessionStartWallMs == 0) sessionStartWallMs = System.currentTimeMillis();
+                saveActiveSession(sessionFileName, sessionStartWallMs);   // A3:录音中即落盘,进程死+笔自停也能补
                 startElapsedMs = SystemClock.elapsedRealtime();
                 autoStoppedAt90 = false;   // 新一段开始 → 重置90分钟自动结束标记
                 penPaused = false;
@@ -1219,10 +1226,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 startStreamCapture();
                 startRecordDurationPoll();
                 if (sessionFileName == null) {
-                    // 开始帧没带文件名 → 主动问一次（cmd=11 回填），收尾/补传都靠它
+                    // 开始帧没带文件名 → 主动问（cmd=11 回填），收尾/补传都靠它。A3:多问两次防回包丢失后永远没名字
                     main.postDelayed(() -> { if (sessionActive && sessionFileName == null) {
                         try { PNote.getFileNameOnlyRecording(); } catch (Throwable ignore) {}
                     }}, 1500);
+                    main.postDelayed(() -> { if (sessionActive && sessionFileName == null) {
+                        try { PNote.getFileNameOnlyRecording(); } catch (Throwable ignore) {}
+                    }}, 4000);
                 }
                 Log.d(TAG, "镜像：笔开始录音 file=" + sessionFileName + " gen=" + sessionGen);
                 post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
@@ -1232,6 +1242,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 if (listener != null) main.post(() -> listener.onPenRecordStatus(true));
             } else if (!TextUtils.isEmpty(fileName)) {
                 sessionFileName = fileName;
+                saveActiveSession(sessionFileName, sessionStartWallMs);   // A3:补到文件名也落盘
             }
         } else if ("2".equals(rs)) {
             // 笔上报暂停
@@ -1416,8 +1427,14 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             catch (Exception e) { aligned = 0; try { part.delete(); } catch (Exception ignore) {} }
             offset = aligned;
         }
-        if (expectedSize > 0 && offset >= expectedSize) {
-            // 上次其实已收完只差收尾 → 直接进入上传
+        // A5(P0):offset 严格大于机身文件 = .part 是别的内容的脏残留(笔时钟回退→同名不同文件),删掉重下
+        if (expectedSize > 0 && offset > expectedSize) {
+            Log.w(TAG, "部分文件比机身文件还大(" + offset + ">" + expectedSize + ")→脏断点,删除重下");
+            penLog("★脏断点删除重下 " + task.fileName + " part=" + offset + " expect=" + expectedSize);
+            try { part.delete(); } catch (Exception ignore) {}
+            offset = 0;
+        } else if (expectedSize > 0 && offset == expectedSize) {
+            // 长度精确相等才认为已收完直接上传(不再用 >= ,避免脏数据凑巧超长被当成品)
             Log.d(TAG, "部分文件已完整 offset=" + offset + " expected=" + expectedSize + " → 直接上传");
             inflightTask = task;
             processAndUploadDownloaded(task, part);
@@ -1483,6 +1500,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     requeueDownloadTask(dl.task, "字节不足 " + got + "/" + dl.expectedSize);
                     return;
                 }
+                if (dl.expectedSize <= 0) dl.task.truncatedFlag = true;   // A2:文件列表无size,无法校验完整性→标可能不全
                 if (listener != null) main.post(() -> listener.onPenProgress(100));
                 inflightTask = dl.task;
                 processAndUploadDownloaded(dl.task, dl.partFile);
@@ -1571,7 +1589,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             // recorded_at：会话开始墙钟丢了(崩溃恢复/手动同步)就用文件名时间戳——连上必 syncTime，文件名可信
             long startWall = task.startWallMs > 0 ? task.startWallMs : parseFileTimestamp(task.fileName);
             Uploader.Result r = Uploader.upload(oggFile, durSec, liveCk, liveUrl,
-                    name, "audio/ogg", task.sn, task.placeholderId, fmtWall(startWall), penFile);
+                    name, "audio/ogg", task.sn, task.placeholderId, fmtWall(startWall), penFile, task.truncatedFlag);
             long ms = SystemClock.elapsedRealtime() - t0;
             writeProbeStatus("[" + tag + "ogg] " + name + " ogg=" + oggFile.length() + "B 上传" + ms + "ms ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
             if (r.ok) {
@@ -1750,6 +1768,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         main.post(() -> {
             if (drop) {
                 uploadQueue.remove(task);
+                try { partFileFor(task.fileName).delete(); } catch (Exception ignore) {}  // A5:放弃删.part,防脏断点污染同名新录音
                 // ★放弃必须落盘:否则 pending_dl 里还留着这条,下次启动 loadPendingQueue 又把它捞回来重试,
                 //   给不掉的"幽灵"任务会让首页"N段后台同步中"永远清不掉(跨重启复活)。
                 persistPendingQueue();
@@ -1866,6 +1885,22 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     // ============ 队列持久化 ============
 
+    // A3(P0):录音中的活动会话落盘——进程被 vivo 杀+笔上自停时,重启后 cmd9 回"未在录",
+    //   靠这条持久化把该段当补传任务恢复(否则无任务无占位,音频静默漏传)。
+    private void saveActiveSession(String fn, long wallMs) {
+        if (fn == null || fn.isEmpty()) return;
+        try {
+            appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE).edit()
+                    .putString("active_session_file", fn).putLong("active_session_wall", wallMs).apply();
+        } catch (Exception ignored) {}
+    }
+    private void clearActiveSession() {
+        try {
+            appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE).edit()
+                    .remove("active_session_file").remove("active_session_wall").apply();
+        } catch (Exception ignored) {}
+    }
+
     private void loadUploadedNames() {
         try {
             java.util.Set<String> s = appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
@@ -1918,6 +1953,20 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                         o.optLong("sw", 0), o.optLong("pid", -1), o.optBoolean("ai", false), o.optLong("fs", 0),
                         o.optInt("rq", 0), o.optLong("na", 0)));
             }
+            // A3:录音中被杀残留的活动会话 → 也当补传任务恢复(进程死+笔自停的漏传兜底)
+            try {
+                android.content.SharedPreferences sp = appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE);
+                String af = sp.getString("active_session_file", "");
+                if (af != null && !af.isEmpty() && !uploadedFileNames.contains(af)) {
+                    boolean dup = false;
+                    for (PersistedDl p : pendingRestore) if (af.equals(p.fileName)) { dup = true; break; }
+                    if (!dup) {
+                        pendingRestore.add(new PersistedDl(af, 0, sp.getLong("active_session_wall", 0),
+                                -1, true, System.currentTimeMillis(), 0, 0));
+                        penLog("★恢复录音中被杀的活动会话→补传 " + af);
+                    }
+                }
+            } catch (Exception ignored) {}
             if (!pendingRestore.isEmpty()) {
                 Log.d(TAG, "读到 " + pendingRestore.size() + " 条持久化待补传任务，待上下文就绪续传");
                 penLog("★读到 " + pendingRestore.size() + " 条持久化待补传(等登录态续传)");

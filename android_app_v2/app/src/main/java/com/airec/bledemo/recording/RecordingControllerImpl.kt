@@ -547,7 +547,8 @@ class RecordingControllerImpl(
             try {
                 val dir = java.io.File(appCtx.filesDir, "recordings")
                 val files = dir.listFiles { f ->
-                    f.isFile && f.name.startsWith("rec_") && f.name.endsWith(".m4a")
+                    // A1:容器改 AAC_ADTS(.aac)后,旧遗留 .m4a 也一并补传兜底(过渡期两种都扫)
+                    f.isFile && f.name.startsWith("rec_") && (f.name.endsWith(".aac") || f.name.endsWith(".m4a"))
                 } ?: return@thread
                 val now = System.currentTimeMillis()
                 // >1KB 且 20s 内没改过（不是正被写的当前录音）才算遗留。
@@ -566,7 +567,10 @@ class RecordingControllerImpl(
                         mmr.release()
                         (ms / 1000L).toInt()
                     }.getOrDefault(0)
-                    var r = Uploader.upload(f, durSec, ck, url)
+                    val upName = "rec-" + System.currentTimeMillis() +
+                        (if (f.name.endsWith(".aac")) ".aac" else ".m4a")
+                    val upMime = if (f.name.endsWith(".aac")) "audio/aac" else "audio/mp4"
+                    var r = Uploader.upload(f, durSec, ck, url, upName, upMime)
                     // 手机麦补传遇 401：先用本地凭证自动重登一次，成功就用新 Cookie 立刻重传这一段。
                     if (!r.ok && r.error?.contains("登录已失效") == true) {
                         val relogged = runCatching { runBlocking { AuthManager().reAuthenticate() } }.getOrDefault(false)
@@ -577,7 +581,7 @@ class RecordingControllerImpl(
                             }.getOrNull()
                             if (!freshCk.isNullOrEmpty()) {
                                 cookie = freshCk
-                                r = Uploader.upload(f, durSec, freshCk, url)
+                                r = Uploader.upload(f, durSec, freshCk, url, upName, upMime)
                             }
                         }
                     }

@@ -83,11 +83,13 @@ public class PhoneMicService extends Service {
 
             File dir = new File(getFilesDir(), "recordings");
             if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("无法创建录音目录");
-            currentFile = new File(dir, "rec_" + System.currentTimeMillis() + ".m4a");
+            // A1(P0):MPEG_4 的 moov 尾只在 stop() 写,录音中被 vivo 杀进程→整段永久不可解。
+            //   改 AAC_ADTS 流式容器:每帧自带头,进程随时被杀,已落盘部分仍可解码/补传。
+            currentFile = new File(dir, "rec_" + System.currentTimeMillis() + ".aac");
 
             recorder = new MediaRecorder();
             recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.AAC_ADTS);
             recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
             // 问题 #4：语音场景单声道 16kHz / 32kbps 足够清晰且利于 ASR，文件比 44.1kHz 立体声小约 6 倍（弱网更易传成）。
             recorder.setAudioChannels(1);
