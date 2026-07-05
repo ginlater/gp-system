@@ -294,11 +294,15 @@ class RecordingControllerImpl(
         if (busState == PhoneMicService.STATE_ERROR && !message.isNullOrBlank()) {
             _penEvents.tryEmit(message)
         }
-        // 手机麦停录上传成功（STATE_IDLE 带 recId）→ 弹绑定对话框（手机麦上传快，几秒内出现）。
-        // 去重：同一 recId 只提示一次（attach 同步快照会重放最近 Idle）。
-        if (busState == PhoneMicService.STATE_IDLE && recId > 0 && recId != lastBusBindRecId) {
+        // 手机麦绑定提示：D12 停录建占位后 UPLOADING 即带占位 recId（录完立刻能绑，不等传完）；
+        // 上传成功的 IDLE 也带 recId 兜底（占位失败降级时仍按老路弹）。
+        // 去重：同一 recId 只提示一次（attach 同步快照会重放最近 Idle；占位/回填是同一行 id）。
+        if ((busState == PhoneMicService.STATE_IDLE || busState == PhoneMicService.STATE_UPLOADING) &&
+            recId > 0 && recId != lastBusBindRecId
+        ) {
             lastBusBindRecId = recId
             _bindPrompt.tryEmit(recId)
+            _penListChanged.tryEmit(Unit)   // 占位已入待整理 → 顺手刷新列表
         }
         _state.value = applyTimeSync(mapBusState(busState, message, durSec, recId))
     }
@@ -570,7 +574,10 @@ class RecordingControllerImpl(
                     val upName = "rec-" + System.currentTimeMillis() +
                         (if (f.name.endsWith(".aac")) ".aac" else ".m4a")
                     val upMime = if (f.name.endsWith(".aac")) "audio/aac" else "audio/mp4"
-                    var r = Uploader.upload(f, durSec, ck, url, upName, upMime)
+                    // D12：文件名里嵌的占位 id（rec_<ts>_p<pid>.aac）——补传带上它回填同一占位行，
+                    // 不再新建重复行、"同步中"占位也能转正。
+                    val pid = Regex("_p(\\d+)\\.").find(f.name)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+                    var r = Uploader.upload(f, durSec, ck, url, upName, upMime, null, pid)
                     // 手机麦补传遇 401：先用本地凭证自动重登一次，成功就用新 Cookie 立刻重传这一段。
                     if (!r.ok && r.error?.contains("登录已失效") == true) {
                         val relogged = runCatching { runBlocking { AuthManager().reAuthenticate() } }.getOrDefault(false)
@@ -581,7 +588,7 @@ class RecordingControllerImpl(
                             }.getOrNull()
                             if (!freshCk.isNullOrEmpty()) {
                                 cookie = freshCk
-                                r = Uploader.upload(f, durSec, freshCk, url, upName, upMime)
+                                r = Uploader.upload(f, durSec, freshCk, url, upName, upMime, null, pid)
                             }
                         }
                     }

@@ -196,6 +196,8 @@ data class CustomerSearchResponse(
 data class RebindCandidatesResponse(
     @Json(name = "items") val items: List<Customer>? = null,
     @Json(name = "service_date") val serviceDate: String? = null,
+    // 已绑定段的当前所属顾客（D9：候选列表要排除本人，换给自己白作废原报告）
+    @Json(name = "current_customer_id") val currentCustomerId: Long? = null,
 )
 
 // ─────────────────────────── 今日接诊（reception）───────────────────────────

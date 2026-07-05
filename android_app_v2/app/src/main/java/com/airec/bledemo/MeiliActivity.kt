@@ -53,6 +53,9 @@ class MeiliActivity : ComponentActivity() {
     /** 电池优化白名单只问一次（每进程）。 */
     private var batteryAsked = false
 
+    /** F1：通知深链（open=reminders）。冷启动 onCreate / 热启动 onNewIntent 都写这里，AppScaffold 消费。 */
+    private val deepLink = androidx.compose.runtime.mutableStateOf<String?>(null)
+
     /** 网络恢复监听（onDestroy 注销，防泄漏）。 */
     private var netCallback: ConnectivityManager.NetworkCallback? = null
 
@@ -68,11 +71,24 @@ class MeiliActivity : ComponentActivity() {
         // 登录门：本地有未过期会话 Cookie 才进 Gate（再按角色分流到顾问端主壳 / 管理台），否则先进登录页。
         // 粗判（不打网络），无网也可用；Gate 会打 /api/me 实判会话与角色，失败再退回登录页。
         val startDestination = if (AuthManager().isLoggedIn()) Routes.Gate else Routes.Login
+        // F1：冷启动就来自点通知（提醒通知塞了 open=reminders）→ 记下深链，壳就绪后跳提醒页
+        deepLink.value = intent?.getStringExtra("open")
         setContent {
-            MeiliApp(startDestination = startDestination)
+            MeiliApp(
+                startDestination = startDestination,
+                deepLink = deepLink.value,
+                onDeepLinkConsumed = { deepLink.value = null },
+            )
         }
         requestRecordingPermissions()
         registerNetworkMonitor()
+    }
+
+    /** F1：App 活着时点通知（SINGLE_TOP 复用本 Activity）→ 从新 intent 取深链。 */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        deepLink.value = intent.getStringExtra("open")
     }
 
     override fun onResume() {
@@ -158,7 +174,11 @@ class MeiliActivity : ComponentActivity() {
 
 /** App 根 Composable：主题 + 系统栏避让 + 主壳。抽出来便于 @Preview / 测试。 */
 @Composable
-private fun MeiliApp(startDestination: String) {
+private fun MeiliApp(
+    startDestination: String,
+    deepLink: String? = null,
+    onDeepLinkConsumed: () -> Unit = {},
+) {
     MeiliTheme {
         // 自动日夜：App 开着时每分钟检查一次是否跨过 6:00/18:00 → 切换日/夜皮肤。
         androidx.compose.runtime.LaunchedEffect(Unit) {
@@ -184,6 +204,8 @@ private fun MeiliApp(startDestination: String) {
         ) {
             AppScaffold(
                 startDestination = startDestination,
+                deepLink = deepLink,
+                onDeepLinkConsumed = onDeepLinkConsumed,
                 modifier = Modifier
                     .fillMaxSize()
                     .windowInsetsPadding(WindowInsets.systemBars),

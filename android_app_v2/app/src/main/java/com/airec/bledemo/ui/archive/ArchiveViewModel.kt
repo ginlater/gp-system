@@ -258,7 +258,9 @@ class ArchiveViewModel(
         viewModelScope.launch {
             when (val r = repo.sessionDeleteRequest(sessionId, reason?.takeIf { it.isNotBlank() })) {
                 is ApiResult.Success -> {
-                    _state.update { it.copy(toast = ArchiveToast("已申请删除，待审批")) }
+                    // D10：<5分钟免审批直删时后端回 deleted=true——行已消失，别再说"待审批"
+                    val msg = if (r.data.deleted == true) "已删除" else "已申请删除，待审批"
+                    _state.update { it.copy(toast = ArchiveToast(msg)) }
                     load(_state.value.page)
                 }
                 is ApiResult.Failure ->

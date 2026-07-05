@@ -53,6 +53,7 @@ public class PhoneMicService extends Service {
     private MediaRecorder recorder;
     private File currentFile;
     private long startElapsedMs;
+    private long startWallMs;                 // D12:录音真实开始墙钟(建占位/recorded_at 用)
     private volatile boolean recording;
     private volatile boolean uploading;
     private String uploadUrl;
@@ -106,6 +107,7 @@ public class PhoneMicService extends Service {
 
             recording = true;
             startElapsedMs = SystemClock.elapsedRealtime();
+            startWallMs = System.currentTimeMillis();
             broadcast(STATE_RECORDING, "录音中…", 0, -1);
         } catch (Exception e) {
             Log.e(TAG, "startRecording failed", e);
@@ -150,14 +152,39 @@ public class PhoneMicService extends Service {
     private void uploadAndFinish(final File file, final int durSec, final String cookie) {
         uploading = true;
         broadcast(STATE_UPLOADING, "上传中…", durSec, -1);
+        final long recStart = startWallMs > 0 ? startWallMs : System.currentTimeMillis() - durSec * 1000L;
         new Thread(() -> {
-            Uploader.Result r = Uploader.upload(file, durSec, cookie, uploadUrl);
+            // D12:对齐笔路径——停录先建占位(几秒即回)，拿到 id 立刻弹绑定，不必等整段传完(弱网可能要几分钟)。
+            //   占位 source=phone(服务端按手机麦权限校验/回填口径)；随后上传带 placeholder_id 回填同一行。
+            File up = file;
+            long pid = -1;
+            if (cookie != null && !cookie.isEmpty() && uploadUrl != null) {
+                String phUrl = uploadUrl.endsWith("/upload")
+                        ? uploadUrl.substring(0, uploadUrl.length() - 7) + "/placeholder"
+                        : uploadUrl.replace("/upload", "/placeholder");
+                pid = Uploader.createPlaceholder(cookie, phUrl, recStart, null, "phone");
+                if (pid > 0) {
+                    // 占位 id 嵌进文件名(rec_<ts>_p<pid>.aac)：上传中途被杀/失败后，补传扫描能带
+                    // placeholder_id 回填同一占位行，不再新建重复行、占位也不会永挂"同步中"。
+                    String newName = up.getName().replaceFirst("\\.(aac|m4a)$", "_p" + pid + ".$1");
+                    File renamed = new File(up.getParentFile(), newName);
+                    if (!newName.equals(up.getName()) && up.renameTo(renamed)) up = renamed;
+                    // 拿到占位 recordingId 即弹绑定（UPLOADING 带 recId，由 RecordingControllerImpl 消费）
+                    broadcast(STATE_UPLOADING, "上传中…", durSec, pid);
+                }
+            }
+            String upName = "rec-" + System.currentTimeMillis() + (up.getName().endsWith(".m4a") ? ".m4a" : ".aac");
+            String upMime = up.getName().endsWith(".m4a") ? "audio/mp4" : "audio/aac";
+            String recordedAt = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                    .format(new java.util.Date(recStart));
+            Uploader.Result r = Uploader.upload(up, durSec, cookie, uploadUrl, upName, upMime, null, pid, recordedAt, null);
             uploading = false;
             if (r.ok) {
-                broadcast(STATE_IDLE, "已上传，请选择顾客", durSec, r.recordingId);
-                if (file != null) file.delete();
+                long rid = r.recordingId > 0 ? r.recordingId : pid;
+                broadcast(STATE_IDLE, "已上传，请选择顾客", durSec, rid);
+                up.delete();
             } else {
-                // 上传失败：保留本地文件，避免丢录音（401 文案已含「请重新登录」，回前台补传扫描会重试）。
+                // 上传失败：保留本地文件与占位行（待整理显示"同步中"可重试），回前台补传扫描按文件名里的 pid 回填。
                 broadcast(STATE_ERROR, "上传失败：" + r.error, durSec, -1);
             }
             stopForeground(true);

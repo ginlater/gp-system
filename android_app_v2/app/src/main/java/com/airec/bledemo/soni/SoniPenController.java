@@ -903,7 +903,32 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             localRaw = writeStreamRaw(streamBuf, fn, startWallMs);
         }
 
-        if (localRaw != null) {
+        if (localRaw != null && fn != null && uploadedFileNames.contains(fn)) {
+            // E4:该段已上传过(如刚被手动同步导入完)——直传流不再重复入队，双上传白耗流量
+            Log.d(TAG, "直传流跳过(已上传过) file=" + fn);
+            penLog("★直传流跳过:该段已上传过 " + fn);
+            post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
+            main.postDelayed(this::kickWorker, 800);
+        } else if (localRaw != null && fn != null && isQueuedByName(fn)) {
+            // E4:同名段已在队(手动导入建的下载任务/在传)——把本地实时流挂给它直传，不再另开一单
+            UploadTask queued = null;
+            for (UploadTask t : uploadQueue) {
+                if (t != null && fn.equals(t.fileName) && t != currentTask && t != inflightTask) { queued = t; break; }
+            }
+            if (queued != null && queued.localRawPath == null) {
+                queued.localRawPath = localRaw;
+                if (estStreamSec < durSec) queued.truncatedFlag = true;
+                if (queued.durSec <= 0) queued.durSec = durSec;
+                Log.d(TAG, "直传流并入已排队任务(免BLE下载) file=" + fn);
+                penLog("★直传流并入已排队任务(排重,免下载) " + fn);
+                persistPendingQueue();
+            } else {
+                Log.d(TAG, "直传流跳过(同名任务在传中) file=" + fn);
+            }
+            notifyPending();
+            post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
+            main.postDelayed(this::kickWorker, 300);
+        } else if (localRaw != null) {
             final UploadTask task = new UploadTask(fn != null ? fn : ("stream_" + startWallMs),
                     cookie, uploadUrl, penSn(), durSec, startWallMs, appInit);
             task.localRawPath = localRaw;
@@ -946,7 +971,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
         final String phUrl = placeholderUrlFrom(task.uploadUrl);
         worker.submit(() -> {
-            long pid = Uploader.createPlaceholder(task.cookie, phUrl, recStart);
+            // E1:占位带机身文件名→同步弹层预检可精确屏蔽"正在传的段"(不再赌±90s时刻吻合)
+            String phPenFile = looksLikePenFile(task.fileName) ? task.fileName : null;
+            long pid = Uploader.createPlaceholder(task.cookie, phUrl, recStart, phPenFile, null);
             if (pid > 0) {
                 task.placeholderId = pid;
                 Log.d(TAG, "已建占位片段 id=" + pid);
@@ -1959,7 +1986,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             final String phUrl = placeholderUrlFrom(uploadUrl);
             for (final UploadTask t : added) {
                 worker.submit(() -> {
-                    long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs);
+                    long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs,
+                            looksLikePenFile(t.fileName) ? t.fileName : null, null);   // E1:占位带机身文件名
                     if (pid > 0) { t.placeholderId = pid; if (listener != null) main.post(listener::onPenPlaceholderCreated); }
                 });
             }
@@ -2112,8 +2140,11 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         StringBuilder sb = new StringBuilder("[");
         boolean first = true;
         if (files != null) {
+            String recordingFn = sessionActive ? sessionFileName : null;
             for (PenFileEntry f : files) {
                 if (f == null || TextUtils.isEmpty(f.name)) continue;
+                // E4:正在录的这段不进同步弹层——导入它会与录音收尾的直传/补下载重复上传
+                if (recordingFn != null && recordingFn.equals(f.name)) continue;
                 long startMs = parseFileTimestamp(f.name);
                 String ra = startMs > 0 ? fmtWall(startMs) : "";
                 if (!first) sb.append(',');
@@ -2154,7 +2185,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             final String phUrl = placeholderUrlFrom(uploadUrl);
             for (final UploadTask t : added) {
                 worker.submit(() -> {
-                    long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs);
+                    long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs,
+                            looksLikePenFile(t.fileName) ? t.fileName : null, null);   // E1:占位带机身文件名
                     if (pid > 0) { t.placeholderId = pid; if (listener != null) main.post(listener::onPenPlaceholderCreated); }
                 });
             }

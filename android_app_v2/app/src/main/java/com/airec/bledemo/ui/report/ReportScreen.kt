@@ -1,5 +1,6 @@
 package com.airec.bledemo.ui.report
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -126,10 +127,12 @@ fun ReportScreen(
     var withdrawConfirm by remember { mutableStateOf(false) }
 
     // 任务执行状态：进报告后每 15s 静默轮询刷新（对齐 report.html setInterval(loadTaskStatus,15000)）。
+    // D5：同时静默重拉会话详情——分析完成后状态 pill / 报告内容就地更新，不用退出重进。
     LaunchedEffect(Unit) {
         while (true) {
             kotlinx.coroutines.delay(15_000)
             viewModel.loadTasks()
+            viewModel.refreshDetailSilently()
         }
     }
 
@@ -359,6 +362,10 @@ private fun ReportContent(
         if (report == null) {
             ReportEmptyState(state = state, onReanalyze = onReanalyze)
         } else {
+            // D6（同iOS-C5）：作废报告要当面说清，别让旧报告看着像有效的
+            if ((state.detail?.displayStatus ?: state.detail?.analysisStatus) == "outdated") {
+                OutdatedBanner(modifier = Modifier.padding(bottom = Dimens.CardGap))
+            }
             // ---- 11 个 PART（顺序 01→11，缺字段各自优雅占位）----
             Part01Overview(report.overview, report.scoring)
             // PART01 详细评分入口：仅当有 scoring 明细时给出（warm_2 #report 的「查看详细评分 ▾」）。
@@ -429,9 +436,10 @@ private fun ReportEmptyState(state: ReportUiState, onReanalyze: () -> Unit) {
                     )
                 }
             }
-            "failed", "stuck" -> {
+            "failed", "stuck", "cancelled" -> {
                 Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("分析失败", style = MaterialTheme.typography.titleMedium, color = MeiliPalette.Rose)
+                    // D7：cancelled 与 failed 分开说——"已中断分析"，与接诊列表口径一致
+                    Text(if (status == "cancelled") "已中断分析" else "分析失败", style = MaterialTheme.typography.titleMedium, color = MeiliPalette.Rose)
                     state.detail?.analysisError?.takeIf { it.isNotBlank() }?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = MeiliPalette.Ink3)
                     }
@@ -476,13 +484,40 @@ private fun ConfidentialPill() {
     }
 }
 
-/** 分析状态 pill：done→已完成；running/queued→分析中；failed/stuck→失败；其它兜底已完成。 */
+/** 分析状态 pill：done→已完成；running/queued→分析中；failed/stuck→失败；D6/D7：outdated→已过期、cancelled→已中断（对齐 iOS）。 */
 @Composable
 private fun AnalysisStatePill(state: ReportUiState) {
     when (state.detail?.displayStatus ?: state.detail?.analysisStatus) {
         "running", "queued" -> StatusPill("分析进行中", PillKind.Run, icon = MeiliIcons.Sync)
         "failed", "stuck" -> StatusPill("分析失败", PillKind.Danger, icon = MeiliIcons.Warn)
+        "outdated" -> StatusPill("报告已过期", PillKind.Warn, icon = MeiliIcons.Warn)
+        "cancelled" -> StatusPill("已中断", PillKind.Warn, icon = MeiliIcons.Warn)
         else -> StatusPill("分析已完成", PillKind.Ok, icon = MeiliIcons.Check)
+    }
+}
+
+/** D6：作废（outdated）横幅——片段有变更，旧报告已过期，提示重新分析。 */
+@Composable
+private fun OutdatedBanner(modifier: Modifier = Modifier) {
+    Surface(
+        shape = MeiliShapes.Md,
+        color = MeiliPalette.HoneySoft,
+        contentColor = MeiliPalette.HoneyText,
+        border = BorderStroke(Dimens.BorderThin, MeiliPalette.Honey.copy(alpha = 0.45f)),
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(MeiliIcons.Warn, contentDescription = null, modifier = Modifier.size(17.dp))
+            Text(
+                text = "陪伴片段在上次分析后有变更（新增/换绑/退回等），本报告已过期——点「重新分析」可更新。",
+                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold, lineHeight = 18.sp),
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
 

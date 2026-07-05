@@ -73,6 +73,8 @@ class BindCustomerViewModel(
     data class UiState(
         val mode: Mode = Mode.Binding,
         val booting: Boolean = true,            // 首屏探测片段状态中
+        // D11：首屏探测失败——不再静默降级成绑定模式（已绑段可能被再 bind 静默移走），给重试态
+        val bootError: String? = null,
         val tab: Tab = Tab.Existing,
         // 该片段服务日期；空=今天
         val serviceDate: String? = null,
@@ -128,8 +130,9 @@ class BindCustomerViewModel(
     // ───────────── 首屏：探测片段状态 + 拉选人列表 ─────────────
 
     /** 用现有 [ConsultantRepository.pending] 判断这段在不在未归档池：在=绑定流程，不在=换绑流程。 */
-    private fun boot() {
+    fun boot() {
         viewModelScope.launch {
+            _state.update { it.copy(booting = true, bootError = null) }
             when (val r = repo.pending()) {
                 is ApiResult.Success -> {
                     val rec = r.data.firstOrNull { it.id == recordingId }
@@ -148,11 +151,12 @@ class BindCustomerViewModel(
                         // 不在未归档池 → 已绑定，进入换绑/退回流程
                         _state.update { it.copy(booting = false, mode = Mode.Rebinding) }
                     }
+                    loadPicks() // 两种模式都要选人列表
                 }
-                // 拉不到也不阻塞：默认按绑定流程（与原行为一致），列表照常加载
-                is ApiResult.Failure -> _state.update { it.copy(booting = false, mode = Mode.Binding) }
+                // D11：拉不到不再静默按绑定流程处理——已绑定的段被误判成 Binding 后再 bind，
+                // 会把它从原顾客名下静默移走。给重试态，由用户点「重试」再探测。
+                is ApiResult.Failure -> _state.update { it.copy(booting = false, bootError = r.message) }
             }
-            loadPicks() // 两种模式都要选人列表
         }
     }
 
@@ -192,10 +196,14 @@ class BindCustomerViewModel(
             _state.update { it.copy(searching = true) }
             val q = _state.value.query.trim().ifBlank { null }
 
-            // 1) 搜索候选（rebind_candidates 同时给 service_date / in_day）
+            // 1) 搜索候选（rebind_candidates 同时给 service_date / in_day / current_customer_id）
             val candResult = repo.rebindCandidates(rid = recordingId, q = q)
             val candidates = (candResult as? ApiResult.Success)?.data?.items ?: emptyList()
             val svcDate = (candResult as? ApiResult.Success)?.data?.serviceDate
+            // D9：已绑定段服务端回当前所属顾客 id → 候选列表排除本人（换给自己白作废原报告）
+            (candResult as? ApiResult.Success)?.data?.currentCustomerId?.let { cur ->
+                _state.update { it.copy(currentCustomerId = cur) }
+            }
 
             // 2) 仅在无关键词时叠加当日接诊名单（带已绑段数/锁定）
             val reception = if (q == null) {
@@ -373,14 +381,8 @@ class BindCustomerViewModel(
         }
         viewModelScope.launch {
             _state.update { it.copy(submitting = true, error = null) }
-            // in_day=false 的顾客：bind 前先补登到该片段当天接诊白名单
-            if (pb.needsBackfill) {
-                val add = repo.addTodayReception(customerId = pb.customerId, date = _state.value.serviceDate)
-                if (add is ApiResult.Failure) {
-                    _state.update { it.copy(submitting = false, error = add.message) }
-                    return@launch
-                }
-            }
+            // D1：不再预调 addTodayReception——bind 接口本身会自动补登当天接诊；
+            // 客户端先补登会撞"补登只能选最近7天"，把服务端"已超过7天无法绑定"的明话挡在半路。
             when (val r = repo.bind(rid = recordingId, customerId = pb.customerId)) {
                 is ApiResult.Success -> {
                     val sid = r.data.sessionId
@@ -404,17 +406,10 @@ class BindCustomerViewModel(
         }
     }
 
-    /** 换绑（仅这一段）。in_day=false 的目标先补登，再 [directRebind]。 */
+    /** 换绑（仅这一段）。D1：directRebind 服务端自动补登目标顾客当天接诊，客户端不再预补登（换绑本无7天限制，预补登反而被7天窗口挡死）。 */
     private fun confirmRebind(pb: PendingBind) {
         viewModelScope.launch {
             _state.update { it.copy(submitting = true, error = null) }
-            if (pb.needsBackfill) {
-                val add = repo.addTodayReception(customerId = pb.customerId, date = _state.value.serviceDate)
-                if (add is ApiResult.Failure) {
-                    _state.update { it.copy(submitting = false, error = add.message) }
-                    return@launch
-                }
-            }
             val reason = _state.value.rebindReason.trim().ifBlank { null }
             when (val r = repo.directRebind(rid = recordingId, toCustomerId = pb.customerId, reason = reason)) {
                 is ApiResult.Success -> {

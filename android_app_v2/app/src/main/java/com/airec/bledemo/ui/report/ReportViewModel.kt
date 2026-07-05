@@ -280,6 +280,32 @@ class ReportViewModel(
     }
 
     /**
+     * D5：15s 轮询时静默重拉会话详情——分析完成后状态 pill / 报告内容就地更新，
+     * 不再卡"分析进行中"要退出重进。不置 loading、失败静默（轮询不打扰、不闪屏）。
+     * 已是终态（done 且已有报告）就不再重拉，省流量。
+     */
+    fun refreshDetailSilently() {
+        val cur = _state.value.detail
+        val status = cur?.displayStatus ?: cur?.analysisStatus
+        if (cur != null && status == "done" && cur.report != null) return
+        viewModelScope.launch {
+            when (val r = repo.session(sessionId)) {
+                is ApiResult.Success -> {
+                    val oldStatus = status
+                    _state.update { it.copy(detail = r.data, error = r.data.error) }
+                    val newStatus = r.data.displayStatus ?: r.data.analysisStatus
+                    // 刚翻到 done → 顺手把任务面板/点评一起补新
+                    if (newStatus == "done" && oldStatus != "done") {
+                        loadTasks()
+                        loadEvaluations()
+                    }
+                }
+                is ApiResult.Failure -> Unit
+            }
+        }
+    }
+
+    /**
      * 拉 11 个任务（顶部「任务执行状态」面板 + 重跑/补齐后刷新 + 15s 轮询都走它）。
      * stale-while-revalidate：已有任务时不置 loading、失败不弹 toast（轮询不打扰、不闪屏）。
      */

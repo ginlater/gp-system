@@ -10411,10 +10411,16 @@ def api_consultant_rebind_candidates():
     rid = request.args.get("rid")
     q = (request.args.get("q") or "").strip()
     rec_date = None
+    # 安卓批次三D9：已绑定段回当前所属顾客 id，客户端候选列表据此排除本人（换给自己白作废原报告）
+    cur_cid = None
     if rid:
         rec = db_fetchone("SELECT * FROM recordings WHERE id=?", (rid,))
         if rec:
             rec_date = _rec_date_of(rec)
+            if rec["session_id"]:
+                s = db_fetchone("SELECT customer_id FROM sessions WHERE id=?", (rec["session_id"],))
+                if s:
+                    cur_cid = s["customer_id"]
     cand_ids = _advisor_received_customer_ids(u["id"], advisor, cid)
     # 当天本人 daily_reception 客人 id（用于标注 in_day）
     day_ids = set()
@@ -10440,9 +10446,9 @@ def api_consultant_rebind_candidates():
         items = [{"customer_id": r["id"], "name": r["name"], "member_card": r["member_card"],
                   "phone_tail": r["phone_tail"], "in_day": r["id"] in day_ids} for r in rows]
         items.sort(key=lambda x: (not x["in_day"], x["customer_id"] not in served))
-        return jsonify({"items": items, "service_date": rec_date})
+        return jsonify({"items": items, "service_date": rec_date, "current_customer_id": cur_cid})
     if not cand_ids:
-        return jsonify({"items": [], "service_date": rec_date})
+        return jsonify({"items": [], "service_date": rec_date, "current_customer_id": cur_cid})
     qm = ",".join(["?"] * len(cand_ids))
     params = list(cand_ids)
     sql = (f"SELECT id, name, member_card, phone_tail FROM company_customers "
@@ -10453,7 +10459,7 @@ def api_consultant_rebind_candidates():
               "phone_tail": r["phone_tail"], "in_day": r["id"] in day_ids} for r in rows]
     # 已在当日接诊的排前面，方便直接选
     items.sort(key=lambda x: (not x["in_day"],))
-    return jsonify({"items": items, "service_date": rec_date})
+    return jsonify({"items": items, "service_date": rec_date, "current_customer_id": cur_cid})
 
 
 @app.route("/api/consultant/recordings/<int:rid>/bind", methods=["POST"])
@@ -10852,6 +10858,9 @@ def api_consultant_direct_rebind(rid):
     if not rec["session_id"]:
         return jsonify({"error": "该录音尚未绑定，请直接绑定即可"}), 400
     old_sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (rec["session_id"],))
+    # 安卓批次三D9守卫：换绑到当前所属顾客本人没有意义，还会白作废原报告——直接拒绝
+    if old_sess and old_sess["customer_id"] == to_customer_id:
+        return jsonify({"error": "这段陪伴本来就属于这位顾客，无需换绑"}), 400
     cid = u["company_id"] or 1
     rec_date = _rec_date_of(rec)
     to_cust = db_fetchone(

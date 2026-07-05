@@ -9,6 +9,7 @@ import com.airec.bledemo.data.repo.ApiResult
 import com.airec.bledemo.data.repo.ConsultantRepository
 import com.airec.bledemo.recording.PenFile
 import com.airec.bledemo.recording.RecordingController
+import com.airec.bledemo.recording.RecordingState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +38,8 @@ data class PenSyncRow(
  * @param rows 机身片段行（含勾选 + 去重状态）
  * @param importing 正在提交导入
  * @param penUnavailable 取不到陪伴笔（未连接 / 无 controller）——sheet 内给提示
+ * @param penBusy E3：笔正在录音——机身列表拉不动，提示结束后再同步
+ * @param loadFailed E2/E3：机身列表超时无响应，或去重预检失败——给重试，不再按本地标记瞎渲染
  */
 data class PenSyncUiState(
     val visible: Boolean = false,
@@ -46,6 +49,8 @@ data class PenSyncUiState(
     val page: Int = 1,                          // 当前页（1-based）
     val importing: Boolean = false,
     val penUnavailable: Boolean = false,
+    val penBusy: Boolean = false,
+    val loadFailed: Boolean = false,
 ) {
     val selectableRows: List<PenSyncRow> get() = rows.filter { it.importable }
     val selectedCount: Int get() = rows.count { it.selected && it.importable }
@@ -257,7 +262,8 @@ class PendingViewModel(
             when (val r = repo.confirmSpeakers(rid, action)) {
                 is ApiResult.Success -> {
                     setBusy(rid, false)
-                    showToast(if (action == "unbind") "已解绑，已回到待整理可拆分重传" else "已确认，将照常分析", ToastIcon.Check)
+                    // D8：服务端不再自动分析（确认后接诊包解锁），别说"照常分析"让人干等
+                    showToast(if (action == "unbind") "已解绑，已回到待整理可拆分重传" else "已确认，请到接诊包点「开始分析」", ToastIcon.Check)
                     load(initial = false)
                 }
                 is ApiResult.Failure -> {
@@ -270,19 +276,37 @@ class PendingViewModel(
 
     // ───────────────────────── 从陪伴笔同步 ─────────────────────────
 
-    /** 打开 sheet：先确认陪伴笔已连接，再拉机身片段并查去重状态。 */
+    // E3：机身列表拉取超时看门狗（BLE 无响应时别永久转圈）。
+    private var penListTimeoutJob: kotlinx.coroutines.Job? = null
+
+    /** 打开 sheet：先确认陪伴笔已连接且空闲，再拉机身片段并查去重状态。也用于「重试」。 */
     fun openPenSync() {
         val c = controller
         // 未连接（或无引擎）→ 直接给「未连接」提示，区别于「连着但机身没文件」
         // （对齐 web 开 sheet 前的 appPenConnected 守卫；否则引擎对未连接也返回空列表，会被误显示成"没有文件"）。
         if (c == null || !c.isPenConnected()) {
-            _penSync.update { it.copy(visible = true, loading = false, rows = emptyList(), penUnavailable = true) }
+            _penSync.update { it.copy(visible = true, loading = false, rows = emptyList(), penUnavailable = true, penBusy = false, loadFailed = false) }
             return
         }
-        _penSync.update { it.copy(visible = true, loading = true, penUnavailable = false) }
+        // E3：笔在录音（含开始中）时列表命令会被笔忽略/顶掉，别发了干等——明说"结束后再同步"
+        val st = c.state.value
+        if (st is RecordingState.Recording) {
+            _penSync.update { it.copy(visible = true, loading = false, rows = emptyList(), penUnavailable = false, penBusy = true, loadFailed = false) }
+            return
+        }
+        _penSync.update { it.copy(visible = true, loading = true, penUnavailable = false, penBusy = false, loadFailed = false) }
         c.syncPenFiles { files ->
+            penListTimeoutJob?.cancel()
             // 回调可能在非主线程；用 viewModelScope 切回协程上下文做后续网络查询。
             viewModelScope.launch { onPenFiles(files) }
+        }
+        // E3：12s 无回调 → 超时给重试，不再永久转圈（后台在传大文件时 BLE 列表常被压住）
+        penListTimeoutJob?.cancel()
+        penListTimeoutJob = viewModelScope.launch {
+            delay(12_000)
+            if (_penSync.value.visible && _penSync.value.loading) {
+                _penSync.update { it.copy(loading = false, rows = emptyList(), loadFailed = true) }
+            }
         }
     }
 
@@ -291,13 +315,20 @@ class PendingViewModel(
             _penSync.update { it.copy(loading = false, rows = emptyList(), penUnavailable = false) }
             return
         }
+        // E2：去重预检失败不再按本地标记瞎渲染——换机/重装会全按"新"引导重复导入，
+        // 本机已传但服务端放行重导的截断件反被隐藏。失败就明说，给「重试」。
         val statusByName: Map<String, String?> =
             when (val r = repo.penSyncPreview(files.map { PenSyncQueryItem(name = it.name, ra = it.recordedAt.ifBlank { null }) })) {
                 is ApiResult.Success -> r.data.items.orEmpty().associate { it.name.orEmpty() to it.status }
-                is ApiResult.Failure -> emptyMap()
+                is ApiResult.Failure -> {
+                    _penSync.update { it.copy(loading = false, rows = emptyList(), loadFailed = true) }
+                    return
+                }
             }
         val rows = files.map { f ->
-            val st = statusByName[f.name] ?: if (f.uploaded) "uploaded" else "new"
+            // 以服务端判定为准（本地 uploaded 标记只在服务端没提到该文件时兜底不了什么——没提到即当 new，
+            // 上传侧仍有 pen_file 排重，最多被服务端吞掉一次重复，不会重复入库）。
+            val st = statusByName[f.name] ?: "new"
             // 对齐网页端：未传【默认不勾】，由顾问自己选要传的（避免误把一堆机身片段全导进来）。
             PenSyncRow(file = f, status = st, selected = false)
         }
@@ -305,7 +336,7 @@ class PendingViewModel(
             .filter { it.status == "new" }
             // 从最近的开始，从上往下（按录音时间倒序；时间为空的排末尾）
             .sortedByDescending { it.file.recordedAt }
-        _penSync.update { it.copy(loading = false, rows = rows, page = 1, penUnavailable = false) }
+        _penSync.update { it.copy(loading = false, rows = rows, page = 1, penUnavailable = false, loadFailed = false) }
     }
 
     /** 同步 sheet 翻页。 */

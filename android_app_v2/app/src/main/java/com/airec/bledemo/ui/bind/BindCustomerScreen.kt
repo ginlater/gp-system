@@ -108,6 +108,11 @@ fun BindCustomerScreen(
 
             when {
                 state.booting -> CenterHint("正在载入这段陪伴…")
+                // D11：首屏探测失败——不猜测绑定/换绑模式（猜错会把已绑段静默移走），给重试
+                state.bootError != null -> BootErrorPane(
+                    message = state.bootError,
+                    onRetry = viewModel::boot,
+                )
                 state.deletePending -> DeletePendingPane(
                     rejectReason = null,
                     submitting = state.submitting,
@@ -131,7 +136,8 @@ fun BindCustomerScreen(
                 modifier = Modifier.align(Alignment.TopCenter),
             )
             LaunchedEffect(banner) {
-                kotlinx.coroutines.delay(2200)
+                // D13：长文案（如"已超过7天无法绑定…"）按长度延长显示，别 2.2s 就闪没
+                kotlinx.coroutines.delay((2200L + banner.length * 60L).coerceAtMost(6500L))
                 if (state.error != null) viewModel.consumeError() else viewModel.consumeToast()
             }
         }
@@ -253,12 +259,80 @@ private fun BindBody(
 
 @Composable
 private fun ServiceDateBanner(serviceDate: String?) {
+    // D3：超过 7 天绑定窗口（用户拍板 2026-07-04）——红条明说不可绑，别等提交才被服务端拒
+    if (beyondBindWindow(serviceDate)) {
+        DangerBanner("这段陪伴是 $serviceDate 的，已超过 7 天绑定窗口，无法再绑定顾客；如不需要可回「待整理」删除。")
+        return
+    }
     val text = if (serviceDate.isNullOrBlank()) {
         "只能绑定到该片段当天的接诊顾客。列表里没有，可切到「新增顾客」当天新建并补登。"
     } else {
         "这段陪伴是 $serviceDate 的，只能绑定到当天的接诊顾客。其余顾客选中后会自动补登当天接诊。"
     }
     WarnBanner(text)
+}
+
+/** D3：该片段服务日期是否已超过绑定窗口（7 天，与服务端同口径，按 yyyy-MM-dd 字符串比较）。 */
+private fun beyondBindWindow(serviceDate: String?): Boolean {
+    val day = serviceDate?.takeIf { it.length >= 10 }?.take(10) ?: return false
+    val cal = java.util.Calendar.getInstance()
+    cal.add(java.util.Calendar.DAY_OF_YEAR, -7)
+    val minDay = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(cal.time)
+    return day < minDay
+}
+
+@Composable
+private fun DangerBanner(text: String) {
+    Surface(
+        shape = MeiliShapes.Md,
+        color = MeiliPalette.RoseSoft,
+        contentColor = MeiliPalette.RoseText,
+        border = BorderStroke(Dimens.BorderThin, MeiliPalette.RoseLine),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 15.dp, vertical = 13.dp),
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(MeiliIcons.Warn, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = 12.5f.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 19.sp,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** D11：首屏探测失败面板——明确报错 + 重试，不再猜模式。 */
+@Composable
+private fun BootErrorPane(message: String?, onRetry: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Icon(MeiliIcons.Warn, contentDescription = null, tint = MeiliPalette.RoseText, modifier = Modifier.size(30.dp))
+        Text(
+            text = "载入失败",
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = 14.sp, fontWeight = FontWeight.Bold),
+            color = MeiliPalette.Ink,
+        )
+        Text(
+            text = message?.takeIf { it.isNotBlank() } ?: "网络异常，无法确认这段陪伴的状态",
+            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp, lineHeight = 18.sp),
+            color = MeiliPalette.Ink3,
+            modifier = Modifier.padding(horizontal = 18.dp),
+        )
+        PrimaryButton(text = "重试", onClick = onRetry, icon = MeiliIcons.Refresh, size = MeiliButtonSize.Small)
+    }
 }
 
 @Composable

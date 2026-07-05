@@ -218,6 +218,15 @@ public final class Uploader {
      * 成功返回后端记录 id；失败/接口不存在返回 -1（调用方据此降级，跳过占位、照旧上传）。
      */
     public static long createPlaceholder(String cookie, String placeholderUrl, long recordedAtWallMs) {
+        return createPlaceholder(cookie, placeholderUrl, recordedAtWallMs, null, null);
+    }
+
+    /**
+     * E1:占位带机身文件名 pen_file → 同步弹层预检可精确匹配"正在传的段"(不再赌 ±90s 时刻吻合)；
+     * D12:source="phone" → 占位按手机麦来源入库(服务端权限/回填口径正确)。两者皆可空。
+     */
+    public static long createPlaceholder(String cookie, String placeholderUrl, long recordedAtWallMs,
+                                         String penFile, String source) {
         if (placeholderUrl == null || placeholderUrl.isEmpty()) return -1;
         HttpURLConnection conn = null;
         String boundary = "----gongpaiPH" + System.currentTimeMillis();
@@ -237,6 +246,18 @@ public final class Uploader {
                 out.writeBytes("Content-Disposition: form-data; name=\"recorded_at\"" + CRLF + CRLF);
                 out.write(recordedAt.getBytes(StandardCharsets.UTF_8));
                 out.writeBytes(CRLF);
+                if (penFile != null && !penFile.isEmpty()) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"pen_file\"" + CRLF + CRLF);
+                    out.write(penFile.getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
+                if (source != null && !source.isEmpty()) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"source\"" + CRLF + CRLF);
+                    out.write(source.getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
                 out.writeBytes("--" + boundary + "--" + CRLF);
                 out.flush();
             }

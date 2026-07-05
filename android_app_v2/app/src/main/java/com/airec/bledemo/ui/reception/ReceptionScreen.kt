@@ -460,6 +460,7 @@ fun ReceptionScreen(
         onImport = { confirmImport = true },
         onPrevPage = pendingVm::penPrevPage,
         onNextPage = pendingVm::penNextPage,
+        onRetry = pendingVm::openPenSync,
     )
 
     // 「申请删除」原因输入弹窗（≥5分钟，可空原因，确认才提交走审批）
@@ -891,6 +892,8 @@ private fun statusFor(item: TodayReception): Triple<String, PillKind, ImageVecto
         "failed" -> Triple("分析失败，可重试", PillKind.Danger, MeiliIcons.Warn)
         "running", "queued" -> Triple("分析中…", PillKind.Run, MeiliIcons.Sync)
         "outdated" -> Triple("录音有变更，重新分析", PillKind.Warn, MeiliIcons.Sync)
+        // D7（同iOS-C11）：取消分析原来落"待分析"，与预览页"分析失败"打架——统一口径"已中断分析"
+        "cancelled" -> Triple("已中断分析，可重新分析", PillKind.Warn, MeiliIcons.Warn)
         "pending" -> Triple("待分析", PillKind.Warn, MeiliIcons.Clock)
         null, "" -> {
             val n = item.recordingCount ?: 0
@@ -951,8 +954,13 @@ private fun TriageRecordingCard(
     when {
         // 删除审批中：需先撤回才能其他操作
         rec.deleteRequestStatus == "pending" -> DeletePendingCard(busy, onWithdrawDelete, modifier)
-        // 同步中占位：audio_url 为空，不可试听（可重试补传）
-        rec.isProcessing -> ProcessingCard(canRetry = canRetry, onRetry = onRetry, modifier = modifier)
+        // 同步中占位：audio_url 为空，不可试听（可重试补传）；D4：同步中也能先绑定（bind-before-upload）
+        rec.isProcessing -> ProcessingCard(
+            canRetry = canRetry,
+            onRetry = onRetry,
+            onBind = { onBindCustomer(rec.id) },
+            modifier = modifier,
+        )
         else -> TriageNormalCard(
             rec = rec,
             busy = busy,
@@ -977,7 +985,12 @@ private fun TriageNormalCard(
     onPreviewToast: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val crossDay = rec.serviceDate != null && rec.recDate != null && rec.serviceDate != rec.recDate
+    // D2：原判 serviceDate≠recDate 恒假（服务端两值恒相同）——改判「非今天且未绑」，
+    // 对齐 iOS「隔天未绑」标红（用户需求 2026-07-04：提醒顾问尽快绑定，别越攒越久）。
+    val recDay = (rec.recordedAt?.takeIf { it.length >= 10 }?.take(10)) ?: rec.serviceDate
+    val crossDay = !recDay.isNullOrBlank() && recDay < todayStr()
+    // D3：超过 7 天绑定窗口（与服务端同口径）——不给绑定入口，只能删除
+    val beyond7 = !recDay.isNullOrBlank() && recDay < minBindDayStr()
     val rejected = rec.deleteRequestStatus == "rejected"
     val freeDelete = isFreeDeleteEligible(rec)   // <5分钟→免审批直接删
     val titleColor = if (crossDay) MeiliPalette.RoseText else MeiliPalette.Ink
@@ -1033,7 +1046,7 @@ private fun TriageNormalCard(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = subLabel(rec, crossDay),
+                        text = subLabel(rec, crossDay, beyond7),
                         style = MaterialTheme.typography.labelSmall,
                         color = if (crossDay) MeiliPalette.RoseText else MeiliPalette.Ink3,
                         maxLines = 1,
@@ -1079,13 +1092,23 @@ private fun TriageNormalCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                PrimaryButton(
-                    text = "绑定顾客",
-                    onClick = { onBindCustomer(rec.id) },
-                    icon = MeiliIcons.Link,
-                    size = MeiliButtonSize.Small,
-                    modifier = Modifier.weight(1f),
-                )
+                if (beyond7) {
+                    // D3（用户拍板 2026-07-04）：超7天不给绑定入口，只能删除；点了也会被服务端明话拒绝
+                    Text(
+                        text = "已超过 7 天，无法绑定",
+                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                        color = MeiliPalette.RoseText,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    PrimaryButton(
+                        text = "绑定顾客",
+                        onClick = { onBindCustomer(rec.id) },
+                        icon = MeiliIcons.Link,
+                        size = MeiliButtonSize.Small,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 Text(
                     text = if (busy) "处理中…" else if (freeDelete) "删除" else "申请删除",
                     style = MaterialTheme.typography.bodySmall.copy(
@@ -1113,7 +1136,12 @@ private fun TriageNormalCard(
 }
 
 @Composable
-private fun ProcessingCard(canRetry: Boolean, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+private fun ProcessingCard(
+    canRetry: Boolean,
+    onRetry: () -> Unit,
+    onBind: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     MeiliCard(modifier = modifier, tight = true) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1127,19 +1155,31 @@ private fun ProcessingCard(canRetry: Boolean, onRetry: () -> Unit, modifier: Mod
             )
         }
         Text(
-            text = "后台同步中，传完后补时段 / 时长",
+            text = "后台同步中，传完后补时段 / 时长。可先绑定顾客，音频传完自动归位。",
             style = MaterialTheme.typography.bodySmall,
             color = MeiliPalette.Ink3,
             modifier = Modifier.padding(top = 4.dp),
         )
-        if (canRetry) {
-            GhostButton(
-                text = "重试",
-                onClick = onRetry,
-                icon = MeiliIcons.Sync,
+        // D4：bind-before-upload（服务端已支持，iOS 已加）——弱网慢传时不用干等，先绑定
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(9.dp),
+        ) {
+            PrimaryButton(
+                text = "绑定顾客",
+                onClick = onBind,
+                icon = MeiliIcons.Link,
                 size = MeiliButtonSize.Xs,
-                modifier = Modifier.padding(top = 10.dp),
+                modifier = Modifier.weight(1f),
             )
+            if (canRetry) {
+                GhostButton(
+                    text = "重试",
+                    onClick = onRetry,
+                    icon = MeiliIcons.Sync,
+                    size = MeiliButtonSize.Xs,
+                )
+            }
         }
     }
 }
@@ -1292,6 +1332,7 @@ private fun PenSyncSheet(
     onImport: () -> Unit,
     onPrevPage: () -> Unit,
     onNextPage: () -> Unit,
+    onRetry: () -> Unit = {},
 ) {
     MeiliBottomSheet(
         visible = state.visible,
@@ -1305,7 +1346,14 @@ private fun PenSyncSheet(
                     CircularProgressIndicator(color = MeiliPalette.Clay, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
                 }
             }
-            state.penUnavailable || state.rows.isEmpty() -> {
+            state.penUnavailable || state.penBusy || state.loadFailed || state.rows.isEmpty() -> {
+                // E2/E3：未连接 / 笔忙 / 拉取失败 / 真没文件——四种情况分开说，失败给「重试」
+                val (title, hint) = when {
+                    state.penUnavailable -> "未连接陪伴笔" to "请在陪伴首页连接陪伴笔后再从机身同步"
+                    state.penBusy -> "陪伴笔正在录音" to "录音结束后再从机身同步（录音中拉列表会互相干扰）"
+                    state.loadFailed -> "同步状态获取失败" to "陪伴笔无响应或网络异常，请稍后重试"
+                    else -> "暂无可导入的机身片段" to "陪伴笔机身已无未导入的片段"
+                }
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 30.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1317,15 +1365,18 @@ private fun PenSyncSheet(
                         }
                     }
                     Text(
-                        text = if (state.penUnavailable) "未连接陪伴笔" else "暂无可导入的机身片段",
+                        text = title,
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                         color = MeiliPalette.Ink2,
                     )
                     Text(
-                        text = if (state.penUnavailable) "请在陪伴首页连接陪伴笔后再从机身同步" else "陪伴笔机身已无未导入的片段",
+                        text = hint,
                         style = MaterialTheme.typography.bodySmall,
                         color = MeiliPalette.Ink3,
                     )
+                    if (state.loadFailed) {
+                        GhostButton(text = "重试", onClick = onRetry, icon = MeiliIcons.Sync, size = MeiliButtonSize.Small)
+                    }
                 }
             }
             else -> {
@@ -1489,11 +1540,27 @@ private fun timeRangeLabel(rec: PendingRecording): String {
     }
 }
 
-private fun subLabel(rec: PendingRecording, crossDay: Boolean): String {
+private fun subLabel(rec: PendingRecording, crossDay: Boolean, beyond7: Boolean = false): String {
     val date = rec.serviceDate ?: rec.recDate ?: "—"
     val dur = rec.durationLabel ?: rec.durationMin?.let { "${it}分钟" } ?: "时长待补"
-    val crossTag = if (crossDay) "（跨日）" else ""
+    // D2/D3：隔天未绑标红提醒；超 7 天直接明示不可绑
+    val crossTag = when {
+        beyond7 -> "（超7天不可绑）"
+        crossDay -> "（隔天未绑）"
+        else -> ""
+    }
     return "$date$crossTag · $dur · 未绑定"
+}
+
+/** 今天（yyyy-MM-dd，本地时区）。 */
+private fun todayStr(): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+
+/** 绑定窗口下限：今天-7 天（与服务端"补登只能选最近7天"同口径）。 */
+private fun minBindDayStr(): String {
+    val cal = java.util.Calendar.getInstance()
+    cal.add(java.util.Calendar.DAY_OF_YEAR, -7)
+    return java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(cal.time)
 }
 
 private fun secToLabel(sec: Int): String {

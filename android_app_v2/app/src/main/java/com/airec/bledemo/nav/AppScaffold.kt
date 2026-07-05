@@ -77,6 +77,7 @@ import com.airec.bledemo.ui.reminders.RemindersScreen
 import com.airec.bledemo.ui.report.ReportScreen
 import com.airec.bledemo.ui.session.SessionPreviewScreen
 import com.airec.bledemo.ui.settings.SettingsScreen
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -110,13 +111,34 @@ private const val TAB_COUNT = 4
  *
  * @param navController 可注入（测试/深链）；默认内部 [rememberNavController]。
  * @param startDestination 起点路由。未登录传 [Routes.Login]，已登录传 [Routes.Gate]（再按角色分流）。
+ * @param deepLink F1：通知深链（"reminders"=打开提醒页）。冷启/热点通知都由 MeiliActivity 递进来。
+ * @param onDeepLinkConsumed 深链导航执行（或放弃）后回执，避免重组重复导航。
  */
 @Composable
 fun AppScaffold(
     modifier: Modifier = Modifier,
     navController: NavHostController = rememberNavController(),
     startDestination: String = Routes.Main,
+    deepLink: String? = null,
+    onDeepLinkConsumed: () -> Unit = {},
 ) {
+    // F1：消费通知深链——等鉴权壳就绪（离开 Login/Gate）再跳提醒页；未登录 10s 内没就绪就放弃
+    //（用户先去登录，红点/提醒页自己会引导）。发送侧 ReminderNotifier 塞的 open=reminders 至此接通。
+    androidx.compose.runtime.LaunchedEffect(deepLink) {
+        if (deepLink == "reminders") {
+            val ready = kotlinx.coroutines.withTimeoutOrNull(10_000) {
+                navController.currentBackStackEntryFlow.first {
+                    it.destination.route != Routes.Login && it.destination.route != Routes.Gate
+                }
+            }
+            if (ready != null && navController.currentDestination?.route != Routes.Reminders) {
+                navController.navigate(Routes.Reminders) { launchSingleTop = true }
+            }
+            onDeepLinkConsumed()
+        } else if (deepLink != null) {
+            onDeepLinkConsumed()
+        }
+    }
     AppNavHost(
         navController = navController,
         startDestination = startDestination,
