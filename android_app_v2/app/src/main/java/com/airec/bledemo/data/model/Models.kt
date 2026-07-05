@@ -237,6 +237,8 @@ data class PreviewRecording(
     @Json(name = "speaker_confirmed") val speakerConfirmed: Int? = null,
     @Json(name = "created_at") val createdAt: String? = null,
     @Json(name = "audio_url") val audioUrl: String? = null,
+    // G8(批次六)：bind-before-upload 的占位段（processing）——显示"同步中"、不可试听
+    @Json(name = "upload_status") val uploadStatus: String? = null,
     @Json(name = "pending_rebind_request_id") val pendingRebindRequestId: Long? = null,
 )
 

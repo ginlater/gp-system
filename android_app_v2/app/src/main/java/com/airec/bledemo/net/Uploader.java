@@ -204,8 +204,15 @@ public final class Uploader {
                     return new Result(false, -1, "上传响应异常，稍后自动重试", true);
                 }
             }
-            if (code == 401 || code == 403) {
+            if (code == 401) {
                 return new Result(false, -1, "登录已失效，请在 App 里重新登录");  // 永久(重试也没用，需重登)
+            }
+            if (code == 403) {
+                // B7(批次六):403≠登录失效——权限被关等场景,透传服务端原话按永久失败处理,
+                // 不再触发无效重登+每2分钟整文件白传的无限重试
+                String msg = "无权限，已停止重试";
+                try { msg = new JSONObject(body).optString("error", msg); } catch (Exception ignore) {}
+                return new Result(false, -1, msg);
             }
             // 5xx=服务器临时故障→可重试；4xx=请求被拒(永久)
             return new Result(false, -1, "服务器返回 " + code, code >= 500);

@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.airec.bledemo.data.model.Scoring
 import com.airec.bledemo.data.model.ScoringStage
@@ -128,11 +129,15 @@ fun ReportScreen(
 
     // 任务执行状态：进报告后每 15s 静默轮询刷新（对齐 report.html setInterval(loadTaskStatus,15000)）。
     // D5：同时静默重拉会话详情——分析完成后状态 pill / 报告内容就地更新，不用退出重进。
+    // G7(批次六)：随生命周期暂停——压后台/锁屏不再每 15s 白打两个接口。
+    val reportPollOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(15_000)
-            viewModel.loadTasks()
-            viewModel.refreshDetailSilently()
+        reportPollOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                kotlinx.coroutines.delay(15_000)
+                viewModel.loadTasks()
+                viewModel.refreshDetailSilently()
+            }
         }
     }
 
@@ -322,7 +327,10 @@ private fun ReportContent(
                     }
                     // 重新分析=小文字按钮；删除=垃圾桶图标按钮（无文字）。
                     // 删除审批中时把垃圾桶撤下，改在下方整条「删除审批中·撤销」蜜色条。
-                    GhostButton("重新分析", onReanalyze, size = MeiliButtonSize.Xs, enabled = !state.reanalyzing)
+                    // G3(批次六)：0 片段时藏起"重新分析"（必然失败）
+                    if (hasRecordings) {
+                        GhostButton("重新分析", onReanalyze, size = MeiliButtonSize.Xs, enabled = !state.reanalyzing)
+                    }
                     if (!deletePending) {
                         TopBarIconButton(MeiliIcons.Trash, onRequestDelete)
                     }
@@ -452,13 +460,24 @@ private fun ReportEmptyState(state: ReportUiState, onReanalyze: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Text(
-                        "本次陪伴还没有生成分析报告。",
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MeiliPalette.Ink2,
-                        textAlign = TextAlign.Center,
-                    )
-                    PrimaryButton("立即分析", onReanalyze, icon = MeiliIcons.Spark, enabled = !state.reanalyzing, modifier = Modifier.fillMaxWidth())
+                    if (state.recordings.isEmpty()) {
+                        // G3(批次六)：0 片段空壳——分析必然失败(服务端也已加守卫)，不给"立即分析"，
+                        // 引导删除(服务端对空壳已改免审批直删)
+                        Text(
+                            "本次接诊已没有陪伴片段（可能已被退回或换绑）。如不需要，点右上角垃圾桶可直接删除。",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MeiliPalette.Ink2,
+                            textAlign = TextAlign.Center,
+                        )
+                    } else {
+                        Text(
+                            "本次陪伴还没有生成分析报告。",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MeiliPalette.Ink2,
+                            textAlign = TextAlign.Center,
+                        )
+                        PrimaryButton("立即分析", onReanalyze, icon = MeiliIcons.Spark, enabled = !state.reanalyzing, modifier = Modifier.fillMaxWidth())
+                    }
                 }
             }
         }

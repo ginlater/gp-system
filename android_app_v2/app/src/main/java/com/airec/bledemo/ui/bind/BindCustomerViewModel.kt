@@ -148,8 +148,30 @@ class BindCustomerViewModel(
                             )
                         }
                     } else {
-                        // 不在未归档池 → 已绑定，进入换绑/退回流程
-                        _state.update { it.copy(booting = false, mode = Mode.Rebinding) }
+                        // C7(批次六)：不在待整理 ≠ 一定已绑定——段可能已被删除。用 rebind_candidates
+                        // 的 current_customer_id 确认真实归属；确认不了给明话，不再渲染空白换绑界面。
+                        when (val c = repo.rebindCandidates(rid = recordingId, q = null)) {
+                            is ApiResult.Success -> {
+                                if (c.data.currentCustomerId != null) {
+                                    _state.update {
+                                        it.copy(
+                                            booting = false, mode = Mode.Rebinding,
+                                            currentCustomerId = c.data.currentCustomerId,
+                                            serviceDate = c.data.serviceDate ?: it.serviceDate,
+                                        )
+                                    }
+                                } else {
+                                    _state.update {
+                                        it.copy(booting = false, bootError = "这段陪伴已不存在（可能已被删除或已处理），请返回刷新列表")
+                                    }
+                                    return@launch
+                                }
+                            }
+                            is ApiResult.Failure -> {
+                                _state.update { it.copy(booting = false, bootError = c.message) }
+                                return@launch
+                            }
+                        }
                     }
                     loadPicks() // 两种模式都要选人列表
                 }
@@ -198,6 +220,12 @@ class BindCustomerViewModel(
 
             // 1) 搜索候选（rebind_candidates 同时给 service_date / in_day / current_customer_id）
             val candResult = repo.rebindCandidates(rid = recordingId, q = q)
+            // C8(批次六)：候选接口失败不再与接诊名单"半合成"渲染——那会让 D9 排除本人与
+            // 超7天红条双双失效。失败整体报错，用户可重试。
+            if (candResult is ApiResult.Failure) {
+                _state.update { it.copy(searching = false, error = candResult.message) }
+                return@launch
+            }
             val candidates = (candResult as? ApiResult.Success)?.data?.items ?: emptyList()
             val svcDate = (candResult as? ApiResult.Success)?.data?.serviceDate
             // D9：已绑定段服务端回当前所属顾客 id → 候选列表排除本人（换给自己白作废原报告）

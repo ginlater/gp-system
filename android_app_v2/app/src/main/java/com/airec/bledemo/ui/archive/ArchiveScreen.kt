@@ -479,12 +479,15 @@ private fun ReportScore(row: SessionRow) {
 /** 综合分整数显示：四舍五入取整（mockup 用整数 86/79；overall 为 0–10/0–100 皆按原值取整）。 */
 private fun formatScore(score: Double): String = Math.round(score).toString()
 
-/** 分析状态 → (文案, pill 色)。对齐 web fmtStatus。 */
+/** 分析状态 → (文案, pill 色)。批次六G4/G5/G6：outdated/cancelled/stuck 各说各话，与接诊/报告页口径统一。 */
 private fun analysisStatusPill(row: SessionRow): Pair<String, PillKind> = when (row.displayStatus) {
     "done" -> "已完成" to PillKind.Ok
     "running" -> "分析中" to PillKind.Run
     "queued" -> "排队中" to PillKind.Run
-    "failed", "stuck", "cancelled" -> "失败" to PillKind.Danger
+    "failed" -> "失败" to PillKind.Danger
+    "stuck" -> "中断，可重试" to PillKind.Warn
+    "cancelled" -> "已中断分析" to PillKind.Warn
+    "outdated" -> "报告已过期" to PillKind.Warn
     else -> "未分析" to PillKind.Neutral
 }
 

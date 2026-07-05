@@ -5262,8 +5262,10 @@ _DISPLAY_BUCKETS = ("running", "queued", "done", "failed", "stuck", "idle")
 
 
 def _status_bucket(status, progress, has_result):
-    """Python 端：把 (analysis_status, progress, 是否有结果) 映射到 6 个展示桶。"""
-    if status in ("done", "failed", "running", "queued"):
+    """Python 端：把 (analysis_status, progress, 是否有结果) 映射到 8 个展示桶。
+    批次六G4：补 outdated/cancelled——原来双双落 idle，客户端 D6"报告已过期"横幅
+    永不显示、D7"已中断"永远走不到（displayStatus 恒非空盖住 raw status）。"""
+    if status in ("done", "failed", "running", "queued", "outdated", "cancelled"):
         return status
     if status == "pending" and (progress or has_result):
         return "stuck"
@@ -5279,6 +5281,8 @@ def _status_bucket_sql(prefix="s."):
         f"WHEN {p}analysis_status='failed'  THEN 'failed' "
         f"WHEN {p}analysis_status='running' THEN 'running' "
         f"WHEN {p}analysis_status='queued'  THEN 'queued' "
+        f"WHEN {p}analysis_status='outdated'  THEN 'outdated' "
+        f"WHEN {p}analysis_status='cancelled' THEN 'cancelled' "
         f"WHEN {p}analysis_status='pending' AND ("
         f"  ({p}analysis_progress IS NOT NULL AND {p}analysis_progress<>'')"
         f"  OR ({p}analysis_result IS NOT NULL AND {p}analysis_result<>'')"
@@ -5383,6 +5387,9 @@ def api_sessions():
             placeholders = ",".join(["?"] * len(wanted))
             where.append(f"({_status_bucket_sql('s.')}) IN ({placeholders})")
             params.extend(wanted)
+    # 批次六G2：非今日且 0 录音的空壳 session(解绑/换绑/删除移空的遗留)不进列表——对它的一切
+    # 操作都是必然失败/误导(李雪雪案)。当日空壳保留(今日接诊"待绑定"流程依赖)。
+    where.append("(s.service_date = date('now','localtime') OR EXISTS(SELECT 1 FROM recordings r2 WHERE r2.session_id = s.id))")
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
     total_row = db_fetchone(
@@ -5862,11 +5869,26 @@ def api_recording_delete_request(rid):
         return jsonify({"error": "管理员请直接删除"}), 400
     if rec["company_id"] != session.get("company_id"):
         return jsonify({"error": "无权操作"}), 403
+    # 批次六C5①属主闸：原来只查公司——同公司任一顾问拿到 rid 就能免审批硬删同事的录音(不可恢复)
+    if rec["uploader_user_id"] and rec["uploader_user_id"] != session.get("user_id"):
+        return jsonify({"error": "无权删除他人录音"}), 403
+    # 批次六C5②锁定闸：所在接诊包正在分析时不许删(preview_remove 有这闸,删除原来没有)
+    if rec["session_id"]:
+        _s = db_fetchone("SELECT locked, analysis_status FROM sessions WHERE id=?", (rec["session_id"],))
+        if _s and (_s["locked"] or _s["analysis_status"] in ("running", "queued")):
+            return jsonify({"error": "该接诊包正在分析中，请先取消分析再删除"}), 409
     # 免审批：时长可解析且 <5 分钟 → 直接删
     secs = _duration_label_seconds(rec["duration_label"])
     if secs is not None and secs < FREE_DELETE_MAX_SEC:
         sid_of = rec["session_id"]
         _hard_delete_recording(rec)
+        # 批次六C5③作废闸：从已出报告的接诊包里删掉一段后,原 done 报告必须标 outdated
+        # (unbind/换绑/preview_remove 都会标,唯独删除原来不标)
+        if sid_of:
+            try:
+                _invalidate_session_after_recording_removed(sid_of)
+            except Exception:
+                pass
         _clear_session_if_empty(sid_of)
         return jsonify({"ok": True, "deleted": True})
     existing = db_fetchone(
@@ -6075,10 +6097,26 @@ def api_session_delete_request(sid):
         return jsonify({"error": "管理员请直接删除"}), 400
     recs = db_fetchall("SELECT id, session_id, company_id, oss_key, duration_label, uploader_user_id, pen_file, recorded_at FROM recordings WHERE session_id=?", (sid,))
     if not recs:
-        return jsonify({"error": "该接诊没有录音"}), 404
+        # 批次六G3：0 录音的空壳 session（解绑/换绑移空的遗留）——原来回 404，顾问端"既免审删
+        # 不了、审批也提交不了"完全无出口(李雪雪案)。空壳没有任何内容,直接删、免审批。
+        srow = db_fetchone("SELECT id, company_id FROM sessions WHERE id=?", (sid,))
+        if not srow:
+            return jsonify({"error": "接诊不存在"}), 404
+        if srow["company_id"] != session.get("company_id"):
+            return jsonify({"error": "无权操作"}), 403
+        _purge_session_derived(sid)
+        db_write("DELETE FROM sessions WHERE id=?", (sid,))
+        return jsonify({"ok": True, "deleted": True})
     for r in recs:
         if r["company_id"] != session.get("company_id"):
             return jsonify({"error": "无权操作"}), 403
+        # 批次六C5①属主闸（session 级同录音级）
+        if r["uploader_user_id"] and r["uploader_user_id"] != session.get("user_id"):
+            return jsonify({"error": "无权删除他人录音"}), 403
+    # 批次六C5②锁定闸
+    _s = db_fetchone("SELECT locked, analysis_status FROM sessions WHERE id=?", (sid,))
+    if _s and (_s["locked"] or _s["analysis_status"] in ("running", "queued")):
+        return jsonify({"error": "该接诊包正在分析中，请先取消分析再删除"}), 409
     # 免审批：所有录音时长都可解析且总时长 <5 分钟 → 直接彻底删除整次接诊（录音+评价+标签+接诊记录）
     secs_list = [_duration_label_seconds(r["duration_label"]) for r in recs]
     if all(s is not None for s in secs_list) and sum(secs_list) < FREE_DELETE_MAX_SEC:
@@ -6297,6 +6335,11 @@ def api_session_analyze(sid):
     sess = db_fetchone("SELECT id, analysis_status, analysis_started_at FROM sessions WHERE id=?", (sid,))
     if not sess:
         return jsonify({"error": "not found"}), 404
+    # 批次六G1：0 录音守卫——空壳 session 点"重新分析"原来被写成永久 pending"排队中"(→stuck→档案显"失败"),
+    # toast 却报"正在排队"(李雪雪案实测路径)。对齐 start_analysis 的守卫。
+    _rc = db_fetchone("SELECT count(*) AS n FROM recordings WHERE session_id=?", (sid,))
+    if not _rc or _rc["n"] == 0:
+        return jsonify({"error": "接诊包内没有录音，无法分析"}), 400
     # 批次二 C1:防重——进行中再点会双跑双烧钱(顾问端有守卫,这里补齐)。
     # queued 但 started_at 为空 = "等转写"态,放行(下面 C8 分支会重置它,不会双跑)。
     if sess["analysis_status"] == "running" or (
@@ -10133,9 +10176,17 @@ def api_consultant_placeholder_cancel():
         "SELECT id, uploader_user_id, upload_status, session_id FROM recordings WHERE id=?",
         (pid,),
     )
-    if row and row["uploader_user_id"] == u["id"] and row["upload_status"] == "processing" \
-            and row["session_id"] is None:
+    if row and row["uploader_user_id"] == u["id"] and row["upload_status"] == "processing":
+        # 批次六G8：已绑定的超时占位也允许本人取消——原来只删未绑的，bind-before-upload 的占位
+        # 上传终败后成"接诊包里的永挂僵尸"(开始分析永远'转写中剩1段')，顾问无任何出口。
+        sid_of = row["session_id"]
         db_write("DELETE FROM recordings WHERE id=?", (row["id"],))
+        if sid_of:
+            try:
+                _invalidate_session_after_recording_removed(sid_of)
+            except Exception:
+                pass
+            _clear_session_if_empty(sid_of)
         return jsonify({"ok": True})
     return jsonify({"ok": False})
 
@@ -10927,11 +10978,9 @@ def api_consultant_direct_rebind(rid):
         (u["id"], to_customer_id, rec_date),
     )
     if not dr:
-        # 放宽：不直接报错。仅当目标属于【本人接待过的客人】才自动补登进当天接诊（算一次接诊）。
-        # 完全陌生（从没本人接待过）则拒绝，保留风控。
-        cand_ids = _advisor_received_customer_ids(u["id"], advisor, cid)
-        if to_customer_id not in cand_ids:
-            return jsonify({"error": "只能换绑到您本人接待过的客人；该客人不在您的接待记录里，请改用“新增客人”"}), 400
+        # 批次六C4：放宽为【同公司客户即自动补登】——候选搜索 2026-07-03 已放开到全公司客户库，
+        # 这里还卡"本人接待过"会让搜到的顾客必失败(D1删预补登后无路可走)、逼用户重复建档；
+        # 换绑本就写审计(rebind_requests)且 to_cust 已验证同公司,风控足够。
         db_write(
             """INSERT OR IGNORE INTO daily_reception
                (company_id, advisor_user_id, advisor_name, customer_id, service_date, store_id)
@@ -10943,6 +10992,13 @@ def api_consultant_direct_rebind(rid):
     new_sid = get_or_create_session(advisor, to_cust["name"], rec_date, company_id=cid, customer_id=to_customer_id)
     if not new_sid:
         return jsonify({"error": "创建目标接诊包失败"}), 500
+    # 批次六C6：目标/原接诊包正在分析时不许塞入/拽出——原来能把段塞进 running 的包(报告不含新段
+    # 又不标过期)。bind/admin rebind 都有这闸,顾问 direct_rebind 原来没有。
+    _tgt = db_fetchone("SELECT analysis_status FROM sessions WHERE id=?", (new_sid,))
+    if _tgt and _tgt["analysis_status"] in ("running", "queued"):
+        return jsonify({"error": "目标顾客的接诊包正在分析中，请等分析完成后再换绑"}), 409
+    if old_sess and old_sess["analysis_status"] in ("running", "queued"):
+        return jsonify({"error": "该接诊包正在分析中，请先取消分析再换绑"}), 409
     try:
         new_key, old_key_to_del = _maybe_rename_consultant_oss(rec, to_cust["name"], advisor)
     except Exception as e:
@@ -11171,6 +11227,11 @@ def api_consultant_recording_unbind(rid):
         return jsonify({"error": "无权操作他人录音"}), 403
     if _has_pending_delete_request(rid):
         return jsonify({"error": "该录音正在申请删除，请先撤回删除申请再操作"}), 409
+    # 批次六C6：正在分析的接诊包不许拽出录音（原来能拽出 running 的包且不标过期）
+    if rec["session_id"]:
+        _os = db_fetchone("SELECT analysis_status FROM sessions WHERE id=?", (rec["session_id"],))
+        if _os and _os["analysis_status"] in ("running", "queued"):
+            return jsonify({"error": "该接诊包正在分析中，请先取消分析再退回"}), 409
     if not rec["session_id"]:
         return jsonify({"error": "该录音本来就未归档"}), 400
     old_sess = db_fetchone("SELECT * FROM sessions WHERE id=?", (rec["session_id"],))
@@ -12415,13 +12476,19 @@ def api_consultant_session_preview():
     bound = []
     if sess:
         rows = db_fetchall(
-            """SELECT id, oss_key, recorded_at, duration_label,
+            """SELECT id, oss_key, recorded_at, duration_label, upload_status,
                       asr_status, asr_error, asr_speaker_count, asr_speaker_warning, speaker_confirmed
                FROM recordings WHERE session_id=? ORDER BY COALESCE(recorded_at,''), id""",
             (sess["id"],),
         )
         for r in rows:
             d = dict(r)
+            # 批次六G8：先绑后传的占位段(processing)不再"伪装成正常段"——回 upload_status 供客户端
+            # 显示"同步中"，且不给假 key 签试听地址(点了必失败)
+            if d.get("upload_status") == "processing":
+                d["audio_url"] = None
+                bound.append(d)
+                continue
             try:
                 d["audio_url"] = oss_signed_url(d["oss_key"], expires=3600)
             except Exception:

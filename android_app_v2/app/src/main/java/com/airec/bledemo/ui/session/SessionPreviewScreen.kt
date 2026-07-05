@@ -558,9 +558,14 @@ private fun BoundRecordingCard(
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            AsrPill(rec.asrStatus, rec.asrError)
-            // 行内播放钮：跟时长/识别状态并排，点了才在下方展开进度条
-            com.airec.bledemo.ui.pending.PreviewPlayDot(audio)
+            if (rec.uploadStatus == "processing") {
+                // G8(批次六)：先绑后传的占位段——明示"同步中"，不给播放钮（假key试听必失败）
+                StatusPill(text = "同步中", kind = PillKind.Run, icon = MeiliIcons.Sync)
+            } else {
+                AsrPill(rec.asrStatus, rec.asrError)
+                // 行内播放钮：跟时长/识别状态并排，点了才在下方展开进度条
+                com.airec.bledemo.ui.pending.PreviewPlayDot(audio)
+            }
         }
 
         // 换绑审批中（后端已有 pending 换绑申请）→ 只读提示，不再叠加换绑动作

@@ -140,6 +140,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private volatile long lastOrphanProbeMs = 0;
     // A4(复审):断线重连宽限期(UI"录音继续中")——期间 RCI 的一致性看门狗不得把状态拉回 Idle
     private volatile long reconnectGraceUntilMs = 0;
+    // A8(批次六):手动连接闸门——connectTo 后 10s 内重连 tick 不得插入扫描打断
+    private volatile long manualConnectUntilMs = 0;
     private volatile boolean appInitiatedPauseResume = false;
 
     // ★镜像状态
@@ -198,6 +200,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         volatile boolean phAttemptDone = true;
         // B2(复审):任务已被放弃——占位迟到时不再回填,直接取消,防孤儿占位永挂"同步中"
         volatile boolean dropped = false;
+        // A11(批次六):任务创建时连着的那支笔——双笔换连后,别的笔的列表不计放弃轮次
+        volatile String penMac = null;
         volatile boolean truncatedFlag = false; // A2:诚实"可能不完整"标记,上传带 truncated=1
         volatile String localRawPath = null;   // 非空=本地已有完整裸帧文件，打包直传（不占蓝牙）
         volatile int uploadAttempts = 0;
@@ -331,6 +335,11 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         return verifiedConnected && linkUp && (SystemClock.elapsedRealtime() - lastRxMs) < STALE_RX_MS;
     }
 
+    /** A10(批次六)：链路级在线（不含回包新鲜度）——开录入口用它，单次心跳丢包不再误弹扫描页。 */
+    public boolean isLinkUp() {
+        return linkUp;
+    }
+
     /** 杰理版遗留语义：让回调指向本控制器。PNote 监听在 init 时已固定为本实例，这里只确保单例指向。 */
     public void activate() { sInstance = this; }
 
@@ -442,6 +451,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (btReady()) { try { PNote.closeConnect(); } catch (Throwable ignore) {} }
         }
         penLog("connectTo " + name + " " + address);
+        manualConnectUntilMs = SystemClock.elapsedRealtime() + 10000;   // A8:10s连接闸门,重连tick别插扫描打断
         final String n = name == null ? "" : name;
         bleCmd("connectDevice", () -> PNote.connectDevice(n, address));
     }
@@ -450,6 +460,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     public void autoConnect(String savedMac) {
         if (savedMac == null || savedMac.isEmpty()) return;
         if (linkUp || autoConnectMac != null) return;
+        // A8(批次六):手动连接进行中(10s闸门),重连tick别在半途插入扫描/连接把它打断
+        if (SystemClock.elapsedRealtime() < manualConnectUntilMs) return;
         // B9:缺蓝牙权限时扫描/连接都会 SecurityException 空转,首页永远"未连接"且无提示——早退不空转
         if (!hasBtScanPerm() || !hasBtConnectPerm()) {
             penLog("★自动重连缺蓝牙权限(BLUETOOTH_SCAN/CONNECT),跳过(需用户授权)");
@@ -1002,6 +1014,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         } else if (localRaw != null) {
             final UploadTask task = new UploadTask(fn != null ? fn : ("stream_" + startWallMs),
                     cookie, uploadUrl, penSn(), durSec, startWallMs, appInit);
+            task.penMac = currentMac;   // A11
             task.localRawPath = localRaw;
             // A2:闸门放行(est≥0.95dur)但仍略短于墙钟 → 标"可能不全",服务端记note、机身完整版可自动替换
             if (estStreamSec < durSec) task.truncatedFlag = true;
@@ -1010,6 +1023,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             enqueuePlaceholderAndKick(task, startWallMs, 300);
         } else if (fn != null && haveCtx && shouldEnqueue(fn)) {
             final UploadTask task = new UploadTask(fn, cookie, uploadUrl, penSn(), durSec, startWallMs, appInit);
+            task.penMac = currentMac;   // A11
             task.firstSeenMs = System.currentTimeMillis();
             uploadQueue.add(task);
             Log.d(TAG, "入队后台下载补全 file=" + fn + "(流不完整) 队列=" + uploadQueue.size());
@@ -1359,6 +1373,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             enableAutoReconnect();
             verifiedConnected = false;
             lastRxMs = 0;
+            manualConnectUntilMs = 0;   // A8:真连上,释放手动连接闸门
             // 手册：连接成功后延时约 2 秒等通道稳定再下发初始化指令
             main.postDelayed(() -> {
                 if (!linkUp || !btReady()) return;
@@ -1368,6 +1383,15 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 try { PNote.getRecordState(); } catch (Throwable ignore) {}  // 连上时笔可能已在录
                 try { PNote.sendAppShowState(1); } catch (Throwable ignore) {}
             }, 2000);
+            // A7(批次六):对齐iOS——+5s 仍未收到真回包,补发一轮(首批命令在通道未稳时会整批丢,
+            // 原来只能干等 7s 握手超时判假连接重来,放大"容易断"体感)
+            main.postDelayed(() -> {
+                if (linkUp && !verifiedConnected && btReady()) {
+                    penLog("★+5s未验证,补发一轮初始化命令");
+                    try { PNote.getRecordState(); } catch (Throwable ignore) {}
+                    try { PNote.getSn(); } catch (Throwable ignore) {}
+                }
+            }, 5000);
             main.removeCallbacks(handshakeTimeout);
             main.postDelayed(handshakeTimeout, HANDSHAKE_TIMEOUT_MS);
             // 连上空闲后清理笔上 >30天 旧文件（同杰理版节奏）
@@ -1433,6 +1457,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 autoStoppedAt90 = false;   // 新一段开始 → 重置90分钟自动结束标记
                 penPaused = false;
                 resetPauseClock();   // F13:新段清零暂停账
+                lastPenDurationSec = 0;   // A9:清上段残值(断链复位不清它,笔键新段会显示旧时长)
                 pauseWorker();
                 startStreamCapture();
                 startRecordDurationPoll();
@@ -1455,11 +1480,15 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 if (!TextUtils.isEmpty(sessionFileName) && !fileName.equals(sessionFileName)) {
                     // B6:上段停止帧丢失,笔已开新段(文件名变)→先按旧名收尾旧段,防两段音频混进同一流buffer
                     penLog("★新段文件名≠旧(" + sessionFileName + "→" + fileName + ")→收尾旧段再开新段");
+                    // B5(批次六):停止帧丢到新cmd3到达之间,新段的帧已写进旧段buffer(旧段尾混入下段开头)
+                    // ——旧段流标不完整,一律走补下载拿机身干净版,不直传混了音的buffer
+                    sessionStreamComplete = false;
                     finishSessionEnqueue(sessionFileName, elapsedSec(), sessionStartWallMs);
                     penRecording = true; sessionActive = true; sessionAdopted = false;
                     enterRecordingKeepAlive(); sessionAppInitiated = false; sessionGen++; failedCount = 0;
                     sessionFileName = fileName; sessionStartWallMs = System.currentTimeMillis();
                     startElapsedMs = SystemClock.elapsedRealtime(); autoStoppedAt90 = false; penPaused = false;
+                    lastPenDurationSec = 0;   // A9:清上段残值,防新段时长虚报/被90分钟闸秒停
                     resetPauseClock();   // F13
                     startStreamCapture(); startRecordDurationPoll(); saveActiveSession(fileName, sessionStartWallMs);
                     post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
@@ -1470,6 +1499,12 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 }
             }
         } else if ("2".equals(rs)) {
+            // A6(批次六):无会话的暂停上报=幽灵(时钟漂移旧文件被忽略后用户按了暂停键)——
+            // 不置 penRecording,否则 isRecording() 恒真:假"录音中"UI+心跳永驻忙态+下载全停
+            if (!sessionActive) {
+                penLog("忽略无会话的暂停上报(幽灵)");
+                return;
+            }
             // 笔上报暂停
             penRecording = true;
             markPauseStart();   // F13:App发起时 pause() 已记过(幂等),笔上按键暂停在这记
@@ -1531,6 +1566,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             sessionFileName = null;
             sessionStartWallMs = 0;   // 更早开始的，不做旧文件拒收
             if (startElapsedMs == 0) { startElapsedMs = SystemClock.elapsedRealtime(); resetPauseClock(); }   // F13
+            autoStoppedAt90 = false;   // A9:接管段恢复90分钟保护(上段自动停的残值)
             pauseWorker();
             startStreamCapture();
             startRecordDurationPoll();
@@ -1644,7 +1680,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 // 整份列表(非空)收齐仍没这个名字、且已连试好几轮 → 文件不在笔上(疑时钟偏移命名不符)，
                 // 直接放弃别再死等 2h；workerTaskFailed(drop) 会取消占位 + persist 移除，重启不再复活。
                 boolean penGaveRealList = files != null && !files.isEmpty();
-                if (penGaveRealList && task.downloadRequeues >= ABSENT_FROM_LIST_GIVEUP) {
+                // A11(批次六)：列表来自"另一支笔"时不计放弃轮次——双笔换连后 3 轮找不到就删占位太冤,
+                // 音频还在原笔上。归属笔回来(或手动同步)自然续。
+                if (penGaveRealList && task.penMac != null && currentMac != null
+                        && !task.penMac.equalsIgnoreCase(currentMac)) {
+                    penLog("★列表来自另一支笔(" + currentMac + "≠归属" + task.penMac + "),不计放弃轮次 " + task.fileName);
+                    requeueDownloadTask(task, "非归属笔在连");
+                } else if (penGaveRealList && task.downloadRequeues >= ABSENT_FROM_LIST_GIVEUP) {
                     penLog("★文件名不在笔列表(疑时钟偏移),放弃补传并取消占位,可从陪伴笔同步重导 " + task.fileName);
                     workerTaskFailed(task, "文件不在笔列表(疑时钟偏移)", true);
                 } else {
@@ -1917,8 +1959,12 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             final long now = System.currentTimeMillis();
             final boolean penBusy = (penRecording || sessionActive || appStartPending);
             UploadTask chosen = null;
-            for (UploadTask t : uploadQueue) {
-                if (t != null && t != inflightTask && t.localRawPath != null) { chosen = t; break; }
+            // H4(批次六):没网时不选直传任务——原来断网也每≤2分钟"打包→连接失败"一轮,
+            // 唤醒锁连烧3小时上耗电榜。网络恢复由进程级回调(C6)立刻kick,不会漏。
+            if (hasNetwork()) {
+                for (UploadTask t : uploadQueue) {
+                    if (t != null && t != inflightTask && t.localRawPath != null) { chosen = t; break; }
+                }
             }
             long earliestRetry = Long.MAX_VALUE;
             if (chosen == null && !penBusy && linkUp) {
@@ -2033,6 +2079,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (drop) {
                 task.dropped = true;   // B2:占位请求还在路上时,回调按此标记直接取消,不留孤儿
                 uploadQueue.remove(task);
+                // B6(批次六):放弃的段若还是 prefs 里的"活动会话"→一并清掉,否则每次冷启动
+                // loadPendingQueue 又把它捞回来复活,失败→放弃→重启→复活无限循环
+                try {
+                    String af = appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
+                            .getString("active_session_file", "");
+                    if (task.fileName != null && task.fileName.equals(af) && !sessionActive) clearActiveSession();
+                } catch (Exception ignore) {}
                 try { partFileFor(task.fileName).delete(); } catch (Exception ignore) {}  // A5:放弃删.part,防脏断点污染同名新录音
                 // ★放弃必须落盘:否则 pending_dl 里还留着这条,下次启动 loadPendingQueue 又把它捞回来重试,
                 //   给不掉的"幽灵"任务会让首页"N段后台同步中"永远清不掉(跨重启复活)。
@@ -2125,6 +2178,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (fts > 0 && (System.currentTimeMillis() - fts) > 7L * 24 * 3600 * 1000) continue;
             long startMs = parseFileTimestamp(f.name);
             UploadTask t = new UploadTask(f.name, cookie, uploadUrl, penSn(), f.timeSec, startMs, true);
+            t.penMac = currentMac;   // A11
             t.firstSeenMs = System.currentTimeMillis();
             uploadQueue.add(t);
             added.add(t);
@@ -2328,6 +2382,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (isQueuedByName(name)) continue;
             long startMs = parseFileTimestamp(name);
             UploadTask t = new UploadTask(name, cookie, uploadUrl, penSn(), 0, startMs, false);
+            t.penMac = currentMac;   // A11
             t.firstSeenMs = System.currentTimeMillis();   // 手动重导=新任务，从现在重新计 2h
             uploadQueue.add(t);
             added.add(t);
@@ -2524,6 +2579,17 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     }
 
     // ============ 工具 ============
+
+    /** H4(批次六)：当前是否有活动网络（断网时不空转直传，省唤醒锁）。查询失败按有网处理（fail-open）。 */
+    private boolean hasNetwork() {
+        try {
+            android.net.ConnectivityManager cm =
+                    (android.net.ConnectivityManager) appCtx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            return cm == null || cm.getActiveNetwork() != null;
+        } catch (Exception e) {
+            return true;
+        }
+    }
 
     private static String placeholderUrlFrom(String uploadUrl) {
         if (uploadUrl == null) return null;

@@ -96,10 +96,29 @@ public class PenKeepAliveService extends Service {
         else if (ACTION_REC_OFF.equals(action))  recHold = false;
         else if (ACTION_CONN_ON.equals(action))  connHold = true;
         else if (ACTION_CONN_OFF.equals(action)) connHold = false;
-        else if (action == null)                 connHold = true;   // 系统 STICKY 重启拉起：先当连接级保活，等下次真实事件校正
+        else if (action == null) {
+            // 系统 STICKY 重启拉起：先当连接级保活。H5(批次六)：加 10 分钟确认窗——笔关机/不在店时
+            // 没有任何真实事件来校正，原来"保持连接中"通知空挂满 3 小时白耗电,还引导用户去限制 App。
+            connHold = true;
+            sawRealEventSinceRestart = false;
+            handler.removeCallbacks(restartConfirm);
+            handler.postDelayed(restartConfirm, 10 * 60 * 1000L);
+        }
+        if (action != null) sawRealEventSinceRestart = true;   // H5:任何真实事件即确认
         reconcile();
         return START_STICKY;
     }
+
+    // H5(批次六):STICKY 重启后的确认窗——10 分钟内没有任何真实事件(笔未回连)就自停,不空挂 3 小时
+    private volatile boolean sawRealEventSinceRestart = true;
+    private final Runnable restartConfirm = () -> {
+        if (!sawRealEventSinceRestart) {
+            Log.w(TAG, "STICKY 重启 10 分钟无真实事件（笔未回连）→ 自停，不再空挂保活");
+            recHold = false;
+            connHold = false;
+            stopSelfClean();
+        }
+    };
 
     /** 按当前两个持有重算：任一为真→挂前台(录音时再持锁)；都为假→停。 */
     private void reconcile() {
@@ -118,6 +137,12 @@ public class PenKeepAliveService extends Service {
 
     private void stopSelfClean() {
         handler.removeCallbacks(maxStop);
+        handler.removeCallbacks(restartConfirm);
+        // H3(批次六):maxStop 兜底自停也清 static 持有——原来留脏 recHold/connHold,之后任一 OFF 类
+        // 事件会按脏持有把 FGS+唤醒锁重新挂起(无人记账的"挂了不撤")。控制器侧 H1 已改"每次真发",
+        // 队列一有动静就能重挂,不会因此失联。
+        recHold = false;
+        connHold = false;
         releaseWakeLock();
         foreground = false;
         try { stopForeground(true); } catch (Exception ignored) {}

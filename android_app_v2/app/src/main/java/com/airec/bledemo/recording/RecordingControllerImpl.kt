@@ -304,6 +304,9 @@ class RecordingControllerImpl(
         // 错误文案走一次性事件流可靠弹出（不依赖 Idle.errorMessage 在去重的 _state 里存活）。
         if (busState == PhoneMicService.STATE_ERROR && !message.isNullOrBlank()) {
             _penEvents.tryEmit(message)
+            // B8(批次六)：手机麦异常收尾（麦被抢/录满90分钟/上传失败）只留了文件——25s 后
+            // 主动踢一次补传扫描（避开 20s"正在写"守卫），不用等用户回首页才补传。
+            mainHandler.postDelayed({ retryLeftoverPhoneMic() }, 25_000)
         }
         // 手机麦绑定提示：D12 停录建占位后 UPLOADING 即带占位 recId（录完立刻能绑，不等传完）；
         // 上传成功的 IDLE 也带 recId 兜底（占位失败降级时仍按老路弹）。
@@ -414,7 +417,9 @@ class RecordingControllerImpl(
                 // 笔未真连接 → 记下「连上后自动开录」意图、显示「正在连接陪伴笔…」(starting)、打开扫描连接页。
                 // 连上后由 onPenConnected(true)/onPenRecordStatus 兑现意图（对齐旧宿主 pendingRecordAfterConnect），
                 // 用户无需再点第二次。
-                if (!penController.isPenAlive()) {
+                // A10(批次六)：用 isLinkUp 而非 isPenAlive——单次心跳回包丢失(12~16s陈旧窗口)时
+                // isPenAlive 瞬时为假，会把实连的笔误判"未连接"弹扫描页（已连的笔不广播=死胡同）。
+                if (!penController.isLinkUp()) {
                     pendingStartAfterConnect = true
                     _state.value = RecordingState.Recording(
                         durationSec = 0,
@@ -588,7 +593,10 @@ class RecordingControllerImpl(
                     val upMime = if (f.name.endsWith(".aac")) "audio/aac" else "audio/mp4"
                     // D12：文件名里嵌的占位 id（rec_<ts>_p<pid>.aac）——补传带上它回填同一占位行，
                     // 不再新建重复行、"同步中"占位也能转正。
-                    val pid = Regex("_p(\\d+)\\.").find(f.name)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
+                    // B9(批次六)：文件名里没有 _p<pid>（rename 失败/被杀早）时查 prefs 映射兜底
+                    val pidPrefs = appCtx.getSharedPreferences("phone_mic_pids", Context.MODE_PRIVATE)
+                    val pid = Regex("_p(\\d+)\\.").find(f.name)?.groupValues?.get(1)?.toLongOrNull()
+                        ?: pidPrefs.getLong(f.name, -1L)
                     // B1(复审)：补传也带 source=phone（服务端按手机录音权限校验）
                     var r = Uploader.upload(f, durSec, ck, url, upName, upMime, null, pid, null, null, false, "phone")
                     // 手机麦补传遇 401：先用本地凭证自动重登一次，成功就用新 Cookie 立刻重传这一段。
@@ -606,7 +614,10 @@ class RecordingControllerImpl(
                         }
                     }
                     when {
-                        r.ok -> f.delete()
+                        r.ok -> {
+                            f.delete()
+                            runCatching { pidPrefs.edit().remove(f.name).apply() }   // B9:清映射
+                        }
                         !r.transientFail -> {
                             // 401/拒绝等永久失败（自动重登也没救回）：保留文件，提示后停止本轮。
                             _penEvents.tryEmit(r.error ?: "补传失败，请重新登录后重试")

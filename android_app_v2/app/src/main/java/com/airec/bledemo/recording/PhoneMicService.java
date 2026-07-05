@@ -183,6 +183,12 @@ public class PhoneMicService extends Service {
                             : uploadUrl.replace("/upload", "/placeholder");
                     pid = Uploader.createPlaceholder(cookie, phUrl, recStart, null, "phone");
                     if (pid > 0) {
+                        // B9(批次六):pid↔文件名映射先落 prefs——rename 失败/建占位到 rename 间被杀时,
+                        // 补传扫描仍能按映射回填同一占位行(上传成功后由扫描/成功路径清理)
+                        try {
+                            getSharedPreferences("phone_mic_pids", MODE_PRIVATE)
+                                    .edit().putLong(up.getName(), pid).apply();
+                        } catch (Exception ignore) {}
                         // 占位 id 嵌进文件名(rec_<ts>_p<pid>.aac)：上传中途被杀/失败后，补传扫描能带
                         // placeholder_id 回填同一占位行，不再新建重复行、占位也不会永挂"同步中"。
                         String newName = up.getName().replaceFirst("\\.(aac|m4a)$", "_p" + pid + ".$1");
