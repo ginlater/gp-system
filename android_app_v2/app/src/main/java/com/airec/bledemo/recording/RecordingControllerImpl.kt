@@ -186,7 +186,18 @@ class RecordingControllerImpl(
             // 连上后查到的笔真实录音状态——状态本身由 RecordingBus 驱动，这里无需重复改 _state。
             // ★笔在录（接管中途会话/笔自发）：来源必须切到 Pen——进程重启后 currentSource 默认手机麦，
             //   不切的话点「结束陪伴」会走 stopPhoneMic，笔上的录音根本停不下来（真机已踩）。
-            if (recording) currentSource = CompanionSource.Pen
+            // B7 双录仲裁：手机麦正录着时笔又开录 → 不翻转来源（否则点「结束」停错设备，
+            //   手机麦这段无人掌控直到进程死）。笔那段由引擎镜像自动收尾上传，两段都不丢；提示顾问知情。
+            if (recording) {
+                val cur = _state.value
+                val phoneBusy = currentSource == CompanionSource.Phone &&
+                    (cur is RecordingState.Recording || cur is RecordingState.Paused)
+                if (phoneBusy) {
+                    _penEvents.tryEmit("注意：手机录音进行中，陪伴笔也开始了录音——手机这段继续，笔上那段会自动另存同步")
+                } else {
+                    currentSource = CompanionSource.Pen
+                }
+            }
             // 重注上传上下文：笔自发录音（声控/笔上操作）也要用同样的会话 Cookie（对齐旧宿主 onPenRecordStatus）。
             onNeedContextRefresh?.invoke()
             // 若有「连上后自动开录」意图（用户在笔未连时点了开启陪伴）→ 现在兑现。

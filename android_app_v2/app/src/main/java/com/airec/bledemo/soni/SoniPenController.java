@@ -87,6 +87,10 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private final Listener listener;
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    // E8:占位建/取消走独立线程——原来与上传共用单线程worker,5分钟慢上传会把下一段的占位/绑定提示压后数分钟
+    private final ExecutorService phWorker = Executors.newSingleThreadExecutor();
+    // C8:penLog/probe 文件写走独立单线程——原来在调用线程(常为主线程)同步IO,低端机重试风暴会卡主线程
+    private final ExecutorService logExec = Executors.newSingleThreadExecutor();
 
     private volatile ScanListener scanListener;
     public void setScanListener(ScanListener l) { this.scanListener = l; }
@@ -126,6 +130,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     // 暂停
     private volatile boolean penPaused = false;
+    // F13:暂停记账——elapsedSec 扣除,防高暂停段误判截断/时长虚报
+    private volatile long pauseAccumMs = 0;
+    private volatile long pausedAtMs = 0;
     private volatile boolean appInitiatedPauseResume = false;
 
     // ★镜像状态
@@ -204,8 +211,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // 不再傻等 2 小时，直接放弃 + 取消占位(badge 清)。真音频在笔上(名字不同)可走「从陪伴笔同步」手动重导。
     private static final int ABSENT_FROM_LIST_GIVEUP = 3;
     private static final int MAX_DOWNLOAD_REQUEUES = 200;
-    private static final long FAIL_GIVEUP_MS = 2 * 60 * 60 * 1000L;
-    private static final long STALE_GIVEUP_MS = 2 * 60 * 60 * 1000L;   // ★v24:僵尸任务按入队龄直接清
+    // E6:放弃烧钟 2h→6h——门店一下午没网/笔不在身边是常态,2h 就删占位("同步中"行集体消失)太急
+    private static final long FAIL_GIVEUP_MS = 6 * 60 * 60 * 1000L;
+    private static final long STALE_GIVEUP_MS = 6 * 60 * 60 * 1000L;   // ★v24:僵尸任务按入队龄直接清
     private static final long FILE_KEEP_MS = 30L * 24 * 3600 * 1000;
     private volatile boolean pendingCleanup = false;
     private volatile boolean pendingSyncList = false;
@@ -248,9 +256,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         sInstance = this;
         try {
             PNote.init(appCtx, this);
-            PNote.setShowLog(true);   // 联调期开着（SDK 协议流水进 logcat）；广测前关
-            // 联调期：让 SDK 把扫描到的每个 BLE 设备直接打进 logcat（tag=PNoteLogger），便于排查"扫不到"
-            try { com.wind.pnote.util.PNoteLogger.isShowLogText = true; } catch (Throwable ignore) {}
+            // F12:广测关闭 SDK 协议流水(含 SN/MAC 隐私,常开还拖累主线程 logcat IO)；排查连不上时临时开
+            PNote.setShowLog(false);
+            try { com.wind.pnote.util.PNoteLogger.isShowLogText = false; } catch (Throwable ignore) {}
         } catch (Throwable t) {
             Log.e(TAG, "PNote.init failed", t);
         }
@@ -574,6 +582,11 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (busy && (now - lastRxMs) < HB_INTERVAL_BUSY_MS) {
                 hbMissed = 0; main.postDelayed(this, HB_INTERVAL_BUSY_MS); return;
             }
+            // B3:忙态却久无回包(笔自停不再发帧/暂停>30s固件不回cmd10)→主动发cmd9问真实状态：
+            //   回包即心跳(暂停不再被误判失联强断)；答"没在录"由cmd9处理器老实收尾(不再镜像空挂90分钟)
+            if (busy && btReady()) {
+                try { PNote.getRecordState(); } catch (Throwable ignore) {}
+            }
             if ((now - lastRxMs) > (HB_INTERVAL_MS + 4000)) {
                 hbMissed++;
                 Log.w(TAG, "心跳未回包，连续 " + hbMissed + " 次");
@@ -804,6 +817,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             return;
         }
         penPaused = false;
+        markPauseEnd();   // F13:停止前先结清暂停账,durAtStop 才是净录音时长
         final String fnAtStop = sessionFileName;
         final int durAtStop = elapsedSec();
         final long startWallAtStop = sessionStartWallMs;
@@ -838,6 +852,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         if (penPaused) return;
         appInitiatedPauseResume = true;
         penPaused = true;
+        markPauseStart();   // F13
         try { PNote.pauseRecord(); } catch (Throwable e) { Log.e(TAG, "pauseRecord failed", e); }
         if (listener != null) main.post(() -> listener.onPenPaused(true));
     }
@@ -846,6 +861,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         if (!penPaused) return;
         appInitiatedPauseResume = true;
         penPaused = false;
+        markPauseEnd();   // F13
         try { PNote.continueRecord(); } catch (Throwable e) { Log.e(TAG, "continueRecord failed", e); }
         if (listener != null) main.post(() -> listener.onPenPaused(false));
     }
@@ -970,13 +986,14 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         notifyPending();
         post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
         final String phUrl = placeholderUrlFrom(task.uploadUrl);
-        worker.submit(() -> {
+        phWorker.submit(() -> {   // E8:独立线程,不再排在慢上传后面(绑定提示不被压后数分钟)
             // E1:占位带机身文件名→同步弹层预检可精确屏蔽"正在传的段"(不再赌±90s时刻吻合)
             String phPenFile = looksLikePenFile(task.fileName) ? task.fileName : null;
             long pid = Uploader.createPlaceholder(task.cookie, phUrl, recStart, phPenFile, null);
             if (pid > 0) {
                 task.placeholderId = pid;
                 Log.d(TAG, "已建占位片段 id=" + pid);
+                main.post(SoniPenController.this::persistPendingQueue);   // E5:pid即落盘,建占位后数秒被杀不再漏"幽灵同步中"
                 if (listener != null) {
                     main.post(listener::onPenPlaceholderCreated);
                     // 录完即可绑定：拿到占位 recordingId 就提示绑定，不必等 BLE 下载/上传完成。
@@ -1079,29 +1096,40 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // ============ 诊断（与杰理版同路径，一键诊断照常能捞） ============
 
     private void penLog(String ev) {
+        // C8:状态在调用线程截好，文件IO丢给单线程logExec——不再在主线程同步写文件(49处调用,重试风暴会卡UI/喂看门狗)
+        final String line = (SystemClock.elapsedRealtime() / 1000 % 100000) + "s  " + ev
+                + "  [conn=" + verifiedConnected + " rec=" + penRecording + " sess=" + sessionActive + " q=" + uploadQueue.size() + "]\n";
         try {
-            File root = appCtx.getExternalFilesDir(null);
-            if (root == null) return;
-            File dir = new File(root, "stream_ops");
-            if (!dir.exists()) dir.mkdirs();
-            File f = new File(dir, "penlog.txt");
-            try (java.io.FileWriter w = new java.io.FileWriter(f, f.length() < 262144)) {
-                w.write((SystemClock.elapsedRealtime() / 1000 % 100000) + "s  " + ev
-                        + "  [conn=" + verifiedConnected + " rec=" + penRecording + " sess=" + sessionActive + " q=" + uploadQueue.size() + "]\n");
-            }
+            logExec.submit(() -> {
+                try {
+                    File root = appCtx.getExternalFilesDir(null);
+                    if (root == null) return;
+                    File dir = new File(root, "stream_ops");
+                    if (!dir.exists()) dir.mkdirs();
+                    File f = new File(dir, "penlog.txt");
+                    try (java.io.FileWriter w = new java.io.FileWriter(f, f.length() < 262144)) {
+                        w.write(line);
+                    }
+                } catch (Exception ignore) {}
+            });
         } catch (Exception ignore) {}
     }
 
     private void writeProbeStatus(String line) {
+        final String out = SystemClock.elapsedRealtime() / 1000 % 100000 + "s  " + line + "\n";
         try {
-            File root = appCtx.getExternalFilesDir(null);
-            if (root == null) return;
-            File dir = new File(root, "stream_ops");
-            if (!dir.exists()) dir.mkdirs();
-            File f = new File(dir, "last_result.txt");
-            try (java.io.FileWriter w = new java.io.FileWriter(f, f.length() < 131072)) {
-                w.write(SystemClock.elapsedRealtime() / 1000 % 100000 + "s  " + line + "\n");
-            }
+            logExec.submit(() -> {
+                try {
+                    File root = appCtx.getExternalFilesDir(null);
+                    if (root == null) return;
+                    File dir = new File(root, "stream_ops");
+                    if (!dir.exists()) dir.mkdirs();
+                    File f = new File(dir, "last_result.txt");
+                    try (java.io.FileWriter w = new java.io.FileWriter(f, f.length() < 131072)) {
+                        w.write(out);
+                    }
+                } catch (Exception ignore) {}
+            });
         } catch (Exception ignore) {}
     }
 
@@ -1299,6 +1327,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (sessionActive && wasPaused) {
                 // 暂停 → 继续
                 penPaused = false;
+                markPauseEnd();   // F13:笔上按键继续也结账
                 if (appInitiatedPauseResume) { appInitiatedPauseResume = false; }
                 else if (listener != null) main.post(() -> listener.onPenPaused(false));
                 if (!TextUtils.isEmpty(fileName)) sessionFileName = fileName;
@@ -1322,6 +1351,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 startElapsedMs = SystemClock.elapsedRealtime();
                 autoStoppedAt90 = false;   // 新一段开始 → 重置90分钟自动结束标记
                 penPaused = false;
+                resetPauseClock();   // F13:新段清零暂停账
                 pauseWorker();
                 startStreamCapture();
                 startRecordDurationPoll();
@@ -1349,6 +1379,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     enterRecordingKeepAlive(); sessionAppInitiated = false; sessionGen++; failedCount = 0;
                     sessionFileName = fileName; sessionStartWallMs = System.currentTimeMillis();
                     startElapsedMs = SystemClock.elapsedRealtime(); autoStoppedAt90 = false; penPaused = false;
+                    resetPauseClock();   // F13
                     startStreamCapture(); startRecordDurationPoll(); saveActiveSession(fileName, sessionStartWallMs);
                     post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
                     if (listener != null) main.post(() -> listener.onPenRecordStatus(true));
@@ -1360,6 +1391,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         } else if ("2".equals(rs)) {
             // 笔上报暂停
             penRecording = true;
+            markPauseStart();   // F13:App发起时 pause() 已记过(幂等),笔上按键暂停在这记
             if (appInitiatedPauseResume) { appInitiatedPauseResume = false; penPaused = true; return; }
             penPaused = true;
             if (listener != null) main.post(() -> listener.onPenPaused(true));
@@ -1367,6 +1399,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             // 停止
             penRecording = false;
             penPaused = false;
+            markPauseEnd();   // F13:结清暂停账再取 elapsedSec
             if (!sessionActive) {
                 kickWorker();
                 return;
@@ -1416,7 +1449,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             sessionAppInitiated = false;
             sessionFileName = null;
             sessionStartWallMs = 0;   // 更早开始的，不做旧文件拒收
-            if (startElapsedMs == 0) startElapsedMs = SystemClock.elapsedRealtime();
+            if (startElapsedMs == 0) { startElapsedMs = SystemClock.elapsedRealtime(); resetPauseClock(); }   // F13
             pauseWorker();
             startStreamCapture();
             startRecordDurationPoll();
@@ -1896,8 +1929,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 if (task.placeholderId > 0) {
                     final long pid = task.placeholderId;
                     final String phCancelUrl = placeholderUrlFrom(task.uploadUrl) + "/cancel";
-                    final String ck = task.cookie;
-                    worker.submit(() -> {
+                    // E7:用最新 Cookie——任务在队里躺久了,冻结的旧 Cookie 401 轮换过就取消失败(占位泄漏成永久"同步中")
+                    final String ck = (cookie != null && !cookie.isEmpty()) ? cookie : task.cookie;
+                    phWorker.submit(() -> {   // E8:独立线程
                         Uploader.cancelPlaceholder(ck, phCancelUrl, pid);
                         if (listener != null) main.post(listener::onPenPlaceholderCreated);
                     });
@@ -1974,7 +2008,10 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (f == null || TextUtils.isEmpty(f.name)) continue;
             if (uploadedFileNames.contains(f.name)) continue;   // 已传过
             if (isQueuedByName(f.name)) continue;               // 已在队
-            if (isStaleRecordingFile(f.name)) continue;         // 超6小时的老段不自动抓(避免重导一堆历史)
+            // E6:手动重试的追抓窗从6小时放宽到7天——2h(现6h)放弃后第二天才发现,点重试也追得回来
+            //   (超7天服务端不可绑,重导无意义;uploadedFileNames 兜底不会重复导)
+            long fts = parseFileTimestamp(f.name);
+            if (fts > 0 && (System.currentTimeMillis() - fts) > 7L * 24 * 3600 * 1000) continue;
             long startMs = parseFileTimestamp(f.name);
             UploadTask t = new UploadTask(f.name, cookie, uploadUrl, penSn(), f.timeSec, startMs, true);
             t.firstSeenMs = System.currentTimeMillis();
@@ -1985,16 +2022,20 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         if (!added.isEmpty()) {
             final String phUrl = placeholderUrlFrom(uploadUrl);
             for (final UploadTask t : added) {
-                worker.submit(() -> {
+                phWorker.submit(() -> {   // E8:独立线程
                     long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs,
                             looksLikePenFile(t.fileName) ? t.fileName : null, null);   // E1:占位带机身文件名
-                    if (pid > 0) { t.placeholderId = pid; if (listener != null) main.post(listener::onPenPlaceholderCreated); }
+                    if (pid > 0) {
+                        t.placeholderId = pid;
+                        main.post(SoniPenController.this::persistPendingQueue);   // E5
+                        if (listener != null) main.post(listener::onPenPlaceholderCreated);
+                    }
                 });
             }
             notifyPending();
             main.postDelayed(this::kickWorker, 800);
         } else {
-            penLog("★重试:笔上没有近6小时未传的段(可能已全传上或音频不在笔上)");
+            penLog("★重试:笔上没有可补传的未传段(可能已全传上或音频不在笔上)");
         }
     }
 
@@ -2184,10 +2225,14 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         if (!added.isEmpty()) {
             final String phUrl = placeholderUrlFrom(uploadUrl);
             for (final UploadTask t : added) {
-                worker.submit(() -> {
+                phWorker.submit(() -> {   // E8:独立线程
                     long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs,
                             looksLikePenFile(t.fileName) ? t.fileName : null, null);   // E1:占位带机身文件名
-                    if (pid > 0) { t.placeholderId = pid; if (listener != null) main.post(listener::onPenPlaceholderCreated); }
+                    if (pid > 0) {
+                        t.placeholderId = pid;
+                        main.post(SoniPenController.this::persistPendingQueue);   // E5
+                        if (listener != null) main.post(listener::onPenPlaceholderCreated);
+                    }
                 });
             }
             notifyPending();
@@ -2407,7 +2452,26 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     private int elapsedSec() {
         if (startElapsedMs == 0) return 0;
-        return (int) Math.max(0, (SystemClock.elapsedRealtime() - startElapsedMs) / 1000);
+        // F13:扣掉累计暂停时长——高暂停段不再被截断闸误判"疑似截断"走慢速补下载,duration_sec 也不虚报
+        long paused = pauseAccumMs + (pausedAtMs > 0 ? SystemClock.elapsedRealtime() - pausedAtMs : 0);
+        return (int) Math.max(0, (SystemClock.elapsedRealtime() - startElapsedMs - paused) / 1000);
+    }
+
+    // F13:暂停时长记账（App发起与笔上按键殊途同归：penPaused true/false 的每处翻转都要过这两个钩子）
+    private void markPauseStart() {
+        if (pausedAtMs == 0) pausedAtMs = SystemClock.elapsedRealtime();
+    }
+
+    private void markPauseEnd() {
+        if (pausedAtMs > 0) {
+            pauseAccumMs += SystemClock.elapsedRealtime() - pausedAtMs;
+            pausedAtMs = 0;
+        }
+    }
+
+    private void resetPauseClock() {
+        pauseAccumMs = 0;
+        pausedAtMs = 0;
     }
 
     private static String jsEsc(String s) {

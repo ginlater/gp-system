@@ -40,13 +40,22 @@ class ReminderPollWorker(
     companion object {
         private const val UNIQUE = "reminder-poll"
 
-        /** 在 Application.onCreate 调一次：登记 ~30 分钟一轮的周期任务（已存在则保留）。 */
+        /**
+         * 在 Application.onCreate 调一次：登记 ~30 分钟一轮的周期任务。
+         * F10：加联网约束（断网不空转白耗电）；策略改 UPDATE——以后调周期/约束对已装机也生效
+         * （原 KEEP 会让老安装永远用第一版参数）。
+         */
         fun schedule(context: Context) {
             val req = PeriodicWorkRequestBuilder<ReminderPollWorker>(30, TimeUnit.MINUTES)
+                .setConstraints(
+                    androidx.work.Constraints.Builder()
+                        .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+                        .build(),
+                )
                 .build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(
                 UNIQUE,
-                ExistingPeriodicWorkPolicy.KEEP,
+                ExistingPeriodicWorkPolicy.UPDATE,
                 req,
             )
         }

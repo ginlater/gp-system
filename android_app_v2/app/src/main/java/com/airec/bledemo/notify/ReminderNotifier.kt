@@ -27,37 +27,51 @@ import com.airec.bledemo.data.model.Reminder
 object ReminderNotifier {
 
     private const val CHANNEL_ID = "reminders"
+    // F11：电量提醒拆独立 DEFAULT 级 channel——用户可单独关电量嗡嗡，不连业务提醒一起哑
+    private const val BATTERY_CHANNEL_ID = "pen_battery"
     private const val PREFS = "reminder_notify_prefs"
     private const val KEY_SEEN = "seen_ids"
+    // F3：已见集是否已播种（首拉存量只记不弹的标记，区别于"真的一条提醒都没有过"）
+    private const val KEY_SEEDED = "seen_seeded"
+    // F5：电量提醒档位落盘（vivo 杀进程冷启不再重弹）
+    private const val KEY_BATTERY_LEVEL = "battery_notified_level"
     private const val BATTERY_NOTIF_ID = 990001
+    private const val GROUP_KEY = "meili_reminders"
+
+    // 一批最多弹几条（F3：重装/换账号首拉存量几百条时不能 heads-up 轰炸）
+    private const val MAX_POST_PER_BATCH = 5
+
+    // F6：已见集读改写全程持锁——前台协程与 WorkManager 并发时不再丢更新/双弹
+    private val seenLock = Any()
 
     @Volatile
     private var appCtx: Context? = null
 
-    // 电量提醒去重：-1=未提醒 / 10=已提醒过10%档 / 5=已提醒过5%档。充电或回到>10%即重置。
-    @Volatile
-    private var batteryNotifiedLevel = -1
-
     /**
      * 陪伴笔电量回调（SoniPenController cmd=6 收到电量时触发）。
-     * 低于 10% 发一次「该充电」、低于 5% 发一次「剩5%」通知；同一档不重复弹，充电/回升后重置。
+     * 低于 10% 发一次「该充电」、低于 5% 发一次「剩5%」通知；同一档不重复弹。
+     * F5：档位落盘（进程被杀重启不重弹）+ 复位阈值 ≥15%（滞回，10↔11 抖动不再反复弹）。
      * @param level 0–100 电量百分比（>100 视为充电中）
      * @param charging 是否充电中（声云笔 "110"=充电中）
      */
     fun onPenBattery(level: Int, charging: Boolean) {
         val c = appCtx ?: return
-        if (charging || level !in 0..100) { batteryNotifiedLevel = -1; return }
-        if (level > 10) { batteryNotifiedLevel = -1; return }   // 电量正常 → 重置, 下次低电再提醒
+        val sp = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val notified = sp.getInt(KEY_BATTERY_LEVEL, -1)
+        fun save(v: Int) = sp.edit().putInt(KEY_BATTERY_LEVEL, v).apply()
+        if (charging || level !in 0..100) { if (notified != -1) save(-1); return }
+        if (level >= 15) { if (notified != -1) save(-1); return }   // F5:≥15% 才复位(滞回)
+        if (level in 11..14) return                                  // 滞回带：不弹也不复位
         ensureChannel(c)
         if (!NotificationManagerCompat.from(c).areNotificationsEnabled()) return
         if (level <= 5) {
-            if (batteryNotifiedLevel != 5) {
-                batteryNotifiedLevel = 5
+            if (notified != 5) {
+                save(5)
                 postBattery(c, "陪伴笔电量不足", "电量剩余5%，快去充电吧，充电时长在1.5～2小时就可以充满了哦～")
             }
         } else { // 6..10
-            if (batteryNotifiedLevel == -1) {
-                batteryNotifiedLevel = 10
+            if (notified == -1) {
+                save(10)
                 postBattery(c, "陪伴笔该充电啦", "陪伴笔电量已低于 10%，建议尽快充电，别耽误美丽陪伴的记录哦～")
             }
         }
@@ -71,7 +85,8 @@ object ReminderNotifier {
             context, BATTERY_NOTIF_ID, tapIntent,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
         )
-        val n = android.app.Notification.Builder(context, CHANNEL_ID).let { b ->
+        // F11：电量走独立 DEFAULT 级 channel（不 heads-up、可单独关）
+        val n = android.app.Notification.Builder(context, BATTERY_CHANNEL_ID).let { b ->
             b.setSmallIcon(R.mipmap.ic_launcher)
             b.setContentTitle(title)
             b.setContentText(text)
@@ -111,38 +126,65 @@ object ReminderNotifier {
                 }
                 nm.createNotificationChannel(ch)
             }
+            // F11：电量提醒独立 channel（DEFAULT：有声不悬浮，可在系统设置单独关掉）
+            if (nm.getNotificationChannel(BATTERY_CHANNEL_ID) == null) {
+                val ch = NotificationChannel(
+                    BATTERY_CHANNEL_ID,
+                    "陪伴笔电量",
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = "陪伴笔低电量充电提醒"
+                }
+                nm.createNotificationChannel(ch)
+            }
         }
     }
 
     /**
-     * 对比已见集合，给「新出现的提醒」各弹一条系统通知，并把当前全部 id 同步为新的已见集合。
-     * 返回实际弹出的条数。需调用方已持有列表（来自 /api/consultant/reminders）。
+     * 登出/换账号时调（F3）：清已见集与播种标记——下个账号首拉按"播种不弹"处理，
+     * 不再把上个账号的已见状态错配到新账号（也不会存量全弹）。
      */
-    fun notifyNew(context: Context, items: List<Reminder>): Int {
-        if (items.isEmpty()) {
-            // 没有任何提醒 → 清空已见集合（都已处理），让日后新提醒能再弹
-            saveSeen(context, emptySet())
-            return 0
+    fun clearSeen() {
+        val c = appCtx ?: return
+        synchronized(seenLock) {
+            c.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().remove(KEY_SEEN).remove(KEY_SEEDED).apply()
         }
+    }
+
+    /**
+     * 对比已见集合，给「新出现的提醒」弹系统通知。返回实际弹出的条数。
+     *
+     * F3：首次运行（重装/清数据/换账号后）只播种不弹——存量几百条不能 heads-up 轰炸；单批弹出上限 5 条+分组。
+     * F4：无通知权限时不把未弹的记为已见——点了"允许"后最近的新提醒还能弹（上限兜底防洪）。
+     * F6：全程持锁，前台协程与 WorkManager 并发不再丢更新。
+     * F7：已见集只并集不清空（服务端 LIMIT 截断边界震荡时消失又重现的 id 不再重复弹）；超限按 id 数值保最新。
+     */
+    fun notifyNew(context: Context, items: List<Reminder>): Int = synchronized(seenLock) {
+        val sp = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (items.isEmpty()) return 0   // F7：空列表不清已见集（可能是截断/瞬时空，清了会重复弹）
         ensureChannel(context)
         val seen = loadSeen(context)
         val currentIds = items.map { it.id.toString() }.toSet()
-        var posted = 0
+        // F3：从没播种过（首装/清数据/登出后首拉）→ 存量全部记已见、一条不弹
+        if (!sp.getBoolean(KEY_SEEDED, false) && seen.isEmpty()) {
+            saveSeen(context, currentIds)
+            return 0
+        }
         val canNotify = NotificationManagerCompat.from(context).areNotificationsEnabled()
-        for (r in items) {
-            val idStr = r.id.toString()
-            if (seen.contains(idStr)) continue
-            if (canNotify) {
-                try {
-                    postOne(context, r)
-                    posted++
-                } catch (_: SecurityException) {
-                    // 没有 POST_NOTIFICATIONS 运行时权限：跳过弹窗，但仍记为已见，避免拿到权限后一次性补弹历史
-                }
+        if (!canNotify) return 0   // F4：权限未给/未决——不弹也不记已见，拿到权限后新提醒仍能弹
+        var posted = 0
+        // 新提醒按 id 降序（最新优先），单批最多弹 MAX_POST_PER_BATCH 条；没弹到的也记已见（老积压不补弹）
+        val fresh = items.filter { it.id.toString() !in seen }.sortedByDescending { it.id }
+        for (r in fresh) {
+            if (posted >= MAX_POST_PER_BATCH) break
+            try {
+                postOne(context, r)
+                posted++
+            } catch (_: SecurityException) {
             }
         }
-        // 已见集合 = 当前在册的全部 id（消失的自动移除）
-        saveSeen(context, currentIds)
+        saveSeen(context, seen + currentIds)   // F7：并集，不整体覆盖
         return posted
     }
 
@@ -173,6 +215,7 @@ object ReminderNotifier {
             b.setStyle(Notification.BigTextStyle().bigText(text))
             b.setAutoCancel(true)
             b.setContentIntent(pi)
+            b.setGroup(GROUP_KEY)   // F3：多条收进一组，通知栏不刷屏
             b.build()
         }
         NotificationManagerCompat.from(context).notify(notifId(r.id), n)
@@ -185,8 +228,14 @@ object ReminderNotifier {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getStringSet(KEY_SEEN, emptySet()) ?: emptySet()
 
+    /** 保存已见集（并置播种标记）。F7：超 800 条按 id 数值只留最新 500，防无限膨胀。 */
     private fun saveSeen(context: Context, ids: Set<String>) {
+        val trimmed = if (ids.size > 800) {
+            ids.sortedByDescending { it.toLongOrNull() ?: 0L }.take(500).toSet()
+        } else {
+            ids
+        }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putStringSet(KEY_SEEN, ids).apply()
+            .edit().putStringSet(KEY_SEEN, trimmed).putBoolean(KEY_SEEDED, true).apply()
     }
 }

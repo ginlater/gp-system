@@ -137,6 +137,12 @@ fun SettingsScreen(
             ThemePickerCard()
             Spacer(Modifier.height(Dimens.CardGap))
 
+            // C7：后台保活引导（vivo 重点）——白名单系统框只弹一次、可拒，拒了以后这里能随时补救
+            SectionLabel("后台保活", icon = MeiliIcons.Info)
+            Spacer(Modifier.height(9.dp))
+            KeepAliveCard()
+            Spacer(Modifier.height(Dimens.CardGap))
+
             // 关于美丽陪伴 / 版本
             SectionLabel("关于美丽陪伴", icon = MeiliIcons.Info)
             Spacer(Modifier.height(9.dp))
@@ -167,6 +173,105 @@ fun SettingsScreen(
                     .padding(bottom = Dimens.BottomNavInset),
             )
         }
+    }
+}
+
+/**
+ * C7：后台保活体检卡。vivo 等国产 ROM 默认激进杀后台——录音/补传半路被掐。
+ * 系统的白名单弹框只在首启弹一次、可拒；这里提供随时可点的三个入口：
+ * 自启动管理（vivo 专属页，别机型兜底到应用详情）、电池优化白名单、应用详情（手动关"后台高耗电限制"）。
+ */
+@Composable
+private fun KeepAliveCard() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    MeiliCard {
+        Text(
+            text = "为了录音和后台同步不被手机中断，建议逐个设置：允许自启动、忽略电池优化、后台高耗电改为「允许」。设置一次即可。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MeiliPalette.Ink2,
+        )
+        Spacer(Modifier.height(11.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp), modifier = Modifier.fillMaxWidth()) {
+            GhostButton(
+                text = "自启动",
+                onClick = { openVivoAutoStart(context) },
+                size = MeiliButtonSize.Small,
+                modifier = Modifier.weight(1f),
+            )
+            GhostButton(
+                text = "电池优化",
+                onClick = { openBatteryWhitelist(context) },
+                size = MeiliButtonSize.Small,
+                modifier = Modifier.weight(1f),
+            )
+            GhostButton(
+                text = "应用详情",
+                onClick = { openAppDetails(context) },
+                size = MeiliButtonSize.Small,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+/** vivo 自启动管理页；非 vivo/打不开时兜底到本应用详情页（里面也有自启动/省电项）。 */
+private fun openVivoAutoStart(context: android.content.Context) {
+    val candidates = listOf(
+        // vivo 新版 i管家 权限管理-自启动
+        android.content.Intent().setClassName(
+            "com.vivo.permissionmanager",
+            "com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
+        ),
+        android.content.Intent().setClassName(
+            "com.vivo.permissionmanager",
+            "com.vivo.permissionmanager.activity.PurviewTabActivity",
+        ),
+        // vivo 后台高耗电
+        android.content.Intent().setClassName(
+            "com.vivo.abe",
+            "com.vivo.applicationbehaviorengine.ui.ExcessivePowerManagerActivity",
+        ),
+    )
+    for (i in candidates) {
+        try {
+            i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(i)
+            return
+        } catch (_: Exception) {
+        }
+    }
+    openAppDetails(context)
+}
+
+/** 请求加入电池优化白名单（系统标准弹框；已在白名单则打开电池优化列表）。 */
+private fun openBatteryWhitelist(context: android.content.Context) {
+    try {
+        val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+        val intent = if (pm != null && !pm.isIgnoringBatteryOptimizations(context.packageName)) {
+            android.content.Intent(
+                android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                android.net.Uri.parse("package:${context.packageName}"),
+            )
+        } else {
+            android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        }
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    } catch (_: Exception) {
+        openAppDetails(context)
+    }
+}
+
+/** 本应用详情页（自启动/电池/通知等入口都在里面，万能兜底）。 */
+private fun openAppDetails(context: android.content.Context) {
+    try {
+        val i = android.content.Intent(
+            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            android.net.Uri.parse("package:${context.packageName}"),
+        )
+        i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(i)
+    } catch (_: Exception) {
     }
 }
 

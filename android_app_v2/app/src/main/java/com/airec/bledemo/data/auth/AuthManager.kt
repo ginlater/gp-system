@@ -71,6 +71,8 @@ class AuthManager(
         } finally {
             cookieJar.clear()
             runCatching { creds.clear() }   // 退出登录后不再自动重登
+            // F3：清提醒已见集——换账号后按"播种不弹"重来，不错配上个账号的已见状态
+            runCatching { com.airec.bledemo.notify.ReminderNotifier.clearSeen() }
         }
     }
 

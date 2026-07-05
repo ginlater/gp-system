@@ -27,6 +27,10 @@ class RemindersViewModel(
     private val _state = MutableStateFlow(RemindersUiState())
     val state: StateFlow<RemindersUiState> = _state.asStateFlow()
 
+    // F8：mark_read 不再纯 fire-and-forget——成功后本次会话不重发（页面停留期 2 分钟轮询
+    // 不再每次都 POST），失败则下次 load 自动补发（弱网不丢已读）。
+    private var markReadDone = false
+
     init {
         load()
     }
@@ -37,7 +41,9 @@ class RemindersViewModel(
             when (val r = repo.reminders()) {
                 is ApiResult.Success -> {
                     // E7 方案B:真的打开了提醒页 → 显式上报已读(服务端已不再"拉取即已读")
-                    launch { repo.markRemindersRead() }
+                    if (!markReadDone) {
+                        launch { markReadDone = repo.markRemindersRead() is ApiResult.Success }
+                    }
                     val items = r.data.items ?: emptyList()
                     val personal = items.filter { it.scope != "escalation" }
                     val escalation = items.filter { it.scope == "escalation" }

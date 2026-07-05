@@ -2,6 +2,7 @@ package com.airec.bledemo.ui.reminders
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -82,10 +83,14 @@ fun RemindersScreen(
     }
 
     // 轮询刷新提醒列表（对齐 web setInterval(loadReminders, 120000)）。
+    // F2：随生命周期暂停——锁屏/切后台不再每 2 分钟 load→markRead（揣兜里被置已读复活的口子堵上）。
+    val pollLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     androidx.compose.runtime.LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(120_000)
-            viewModel.load()
+        pollLifecycleOwner.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                kotlinx.coroutines.delay(120_000)
+                viewModel.load()
+            }
         }
     }
 

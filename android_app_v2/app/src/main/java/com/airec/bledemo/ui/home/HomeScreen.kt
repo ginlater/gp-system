@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.airec.bledemo.designsystem.Dimens
 import com.airec.bledemo.designsystem.MeiliIcons
@@ -110,10 +111,14 @@ fun HomeScreen(
     LaunchedEffect(Unit) { viewModel.refreshOnEnter() }
 
     // 提醒红点轮询（对齐 web setInterval(loadReminders, 120000)）：每 120s 刷新一次未读计数。
+    // F2：随生命周期暂停——锁屏/切后台不再空转联网。
+    val pollLifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     LaunchedEffect(Unit) {
-        while (true) {
-            kotlinx.coroutines.delay(120_000)
-            viewModel.refreshReminders()
+        pollLifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                kotlinx.coroutines.delay(120_000)
+                viewModel.refreshReminders()
+            }
         }
     }
 

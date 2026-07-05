@@ -2441,7 +2441,12 @@ function toggleReminderPanel() {
   const p = document.getElementById('reminderPanel');
   const show = p.style.display === 'none';
   p.style.display = show ? 'block' : 'none';
-  if (show) loadReminders();  // 展示即拉取；后端在拉取时把升级项置已读
+  if (show) {
+    loadReminders();
+    // F9(E7方案B收尾)：服务端已不再"拉取即已读"，展开面板=真看了 → 显式上报已读。
+    // 店长只用 web 看提醒时 read_at 也能置位，管理端"已读"数字不再恒未读。失败静默(下次展开再报)。
+    fetch(BASE + '/api/consultant/reminders/mark_read', { method: 'POST' }).catch(() => {});
+  }
 }
 
 // ============ 客户档案：搜索 → 打开档案（复用 /customer/<id>）============
