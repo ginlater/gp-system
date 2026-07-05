@@ -4949,7 +4949,7 @@ def download_page_v2():
         size_mb=size_mb,
         updated=updated,
         available=V2_APK_PATH.exists(),
-        app_label="美丽陪伴",
+        app_label="美业私教",
         logo_char="美",
         apk_href=url_for("download_apk_v2_versioned", ver=f"v{APP_V2_VERSION_NAME}"),
         apk_version=APP_V2_VERSION_NAME,
