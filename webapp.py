@@ -4864,8 +4864,8 @@ APP_V2_VERSION_NAME = "2.1.0"
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 63   # = build.gradle versionCode（2.1.0，六批83项修复大版本 2026-07-06）
-APP_V2_MIN_VERSION_CODE = 63      # 2026-07-06 全量强更到 2.1.0(63)——六批83项修复+更名美业私教
+APP_V2_LATEST_VERSION_CODE = 64   # 2.1.0 第二次打包(64)：补全局强更门
+APP_V2_MIN_VERSION_CODE = 64      # 2026-07-06 全量强更(含补门的64)
 APP_V2_UPDATE_NOTE = "稳定性大版本：录音更稳不丢段、后台同步更快、绑定更顺畅，修复大量已知问题，建议尽快更新。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
 #   每个版本同名("刁姐陪伴.apk")时，上次强更留在手机下载目录里的旧包会顶包——浏览器弹"该文件已下载"

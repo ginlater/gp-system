@@ -15,11 +15,27 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -198,19 +214,85 @@ private fun MeiliApp(
                 ctl.isAppearanceLightNavigationBars = !dark
             }
         }
+        // 全局强更门（2026-07-06）：原来强更卡只在设置页——顾问不点设置等于没强更。
+        // 每次启动/回前台查 /api/app/v2/version（无需登录），installed < min → 全屏遮罩挡住整个 App。
+        val forceUpdate = remember { mutableStateOf<com.airec.bledemo.data.model.AppVersion?>(null) }
+        val fuCtx = androidx.compose.ui.platform.LocalContext.current
+        val fuOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+        LaunchedEffect(Unit) {
+            fuOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                runCatching {
+                    val r = com.airec.bledemo.data.repo.ConsultantRepository().appVersionV2()
+                    if (r is com.airec.bledemo.data.repo.ApiResult.Success) {
+                        val installed = runCatching {
+                            fuCtx.packageManager.getPackageInfo(fuCtx.packageName, 0).run {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) longVersionCode
+                                else @Suppress("DEPRECATION") versionCode.toLong()
+                            }
+                        }.getOrDefault(0L)
+                        val min = (r.data.minVersionCode ?: 0).toLong()
+                        forceUpdate.value = if (installed in 1 until min) r.data else null
+                    }
+                }
+            }
+        }
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MeiliPalette.Bg,
         ) {
-            AppScaffold(
-                startDestination = startDestination,
-                deepLink = deepLink,
-                onDeepLinkConsumed = onDeepLinkConsumed,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.systemBars),
+            Box(Modifier.fillMaxSize()) {
+                AppScaffold(
+                    startDestination = startDestination,
+                    deepLink = deepLink,
+                    onDeepLinkConsumed = onDeepLinkConsumed,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .windowInsetsPadding(WindowInsets.systemBars),
+                )
+                forceUpdate.value?.let { ForceUpdateGate(it) }
+            }
+        }
+        // 可关的「有新版」提示仍在设置页（AboutCard 检查更新）；不可关的强更由上面的全局门负责。
+    }
+}
+
+/** 全屏不可关的强制升级门：盖住整个 App，吞返回键，唯一出口是「立即更新」（浏览器开下载页）。 */
+@Composable
+private fun ForceUpdateGate(v: com.airec.bledemo.data.model.AppVersion) {
+    androidx.activity.compose.BackHandler(enabled = true) { /* 吞掉返回键：强更不可绕过 */ }
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    Surface(modifier = Modifier.fillMaxSize(), color = MeiliPalette.Bg) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = "请升级到新版本",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MeiliPalette.Ink,
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = v.updateNote?.takeIf { it.isNotBlank() }
+                    ?: "当前版本已停用，请更新到 ${v.latestVersionName ?: "最新版"} 后继续使用。",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MeiliPalette.Ink2,
+            )
+            Spacer(Modifier.height(24.dp))
+            com.airec.bledemo.designsystem.components.PrimaryButton(
+                text = "立即更新",
+                onClick = {
+                    val base = com.airec.bledemo.data.net.NetworkModule.BASE_URL.trimEnd('/')
+                    val page = v.apkUrl ?: v.pageUrl ?: "/download/v2"
+                    val url = if (page.startsWith("http")) page else base + page
+                    runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                },
+                modifier = Modifier.fillMaxWidth(),
             )
         }
-        // 更新检查改到「设置」里手动/进入即查（AboutCard 的「检查更新」），不在主屏弹窗。
     }
 }

@@ -19,7 +19,7 @@ android {
         applicationId "com.aibeautyfulwomen.gongpai"
         minSdk 24
         targetSdk 34
-        versionCode 63
+        versionCode 64
         versionName "2.1.0"
 
         ndk {
