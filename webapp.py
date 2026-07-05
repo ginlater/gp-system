@@ -4883,12 +4883,16 @@ APP_V2_UPDATE_NOTE = "稳定性大版本：录音更稳不丢段、后台同步�
 #   ③下载卡死看门狗(>30s无进度取消重来)；④"上传中"加「重试」按钮；
 #   ⑤补传2小时墙钟封顶才真放弃+删占位(音频在笔上、可日后重导)。真机验过①②③。
 #   与 build.gradle(versionCode 12 / 2.1.1) 已对齐。
-APP_LATEST_VERSION_CODE = 26
-APP_LATEST_VERSION_NAME = "2.1.15"
-# ★v26/2.1.15 全网强制更新(2026-06-15)：真机验证长录音提速通过(96→32kbps,1小时42MB→14MB)→ MIN 抬到 26，
-#   所有 <26 的顾问打开 App 即弹不可关强更框。改 MIN 即全网强更；要回退灰度把 MIN 降回上一档即可。
-APP_MIN_VERSION_CODE = 26
-APP_UPDATE_NOTE = "本次更新解决了这些问题：① 手机长录音（一小时以上）保存慢又费流量——现在文件更小、保存快约3倍；② 偶尔出现的「录音后段变乱码噪声」已根治；③ 登录过期时正在上传的录音不再丢失，重新登录会自动补传；④ 手机录音被来电或其他应用打断时会提示并保留已录部分（不再悄悄录废）；⑤ 小伙伴里还没导入的录音会主动提示「点取回」，不再被遗漏；⑥ 蓝牙断连更好排查（可读取小伙伴的信号与电量）。建议立即更新，更稳更省心 💛"
+# ★2026-07-06 v1 全网退役：MIN 抬到 999（任何 v1 版本都触发不可关强更框），
+#   下载地址指向 v2「美业私教」——引导所有 v1 顾问迁移到 v2 原生新 App
+#   （包名不同=另装新 App，用原账号登录，数据在云端全都在；装好后旧 App 可卸载）。
+#   要回退：MIN 降回 26、LATEST 恢复 26/2.1.15、app_version() 的 apkUrl 覆盖删掉即可。
+APP_LATEST_VERSION_CODE = 999
+APP_LATEST_VERSION_NAME = "美业私教 2.1.0"
+APP_MIN_VERSION_CODE = 999
+APP_UPDATE_NOTE = ("本 App 已全面升级为全新的「美业私教」，更快更稳、录音不丢、功能更全。"
+                   "点「立即更新」下载安装新 App（青绿色新图标），用您原来的账号密码登录即可，"
+                   "所有顾客和数据都在、一条不丢。装好新 App 后，这个旧 App 可以卸载。")
 
 
 @app.route("/download")
@@ -5000,9 +5004,10 @@ def app_version():
         "latestVersionCode": APP_LATEST_VERSION_CODE,
         "latestVersionName": APP_LATEST_VERSION_NAME,
         "minVersionCode": APP_MIN_VERSION_CODE,
-        # ★URL 带版本参数：部分浏览器/下载管理器按 URL 去重("该文件已下载"直接给旧文件)，变 URL 强制真下载
-        "apkUrl": f"/download/app.apk?v={APP_LATEST_VERSION_CODE}",
-        "pageUrl": "/download",
+        # ★2026-07-06 v1 退役：apkUrl 指向 v2「美业私教」下载页（v1 强更框点「立即更新」
+        #   会用浏览器打开这个地址→落地页有安装说明+微信引导，下载按钮带版本号防缓存）
+        "apkUrl": f"/download/v2?from=v1&v={APP_V2_VERSION_NAME}",
+        "pageUrl": "/download/v2",
         "updateNote": APP_UPDATE_NOTE,
     })
 
