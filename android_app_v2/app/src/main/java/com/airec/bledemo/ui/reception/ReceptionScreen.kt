@@ -758,14 +758,16 @@ private fun ContextAction(
         status == "done" -> if (sid != null) {
             HoneyButton(text = "看报告", onClick = { onOpenReport(sid) })
         }
-        // 失败 / 录音有变更(outdated，含给已完成报告新增/移除录音) → 重新分析，走可编辑预览(能移除片段)
-        status == "failed" || status == "outdated" -> if (canPreview) {
+        // 失败 / 已中断 / 录音有变更(outdated) → 重新分析，走可编辑预览(能移除片段)
+        status == "failed" || status == "outdated" || status == "cancelled" -> if (canPreview) {
             GhostButton(text = "重新分析", onClick = { onOpenPreview(cid!!, date) }, size = MeiliButtonSize.Xs)
         }
-        status == "running" || status == "queued" || status == "pending" -> if (canPreview) {
+        // 只有真在跑(running/queued)才是「看进度」——pending=绑了录音还没点开始分析，
+        // 归到下面「开始分析」（用户拍板 2026-07-06：按钮文案必须告诉顾问下一步干什么）
+        status == "running" || status == "queued" -> if (canPreview) {
             GhostButton(text = "看进度", onClick = { onOpenPreview(cid!!, date) }, size = MeiliButtonSize.Xs)
         }
-        // 有陪伴但未分析（null/""/idle）
+        // 有陪伴但未开始分析（null/""/pending）→ 开始分析
         else -> if (canPreview) {
             PrimaryButton(text = "开始分析", onClick = { onOpenPreview(cid!!, date) }, size = MeiliButtonSize.Xs)
         }
