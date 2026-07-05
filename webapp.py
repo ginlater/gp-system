@@ -5096,6 +5096,28 @@ def customer_profile_page(customer_id):
     )
 
 
+@app.route("/api/consultant/change-password", methods=["POST"])
+@login_required
+def api_consultant_change_password():
+    # 2026-07-05 从服务器备份(webapp.py.bak.20260704_batch2)找回入库：此前只热修在服务器上，
+    # 7月4日晚被一次人肉覆盖冲掉过一天（前端"改密码"按钮还在、接口 404）。
+    u = current_user()
+    if not u:
+        return jsonify({"error": "未登录"}), 401
+    data = request.get_json(silent=True) or {}
+    old = data.get("old_password") or ""
+    new = data.get("new_password") or ""
+    row = db_fetchone("SELECT password_hash FROM users WHERE id=?", (u["id"],))
+    if not row or row["password_hash"] != _hash_pw(old):
+        return jsonify({"error": "原密码不正确"}), 400
+    if len(new) < 6:
+        return jsonify({"error": "新密码至少 6 位"}), 400
+    if new == old:
+        return jsonify({"error": "新密码不能与原密码相同"}), 400
+    db_write("UPDATE users SET password_hash=? WHERE id=?", (_hash_pw(new), u["id"]))
+    return jsonify({"ok": True})
+
+
 @app.route("/consultant")
 @login_required
 def consultant_page():

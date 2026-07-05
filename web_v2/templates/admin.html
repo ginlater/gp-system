@@ -188,9 +188,24 @@ a{text-decoration:none}
   <div class="me">
     <div class="av">{{ (username or '管')[0] }}</div>
     <div><div class="nm">{{ username or '管理员' }}</div><div class="rl">{{ {'super':'超级管理员','admin':'管理员','store_manager':'店长'}.get(role, role) }}</div></div>
+    <a class="out" href="javascript:void(0)" onclick="openChangePwd()">改密码</a>
     <a class="out" href="{{ url_for('logout') }}">退出</a>
   </div>
 </aside>
+
+<div id="cpwdMask" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:#fff;padding:24px;border-radius:12px;width:90%;max-width:340px;box-shadow:0 10px 40px rgba(0,0,0,.3);color:#1f2937;">
+    <h3 style="margin:0 0 16px;font-size:16px;">修改密码</h3>
+    <input id="cpwdOld" type="password" placeholder="当前密码" autocomplete="current-password" style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;">
+    <input id="cpwdNew" type="password" placeholder="新密码（至少6位）" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;">
+    <input id="cpwdNew2" type="password" placeholder="确认新密码" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;">
+    <div id="cpwdErr" style="color:#dc2626;font-size:12px;min-height:16px;margin-bottom:8px;"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button onclick="closeChangePwd()" style="padding:8px 18px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;cursor:pointer;font-size:14px;">取消</button>
+      <button id="cpwdSubmit" onclick="submitChangePwd()" style="padding:8px 18px;border:none;background:#2563eb;color:#fff;border-radius:8px;cursor:pointer;font-size:14px;">确定</button>
+    </div>
+  </div>
+</div>
 
 <div class="main">
   <div class="topbar">
@@ -856,6 +871,42 @@ a{text-decoration:none}
 const BASE = {{ request.script_root|tojson }};
 const ROLE = {{ role|tojson }};
 let _custCache = [];
+
+function openChangePwd() {
+  ['cpwdOld','cpwdNew','cpwdNew2'].forEach(function(id){ document.getElementById(id).value = ''; });
+  document.getElementById('cpwdErr').textContent = '';
+  document.getElementById('cpwdMask').style.display = 'flex';
+}
+function closeChangePwd() {
+  document.getElementById('cpwdMask').style.display = 'none';
+}
+async function submitChangePwd() {
+  var oldp = document.getElementById('cpwdOld').value;
+  var newp = document.getElementById('cpwdNew').value;
+  var newp2 = document.getElementById('cpwdNew2').value;
+  var err = document.getElementById('cpwdErr');
+  var btn = document.getElementById('cpwdSubmit');
+  err.textContent = '';
+  if (!oldp || !newp) { err.textContent = '请填写完整'; return; }
+  if (newp.length < 6) { err.textContent = '新密码至少 6 位'; return; }
+  if (newp === oldp) { err.textContent = '新密码不能与当前密码相同'; return; }
+  if (newp !== newp2) { err.textContent = '两次输入的新密码不一致'; return; }
+  btn.disabled = true; btn.textContent = '提交中…';
+  try {
+    var res = await fetch(BASE + '/api/consultant/change-password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_password: oldp, new_password: newp })
+    });
+    var data = await res.json();
+    if (!res.ok || !data.ok) { err.textContent = data.error || '修改失败'; return; }
+    closeChangePwd();
+    alert('密码已修改，下次登录请使用新密码');
+  } catch (e) {
+    err.textContent = '网络错误，请重试';
+  } finally {
+    btn.disabled = false; btn.textContent = '确定';
+  }
+}
 
 // tab switch — 切换是纯 CSS 操作（瞬时），首次进入该 tab 时才懒加载该列表
 const _tabLoaders = {

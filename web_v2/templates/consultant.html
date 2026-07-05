@@ -222,8 +222,22 @@ body.skin-cute .dlg{border-radius:16px}
       <button id="reminderBell" onclick="toggleReminderPanel()" title="提醒" style="position:relative;background:none;border:none;cursor:pointer;font-size:18px;vertical-align:middle;margin-right:6px">🔔<span id="reminderDot" style="display:none;position:absolute;top:-2px;right:-4px;background:#e74c3c;color:#fff;border-radius:99px;font-size:10px;padding:0 4px;line-height:14px"></span></button>
       {{ advisor_name or username }}（{% if role == 'store_manager' %}店长{% else %}<span class="t-pro">顾问</span><span class="t-cute">陪伴师</span>{% endif %}） ·
       {% if role == 'store_manager' %}<a href="{{ url_for('admin_page') }}" style="color:var(--blue)">本店看板</a> · {% endif %}
+      <a href="javascript:void(0)" onclick="openChangePwd()" style="color:var(--blue)">改密码</a> ·
       <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a>
       <button class="skin-toggle" onclick="toggleSkin()" title="切换皮肤"><span id="skinLabel">🎀 切换皮肤</span></button>
+      <div id="cpwdMask" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999;align-items:center;justify-content:center;">
+        <div style="background:#fff;padding:24px;border-radius:12px;width:90%;max-width:320px;box-shadow:0 10px 40px rgba(0,0,0,.25);color:#333;">
+          <h3 style="margin:0 0 16px;font-size:16px;">修改密码</h3>
+          <input id="cpwdOld" type="password" placeholder="原密码" autocomplete="current-password" style="width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:10px;border:1px solid #ccc;border-radius:8px;font-size:14px;">
+          <input id="cpwdNew" type="password" placeholder="新密码（至少6位）" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:10px;border:1px solid #ccc;border-radius:8px;font-size:14px;">
+          <input id="cpwdNew2" type="password" placeholder="确认新密码" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:9px 11px;margin-bottom:10px;border:1px solid #ccc;border-radius:8px;font-size:14px;">
+          <div id="cpwdErr" style="color:#e74c3c;font-size:12px;min-height:16px;margin-bottom:8px;"></div>
+          <div style="display:flex;gap:10px;justify-content:flex-end;">
+            <button onclick="closeChangePwd()" style="padding:7px 16px;border:1px solid #ccc;background:#fff;border-radius:8px;cursor:pointer;font-size:13px;">取消</button>
+            <button id="cpwdSubmit" onclick="submitChangePwd()" style="padding:7px 16px;border:none;background:var(--blue,#3a7afe);color:#fff;border-radius:8px;cursor:pointer;font-size:13px;">确定</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -494,6 +508,42 @@ body.skin-cute .dlg{border-radius:16px}
 const BASE = {{ request.script_root|tojson }};
 const ADVISOR = {{ advisor_name|tojson }};
 const ROLE = {{ role|tojson }};
+
+function openChangePwd() {
+  ['cpwdOld','cpwdNew','cpwdNew2'].forEach(function(id){ document.getElementById(id).value = ''; });
+  document.getElementById('cpwdErr').textContent = '';
+  document.getElementById('cpwdMask').style.display = 'flex';
+}
+function closeChangePwd() {
+  document.getElementById('cpwdMask').style.display = 'none';
+}
+async function submitChangePwd() {
+  var oldp = document.getElementById('cpwdOld').value;
+  var newp = document.getElementById('cpwdNew').value;
+  var newp2 = document.getElementById('cpwdNew2').value;
+  var err = document.getElementById('cpwdErr');
+  var btn = document.getElementById('cpwdSubmit');
+  err.textContent = '';
+  if (!oldp || !newp) { err.textContent = '请填写完整'; return; }
+  if (newp.length < 6) { err.textContent = '新密码至少 6 位'; return; }
+  if (newp === oldp) { err.textContent = '新密码不能与原密码相同'; return; }
+  if (newp !== newp2) { err.textContent = '两次输入的新密码不一致'; return; }
+  btn.disabled = true; btn.textContent = '提交中…';
+  try {
+    var res = await fetch(BASE + '/api/consultant/change-password', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ old_password: oldp, new_password: newp })
+    });
+    var data = await res.json();
+    if (!res.ok || !data.ok) { err.textContent = data.error || '修改失败'; return; }
+    closeChangePwd();
+    alert('密码已修改，下次登录请使用新密码');
+  } catch (e) {
+    err.textContent = '网络错误，请重试';
+  } finally {
+    btn.disabled = false; btn.textContent = '确定';
+  }
+}
 
 // ===== 网络断开统一提示（toast）=====
 // 联网请求(fetch)在断网/连接失败时会 reject(通常 TypeError)；HTTP 4xx/5xx 不会 reject，仍由各自逻辑处理。
