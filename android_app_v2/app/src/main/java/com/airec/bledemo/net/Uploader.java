@@ -86,6 +86,13 @@ public final class Uploader {
     public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
                                 String fileName, String mime, String sn, long placeholderId, String recordedAt,
                                 String penFile, boolean truncated) {
+        return upload(file, durationSec, cookie, uploadUrl, fileName, mime, sn, placeholderId, recordedAt, penFile, truncated, null);
+    }
+
+    /** B1(复审):source="phone" → 服务端按手机录音权限校验(否则默认按录音笔权限,只开手机权限的顾问恒403)。 */
+    public static Result upload(File file, int durationSec, String cookie, String uploadUrl,
+                                String fileName, String mime, String sn, long placeholderId, String recordedAt,
+                                String penFile, boolean truncated, String source) {
         if (file == null || !file.exists() || file.length() == 0) {
             return new Result(false, -1, "录音文件为空");
         }
@@ -148,6 +155,13 @@ public final class Uploader {
                     out.writeBytes("--" + boundary + CRLF);
                     out.writeBytes("Content-Disposition: form-data; name=\"pen_file\"" + CRLF + CRLF);
                     out.write(penFile.getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
+                // B1 source 字段（"phone"=手机麦，服务端按 allow_phone_rec 校验；空则按笔）
+                if (source != null && !source.isEmpty()) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"source\"" + CRLF + CRLF);
+                    out.write(source.getBytes(StandardCharsets.UTF_8));
                     out.writeBytes(CRLF);
                 }
                 // A2 truncated 字段（诚实"可能不完整"标记，服务端记 note+允许完整版替换）

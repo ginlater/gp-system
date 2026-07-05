@@ -9845,6 +9845,16 @@ def api_consultant_upload():
             "WHERE uploader_user_id=? AND recorded_at=? "
             "AND source LIKE 'consultant-pen%' AND upload_status!='processing' LIMIT 1",
             (u["id"], recorded_at_form))
+    # 安卓批次五C2：占位已被绑定(bind-before-upload)时【跳过整个去重分支】——原逻辑会把已绑
+    # 占位 DELETE 掉(刚绑好的段凭空蒸发)。绑定优先：音频回填进已绑占位；未绑的 dup 行留待整理。
+    if dup and placeholder_id:
+        _ph_bound = db_fetchone(
+            "SELECT id FROM recordings WHERE id=? AND uploader_user_id=? "
+            "AND upload_status='processing' AND session_id IS NOT NULL",
+            (placeholder_id, u["id"]))
+        if _ph_bound:
+            app.logger.info("[upload] 占位 %s 已绑定→跳过去重,音频回填占位(dup=%s 保留)", placeholder_id, dup["id"])
+            dup = None
     if dup:
         # ★命中的旧记录是「后段乱码/损坏」段、且还没绑定顾客 → 本次多半是从笔重新下载的【完整版】。
         #   不再当重复跳过(那样完整版会被白白丢弃)，而是用完整版替换旧损坏版、清掉损坏标记。
@@ -9870,13 +9880,14 @@ def api_consultant_upload():
             if device_sn:
                 db_write("UPDATE recordings SET device_sn=? WHERE id=?", (device_sn, dup["id"]))
             if placeholder_id:
-                db_write("DELETE FROM recordings WHERE id=? AND upload_status='processing' AND uploader_user_id=?",
+                # 批次五C2：只删未绑定的占位（已绑的上面已跳过去重，双保险再挡一层）
+                db_write("DELETE FROM recordings WHERE id=? AND upload_status='processing' AND uploader_user_id=? AND session_id IS NULL",
                          (placeholder_id, u["id"]))
             _kick_clean_audio_async(dup["id"])
             app.logger.info("[upload] 替换损坏段 rec %s pen_file=%s ra=%s", dup["id"], pen_file, recorded_at_form)
             return jsonify({"id": dup["id"], "replaced": True})
         if placeholder_id:
-            db_write("DELETE FROM recordings WHERE id=? AND upload_status='processing' AND uploader_user_id=?",
+            db_write("DELETE FROM recordings WHERE id=? AND upload_status='processing' AND uploader_user_id=? AND session_id IS NULL",
                      (placeholder_id, u["id"]))
         app.logger.info("[upload] 去重跳过 pen_file=%s ra=%s → 已存在 rec %s", pen_file, recorded_at_form, dup["id"])
         return jsonify({"id": dup["id"], "deduped": True})
@@ -9885,6 +9896,12 @@ def api_consultant_upload():
             "SELECT id, uploader_user_id, upload_status, source, session_id FROM recordings WHERE id=?",
             (placeholder_id,),
         )
+        # 安卓批次五B3：占位已回填过(done)=上次上传其实成功但响应丢了(大文件读超时/客户端被杀)，
+        # 客户端补传又带同一 placeholder_id 来——直接按去重返回，不再落到 ingest 新建重复行
+        # (重复行可能被分别绑到两位顾客)。
+        if prow and prow["uploader_user_id"] == u["id"] and prow["upload_status"] == "done":
+            app.logger.info("[upload] 占位 %s 已回填过→幂等去重返回", placeholder_id)
+            return jsonify({"id": prow["id"], "deduped": True})
         if prow and prow["uploader_user_id"] == u["id"] and prow["upload_status"] == "processing":
             try:
                 oss_bucket.put_object(oss_key, data)
@@ -10182,9 +10199,11 @@ def api_consultant_recordings_pending():
                  )""",
             (u["id"],),
         )
-        # 占位建立超过2小时仍 processing → 死会话遗留,清掉(建立时刻取 oss_key 内嵌 ts14,
+        # 占位建立超过【8小时】仍 processing → 死会话遗留,清掉(建立时刻取 oss_key 内嵌 ts14,
         # 不能用 created_at:占位的 created_at=recorded_at,同步老录音会被误杀)
-        _ph_cutoff = (datetime.now() - timedelta(hours=2)).strftime("%Y%m%d%H%M%S")
+        # 批次五B4:原2小时被客户端6小时放弃烧钟(E6)反超——门店一下午没网,"同步中"行2小时就被
+        # 服务端删了(E6原症状复现),传成后又以新行冒回。放到8小时(6h客户端+2h余量)。
+        _ph_cutoff = (datetime.now() - timedelta(hours=8)).strftime("%Y%m%d%H%M%S")
         db_write(
             """DELETE FROM recordings
                WHERE uploader_user_id=? AND upload_status='processing' AND session_id IS NULL
@@ -10501,6 +10520,11 @@ def api_consultant_recording_bind(rid):
         return jsonify({"error": "录音不存在"}), 404
     if rec["uploader_user_id"] and rec["uploader_user_id"] != u["id"]:
         return jsonify({"error": "无权绑定他人录音"}), 403
+    # 批次五C1：已绑定的段不许再 bind——并发窗口(另一设备/网页先绑了)会把别人接诊包里的段
+    # 静默抢走：原包不作废、无审计。三条移动路径(unbind/direct_rebind/preview_remove)都有防护，
+    # 唯独 bind 原来裸奔。要移动请走换绑。
+    if rec["session_id"]:
+        return jsonify({"error": "这段陪伴已绑定到顾客，请刷新列表；要移动请在接诊包里用「换绑」"}), 409
     if _has_pending_delete_request(rid):
         return jsonify({"error": "该录音正在申请删除，请先撤回删除申请再操作"}), 409
     cid = u["company_id"] or 1
@@ -10883,6 +10907,11 @@ def api_consultant_direct_rebind(rid):
     # 安卓批次三D9守卫：换绑到当前所属顾客本人没有意义，还会白作废原报告——直接拒绝
     if old_sess and old_sess["customer_id"] == to_customer_id:
         return jsonify({"error": "这段陪伴本来就属于这位顾客，无需换绑"}), 400
+    # 批次五C3兜底：历史 session customer_id=NULL（老数据/曾漏传）时按姓名比较
+    if old_sess and old_sess["customer_id"] is None:
+        _to_name = db_fetchone("SELECT name FROM company_customers WHERE id=?", (to_customer_id,))
+        if _to_name and old_sess["customer"] == _to_name["name"]:
+            return jsonify({"error": "这段陪伴本来就属于这位顾客，无需换绑"}), 400
     cid = u["company_id"] or 1
     rec_date = _rec_date_of(rec)
     to_cust = db_fetchone(
@@ -10909,7 +10938,9 @@ def api_consultant_direct_rebind(rid):
                VALUES (?,?,?,?,?,?)""",
             (cid, u["id"], advisor, to_customer_id, rec_date, u["store_id"]),
         )
-    new_sid = get_or_create_session(advisor, to_cust["name"], rec_date, company_id=cid)
+    # 批次五C3：补传 customer_id——原来漏传导致换绑新建的 session customer_id=NULL，
+    # 「禁换给自己」的客户端过滤(rebind_candidates 回 NULL)与服务端守卫(NULL 比较恒 False)双双失效
+    new_sid = get_or_create_session(advisor, to_cust["name"], rec_date, company_id=cid, customer_id=to_customer_id)
     if not new_sid:
         return jsonify({"error": "创建目标接诊包失败"}), 500
     try:
@@ -12099,7 +12130,7 @@ def api_admin_rebind_approve(req_id):
         return jsonify({"error": "目标顾客已不在录音当天接诊列表，无法换绑"}), 400
     old_session_id = rec["session_id"]
     # 目标 session：找到 / 创建
-    new_sid = get_or_create_session(advisor, to_cust["name"], rr["rec_date"], company_id=cid)
+    new_sid = get_or_create_session(advisor, to_cust["name"], rr["rec_date"], company_id=cid, customer_id=to_customer_id)   # 批次五C3
     if not new_sid:
         return jsonify({"error": "创建目标接诊包失败"}), 500
     # OSS 重命名（新格式录音）；失败 → 回滚（不改 DB，申请保持 pending 待重试）

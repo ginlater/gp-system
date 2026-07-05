@@ -114,6 +114,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private volatile long    lastRxMs = 0;
     private volatile int     hbMissed = 0;
     private int              hbBatteryTick = 0;   // 心跳计数：每 ~8 拍(≈64s)查一次电量
+    private int              hbBusyTick = 0;      // H1(复审):忙态心跳计数,每~4拍(≈60s)续租保活
     private static final long HANDSHAKE_TIMEOUT_MS = 7000;  // 连上后 2s 才发首批命令（手册要求），整体放宽到 7s
     private static final long STALE_RX_MS = 12000;
     private static final long HB_INTERVAL_MS = 8000;
@@ -133,6 +134,12 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // F13:暂停记账——elapsedSec 扣除,防高暂停段误判截断/时长虚报
     private volatile long pauseAccumMs = 0;
     private volatile long pausedAtMs = 0;
+    // A2(复审):cmd9"未在录"抖动计数——连续2次才收尾(单次可能是固件抖动)
+    private volatile int cmd9NotRecCount = 0;
+    // A2(复审):会话已收尾但仍有音频帧到达(收尾误判/笔仍在录)→限频补发cmd9复核重新接管
+    private volatile long lastOrphanProbeMs = 0;
+    // A4(复审):断线重连宽限期(UI"录音继续中")——期间 RCI 的一致性看门狗不得把状态拉回 Idle
+    private volatile long reconnectGraceUntilMs = 0;
     private volatile boolean appInitiatedPauseResume = false;
 
     // ★镜像状态
@@ -186,6 +193,11 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         final long startWallMs;
         final boolean appInitiated;
         volatile long placeholderId = -1;
+        // B2(复审):占位挪独立线程后的合流标记——true=占位请求已终结(成/败),直传前可放心读 placeholderId;
+        //   仅在真正提交占位请求前置 false(恢复的旧任务不等)
+        volatile boolean phAttemptDone = true;
+        // B2(复审):任务已被放弃——占位迟到时不再回填,直接取消,防孤儿占位永挂"同步中"
+        volatile boolean dropped = false;
         volatile boolean truncatedFlag = false; // A2:诚实"可能不完整"标记,上传带 truncated=1
         volatile String localRawPath = null;   // 非空=本地已有完整裸帧文件，打包直传（不占蓝牙）
         volatile int uploadAttempts = 0;
@@ -332,6 +344,11 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     /** App 前后台状态通知给笔（SDK 要求实现；失败静默）。 */
     public void setAppForeground(boolean fg) {
+        // H1(复审):回前台按当前持有态补挂保活——后台启 FGS 被拒的会话,回前台是百分百能挂上的时机
+        if (fg) {
+            if (keepAliveOn) PenKeepAliveService.recOn(appCtx);
+            else if (connKeepAliveOn) PenKeepAliveService.connOn(appCtx);
+        }
         if (!linkUp) return;
         try { PNote.sendAppShowState(fg ? 1 : 2); } catch (Throwable ignore) {}
     }
@@ -411,18 +428,19 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         bleCmd("stopSearch", PNote::stopSearch);
     }
 
-    /** 扫描页点连接 / 自动重连命中：连接指定设备并记住它。 */
+    /** 扫描页点连接 / 自动重连命中：连接指定设备。 */
     public void connectTo(String name, String address) {
         if (TextUtils.isEmpty(address)) return;
-        currentMac = address;
-        lastConnectedMac = address;
-        lastConnectedName = name;
-        try {
-            appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE).edit()
-                    .putString("last_mac", address)
-                    .putString("last_name", name == null ? "" : name)
-                    .apply();
-        } catch (Exception ignore) {}
+        // A1(复审):不再乐观预写 currentMac/lastConnectedMac/prefs——那会把 B4 双笔校验变成自己骗自己
+        //   (connectWatch 拿笔A的心跳+被覆写成B的mac 秒判"连B成功")。这些只在 cmd2 真连上时写。
+        // 已连着另一支笔时先主动断开(对齐 iOS)，否则 SDK 可能保持旧连接、新连接请求被吞
+        if (linkUp && currentMac != null && !address.equalsIgnoreCase(currentMac)) {
+            penLog("★连新笔前先断旧笔 " + currentMac + " → " + address);
+            verifiedConnected = false;
+            linkUp = false;
+            stopHeartbeat();
+            if (btReady()) { try { PNote.closeConnect(); } catch (Throwable ignore) {} }
+        }
         penLog("connectTo " + name + " " + address);
         final String n = name == null ? "" : name;
         bleCmd("connectDevice", () -> PNote.connectDevice(n, address));
@@ -522,6 +540,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                         stopHeartbeat();
                         if (listener != null) main.post(() -> listener.onPenConnected(false));
                         connKeepAlive(false);
+                        cleanupWorkerOnLinkDown("bt-off");   // A3(复审):同cmd2断开,防workerBusy悬挂卡死队列
                         resetSessionOnLinkDown();
                     }
                 }
@@ -587,6 +606,12 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (busy && btReady()) {
                 try { PNote.getRecordState(); } catch (Throwable ignore) {}
             }
+            // H1(复审):忙态也续租保活——C9 的续租原来只在 !busy 分支,录音/下载中一次不跑;
+            //   FGS 若曾被拒或被 maxStop 停掉,这里每 ~60s 补挂一次(每次真发,服务幂等)
+            if (busy && (++hbBusyTick % 4) == 0) {
+                if (keepAliveOn) PenKeepAliveService.recOn(appCtx);
+                else if (connKeepAliveOn) PenKeepAliveService.connOn(appCtx);
+            }
             if ((now - lastRxMs) > (HB_INTERVAL_MS + 4000)) {
                 hbMissed++;
                 Log.w(TAG, "心跳未回包，连续 " + hbMissed + " 次");
@@ -598,6 +623,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     if (btReady()) { try { PNote.closeConnect(); } catch (Throwable ignore) {} } else penLog("跳过closeConnect:蓝牙未就绪");
                     if (listener != null) main.post(() -> listener.onPenConnected(false));
                     connKeepAlive(false);   // ★失联 → 去抖90s后撤连接级保活(其间重连成功会取消)
+                    cleanupWorkerOnLinkDown("hb-lost");   // A3(复审):同cmd2断开,防workerBusy悬挂卡死队列
                     resetSessionOnLinkDown();
                     stopHeartbeat();
                     if (autoReconnectOn) { reconnectAttempts = 0; scheduleReconnect(3000); }
@@ -759,8 +785,14 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         main.removeCallbacks(recordingHealthWatchdog);
     }
 
+    /** A4(复审):是否处于断线重连宽限期（UI 占位"录音继续中"），RCI 一致性看门狗据此豁免。 */
+    public boolean inReconnectGrace() {
+        return SystemClock.elapsedRealtime() < reconnectGraceUntilMs;
+    }
+
     private final Runnable reconnectGiveUp = new Runnable() {
         @Override public void run() {
+            reconnectGraceUntilMs = 0;   // A4:宽限结束
             if (sessionActive || penRecording) return;
             Log.w(TAG, "断线重连宽限到，仍未恢复录音 → 老实结束本段(只到断开前)");
             penLog("★重连宽限到仍未恢复→老实结束、停墙钟空跑");
@@ -768,6 +800,26 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             post(PhoneMicService.STATE_ERROR, "录音笔信号中断，本段只保存到断开前，请重连后继续", 0, -1);
         }
     };
+
+    /**
+     * A3(复审):断链时的 worker/下载收口——原来只有 cmd2 断开分支做，STATE_OFF/心跳失联(SDK不发cmd2的
+     * 场景,恰是B1修的那类)不做 → workerBusy/waitingForFile 永久悬挂,重连后 kickWorker 直接 return,
+     * 补传队列卡死到杀进程,还一直白持 FGS。三个断链入口统一走这里。
+     */
+    private void cleanupWorkerOnLinkDown(String reason) {
+        DownloadState dl = dlState;
+        if (dl != null) {
+            closeDownload(dl);
+            dlState = null;
+            workerTaskFailed(dl.task, reason, false);
+        } else if (workerBusy && currentTask != null && inflightTask == null) {
+            workerTaskFailed(currentTask, reason, false);
+        } else if (workerBusy && inflightTask == null) {
+            // 只有状态位悬挂(如等文件列表)没有具体任务 → 直接复位
+            workerBusy = false; waitingForFile = false; currentTask = null;
+            notifyPending();
+        }
+    }
 
     private void resetSessionOnLinkDown() {
         main.removeCallbacks(confirmTimeout);
@@ -789,6 +841,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         appStartPending = false; sessionAppInitiated = false; sessionAdopted = false;
         startElapsedMs = 0; sessionFileName = null; sessionStartWallMs = 0;
         if (wasRecording && autoReconnectOn) {
+            reconnectGraceUntilMs = SystemClock.elapsedRealtime() + RECONNECT_RECORDING_GRACE_MS;   // A4
             post(PhoneMicService.STATE_RECORDING, "🔄 信号断开，正在自动重连，录音继续中…", wasElapsed, -1);
             main.removeCallbacks(reconnectGiveUp);
             main.postDelayed(reconnectGiveUp, RECONNECT_RECORDING_GRACE_MS);
@@ -870,6 +923,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     private void finishSessionEnqueue(String fileName, int durSec, long startWallMs) {
         stopConfirmGen = -1;   // B2:会话收尾,停止确认作废
+        cmd9NotRecCount = 0;   // A2:抖动计数不跨会话
+        reconnectGraceUntilMs = 0;   // A4:真收尾即结束宽限
         clearActiveSession();   // A3:会话收尾,恢复交给 uploadQueue 持久化接手
         disarmHealthWatchdog();
         main.removeCallbacks(reconnectGiveUp);
@@ -986,19 +1041,29 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         notifyPending();
         post(PhoneMicService.STATE_IDLE, "已结束", 0, -1);
         final String phUrl = placeholderUrlFrom(task.uploadUrl);
+        task.phAttemptDone = false;   // B2:直传侧要等这个占位结果
         phWorker.submit(() -> {   // E8:独立线程,不再排在慢上传后面(绑定提示不被压后数分钟)
-            // E1:占位带机身文件名→同步弹层预检可精确屏蔽"正在传的段"(不再赌±90s时刻吻合)
-            String phPenFile = looksLikePenFile(task.fileName) ? task.fileName : null;
-            long pid = Uploader.createPlaceholder(task.cookie, phUrl, recStart, phPenFile, null);
-            if (pid > 0) {
-                task.placeholderId = pid;
-                Log.d(TAG, "已建占位片段 id=" + pid);
-                main.post(SoniPenController.this::persistPendingQueue);   // E5:pid即落盘,建占位后数秒被杀不再漏"幽灵同步中"
-                if (listener != null) {
-                    main.post(listener::onPenPlaceholderCreated);
-                    // 录完即可绑定：拿到占位 recordingId 就提示绑定，不必等 BLE 下载/上传完成。
-                    main.post(() -> listener.onPenBindPrompt(pid));
+            try {
+                // E1:占位带机身文件名→同步弹层预检可精确屏蔽"正在传的段"(不再赌±90s时刻吻合)
+                String phPenFile = looksLikePenFile(task.fileName) ? task.fileName : null;
+                long pid = Uploader.createPlaceholder(task.cookie, phUrl, recStart, phPenFile, null);
+                if (pid > 0) {
+                    if (task.dropped) {
+                        // B2:任务已被放弃,迟到的占位立即取消,不留孤儿"同步中"
+                        Uploader.cancelPlaceholder(cookie != null ? cookie : task.cookie, phUrl + "/cancel", pid);
+                        return;
+                    }
+                    task.placeholderId = pid;
+                    Log.d(TAG, "已建占位片段 id=" + pid);
+                    main.post(SoniPenController.this::persistPendingQueue);   // E5:pid即落盘,建占位后数秒被杀不再漏"幽灵同步中"
+                    if (listener != null) {
+                        main.post(listener::onPenPlaceholderCreated);
+                        // 录完即可绑定：拿到占位 recordingId 就提示绑定，不必等 BLE 下载/上传完成。
+                        main.post(() -> listener.onPenBindPrompt(pid));
+                    }
                 }
+            } finally {
+                task.phAttemptDone = true;
             }
         });
         main.postDelayed(this::kickWorker, kickDelayMs);
@@ -1021,7 +1086,16 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         if (data == null || data.length == 0) return;
         lastRxMs = SystemClock.elapsedRealtime();   // 音频帧也是活性证据
         java.io.ByteArrayOutputStream buf = sessionStreamBuf;
-        if (buf == null) return;
+        if (buf == null) {
+            // A2(复审):无会话却还在收音频帧=收尾误判(cmd9抖动)或漏了开始帧——限频(5s)补发cmd9，
+            //   回"在录"会走接管路径把会话捡回来，不再让笔空录、UI 却显示"已结束"。
+            long now = SystemClock.elapsedRealtime();
+            if (!sessionActive && now - lastOrphanProbeMs > 5000) {
+                lastOrphanProbeMs = now;
+                main.post(() -> { if (!sessionActive && btReady()) { try { PNote.getRecordState(); } catch (Throwable ignore) {} } });
+            }
+            return;
+        }
         try { synchronized (buf) { buf.write(data); } } catch (Exception ignore) {}
         sessionStreamBytes += data.length;
         sessionStreamFrames++;
@@ -1060,10 +1134,12 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // ============ 保活 ============
 
     private void enterRecordingKeepAlive() {
-        if (keepAliveOn) return;
+        // H1(复审):去掉一次性守卫——后台启 FGS 被拒时(C3捕获后退化)原来 keepAliveOn=true 挡住
+        //   本会话所有重试,保活永不自愈。改为每次真发(PKS 幂等,代价一次IPC),守卫只管日志。
+        boolean first = !keepAliveOn;
         keepAliveOn = true;
         PenKeepAliveService.recOn(appCtx);
-        penLog("保活↑(录音级:FGS+唤醒锁)");
+        if (first) penLog("保活↑(录音级:FGS+唤醒锁)");
     }
 
     private void exitRecordingKeepAlive() {
@@ -1221,7 +1297,12 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             case "11": markPenResponded();
                 if (data != null && sessionActive) {
                     String rn = String.valueOf(data.opt("recordName"));
-                    if (!TextUtils.isEmpty(rn) && !"null".equals(rn)) sessionFileName = rn;
+                    if (!TextUtils.isEmpty(rn) && !"null".equals(rn)) {
+                        sessionFileName = rn;
+                        // A5(复审):cmd11 回填的文件名立即落盘——这正是 A3 最想保的"开始帧没带名字"
+                        //   场景(含接管会话)，原来只写内存，进程死+笔自停仍会静默漏传
+                        saveActiveSession(sessionFileName, sessionStartWallMs);
+                    }
                 }
                 break;
             case "14": markPenResponded(); break;   // 删除结果，忽略
@@ -1262,6 +1343,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (!"null".equals(address) && !TextUtils.isEmpty(address)) {
                 lastConnectedMac = address;
                 currentMac = address;
+                // A1(复审):prefs last_mac 从 connectTo 挪到这里——真连上才记，连不上不会让自动重连去追错笔
+                try {
+                    appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE).edit()
+                            .putString("last_mac", address)
+                            .putString("last_name", "null".equals(name) || name == null ? "" : name)
+                            .apply();
+                } catch (Exception ignore) {}
             }
             if (!"null".equals(name) && !TextUtils.isEmpty(name)) lastConnectedName = name;
             linkUp = true;
@@ -1293,15 +1381,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             main.removeCallbacks(handshakeTimeout);
             if (listener != null) main.post(() -> listener.onPenConnected(false));
             connKeepAlive(false);   // ★断开 → 去抖90s后撤连接级保活
-            // 断开时若后台正在下载 → 收口部分文件，留队重连续传
-            DownloadState dl = dlState;
-            if (dl != null) {
-                closeDownload(dl);
-                dlState = null;
-                workerTaskFailed(dl.task, "disconnected", false);
-            } else if (workerBusy && currentTask != null && inflightTask == null) {
-                workerTaskFailed(currentTask, "disconnected", false);
-            }
+            cleanupWorkerOnLinkDown("disconnected");
             resetSessionOnLinkDown();
             if (wasUp && autoReconnectOn) {
                 Log.d(TAG, "断开 → 启动自动重连循环");
@@ -1322,6 +1402,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             boolean wasAppStart = appStartPending;
             boolean wasPaused = penPaused;
             penRecording = true;
+            cmd9NotRecCount = 0;   // A2:在录证据清抖动计数
             appStartPending = false;
             main.removeCallbacks(confirmTimeout);
             if (sessionActive && wasPaused) {
@@ -1457,10 +1538,25 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
             main.removeCallbacks(reconnectGiveUp);
         } else if (!recording && sessionActive && !appStartPending && !penPaused) {
-            // 巡检发现笔其实没在录（黑屏漏帧等）→ 老实收尾。
+            // 巡检发现笔其实没在录（黑屏漏帧等）→ 收尾。
             // ★penPaused 守卫：暂停时笔可能回"不在录音"，不能把暂停中的会话误杀。
-            Log.w(TAG, "cmd9 笔没在录但会话残留 → 收尾入队");
-            finishSessionEnqueue(sessionFileName, elapsedSec(), sessionStartWallMs);
+            // A2(复审):对齐 iOS——固件抖动会偶发回一次"未在录"，单次即收尾会引发
+            //   "下载仍在增长的文件→假完整版占坑→真完整版被pen_file去重挡死→尾段永久丢"。
+            //   连续 2 次才收尾；第一次只记数并 2s 后复核。
+            cmd9NotRecCount++;
+            if (cmd9NotRecCount >= 2) {
+                cmd9NotRecCount = 0;
+                Log.w(TAG, "cmd9 连续2次笔没在录但会话残留 → 收尾入队");
+                penLog("★cmd9连续2次未在录→收尾入队");
+                finishSessionEnqueue(sessionFileName, elapsedSec(), sessionStartWallMs);
+            } else {
+                penLog("★cmd9回未在录(第1次,防固件抖动)→2s后复核");
+                main.postDelayed(() -> {
+                    if (sessionActive && btReady()) { try { PNote.getRecordState(); } catch (Throwable ignore) {} }
+                }, 2000);
+            }
+        } else if (recording) {
+            cmd9NotRecCount = 0;   // A2:任何"在录"证据都清抖动计数
         }
         if (listener != null) {
             final boolean r = recording;
@@ -1718,6 +1814,11 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     /** 公共上传路径：裸帧文件 → OggOpusWriter 打包 → Uploader 直传 .ogg。 */
     private void uploadRawAsOgg(final UploadTask task, final String rawPath, final String tag) {
         try {
+            // B2(复审):占位在独立线程,直传 300ms 后就可能跑到这——占位没回来就带 pid=-1 上传会让
+            //   服务端新建行、占位变孤儿(被用户绑定则永挂"同步中")。最多等 10s 合流。
+            for (int i = 0; i < 25 && !task.phAttemptDone && task.placeholderId <= 0; i++) {
+                try { Thread.sleep(400); } catch (InterruptedException ie) { break; }
+            }
             File raw = rawPath == null ? null : new File(rawPath);
             if (raw == null || !raw.exists() || raw.length() < 800) {
                 workerTaskFailed(task, tag + ":裸帧文件无效", true);
@@ -1848,6 +1949,15 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             fileListAttempts = 0;
             Log.d(TAG, "后台开始处理 file=" + chosen.fileName + " 剩余=" + uploadQueue.size());
             requestFileListInternal();
+            // A3(复审):文件列表首包超时看门狗——cmd4 首包丢失时原来无任何超时/重发,
+            //   waitingForFile 悬挂到杀进程。20s 没等到就把任务按临时失败退避重排。
+            final UploadTask waited = chosen;
+            main.postDelayed(() -> {
+                if (waitingForFile && currentTask == waited) {
+                    penLog("★文件列表20s无回包→超时重排 " + waited.fileName);
+                    requeueDownloadTask(waited, "列表超时");
+                }
+            }, 20000);
         });
     }
 
@@ -1921,6 +2031,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private void workerTaskFailed(final UploadTask task, final String reason, final boolean drop) {
         main.post(() -> {
             if (drop) {
+                task.dropped = true;   // B2:占位请求还在路上时,回调按此标记直接取消,不留孤儿
                 uploadQueue.remove(task);
                 try { partFileFor(task.fileName).delete(); } catch (Exception ignore) {}  // A5:放弃删.part,防脏断点污染同名新录音
                 // ★放弃必须落盘:否则 pending_dl 里还留着这条,下次启动 loadPendingQueue 又把它捞回来重试,

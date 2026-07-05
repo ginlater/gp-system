@@ -71,13 +71,25 @@ public class PhoneMicService extends Service {
             String cookie = intent.getStringExtra(EXTRA_COOKIE);
             if (intent.hasExtra(EXTRA_UPLOAD_URL)) uploadUrl = intent.getStringExtra(EXTRA_UPLOAD_URL);
             stopAndUpload(cookie);
+        } else {
+            // H2(复审):STICKY 空 intent 重启——MediaRecorder 早随进程死,重启毫无意义,
+            //   且经 startForegroundService 拉起却不调 startForeground 会被系统按时限击杀(本工程实锤过)。
+            stopSelf();
         }
-        return START_STICKY;
+        // H2(复审):不再 STICKY——被杀后的恢复本来就走 retryLeftoverPhoneMic 补传扫描,
+        //   系统自动重启只会带来 FGS 超时崩溃循环或僵尸服务,纯负收益。
+        return START_NOT_STICKY;
     }
 
     private void startRecording() {
-        if (recording || uploading) {
+        if (recording) {
             broadcast(STATE_RECORDING, "正在录音", elapsedSec(), -1);
+            return;
+        }
+        if (uploading) {
+            // Z1(复审/P0):上传中收到开始命令,原来假广播"正在录音"——UI 进录音态、计时自走,
+            //   麦克风根本没开,下一位顾客整段从未采集。老实报错,让顾问稍等或重试。
+            broadcast(STATE_ERROR, "上一段录音还在保存中，请稍等几秒再点开始", 0, -1);
             return;
         }
         try {
@@ -177,7 +189,8 @@ public class PhoneMicService extends Service {
             String upMime = up.getName().endsWith(".m4a") ? "audio/mp4" : "audio/aac";
             String recordedAt = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
                     .format(new java.util.Date(recStart));
-            Uploader.Result r = Uploader.upload(up, durSec, cookie, uploadUrl, upName, upMime, null, pid, recordedAt, null);
+            // B1(复审):带 source=phone——服务端按手机录音权限校验,只开手机权限的顾问不再恒403
+            Uploader.Result r = Uploader.upload(up, durSec, cookie, uploadUrl, upName, upMime, null, pid, recordedAt, null, false, "phone");
             uploading = false;
             if (r.ok) {
                 long rid = r.recordingId > 0 ? r.recordingId : pid;

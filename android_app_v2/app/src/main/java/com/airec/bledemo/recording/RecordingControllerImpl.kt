@@ -350,7 +350,9 @@ class RecordingControllerImpl(
      */
     private fun withRecordingConsistency(s: RecordingState): RecordingState =
         if (s is RecordingState.Recording && !s.starting &&
-            currentSource == CompanionSource.Pen && !penController.isRecording()
+            currentSource == CompanionSource.Pen && !penController.isRecording() &&
+            // A4(复审)：断线重连宽限期的"录音继续中"占位是故意的，看门狗别 3 秒就拉回 Idle
+            !penController.inReconnectGrace()
         ) {
             RecordingState.Idle()
         } else {
@@ -588,7 +590,8 @@ class RecordingControllerImpl(
                     // D12：文件名里嵌的占位 id（rec_<ts>_p<pid>.aac）——补传带上它回填同一占位行，
                     // 不再新建重复行、"同步中"占位也能转正。
                     val pid = Regex("_p(\\d+)\\.").find(f.name)?.groupValues?.get(1)?.toLongOrNull() ?: -1L
-                    var r = Uploader.upload(f, durSec, ck, url, upName, upMime, null, pid)
+                    // B1(复审)：补传也带 source=phone（服务端按手机录音权限校验）
+                    var r = Uploader.upload(f, durSec, ck, url, upName, upMime, null, pid, null, null, false, "phone")
                     // 手机麦补传遇 401：先用本地凭证自动重登一次，成功就用新 Cookie 立刻重传这一段。
                     if (!r.ok && r.error?.contains("登录已失效") == true) {
                         val relogged = runCatching { runBlocking { AuthManager().reAuthenticate() } }.getOrDefault(false)
@@ -599,7 +602,7 @@ class RecordingControllerImpl(
                             }.getOrNull()
                             if (!freshCk.isNullOrEmpty()) {
                                 cookie = freshCk
-                                r = Uploader.upload(f, durSec, freshCk, url, upName, upMime, null, pid)
+                                r = Uploader.upload(f, durSec, freshCk, url, upName, upMime, null, pid, null, null, false, "phone")
                             }
                         }
                     }
