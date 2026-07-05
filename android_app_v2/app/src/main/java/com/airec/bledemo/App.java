@@ -43,5 +43,23 @@ public class App extends Application {
         } catch (Throwable t) {
             android.util.Log.w("App", "引擎自举失败(不影响正常入口): " + t.getMessage());
         }
+        // C6:网络恢复监听挂【进程级】(不随 Activity 销毁)——补传进程被 STICKY 服务/Worker 拉活但无界面时,
+        //   断网恢复也能立即清退避重推,不必干等最长 2h 的退避时钟(何智莉那类"上传卡住"的兜底)。
+        try {
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                    getSystemService(android.content.Context.CONNECTIVITY_SERVICE);
+            if (cm != null) {
+                cm.registerDefaultNetworkCallback(new android.net.ConnectivityManager.NetworkCallback() {
+                    @Override public void onAvailable(android.net.Network network) {
+                        try {
+                            com.airec.bledemo.recording.RecordingModule.INSTANCE.onNetworkAvailable();
+                            com.airec.bledemo.recording.RecordingModule.INSTANCE.refreshUploadContext();
+                        } catch (Throwable ignore) {}
+                    }
+                });
+            }
+        } catch (Throwable t) {
+            android.util.Log.w("App", "网络监听登记失败: " + t.getMessage());
+        }
     }
 }

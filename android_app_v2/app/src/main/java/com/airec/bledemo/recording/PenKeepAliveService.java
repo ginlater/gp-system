@@ -104,8 +104,10 @@ public class PenKeepAliveService extends Service {
     /** 按当前两个持有重算：任一为真→挂前台(录音时再持锁)；都为假→停。 */
     private void reconcile() {
         if (recHold || connHold) {
-            if (!foreground) { startForegroundCompat(); foreground = true; }
-            else updateNotification();              // 已在前台：只刷新文案(已就绪/进行中)
+            if (!foreground) {
+                // C3:启 FGS 被拒(Android12+ 后台未白名单)→已在 startForegroundCompat 内退化,不再往下持锁
+                if (startForegroundCompat()) foreground = true; else return;
+            } else updateNotification();              // 已在前台：只刷新文案(已就绪/进行中)
             if (recHold) acquireWakeLock(); else releaseWakeLock();   // 唤醒锁仅录音时持，空闲连接省电
             handler.removeCallbacks(maxStop);
             handler.postDelayed(maxStop, MAX_KEEPALIVE_MS);
@@ -170,15 +172,25 @@ public class PenKeepAliveService extends Service {
                 .build();
     }
 
-    private void startForegroundCompat() {
+    /** C3:返回是否真的进了前台。STICKY 重启在后台未白名单时 startForeground 会抛
+     *  ForegroundServiceStartNotAllowedException(Android12+),这里吞掉退化"无保活",绝不让自愈重启变崩溃循环。 */
+    private boolean startForegroundCompat() {
         NotificationManager nm = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         ensureChannel(nm);
         Notification n = buildNotification();
-        // connectedDevice 类型常量 + 三参 startForeground 都是 API 30(R) 起；24~29 用两参，靠 manifest 里的 type。
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
-        } else {
-            startForeground(NOTIFICATION_ID, n);
+        try {
+            // connectedDevice 类型常量 + 三参 startForeground 都是 API 30(R) 起；24~29 用两参，靠 manifest 里的 type。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                startForeground(NOTIFICATION_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE);
+            } else {
+                startForeground(NOTIFICATION_ID, n);
+            }
+            return true;
+        } catch (Throwable t) {
+            Log.w(TAG, "startForeground 被拒→退化无保活(不崩): " + t.getMessage());
+            recHold = false; connHold = false;
+            try { stopSelf(); } catch (Throwable ignore) {}
+            return false;
         }
     }
 

@@ -234,10 +234,10 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private static final class PersistedDl {
         final String fileName; final int durSec; final long startWallMs;
         final long placeholderId; final boolean appInitiated; final long firstSeenMs;
-        final int downloadRequeues; final long nextAttemptMs;
-        PersistedDl(String fn, int d, long sw, long pid, boolean ai, long fs, int rq, long na) {
+        final int downloadRequeues; final long nextAttemptMs; final String rawPath;
+        PersistedDl(String fn, int d, long sw, long pid, boolean ai, long fs, int rq, long na, String raw) {
             fileName = fn; durSec = d; startWallMs = sw; placeholderId = pid; appInitiated = ai; firstSeenMs = fs;
-            downloadRequeues = rq; nextAttemptMs = na;
+            downloadRequeues = rq; nextAttemptMs = na; rawPath = raw;
         }
     }
     private final List<PersistedDl> pendingRestore = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -355,6 +355,18 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
      * 都在【我们的主线程】执行。蓝牙关闭/切换瞬间，SDK 内部的 closeConnect/startSearch 会同步阻塞，
      * 直接把主线程冻死(真机实锤：63116s 后 penlog 全停、UI 无响应)。适配器不在 ON 态就别发任何 BLE 命令。
      */
+    // B9:Android12+ 蓝牙运行时权限——缺权时自动重连全链路会静默 SecurityException 空转,先判
+    private boolean hasBtConnectPerm() {
+        if (android.os.Build.VERSION.SDK_INT < 31) return true;
+        try { return appCtx.checkSelfPermission("android.permission.BLUETOOTH_CONNECT")
+                == android.content.pm.PackageManager.PERMISSION_GRANTED; } catch (Throwable t) { return false; }
+    }
+    private boolean hasBtScanPerm() {
+        if (android.os.Build.VERSION.SDK_INT < 31) return true;
+        try { return appCtx.checkSelfPermission("android.permission.BLUETOOTH_SCAN")
+                == android.content.pm.PackageManager.PERMISSION_GRANTED; } catch (Throwable t) { return false; }
+    }
+
     private static boolean btReady() {
         try {
             android.bluetooth.BluetoothAdapter ad = android.bluetooth.BluetoothAdapter.getDefaultAdapter();
@@ -412,6 +424,27 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     public void autoConnect(String savedMac) {
         if (savedMac == null || savedMac.isEmpty()) return;
         if (linkUp || autoConnectMac != null) return;
+        // B9:缺蓝牙权限时扫描/连接都会 SecurityException 空转,首页永远"未连接"且无提示——早退不空转
+        if (!hasBtScanPerm() || !hasBtConnectPerm()) {
+            penLog("★自动重连缺蓝牙权限(BLUETOOTH_SCAN/CONNECT),跳过(需用户授权)");
+            return;
+        }
+        // B5:僵尸态救援——笔被杀/重装后仍挂系统蓝牙上不广播,扫描永远搜不到;
+        //   先查系统已连接的 GATT 设备,命中目标 MAC 就直接 connectDevice(绕过扫描),不用再让用户重启笔
+        try {
+            android.bluetooth.BluetoothManager bm =
+                    (android.bluetooth.BluetoothManager) appCtx.getSystemService(Context.BLUETOOTH_SERVICE);
+            if (bm != null) {
+                for (android.bluetooth.BluetoothDevice d :
+                        bm.getConnectedDevices(android.bluetooth.BluetoothProfile.GATT)) {
+                    if (d != null && savedMac.equalsIgnoreCase(d.getAddress())) {
+                        penLog("★僵尸救援:系统已连接含目标笔→直连跳过扫描 " + savedMac);
+                        connectTo(d.getName(), savedMac);
+                        return;
+                    }
+                }
+            }
+        } catch (Throwable t) { Log.w(TAG, "getConnectedDevices 查询失败: " + t.getMessage()); }
         autoConnectMac = savedMac;
         scanningForAuto = true;
         startSearch();
@@ -563,7 +596,10 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (!busy && btReady()) {
                 try { PNote.getRecordState(); } catch (Throwable ignore) {}   // cmd=9 回包即心跳
                 // ~每 64s 查一次电量(cmd=6)，低电时由 cmd=6 回包触发充电通知
-                if ((++hbBatteryTick % 8) == 0) { try { PNote.getCBC(); } catch (Throwable ignore) {} }
+                if ((++hbBatteryTick % 8) == 0) {
+                    try { PNote.getCBC(); } catch (Throwable ignore) {}
+                    connKeepAlive(true);   // C9:每~64s续租连接级FGS,防3h maxStop把空闲连接的保活停掉→整下午没客人傍晚App已死
+                }
             }
             main.postDelayed(this, busy ? HB_INTERVAL_BUSY_MS : HB_INTERVAL_MS);
         }
@@ -1985,11 +2021,14 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             JSONArray arr = new JSONArray();
             for (UploadTask t : uploadQueue) {
                 if (t == null || t.fileName == null) continue;
-                if (t.localRawPath != null && !looksLikePenFile(t.fileName)) continue;   // 合成名(stream_*)没法补下载，不存
+                // C5:有本地实时流文件就持久化其路径,重启后直传不再降级整段重走BLE;合成名(stream_*)且无本地文件才跳过
+                boolean hasLocalRaw = t.localRawPath != null && new File(t.localRawPath).exists();
+                if (!hasLocalRaw && !looksLikePenFile(t.fileName)) continue;
                 JSONObject o = new JSONObject();
                 o.put("fn", t.fileName); o.put("dur", t.durSec); o.put("sw", t.startWallMs);
                 o.put("pid", t.placeholderId); o.put("ai", t.appInitiated); o.put("fs", t.firstSeenMs);
                 o.put("rq", t.downloadRequeues); o.put("na", t.nextAttemptWallMs);
+                if (hasLocalRaw) o.put("raw", t.localRawPath);
                 arr.put(o);
             }
             appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
@@ -2010,7 +2049,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 if (fn.isEmpty() || uploadedFileNames.contains(fn)) continue;
                 pendingRestore.add(new PersistedDl(fn, o.optInt("dur", 0),
                         o.optLong("sw", 0), o.optLong("pid", -1), o.optBoolean("ai", false), o.optLong("fs", 0),
-                        o.optInt("rq", 0), o.optLong("na", 0)));
+                        o.optInt("rq", 0), o.optLong("na", 0), o.optString("raw", "")));
             }
             // A3:录音中被杀残留的活动会话 → 也当补传任务恢复(进程死+笔自停的漏传兜底)
             try {
@@ -2021,7 +2060,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     for (PersistedDl p : pendingRestore) if (af.equals(p.fileName)) { dup = true; break; }
                     if (!dup) {
                         pendingRestore.add(new PersistedDl(af, 0, sp.getLong("active_session_wall", 0),
-                                -1, true, System.currentTimeMillis(), 0, 0));
+                                -1, true, System.currentTimeMillis(), 0, 0, ""));
                         penLog("★恢复录音中被杀的活动会话→补传 " + af);
                     }
                 }
@@ -2045,6 +2084,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     p.durSec, p.startWallMs, p.appInitiated);
             t.placeholderId = p.placeholderId;
             t.firstSeenMs = p.firstSeenMs;
+            if (p.rawPath != null && !p.rawPath.isEmpty() && new File(p.rawPath).exists()) t.localRawPath = p.rawPath;   // C5:本地实时流在→直传不重下
             t.downloadRequeues = p.downloadRequeues;
             t.nextAttemptWallMs = p.nextAttemptMs;
             if (giveUpIfStale(t)) { n++; continue; }
@@ -2193,6 +2233,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 } else {
                     penAllowed = false; penDenyMsg = v.message; penDeniedMac = mac;
                     if (mac != null && mac.equals(lastConnectedMac)) lastConnectedMac = null;
+                    // B8:同步清 prefs last_mac,否则冷启动 autoConnect 又自动连这支被拒的笔→连上→拒→断,循环打扰
+                    try { appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE).edit().remove("last_mac").remove("last_name").apply(); } catch (Exception ignore) {}
                     penLog("★SN校验拒绝→断开 " + v.message);
                     String msg = (v.message == null || v.message.isEmpty()) ? "这台录音笔不是你的，请连你自己的录音笔" : v.message;
                     post(PhoneMicService.STATE_ERROR, msg, 0, -1);
@@ -2201,6 +2243,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             });
         });
     }
+
+    /** B4:当前【真连上】那支笔的 MAC(未验证连接/断开返回 null)。扫描页据此确认连的是不是用户点选的那支。 */
+    public String currentConnectedMac() { return (verifiedConnected && linkUp) ? currentMac : null; }
 
     /** 当前连接笔的 SN（cmd=7 缓存）。读不到返回空串。 */
     private String penSn() { return penSn == null ? "" : penSn; }

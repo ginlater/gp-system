@@ -77,10 +77,15 @@ public class SoniScanActivity extends AppCompatActivity {
 
     /** 连接结果轮询：真在线(isPenAlive) → 记住并收页；超时报失败。 */
     private long connectStartMs = 0;
+    private String connectTargetAddr = null;   // B4:本次点选要连的笔MAC,防"另一支自动连上被当成功"
     private final Runnable connectWatch = new Runnable() {
         @Override public void run() {
             SoniPenController pc = SoniPenController.instance();
-            if (pc != null && pc.isPenAlive()) {
+            // B4:必须是"点选的那支"真连上才算成功——否则双笔场景自动重连抢连了另一支,
+            //   isPenAlive 也为真会误判成功并把错的笔存成 last_mac(以后自动连错笔/录进别人的笔)
+            if (pc != null && pc.isPenAlive()
+                    && connectTargetAddr != null
+                    && connectTargetAddr.equalsIgnoreCase(pc.currentConnectedMac())) {
                 setResult(RESULT_OK, new Intent());
                 finish();
                 return;
@@ -146,6 +151,7 @@ public class SoniScanActivity extends AppCompatActivity {
         binding.progressBar.setVisibility(View.VISIBLE);
         binding.tvStatus.setText("连接中：" + (d.name == null || d.name.isEmpty() ? d.address : d.name) + "…");
         pc.stopSearch();
+        connectTargetAddr = d.address;   // B4:记住点选的笔,connectWatch 只认它真连上
         pc.connectTo(d.name, d.address);
         connectStartMs = SystemClock.elapsedRealtime();
         scanUi.removeCallbacks(connectWatch);
