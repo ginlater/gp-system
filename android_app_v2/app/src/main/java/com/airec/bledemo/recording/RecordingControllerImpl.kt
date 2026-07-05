@@ -307,10 +307,9 @@ class RecordingControllerImpl(
         }
         // 手机麦绑定提示：D12 停录建占位后 UPLOADING 即带占位 recId（录完立刻能绑，不等传完）；
         // 上传成功的 IDLE 也带 recId 兜底（占位失败降级时仍按老路弹）。
+        // Z1改B：新段已开录时上一段的占位/回填经 RECORDING 状态捎带 recId——任何状态带 recId 都触发。
         // 去重：同一 recId 只提示一次（attach 同步快照会重放最近 Idle；占位/回填是同一行 id）。
-        if ((busState == PhoneMicService.STATE_IDLE || busState == PhoneMicService.STATE_UPLOADING) &&
-            recId > 0 && recId != lastBusBindRecId
-        ) {
+        if (recId > 0 && recId != lastBusBindRecId) {
             lastBusBindRecId = recId
             _bindPrompt.tryEmit(recId)
             _penListChanged.tryEmit(Unit)   // 占位已入待整理 → 顺手刷新列表

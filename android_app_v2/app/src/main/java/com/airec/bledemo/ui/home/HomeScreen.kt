@@ -435,7 +435,8 @@ private fun CompactCompanionRow(
         CompactCompanionButton(
             live = companion.live,
             starting = companion.starting,
-            enabled = !companion.uploading,
+            // Z1改B（用户拍板）：保存中也能点——直接开录新段，上一段后台继续传（录音优先级最高）
+            enabled = true,
             onClick = onToggle,
         )
         Column(modifier = Modifier.weight(1f)) {

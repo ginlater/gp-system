@@ -373,15 +373,16 @@ class HomeViewModel(
             return
         }
         when (companion.value.state) {
-            is RecordingState.Uploading -> Unit // 保存中：忽略（web: if(uploading)return）
-            is RecordingState.Recording, is RecordingState.Paused -> rc.stopCompanion()
-            is RecordingState.Idle -> {
+            // Z1改B（用户拍板 2026-07-06）：保存中点开始=直接开录新段——录音优先级最高，
+            // 上一段在后台继续传（PhoneMicService 已解耦，上传与录音并行互不干扰）。
+            is RecordingState.Uploading, is RecordingState.Idle -> {
                 // 权限守卫：避免极端时序下用未开通来源开录（后端也会 403 兜底）。
                 val src = _source.value
                 if (src == CompanionSource.Phone && !_recPerm.value.phone) { _toast.value = "未开通手机录音权限"; return }
                 if (src == CompanionSource.Pen && !_recPerm.value.pen) { _toast.value = "未开通陪伴笔权限"; return }
                 rc.startCompanion(src)
             }
+            is RecordingState.Recording, is RecordingState.Paused -> rc.stopCompanion()
         }
     }
 
