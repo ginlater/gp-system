@@ -37,6 +37,30 @@ public final class Uploader {
 
     private Uploader() {}
 
+    // ★双Cookie头401病根防御(2026-07-09)：部分机型进程运行数小时后会被装上全局 CookieHandler
+    //   (注入者待查,ROM/运行时组件)，它给 HttpURLConnection 自动追加第二个 Cookie 头——旧 session 快照。
+    //   服务端(WSGI)把两个头折叠成 "session=新,session=旧"，werkzeug 验签失败 → 上传永远 401、
+    //   重登也救不回(新Cookie在第一个头里，坏的是折叠后的整串)，只有重开App(Handler消失)才好。
+    //   每次发请求前清掉它；首次发现暂存类名，由 SoniPenController 落 penlog(诊断上传可见,vivo等logcat不可用)。
+    private static final java.util.concurrent.atomic.AtomicReference<String> CK_HANDLER_SEEN =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    /** 取一次"发现全局CookieHandler"通告（取后清空；无则 null）。 */
+    public static String consumeCookieHandlerNotice() {
+        return CK_HANDLER_SEEN.getAndSet(null);
+    }
+
+    private static void disarmGlobalCookieHandler() {
+        try {
+            java.net.CookieHandler h = java.net.CookieHandler.getDefault();
+            if (h != null) {
+                java.net.CookieHandler.setDefault(null);
+                CK_HANDLER_SEEN.set(h.getClass().getName());
+                Log.w(TAG, "发现并清除全局CookieHandler(双Cookie头401病根): " + h.getClass().getName());
+            }
+        } catch (Throwable ignore) {}
+    }
+
     /** 手机麦克风路径：m4a。沿用旧签名，委托给通用方法。 */
     public static Result upload(File file, int durationSec, String cookie, String uploadUrl) {
         String name = "rec-" + System.currentTimeMillis() + ".aac";   // A1:ADTS 流式容器
@@ -103,6 +127,7 @@ public final class Uploader {
         String boundary = "----gongpai" + System.currentTimeMillis();
         HttpURLConnection conn = null;
         try {
+            disarmGlobalCookieHandler();
             URL url = new URL(uploadUrl);
             conn = (HttpURLConnection) url.openConnection();
             conn.setUseCaches(false);
@@ -252,6 +277,7 @@ public final class Uploader {
         HttpURLConnection conn = null;
         String boundary = "----gongpaiPH" + System.currentTimeMillis();
         try {
+            disarmGlobalCookieHandler();
             conn = (HttpURLConnection) new URL(placeholderUrl).openConnection();
             conn.setUseCaches(false);
             conn.setDoOutput(true);
@@ -307,6 +333,7 @@ public final class Uploader {
         HttpURLConnection conn = null;
         String boundary = "----gongpaiPC" + System.currentTimeMillis();
         try {
+            disarmGlobalCookieHandler();
             conn = (HttpURLConnection) new URL(cancelUrl).openConnection();
             conn.setUseCaches(false);
             conn.setDoOutput(true);
@@ -348,6 +375,7 @@ public final class Uploader {
         HttpURLConnection conn = null;
         String boundary = "----gongpaiSN" + System.currentTimeMillis();
         try {
+            disarmGlobalCookieHandler();
             conn = (HttpURLConnection) new URL(url).openConnection();
             conn.setUseCaches(false);
             conn.setDoOutput(true);

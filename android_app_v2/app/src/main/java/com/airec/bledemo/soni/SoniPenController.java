@@ -1890,6 +1890,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             Uploader.Result r = Uploader.upload(oggFile, durSec, liveCk, liveUrl,
                     name, "audio/ogg", task.sn, task.placeholderId, fmtWall(startWall), penFile, task.truncatedFlag);
             long ms = SystemClock.elapsedRealtime() - t0;
+            String ckNotice = Uploader.consumeCookieHandlerNotice();
+            if (ckNotice != null) penLog("★发现并已清除全局CookieHandler注入(双Cookie头401病根,注入者): " + ckNotice);
             writeProbeStatus("[" + tag + "ogg] " + name + " ogg=" + oggFile.length() + "B 上传" + ms + "ms ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
             if (r.ok) {
                 try { raw.delete(); oggFile.delete(); } catch (Exception ignore) {}
