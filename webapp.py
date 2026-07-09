@@ -110,6 +110,41 @@ app = Flask(
     static_folder=str(Path(__file__).parent / "web_v2" / "static"),
 )
 app.secret_key = FLASK_SECRET_KEY
+
+
+# ============ 会话兼容修复（2026-07-09）============
+# 病根：部分安卓机的 App 进程会被注入一个全局 CookieHandler（疑似 ROM/运行时组件），
+# 它给录音上传的 HttpURLConnection 自动追加第二个 Cookie 头（存的是旧 session 快照）。
+# gunicorn 按 WSGI 把两个 Cookie 头折叠成 "session=新值,session=旧值"，
+# 新版 werkzeug 只按 ";" 分割 → 整串当一个 session 值 → 验签失败 → 上传 401 死循环
+# （表现="录音卡在上传/登录已失效"，重开 App 才好）。
+# 修法：正常解析失败时，把原始 Cookie 头里所有 session= 候选逐个验签，第一个有效的放行。
+import re as _re
+from flask.sessions import SecureCookieSessionInterface as _SCSI
+
+
+class TolerantSessionInterface(_SCSI):
+    def open_session(self, app, request):
+        sess = super().open_session(app, request)
+        if sess:  # 正常解出非空会话 → 原样返回
+            return sess
+        raw = request.headers.get("Cookie", "") or ""
+        # 只有出现"折叠双 cookie"特征时才走兜底（单个坏 cookie 不必多试）
+        if raw.count("session=") >= 2:
+            s = self.get_signing_serializer(app)
+            if s is not None:
+                max_age = int(app.permanent_session_lifetime.total_seconds())
+                for m in _re.finditer(r"session=([^;,\s]+)", raw):
+                    try:
+                        data = s.loads(m.group(1), max_age=max_age)
+                    except Exception:
+                        continue
+                    if data:
+                        return self.session_class(data)
+        return sess
+
+
+app.session_interface = TolerantSessionInterface()
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1GB（支持多文件批量上传）
 # 登录有效期延长到 1 年（顾问端长期在岗，避免几小时/几天就 401 过期、上传被堵）。
 # 配合 App 端「401 自动重登」，顾问基本不再手动重新登录。
@@ -4859,14 +4894,14 @@ def terms_of_service():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.1.0"
+APP_V2_VERSION_NAME = "2.1.2"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 64   # 2.1.0 第二次打包(64)：补全局强更门
+APP_V2_LATEST_VERSION_CODE = 66   # 2.1.2(66)：根治卡在上传——清除注入的全局CookieHandler(双Cookie头401病根)(不强更,MIN保持64)
 APP_V2_MIN_VERSION_CODE = 64      # 2026-07-06 全量强更(含补门的64)
-APP_V2_UPDATE_NOTE = "稳定性大版本：录音更稳不丢段、后台同步更快、绑定更顺畅，修复大量已知问题，建议尽快更新。"
+APP_V2_UPDATE_NOTE = "本次更新：彻底修复部分手机录音长时间卡在【上传中】的问题，强烈建议更新。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
 #   每个版本同名("刁姐陪伴.apk")时，上次强更留在手机下载目录里的旧包会顶包——浏览器弹"该文件已下载"
 #   或存成"(1)"副本，顾问点开装的还是旧版 → 版本仍 < MIN → 又弹强更，"点了立即更新还要更新"死循环。
@@ -5178,6 +5213,10 @@ def session_detail(sid):
     sess_d["display_status"] = _display_status(
         sess_d.get("analysis_status"), sess_d.get("analysis_progress"),
         bool(sess_d.get("analysis_result")),
+    )
+    # 有录音还没从手机传上来(awaiting_intake) → 把"排队中"细分成"录音上传中"，提示保持App打开
+    sess_d["upload_pending"] = any(
+        r.get("asr_status") == "awaiting_intake" for r in recordings
     )
 
     # 顾客标签（本次/历史累积、按服务次数、时间区间）改由前端调
@@ -5568,7 +5607,7 @@ def api_session_get(sid):
                customer, asr_status, asr_transcript, asr_error,
                asr_started_at, asr_finished_at,
                asr_speaker_count, asr_speaker_warning, speaker_confirmed,
-               advisor, uploader_user_id, store_id
+               advisor, uploader_user_id, store_id, company_id
         FROM recordings WHERE session_id=?
         ORDER BY COALESCE(recorded_at, ''), id
     """, (sid,))
@@ -5595,6 +5634,10 @@ def api_session_get(sid):
     out["display_status"] = _display_status(
         out.get("analysis_status"), out.get("analysis_progress"),
         bool(out.get("analysis_result")),
+    )
+    # 有录音还没从手机传上来(awaiting_intake) → 前端把"排队中"细分成"录音上传中"
+    out["upload_pending"] = any(
+        rr.get("asr_status") == "awaiting_intake" for rr in out["recordings"]
     )
     return jsonify(out)
 
@@ -5725,13 +5768,20 @@ def api_upload():
 
 
 def _can_listen_recording(u, rec):
-    """P1.7 录音收听统一闸：判断用户 u 是否有权收听录音 rec（rec 需含 advisor/uploader_user_id/store_id）。
+    """P1.7 录音收听统一闸：判断用户 u 是否有权收听录音 rec（rec 需含 company_id/advisor/uploader_user_id/store_id）。
     所有会返回签名播放URL/音频的端点都必须经此判定，避免再出现绕过的侧门。
-      - admin/super：放行；store_manager：仅本店；consultant：仅本人 advisor 或 uploader；其它/未登录：拒绝。"""
+      - super（平台超管）：放行；
+      - 其余角色（含 company admin）先要求录音属于本公司（跨公司一律拒绝），再按角色细分：
+        admin=本公司全放行；store_manager=仅本店；consultant=仅本人 advisor 或 uploader；其它/未登录：拒绝。"""
     if not u:
         return False
     role = u["role"]
-    if role in ("admin", "super"):
+    if role == "super":
+        return True
+    # 公司级隔离：非平台超管一律要求录音属于本公司（company admin 也不例外）
+    if rec["company_id"] != u["company_id"]:
+        return False
+    if role == "admin":
         return True
     if role == "store_manager":
         return bool(u["store_id"]) and rec["store_id"] == u["store_id"]
@@ -5778,9 +5828,13 @@ def api_recording_url(rid):
 @login_required
 def api_run_asr(rid):
     """老板手动重跑 ASR（兜底）"""
-    rec = db_fetchone("SELECT asr_status FROM recordings WHERE id=?", (rid,))
+    rec = db_fetchone("SELECT asr_status, company_id FROM recordings WHERE id=?", (rid,))
     if not rec:
         return jsonify({"error": "not found"}), 404
+    # 租户隔离：非平台超管不得对其他公司的录音重跑转写（会烧本方 ASR 费用）
+    _u = current_user()
+    if _u and _u["role"] != "super" and rec["company_id"] is not None and rec["company_id"] != _u["company_id"]:
+        return jsonify({"error": "无权操作其他公司的录音"}), 403
     if rec["asr_status"] == "running":
         return jsonify({"status": "running"})
     trigger_pipeline_for_recording(rid)
@@ -6340,9 +6394,13 @@ def api_session_analyze(sid):
     - 其它（outdated / 换绑后 / done 强制重跑 / 全部失败 等）→ 全量从 0 跑，
       并强制重建 shared_context。
     """
-    sess = db_fetchone("SELECT id, analysis_status, analysis_started_at FROM sessions WHERE id=?", (sid,))
+    sess = db_fetchone("SELECT id, analysis_status, analysis_started_at, company_id FROM sessions WHERE id=?", (sid,))
     if not sess:
         return jsonify({"error": "not found"}), 404
+    # 租户隔离：非平台超管不得重跑其他公司的接诊（会烧本方 API 费并覆盖对方报告）
+    _u = current_user()
+    if _u and _u["role"] != "super" and sess["company_id"] is not None and sess["company_id"] != _u["company_id"]:
+        return jsonify({"error": "无权操作其他公司的接诊"}), 403
     # 批次六G1：0 录音守卫——空壳 session 点"重新分析"原来被写成永久 pending"排队中"(→stuck→档案显"失败"),
     # toast 却报"正在排队"(李雪雪案实测路径)。对齐 start_analysis 的守卫。
     _rc = db_fetchone("SELECT count(*) AS n FROM recordings WHERE session_id=?", (sid,))
@@ -6442,12 +6500,20 @@ def api_sessions_batch_analyze():
         return jsonify({"error": f"不支持的模型: {model}"}), 400
     force_confirm = bool(data.get("force_confirm_speakers"))
 
+    # 租户隔离：非平台超管只能批量重跑本公司的接诊，其它公司的 id 一律跳过
+    _cu = current_user()
+    _cu_company = _cu["company_id"] if _cu else None
+    _cu_is_super = bool(_cu and _cu["role"] == "super")
+
     ok, skipped, failed = [], [], []
     forced_recs = 0
     for sid in ids:
-        row = db_fetchone("SELECT id FROM sessions WHERE id=?", (sid,))
+        row = db_fetchone("SELECT id, company_id FROM sessions WHERE id=?", (sid,))
         if not row:
             skipped.append({"id": sid, "reason": "not_found"})
+            continue
+        if not _cu_is_super and row["company_id"] is not None and row["company_id"] != _cu_company:
+            skipped.append({"id": sid, "reason": "forbidden"})
             continue
         try:
             if force_confirm:
@@ -9964,9 +10030,11 @@ def api_consultant_upload():
             # ★「录完先绑定、音频后到」(bind-before-upload)：若占位已被绑定(session_id 非空)，
             #   说明顾问已提前绑好顾客，绝不能动 session_id/customer，且 asr_status 维持绑定时设的
             #   pending(让分析能跑)；只有【未绑定】的占位回填才置 awaiting_intake(未绑定不跑ASR省钱)。
-            bound = prow["session_id"] is not None
-            asr_clause = ("asr_status" if bound
-                          else "CASE WHEN asr_status='pending' THEN 'awaiting_intake' ELSE asr_status END")
+            # ★竞态修复(2026-07-08 rec1635案):bind 和 upload 收尾可能同秒交错,此处提前读的
+            #   session_id 会过期 → asr_status 判定放进 UPDATE 原子完成:写入瞬间已绑定则保持
+            #   (bind 设的 pending 不被打回),未绑定才降 awaiting_intake(不跑ASR省钱)。
+            asr_clause = ("CASE WHEN session_id IS NULL AND asr_status='pending' "
+                          "THEN 'awaiting_intake' ELSE asr_status END")
             if recorded_at_form:
                 db_write(
                     f"""UPDATE recordings SET oss_key=?, size_bytes=?, duration_label=?,
@@ -9988,8 +10056,13 @@ def api_consultant_upload():
             if pen_file:
                 db_write("UPDATE recordings SET pen_file=? WHERE id=?", (pen_file, prow["id"]))
             _kick_clean_audio_async(prow["id"])  # 后台转带头 wav：校正时长 + 让试听器可显时长/拖动
-            # bind-before-upload:顾问已提前绑好(占位带 session_id),音频此刻才落地 → 立即起 ASR
-            if bound:
+            # bind-before-upload:顾问已提前绑好(占位带 session_id),音频此刻才落地 → 立即起 ASR。
+            # ★必须在 upload_status='done' 落库后重读绑定态(rec1635案:提前读的 prow 会被同秒的
+            #   bind 插队变过期):此刻已绑定 → 修正状态并触发;bind 侧的"回填后接力"检查兜住另一侧时序。
+            _fresh = db_fetchone("SELECT session_id FROM recordings WHERE id=?", (prow["id"],))
+            if _fresh and _fresh["session_id"] is not None:
+                db_write("UPDATE recordings SET asr_status='pending' WHERE id=? AND asr_status='awaiting_intake'",
+                         (prow["id"],))
                 trigger_pipeline_for_recording(prow["id"])
             return jsonify({"id": prow["id"], "oss_key": oss_key})
     try:
@@ -10283,15 +10356,17 @@ def api_consultant_recordings_pending():
            ORDER BY id DESC LIMIT 200""",
         (u["id"],),
     )
-    # 兼容老数据：advisor 同名但 uploader_user_id 为空的也算上
+    # 兼容老数据：advisor 同名但 uploader_user_id 为空的也算上。
+    # 租户隔离：必须限定本公司，否则跨公司同名顾问(如两家都有"王芳")会被互相捞到并签发试听URL。
     rows2 = db_fetchall(
         """SELECT id, oss_key, recorded_at, duration_label, size_bytes,
                   asr_status, asr_error, customer, created_at,
                   asr_speaker_count, asr_speaker_warning, upload_status, truncate_note, pen_file
            FROM recordings
            WHERE advisor=? AND uploader_user_id IS NULL AND session_id IS NULL
+             AND company_id=?
            ORDER BY id DESC LIMIT 200""",
-        (advisor,),
+        (advisor, u["company_id"]),
     )
     seen = set()
     out = []
@@ -12560,6 +12635,23 @@ def api_consultant_session_preview():
                     wait_sec = 0
             except Exception:
                 wait_sec = None
+        # 是否还有录音没从手机传上来(awaiting_intake=音频未上传，故意不转写)。
+        # 用于把"排队中/转写中"细分成"录音上传中"——顾问一看就知道是手机还没传完，需保持App打开，
+        # 而不是服务器在慢慢转写/排队（真转写只需几十秒）。
+        _await_row = db_fetchone(
+            "SELECT COUNT(*) AS n FROM recordings WHERE session_id=? AND asr_status='awaiting_intake'",
+            (sess["id"],))
+        upload_pending = bool(_await_row and _await_row["n"] > 0)
+        # ★自愈(rec1635案):awaiting_intake 却 upload_status=done = 竞态留下的死态,没人会再触发。
+        #   顾问轮询进度时踢一脚;run_asr 秒内置 running,下轮询不再命中,不会重复踢。
+        if upload_pending:
+            for _stuck in db_fetchall(
+                    "SELECT id FROM recordings WHERE session_id=? AND asr_status='awaiting_intake' "
+                    "AND IFNULL(upload_status,'')='done'", (sess["id"],)):
+                try:
+                    trigger_pipeline_for_recording(_stuck["id"])
+                except Exception:
+                    pass
         task_progress = {
             "total": len(TASK_REGISTRY),
             "done": len(done_names),
@@ -12571,6 +12663,7 @@ def api_consultant_session_preview():
             "failed_names": failed_names,
             "pending_names": pending_names,
             "wait_sec": wait_sec,
+            "upload_pending": upload_pending,
             "progress_text": sess["analysis_progress"] if "analysis_progress" in sess.keys() else None,
         }
     return jsonify({
