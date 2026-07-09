@@ -15,6 +15,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -85,6 +86,8 @@ class MeiliActivity : ComponentActivity() {
         // 主题皮肤：载入用户上次选定的配色（默认暖玉柔光），全 app 据此着色。
         com.airec.bledemo.designsystem.ThemeManager.init(applicationContext)
         com.airec.bledemo.designsystem.FontScaleManager.init(applicationContext)
+        // 蓝牙开关状态（全局横幅）：广播+定时双保险，见 BtStateManager 病案注释。
+        com.airec.bledemo.device.BtStateManager.init(applicationContext)
         // 登录门：本地有未过期会话 Cookie 才进 Gate（再按角色分流到顾问端主壳 / 管理台），否则先进登录页。
         // 粗判（不打网络），无网也可用；Gate 会打 /api/me 实判会话与角色，失败再退回登录页。
         val startDestination = if (AuthManager().isLoggedIn()) Routes.Gate else Routes.Login
@@ -114,6 +117,8 @@ class MeiliActivity : ComponentActivity() {
         com.airec.bledemo.designsystem.ThemeManager.tick()
         // 回前台：会话 Cookie 可能登录后才拿到/已变 → 刷新上传上下文，保证开启陪伴/后台补传带的是最新会话。
         RecordingModule.refreshUploadContext()
+        // 回前台：重查蓝牙开关（蓝牙栈假死时广播可能不来，这里主动补一刀）。
+        com.airec.bledemo.device.BtStateManager.refresh()
         // 引导加入电池白名单（每进程一次），降低国产 ROM 杀后台、保证陪伴/补传不被打断。
         maybeAskBatteryExemption()
         // 回前台：已连陪伴笔→夺回引擎回调(activate)；未连→静默自动重连上次那支笔，与旧端 onResume 一致。
@@ -206,6 +211,8 @@ private fun MeiliApp(
                 // ("卡在上传")。原来只在回前台/进首页刷新，顾问干等不会自动好、要手动重开 App。这里定时兜底，
                 // 最多 1 分钟内上传器就换上新 Cookie 自动冲上去，不依赖自动重登的返回值判定。
                 runCatching { com.airec.bledemo.recording.RecordingModule.refreshUploadContext() }
+                // 蓝牙开关兜底刷新：MIUI 等蓝牙栈假死时 STATE_CHANGED 广播可能不发，定时查真实状态。
+                runCatching { com.airec.bledemo.device.BtStateManager.refresh() }
                 kotlinx.coroutines.delay(60_000)
             }
         }
@@ -247,18 +254,65 @@ private fun MeiliApp(
             color = MeiliPalette.Bg,
         ) {
             Box(Modifier.fillMaxSize()) {
-                AppScaffold(
-                    startDestination = startDestination,
-                    deepLink = deepLink,
-                    onDeepLinkConsumed = onDeepLinkConsumed,
-                    modifier = Modifier
+                Column(
+                    Modifier
                         .fillMaxSize()
                         .windowInsetsPadding(WindowInsets.systemBars),
-                )
+                ) {
+                    // 全局蓝牙横幅：蓝牙没开时所有页面（首页/待整理/…）顶部都能看见并一键打开，
+                    // 不再依赖只在扫描页的提示 + 会被 MIUI 吞掉的系统弹框（2026-07-09 西财店病案）。
+                    BtOffBanner()
+                    AppScaffold(
+                        startDestination = startDestination,
+                        deepLink = deepLink,
+                        onDeepLinkConsumed = onDeepLinkConsumed,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                    )
+                }
                 forceUpdate.value?.let { ForceUpdateGate(it) }
             }
         }
         // 可关的「有新版」提示仍在设置页（AboutCard 检查更新）；不可关的强更由上面的全局门负责。
+    }
+}
+
+/**
+ * 全局蓝牙横幅：手机蓝牙没开 && 这台手机用过陪伴笔 → 所有页面顶部醒目红条 + 一键打开。
+ * 安卓 12 及以下点击直接帮用户把蓝牙打开（enable()），不依赖系统弹框；13+ 走系统弹框/设置页。
+ */
+@Composable
+private fun BtOffBanner() {
+    val btOn by com.airec.bledemo.device.BtStateManager.btOn
+    val penUser by com.airec.bledemo.device.BtStateManager.penUser
+    if (btOn || !penUser) return
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    Surface(color = MeiliPalette.RoseDeep, modifier = Modifier.fillMaxWidth()) {
+        androidx.compose.foundation.layout.Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+        ) {
+            Text(
+                text = "手机蓝牙未开启，无法连接录音笔",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MeiliPalette.White,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "点此打开",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                ),
+                color = MeiliPalette.White,
+                modifier = Modifier
+                    .padding(start = 12.dp)
+                    .clickable { com.airec.bledemo.device.BtStateManager.requestEnable(ctx) },
+            )
+        }
     }
 }
 

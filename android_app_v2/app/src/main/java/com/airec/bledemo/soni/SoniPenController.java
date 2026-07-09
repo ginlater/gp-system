@@ -129,6 +129,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private volatile String  penSn = "";          // cmd=7 缓存
     private volatile String  batteryPct = "";     // cmd=6 缓存（"110"=充电中）
 
+    // ★蓝牙未开启提醒(2026-07-09西财店病案)：日志限流 + 每次关闭只发一次通知
+    private static final int NOTIF_BT_OFF = 4301;
+    private volatile long    lastBtOffLogMs = 0;
+    private volatile boolean btOffNotified = false;
+    // ★扫描发现设备日志限流：address→上次记录时刻，同一设备5分钟最多记一条(防刷爆penlog)
+    private final java.util.HashMap<String, Long> scanLogSeen = new java.util.HashMap<>();
+
     // 暂停
     private volatile boolean penPaused = false;
     // F13:暂停记账——elapsedSec 扣除,防高暂停段误判截断/时长虚报
@@ -529,8 +536,45 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             Log.d(TAG, "自动重连尝试#" + reconnectAttempts + " → " + lastConnectedMac);
             penLog("自动重连尝试#" + reconnectAttempts + " 扫描连 " + lastConnectedMac);
             autoConnect(lastConnectedMac);
+        } else if (!btOn) {
+            // ★蓝牙没开就别装着扫(2026-07-09西财店病案:顾问守着待整理页等自动重连两小时,
+            //   日志/界面全无"蓝牙没开"线索)。如实记日志(限流10分钟)+通知提醒(每次关闭只发一次,重开即撤)。
+            long now = SystemClock.elapsedRealtime();
+            if (now - lastBtOffLogMs > 10 * 60_000L) {
+                lastBtOffLogMs = now;
+                penLog("★蓝牙未开启→自动重连暂停等蓝牙(不做空扫描);请打开手机蓝牙");
+            }
+            maybeNotifyBtOff();
         }
         scheduleReconnect(reconnectAttempts <= 5 ? 15000 : 60000);
+    }
+
+    /** ★蓝牙没开时提醒一条系统通知（每次关闭只发一次；STATE_ON 时撤销并复位）。 */
+    private void maybeNotifyBtOff() {
+        if (btOffNotified || appCtx == null) return;
+        btOffNotified = true;
+        try {
+            android.app.NotificationManager nm = (android.app.NotificationManager)
+                    appCtx.getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+            if (nm == null) return;
+            if (android.os.Build.VERSION.SDK_INT >= 26 && nm.getNotificationChannel("bt_alert") == null) {
+                nm.createNotificationChannel(new android.app.NotificationChannel(
+                        "bt_alert", "蓝牙提醒", android.app.NotificationManager.IMPORTANCE_HIGH));
+            }
+            android.content.Intent it = new android.content.Intent(appCtx, com.airec.bledemo.MeiliActivity.class);
+            it.setFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK | android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            android.app.PendingIntent pi = android.app.PendingIntent.getActivity(appCtx, NOTIF_BT_OFF, it,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT | android.app.PendingIntent.FLAG_IMMUTABLE);
+            android.app.Notification.Builder b = android.os.Build.VERSION.SDK_INT >= 26
+                    ? new android.app.Notification.Builder(appCtx, "bt_alert")
+                    : new android.app.Notification.Builder(appCtx);
+            b.setSmallIcon(com.airec.bledemo.R.mipmap.ic_launcher)
+                    .setContentTitle("手机蓝牙未开启")
+                    .setContentText("录音笔无法连接，请打开手机蓝牙")
+                    .setAutoCancel(true)
+                    .setContentIntent(pi);
+            nm.notify(NOTIF_BT_OFF, b.build());
+        } catch (Throwable ignore) {}
     }
 
     private void registerBtReceiver() {
@@ -539,6 +583,16 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             @Override public void onReceive(android.content.Context c, android.content.Intent i) {
                 int st = i.getIntExtra(android.bluetooth.BluetoothAdapter.EXTRA_STATE, -1);
                 penLog("蓝牙状态广播 state=" + st + " autoReconnectOn=" + autoReconnectOn + " linkUp=" + linkUp);
+                if (st == android.bluetooth.BluetoothAdapter.STATE_ON) {
+                    // 蓝牙回来了：撤掉"蓝牙未开启"通知、复位限流，下次关闭还能再提醒。
+                    lastBtOffLogMs = 0;
+                    btOffNotified = false;
+                    try {
+                        android.app.NotificationManager nm0 = (android.app.NotificationManager)
+                                appCtx.getSystemService(android.content.Context.NOTIFICATION_SERVICE);
+                        if (nm0 != null) nm0.cancel(NOTIF_BT_OFF);
+                    } catch (Throwable ignore) {}
+                }
                 if (st == android.bluetooth.BluetoothAdapter.STATE_ON && autoReconnectOn && !linkUp) {
                     reconnectAttempts = 0;
                     scheduleReconnect(1500);
@@ -1334,6 +1388,20 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         String productType = String.valueOf(data.opt("productType"));
         if ("null".equals(name)) name = "";
         if ("null".equals(address)) address = "";
+        // ★扫描发现记入penlog(同设备5分钟限流)：以后诊断一眼分清"笔没广播"还是"手机扫描器瞎了"
+        //   ——2026-07-09西财店病案里125次"扫描"零发现,却分不清是空气里没笔还是扫描已假死。
+        if (!address.isEmpty()) {
+            try {
+                long now = SystemClock.elapsedRealtime();
+                boolean logIt = false;
+                synchronized (scanLogSeen) {
+                    Long last = scanLogSeen.get(address);
+                    if (last == null || now - last > 5 * 60_000L) { scanLogSeen.put(address, now); logIt = true; }
+                    if (scanLogSeen.size() > 64) scanLogSeen.clear();   // 商场环境设备多,防无界增长
+                }
+                if (logIt) penLog("★扫描发现 " + (name.isEmpty() ? "(无名)" : name) + " " + address + " type=" + productType);
+            } catch (Exception ignore) {}
+        }
         ScanListener sl = scanListener;
         if (sl != null) {
             final String n = name, a = address, p = productType;
@@ -2529,6 +2597,20 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             o.put("penConnected", isPenAlive());
             o.put("pending", pendingCount() + "," + pendingFailedCount());
             o.put("battery", batteryPct);
+            // ★蓝牙/定位开关(2026-07-09西财店病案:蓝牙没开排查了三小时——有这两个字段第一份诊断就破案)
+            //   btState 记原始值(10=OFF/12=ON…)：MIUI蓝牙栈假死时 isEnabled 可能与真实状态脱节,原始值留证。
+            try {
+                android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager)
+                        appCtx.getSystemService(android.content.Context.BLUETOOTH_SERVICE);
+                android.bluetooth.BluetoothAdapter ad = bm != null ? bm.getAdapter() : null;
+                o.put("btEnabled", ad != null && ad.isEnabled());
+                o.put("btState", ad != null ? ad.getState() : -1);
+            } catch (Exception ignore) {}
+            try {
+                android.location.LocationManager lm = (android.location.LocationManager)
+                        appCtx.getSystemService(android.content.Context.LOCATION_SERVICE);
+                if (android.os.Build.VERSION.SDK_INT >= 28) o.put("locationOn", lm != null && lm.isLocationEnabled());
+            } catch (Exception ignore) {}
             // ★后台保活授权状态（排查"被系统杀/冻结"用）：是否加了电池白名单、后台是否被限制、关键权限是否授予。
             if (appCtx != null) {
                 try {
