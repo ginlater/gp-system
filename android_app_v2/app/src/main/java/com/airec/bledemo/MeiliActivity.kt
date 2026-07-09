@@ -84,6 +84,7 @@ class MeiliActivity : ComponentActivity() {
         RecordingModule.init(applicationContext)
         // 主题皮肤：载入用户上次选定的配色（默认暖玉柔光），全 app 据此着色。
         com.airec.bledemo.designsystem.ThemeManager.init(applicationContext)
+        com.airec.bledemo.designsystem.FontScaleManager.init(applicationContext)
         // 登录门：本地有未过期会话 Cookie 才进 Gate（再按角色分流到顾问端主壳 / 管理台），否则先进登录页。
         // 粗判（不打网络），无网也可用；Gate 会打 /api/me 实判会话与角色，失败再退回登录页。
         val startDestination = if (AuthManager().isLoggedIn()) Routes.Gate else Routes.Login
@@ -200,6 +201,11 @@ private fun MeiliApp(
         androidx.compose.runtime.LaunchedEffect(Unit) {
             while (true) {
                 com.airec.bledemo.designsystem.ThemeManager.tick()
+                // ★上传 cookie 自愈：前台时每分钟把本地最新会话 Cookie 重注给上传引擎。
+                // 会话失效后 App 会自动重登拿到新 Cookie(已落 CookieJar)，但引擎里可能还攥着旧 Cookie 死循环 401
+                // ("卡在上传")。原来只在回前台/进首页刷新，顾问干等不会自动好、要手动重开 App。这里定时兜底，
+                // 最多 1 分钟内上传器就换上新 Cookie 自动冲上去，不依赖自动重登的返回值判定。
+                runCatching { com.airec.bledemo.recording.RecordingModule.refreshUploadContext() }
                 kotlinx.coroutines.delay(60_000)
             }
         }

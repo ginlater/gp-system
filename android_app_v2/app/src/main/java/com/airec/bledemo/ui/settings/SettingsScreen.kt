@@ -48,6 +48,7 @@ import com.airec.bledemo.designsystem.MeiliIcons
 import com.airec.bledemo.designsystem.MeiliPalette
 import com.airec.bledemo.designsystem.MeiliShapes
 import com.airec.bledemo.designsystem.MeiliTheme
+import com.airec.bledemo.designsystem.FontScaleManager
 import com.airec.bledemo.designsystem.ThemeManager
 import com.airec.bledemo.designsystem.components.GhostButton
 import com.airec.bledemo.designsystem.components.MeiliButtonSize
@@ -135,6 +136,12 @@ fun SettingsScreen(
             SectionLabel("主题皮肤", icon = MeiliIcons.Palette)
             Spacer(Modifier.height(9.dp))
             ThemePickerCard()
+            Spacer(Modifier.height(Dimens.CardGap))
+
+            // 字体大小（5 档滑块，全 app 文字按倍数放大，选择持久化）
+            SectionLabel("字体大小", icon = MeiliIcons.Doc)
+            Spacer(Modifier.height(9.dp))
+            FontScaleCard()
             Spacer(Modifier.height(Dimens.CardGap))
 
             // C7：后台保活引导（vivo 重点）——白名单系统框只弹一次、可拒，拒了以后这里能随时补救
@@ -354,6 +361,68 @@ private fun ConsultantCard(state: SettingsUiState) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MeiliPalette.RoseText,
             )
+        }
+    }
+}
+
+/* ───────────────────────── 字体大小 ───────────────────────── */
+
+/**
+ * 字体大小：5 档滑块（小 / 标准 / 大 / 更大 / 特大）。
+ * 拖动即经 [FontScaleManager] 改倍数 → [MeiliTheme] 缩放全 app 文字（含本卡片预览，实时可见）。
+ */
+@Composable
+private fun FontScaleCard() {
+    val level = FontScaleManager.level
+    MeiliCard {
+        Text(
+            "调整整个 App 的文字大小。拖动下面的滑块即可，选好会自动记住。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MeiliPalette.Ink3,
+        )
+        Spacer(Modifier.height(14.dp))
+        // 预览行：本卡片也在 MeiliTheme 内，字号随滑块实时变化 → 拖动所见即所得
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MeiliPalette.SurfaceSoft,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                "预览：美业私教 · 接待记录 Aa 123",
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                color = MeiliPalette.Ink,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp),
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        androidx.compose.material3.Slider(
+            value = level.toFloat(),
+            onValueChange = { FontScaleManager.setLevel(Math.round(it)) },
+            valueRange = 0f..FontScaleManager.steps.lastIndex.toFloat(),
+            steps = FontScaleManager.steps.size - 2, // 5 档 → 中间 3 个刻度点
+            colors = androidx.compose.material3.SliderDefaults.colors(
+                thumbColor = MeiliPalette.Clay,
+                activeTrackColor = MeiliPalette.Clay,
+                inactiveTrackColor = MeiliPalette.Line,
+                activeTickColor = MeiliPalette.White,
+                inactiveTickColor = MeiliPalette.Line,
+            ),
+        )
+        // 档位标签：当前档加粗高亮
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            FontScaleManager.labels.forEachIndexed { i, l ->
+                Text(
+                    l,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = if (i == level) FontWeight.Bold else FontWeight.Normal,
+                        fontSize = 11.sp,
+                    ),
+                    color = if (i == level) MeiliPalette.ClayDeep else MeiliPalette.Ink3,
+                )
+            }
         }
     }
 }

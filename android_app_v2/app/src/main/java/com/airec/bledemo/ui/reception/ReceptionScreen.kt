@@ -5,6 +5,8 @@ import android.media.MediaPlayer
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -1391,18 +1393,25 @@ private fun PenSyncSheet(
                     trailing = { StatusPill(text = "陪伴笔", kind = PillKind.Clay, icon = MeiliIcons.Pen) },
                     modifier = Modifier.padding(bottom = 14.dp),
                 )
-                // 只渲染当前页（pageRows，每页 PEN_SYNC_PAGE_SIZE 段），机身片段多时翻页看，
-                // 否则一屏塞不下、翻页器和导入按钮掉到屏外（弹窗不可靠滚动）。
-                state.pageRows.forEach { row ->
-                    CheckRow(
-                        title = "${penDateLabel(row.file.recordedAt)} · ${secToLabel(row.file.durationSec)}",
-                        meta = penMeta(row.file.sizeBytes),
-                        checked = row.selected,
-                        enabled = row.importable,
-                        onClick = { onToggleRow(row.file.name) },
-                        trailing = { StatusPill(text = penStatusText(row.status), kind = penStatusKind(row.status)) },
-                        modifier = Modifier.padding(bottom = 10.dp),
-                    )
+                // 只渲染当前页（pageRows，每页 PEN_SYNC_PAGE_SIZE 段）。条目区再套一层【限高可滚动】：
+                // 小屏 / 大字体下即使一页也可能塞不下，此时条目在区域内滚动，而「全选」和下方的翻页器、
+                // 导入按钮始终钉在可见区，绝不会被挤出屏外（修「录音多/字体大时导入按钮消失」）。
+                Column(
+                    modifier = Modifier
+                        .heightIn(max = 300.dp)
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    state.pageRows.forEach { row ->
+                        CheckRow(
+                            title = "${penDateLabel(row.file.recordedAt)} · ${secToLabel(row.file.durationSec)}",
+                            meta = penMeta(row.file.sizeBytes),
+                            checked = row.selected,
+                            enabled = row.importable,
+                            onClick = { onToggleRow(row.file.name) },
+                            trailing = { StatusPill(text = penStatusText(row.status), kind = penStatusKind(row.status)) },
+                            modifier = Modifier.padding(bottom = 10.dp),
+                        )
+                    }
                 }
                 // 翻页导航（机身片段多于一页时）
                 if (state.totalPages > 1) {

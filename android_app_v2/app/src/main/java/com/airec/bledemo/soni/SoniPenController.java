@@ -1060,7 +1060,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             try {
                 // E1:占位带机身文件名→同步弹层预检可精确屏蔽"正在传的段"(不再赌±90s时刻吻合)
                 String phPenFile = looksLikePenFile(task.fileName) ? task.fileName : null;
-                long pid = Uploader.createPlaceholder(task.cookie, phUrl, recStart, phPenFile, null);
+                // ★用【当前最新】Cookie 建占位(与上传路径 liveCk 一致)：task 里冻结的 Cookie 可能已过期→占位 401。
+                String phCk = (cookie != null && !cookie.isEmpty()) ? cookie : task.cookie;
+                long pid = Uploader.createPlaceholder(phCk, phUrl, recStart, phPenFile, null);
                 if (pid > 0) {
                     if (task.dropped) {
                         // B2:任务已被放弃,迟到的占位立即取消,不留孤儿"同步中"

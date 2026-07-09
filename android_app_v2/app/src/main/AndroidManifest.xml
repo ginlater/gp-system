@@ -63,13 +63,6 @@
             </intent-filter>
         </activity>
 
-        <!-- 旧接诊 WebView 壳：保留备用，不再是入口（已移除 launcher intent-filter） -->
-        <activity
-            android:name=".ConsultantActivity"
-            android:exported="false"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
-            android:windowSoftInputMode="adjustResize" />
-
         <!-- 手机麦克风前台录音 Service -->
         <service
             android:name=".recording.PhoneMicService"
@@ -82,14 +75,7 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
-        <!-- 录音笔管理页（沿用 Demo，阶段二从接诊页进入） -->
-        <!-- exported=true：便于用 adb 直接打开录音笔设置页/恢复出厂（内部调试用） -->
-        <activity
-            android:name=".MainActivity"
-            android:exported="true"
-            android:windowSoftInputMode="adjustResize" />
-        <activity android:name=".ScanActivity" android:exported="false" />
-        <!-- 声云陪伴笔扫描/连接页（v2 正式入口，替代杰理 ScanActivity）。exported=true：便于 adb 直接打开（内部调试用，同 MainActivity 先例） -->
+        <!-- 声云陪伴笔扫描/连接页（v2 正式入口）。exported=true：便于 adb 直接打开（内部调试用） -->
         <activity android:name=".soni.SoniScanActivity" android:exported="true" />
         <activity android:name=".PlayerActivity" android:exported="false" />
 

@@ -53,7 +53,17 @@ fun MeiliTheme(content: @Composable () -> Unit) {
         inverseOnSurface = MeiliPalette.White,
         scrim = MeiliPalette.Ink,
     )
-    CompositionLocalProvider(LocalMeiliColors provides MeiliColors()) {
+    // 字体大小档位：把用户选的倍数(FontScaleManager.scale)乘到系统 fontScale 上，只放大文字、不动布局尺寸(dp)。
+    // 读 FontScaleManager.scale(Compose State) → 改档时全 app 重组换字号。
+    val base = androidx.compose.ui.platform.LocalDensity.current
+    val scaledDensity = androidx.compose.ui.unit.Density(
+        density = base.density,
+        fontScale = base.fontScale * FontScaleManager.scale,
+    )
+    CompositionLocalProvider(
+        LocalMeiliColors provides MeiliColors(),
+        androidx.compose.ui.platform.LocalDensity provides scaledDensity,
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = MeiliTypography,
