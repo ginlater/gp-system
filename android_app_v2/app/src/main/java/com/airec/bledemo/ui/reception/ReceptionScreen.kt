@@ -1403,7 +1403,12 @@ private fun PenSyncSheet(
                 ) {
                     state.pageRows.forEach { row ->
                         CheckRow(
-                            title = "${penDateLabel(row.file.recordedAt)} · ${secToLabel(row.file.durationSec)}",
+                            // ★2.1.6:标题带"几点–几点"时间段——顾问靠时段回忆是哪位顾客,不然只见日期+时长没法认段绑人
+                            title = listOfNotNull(
+                                penDateLabel(row.file.recordedAt),
+                                penTimeRange(row.file.recordedAt, row.file.durationSec),
+                                secToLabel(row.file.durationSec),
+                            ).joinToString(" · "),
                             meta = penMeta(row.file.sizeBytes),
                             checked = row.selected,
                             enabled = row.importable,
@@ -1582,6 +1587,20 @@ private fun secToLabel(sec: Int): String {
 
 private fun penDateLabel(recordedAt: String): String =
     recordedAt.take(10).ifBlank { "陪伴笔片段" }
+
+/** ★2.1.6:由"开始时间+时长"算出"HH:mm – HH:mm"时间段（recordedAt 缺失/解析失败返回 null 不显示）。 */
+private fun penTimeRange(recordedAt: String, durSec: Int): String? {
+    if (recordedAt.length < 16) return null
+    return try {
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+        val start = fmt.parse(recordedAt) ?: return null
+        val end = java.util.Date(start.time + durSec * 1000L)
+        val hm = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+        "${hm.format(start)} – ${hm.format(end)}"
+    } catch (_: Exception) {
+        null
+    }
+}
 
 private fun penMeta(sizeBytes: Long): String {
     val mb = sizeBytes / (1024.0 * 1024.0)

@@ -4894,14 +4894,14 @@ def terms_of_service():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.1.5"
+APP_V2_VERSION_NAME = "2.1.6"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 69   # 2.1.5(69)：扫描列表标注笔归属(我的笔置顶,他人笔置灰禁点)+服务端pen/bindings接口(不强更,MIN保持64)
+APP_V2_LATEST_VERSION_CODE = 70   # 2.1.6(70)：同步弹层显示录音起止时间段(认段绑人)(不强更,MIN保持64)
 APP_V2_MIN_VERSION_CODE = 64      # 2026-07-06 全量强更(含补门的64)
-APP_V2_UPDATE_NOTE = "本次更新：扫描页自动标出你的录音笔并置顶，他人的笔置灰不可选，防止连错，建议更新。"
+APP_V2_UPDATE_NOTE = "本次更新：陪伴笔同步列表显示每段录音的起止时间（几点到几点），方便对应顾客，建议更新。"
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
 #   每个版本同名("刁姐陪伴.apk")时，上次强更留在手机下载目录里的旧包会顶包——浏览器弹"该文件已下载"
 #   或存成"(1)"副本，顾问点开装的还是旧版 → 版本仍 < MIN → 又弹强更，"点了立即更新还要更新"死循环。
