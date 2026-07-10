@@ -47,6 +47,9 @@ public class SoniScanActivity extends AppCompatActivity {
     private ActivityScanBinding binding;
     private final List<Device> deviceList = new ArrayList<>();
     private final Map<String, Long> lastSeen = new HashMap<>();
+    // ★2.1.5 笔归属标注：我的SN + 本公司"SN(大写化)→归属人"。拉不到=两者为空,列表行为与旧版一致(服务端裁决兜底)。
+    private volatile String myPenSn = null;
+    private final Map<String, String> penOwners = new HashMap<>();
     private final Handler scanUi = new Handler(Looper.getMainLooper());
     private RecyclerView.Adapter<VH> adapter;
     private String lastMac;
@@ -131,8 +134,22 @@ public class SoniScanActivity extends AppCompatActivity {
             }
             @Override public void onBindViewHolder(@NonNull VH h, int pos) {
                 Device d = deviceList.get(pos);
-                h.tvName.setText(d.name == null || d.name.isEmpty() ? "陪伴笔" : d.name);
+                String base = d.name == null || d.name.isEmpty() ? "陪伴笔" : d.name;
+                // ★2.1.5:按归属标注——我的笔标出来,别人的笔置灰禁点(误连本身仍有服务端裁决兜底)
+                String sn = macToSn(d.address);
+                boolean isMine = myPenSn != null && myPenSn.equalsIgnoreCase(sn);
+                String owner = isMine ? null : penOwners.get(sn.toUpperCase(java.util.Locale.US));
+                boolean others = owner != null && !owner.isEmpty();
+                if (isMine) {
+                    h.tvName.setText(base + "（我的笔）");
+                } else if (others) {
+                    h.tvName.setText(base + "（已分配给" + owner + "）");
+                } else {
+                    h.tvName.setText(base);
+                }
                 h.tvAddress.setText(d.address);
+                h.itemView.setAlpha(others ? 0.45f : 1f);
+                h.btnConnect.setEnabled(!others);
                 h.btnConnect.setOnClickListener(v -> connectTo(d));
             }
             @Override public int getItemCount() { return deviceList.size(); }
@@ -142,6 +159,61 @@ public class SoniScanActivity extends AppCompatActivity {
         binding.btnScan.setOnClickListener(v -> requestPermissionsAndScan());
 
         requestPermissionsAndScan();
+        fetchPenBindings();
+    }
+
+    /** 声云笔 SN 由 MAC 派生：s + 去冒号 MAC(大写)。列表标注/置顶据此把广播 MAC 对回归属表。 */
+    private static String macToSn(String mac) {
+        if (mac == null) return "";
+        return "s" + mac.replace(":", "").toUpperCase(java.util.Locale.US);
+    }
+
+    /**
+     * ★2.1.5：拉"我的笔SN + 本公司SN→归属人"，扫描列表据此标「我的笔」置顶、他人笔置灰禁点。
+     * 拉不到（无网/未登录/老服务端）= 静默降级，列表行为与旧版完全一致（误连由服务端裁决兜底）。
+     */
+    private void fetchPenBindings() {
+        new Thread(() -> {
+            java.net.HttpURLConnection conn = null;
+            try {
+                String base = com.airec.bledemo.data.net.NetworkModule.BASE_URL;
+                String ck = com.airec.bledemo.data.net.NetworkModule.INSTANCE.getCookieJar()
+                        .cookieHeader(okhttp3.HttpUrl.get(base));
+                conn = (java.net.HttpURLConnection) new java.net.URL(
+                        base.replaceAll("/+$", "") + "/api/consultant/pen/bindings").openConnection();
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                if (!ck.isEmpty()) conn.setRequestProperty("Cookie", ck);
+                if (conn.getResponseCode() != 200) return;
+                StringBuilder sb = new StringBuilder();
+                try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+                        conn.getInputStream(), java.nio.charset.StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = r.readLine()) != null) sb.append(line);
+                }
+                org.json.JSONObject o = new org.json.JSONObject(sb.toString());
+                final String mine = o.isNull("mine") ? "" : o.optString("mine", "");
+                org.json.JSONObject as = o.optJSONObject("assignments");
+                final Map<String, String> owners = new HashMap<>();
+                if (as != null) {
+                    java.util.Iterator<String> it = as.keys();
+                    while (it.hasNext()) {
+                        String k = it.next();
+                        owners.put(k.toUpperCase(java.util.Locale.US), as.optString(k, ""));
+                    }
+                }
+                runOnUiThread(() -> {
+                    myPenSn = mine.isEmpty() ? null : mine;
+                    penOwners.clear();
+                    penOwners.putAll(owners);
+                    if (!connecting) adapter.notifyDataSetChanged();
+                });
+            } catch (Throwable ignore) {
+                // 静默降级：标注是锦上添花,拉不到不打扰扫描
+            } finally {
+                if (conn != null) try { conn.disconnect(); } catch (Throwable ignore2) {}
+            }
+        }).start();
     }
 
     private void connectTo(Device d) {
@@ -195,8 +267,14 @@ public class SoniScanActivity extends AppCompatActivity {
             if (found == null) {
                 Device d = new Device();
                 d.name = name; d.address = address;
-                deviceList.add(d);
-                adapter.notifyItemInserted(deviceList.size() - 1);
+                // ★2.1.5:自己的笔置顶,一眼就点得到
+                if (myPenSn != null && myPenSn.equalsIgnoreCase(macToSn(address))) {
+                    deviceList.add(0, d);
+                    adapter.notifyItemInserted(0);
+                } else {
+                    deviceList.add(d);
+                    adapter.notifyItemInserted(deviceList.size() - 1);
+                }
             } else if (name != null && !name.isEmpty() && !name.equals(found.name)) {
                 found.name = name;
                 adapter.notifyDataSetChanged();
