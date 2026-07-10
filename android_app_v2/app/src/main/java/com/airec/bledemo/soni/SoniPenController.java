@@ -136,6 +136,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // ★扫描发现设备日志限流：address→上次记录时刻，同一设备5分钟最多记一条(防刷爆penlog)
     private final java.util.HashMap<String, Long> scanLogSeen = new java.util.HashMap<>();
 
+    // ★2.1.4 #1 定向过滤重连扫描：安卓8.1+熄屏禁止"无过滤"BLE扫描,SDK的startSearch是无过滤的
+    //   →熄屏/后台时自动重连永远扫不到(西财店病案)。按目标笔MAC做过滤扫描系统放行,命中即直连。
+    private volatile android.bluetooth.le.ScanCallback filteredScanCb = null;
+    private volatile long filteredScanStartMs = 0;
+    // ★2.1.4 #3 冻结识别：上一次心跳tick的时刻,tick间隔远超周期=进程刚被冻结过(MIUI后台冻结)
+    private volatile long hbLastTickMs = 0;
+
     // 暂停
     private volatile boolean penPaused = false;
     // F13:暂停记账——elapsedSec 扣除,防高暂停段误判截断/时长虚报
@@ -173,7 +180,10 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // ★保活：REC(录音级,FGS+唤醒锁) + CONN(连接级,仅FGS——笔连着就托住进程,治后台被杀断蓝牙, v23方案)
     private volatile boolean keepAliveOn = false;
     private volatile boolean connKeepAliveOn = false;
-    private static final long CONN_KEEPALIVE_LINGER_MS = 90 * 1000L;   // 断开去抖：短暂抖动/重连期间不撤 FGS
+    // ★2.1.4:断开后保活从90s延到30分钟——原来恰在最需要后台扫描能力的重连窗口把FGS撤了,
+    //   MIUI立刻降级该应用的后台蓝牙(2026-07-10西财店红米实锤:断后台重连46+125次零命中)。
+    //   30分钟窗口内FGS托住进程,配合定向过滤扫描,熄屏也能自动连回。
+    private static final long CONN_KEEPALIVE_LINGER_MS = 30 * 60 * 1000L;
 
     // ★上传遇 401(登录失效)时回调上层刷新 Cookie（RecordingControllerImpl 接到 RecordingModule.refreshUploadContext）
     public volatile Runnable onAuthExpired;
@@ -506,6 +516,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     public void stopAutoReconnect() {
         autoReconnectOn = false;
         main.removeCallbacks(reconnectRunnable);
+        stopFilteredReconnectScan();
     }
 
     private final Runnable reconnectRunnable = this::tryReconnect;
@@ -535,6 +546,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             reconnectAttempts++;
             Log.d(TAG, "自动重连尝试#" + reconnectAttempts + " → " + lastConnectedMac);
             penLog("自动重连尝试#" + reconnectAttempts + " 扫描连 " + lastConnectedMac);
+            startFilteredReconnectScan();   // ★2.1.4:与SDK扫描并行的定向过滤扫描,熄屏/后台也能命中
             autoConnect(lastConnectedMac);
         } else if (!btOn) {
             // ★蓝牙没开就别装着扫(2026-07-09西财店病案:顾问守着待整理页等自动重连两小时,
@@ -547,6 +559,72 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             maybeNotifyBtOff();
         }
         scheduleReconnect(reconnectAttempts <= 5 ? 15000 : 60000);
+    }
+
+    /**
+     * ★2.1.4 #1：启动"按MAC过滤"的定向重连扫描（熄屏/后台也被系统放行）。
+     * 与 SDK 的无过滤扫描并行跑：谁先命中谁连。命中回调里先停本扫描再直连，防重复触发。
+     * 安卓会把持续>30分钟的后台扫描降级为机会式，故每25分钟自动重启一轮。
+     */
+    private void startFilteredReconnectScan() {
+        String mac = lastConnectedMac;
+        if (mac == null || mac.isEmpty()) return;
+        if (filteredScanCb != null) {
+            if (SystemClock.elapsedRealtime() - filteredScanStartMs < 25 * 60_000L) return;   // 还新鲜,不折腾
+            stopFilteredReconnectScan();   // 超25分钟→重启一轮,防被系统降级
+        }
+        try {
+            android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager)
+                    appCtx.getSystemService(android.content.Context.BLUETOOTH_SERVICE);
+            android.bluetooth.BluetoothAdapter ad = bm != null ? bm.getAdapter() : null;
+            android.bluetooth.le.BluetoothLeScanner sc =
+                    (ad != null && ad.isEnabled()) ? ad.getBluetoothLeScanner() : null;
+            if (sc == null) return;
+            android.bluetooth.le.ScanCallback cb = new android.bluetooth.le.ScanCallback() {
+                @Override public void onScanResult(int callbackType, android.bluetooth.le.ScanResult r) {
+                    try {
+                        String addr = r.getDevice() != null ? r.getDevice().getAddress() : null;
+                        String target = lastConnectedMac;
+                        if (addr == null || target == null || !addr.equalsIgnoreCase(target)) return;
+                        stopFilteredReconnectScan();   // 先停,防回调风暴重复直连
+                        main.post(() -> {
+                            if (linkUp || !autoReconnectOn) return;
+                            penLog("★定向扫描命中(熄屏可用)→直连 " + addr);
+                            String nm = (lastConnectedName == null || lastConnectedName.isEmpty()) ? "CB08" : lastConnectedName;
+                            connectTo(nm, addr);
+                        });
+                    } catch (Throwable ignore) {}
+                }
+                @Override public void onScanFailed(int errorCode) {
+                    penLog("★定向重连扫描启动失败 code=" + errorCode);
+                    filteredScanCb = null;
+                }
+            };
+            java.util.List<android.bluetooth.le.ScanFilter> filters = java.util.Collections.singletonList(
+                    new android.bluetooth.le.ScanFilter.Builder()
+                            .setDeviceAddress(mac.toUpperCase(java.util.Locale.US)).build());
+            android.bluetooth.le.ScanSettings settings = new android.bluetooth.le.ScanSettings.Builder()
+                    .setScanMode(android.bluetooth.le.ScanSettings.SCAN_MODE_BALANCED).build();
+            sc.startScan(filters, settings, cb);
+            filteredScanCb = cb;
+            filteredScanStartMs = SystemClock.elapsedRealtime();
+            penLog("★定向重连扫描已启动(按MAC过滤,熄屏可用) " + mac);
+        } catch (Throwable t) {
+            Log.w(TAG, "startFilteredReconnectScan failed: " + t.getMessage());
+        }
+    }
+
+    private void stopFilteredReconnectScan() {
+        android.bluetooth.le.ScanCallback cb = filteredScanCb;
+        filteredScanCb = null;
+        if (cb == null) return;
+        try {
+            android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager)
+                    appCtx.getSystemService(android.content.Context.BLUETOOTH_SERVICE);
+            android.bluetooth.BluetoothAdapter ad = bm != null ? bm.getAdapter() : null;
+            android.bluetooth.le.BluetoothLeScanner sc = ad != null ? ad.getBluetoothLeScanner() : null;
+            if (sc != null) sc.stopScan(cb);
+        } catch (Throwable ignore) {}
     }
 
     /** ★蓝牙没开时提醒一条系统通知（每次关闭只发一次；STATE_ON 时撤销并复位）。 */
@@ -598,6 +676,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     scheduleReconnect(1500);
                 } else if (st == android.bluetooth.BluetoothAdapter.STATE_OFF
                         || st == android.bluetooth.BluetoothAdapter.STATE_TURNING_OFF) {
+                    stopFilteredReconnectScan();   // ★2.1.4:蓝牙关了,过滤扫描句柄一并释放(重开由tryReconnect再起)
                     // B1:蓝牙关了→SDK可能发不出cmd2断开(btReady=false连closeConnect都跳),强制清理,
                     //   否则linkUp残留true,重开蓝牙STATE_ON因!linkUp不成立→永不重连(死链到杀进程)
                     if (linkUp || verifiedConnected) {
@@ -664,6 +743,19 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             checkMaxRecordLimit();   // ★每拍查一次：录满90分钟就自动结束保存
             long now = SystemClock.elapsedRealtime();
             boolean busy = penRecording || sessionActive || workerBusy || waitingForFile || dlState != null;
+            // ★2.1.4 #3 冻结豁免：tick间隔远超周期=进程刚被MIUI冻结过(西财店实锤:判失联前cmd9节拍
+            //   停摆28~51秒)。冻结期间探测根本没发出去,笔无从应答,此时的"无回包"不作数——
+            //   复位计数、立刻补发探测,给一个完整周期,笔真死了下一拍照样判,不误杀好连接。
+            long prevTick = hbLastTickMs;
+            hbLastTickMs = now;
+            long expect = busy ? HB_INTERVAL_BUSY_MS : HB_INTERVAL_MS;
+            if (prevTick > 0 && (now - prevTick) > expect * 2 + 4000) {
+                hbMissed = 0;
+                penLog("★进程冻结醒来(" + ((now - prevTick) / 1000) + "s无tick)→心跳计数复位,先探测再判失联");
+                if (btReady()) { try { PNote.getRecordState(); } catch (Throwable ignore) {} }
+                main.postDelayed(this, HB_INTERVAL_MS);
+                return;
+            }
             if (busy && (now - lastRxMs) < HB_INTERVAL_BUSY_MS) {
                 hbMissed = 0; main.postDelayed(this, HB_INTERVAL_BUSY_MS); return;
             }
@@ -709,8 +801,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             main.postDelayed(this, busy ? HB_INTERVAL_BUSY_MS : HB_INTERVAL_MS);
         }
     };
-    private void startHeartbeat() { hbMissed = 0; main.removeCallbacks(heartbeat); main.postDelayed(heartbeat, HB_INTERVAL_MS); }
-    private void stopHeartbeat() { main.removeCallbacks(heartbeat); hbMissed = 0; }
+    private void startHeartbeat() { hbMissed = 0; hbLastTickMs = 0; main.removeCallbacks(heartbeat); main.postDelayed(heartbeat, HB_INTERVAL_MS); }
+    private void stopHeartbeat() { main.removeCallbacks(heartbeat); hbMissed = 0; hbLastTickMs = 0; }
 
     /**
      * 录满 90 分钟自动结束的判定。只在【真在录、未暂停、本段还没触发过】时查；
@@ -1422,6 +1514,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         String cs = String.valueOf(data.opt("connect_state"));
         boolean connected = "true".equals(cs) || "1".equals(cs);
         if (connected) {
+            stopFilteredReconnectScan();   // ★2.1.4:已连上,定向重连扫描收工
             String name = String.valueOf(data.opt("name"));
             String address = String.valueOf(data.opt("address"));
             if (!"null".equals(address) && !TextUtils.isEmpty(address)) {
