@@ -13,6 +13,11 @@ struct HomeView: View {
     @ObservedObject private var queue = UploadQueue.shared
     @StateObject private var vm = HomeViewModel()
     @State private var showPenScan = false
+    // ★启动版本检查(Ad Hoc 分发没有自动更新):每次进程只查一次,有新版弹可关提示
+    @State private var showUpdateAlert = false
+    @State private var updateNote = ""
+    @State private var updateUrl = ""
+    private static var updateChecked = false
 
     var body: some View {
         ScrollView {
@@ -26,9 +31,37 @@ struct HomeView: View {
             .padding(.bottom, MeiliMetric.bottomNavInset)
         }
         .background(MeiliColor.bg)
-        .onAppear { vm.onAppear() }
+        .onAppear {
+            vm.onAppear()
+            checkUpdateOnce()
+        }
         // 录音引擎 toast 改由 MainShell 全局显示(同步/删除等提示在任何 tab 都能看到)
         .sheet(isPresented: $showPenScan) { PenScanSheet(rec: rec) }
+        .alert("发现新版本", isPresented: $showUpdateAlert) {
+            Button("去更新") {
+                if let u = URL(string: updateUrl) { UIApplication.shared.open(u) }
+            }
+            Button("下次再说", role: .cancel) {}
+        } message: {
+            Text(updateNote)
+        }
+    }
+
+    /// ★每次进程只查一次:比对服务端 latestBuild 与本机 build,新版弹可关提示(点「去更新」开安装页重装即升级)。
+    private func checkUpdateOnce() {
+        if Self.updateChecked { return }
+        Self.updateChecked = true
+        Task {
+            guard let v = try? await ConsultantRepo.iosVersion() else { return }
+            let local = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1") ?? 1
+            guard let latest = v.latestBuild, latest > local,
+                  let url = v.installUrl, !url.isEmpty else { return }
+            await MainActor.run {
+                updateNote = "新版本 \(v.latestVersionName ?? "")（\(latest)）：\(v.updateNote ?? "修复与优化")"
+                updateUrl = url
+                showUpdateAlert = true
+            }
+        }
     }
 
     // MARK: 顶部
@@ -38,7 +71,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("\(greetingNow())，")
                     .font(.sz(12.5, weight: .semibold)).foregroundStyle(MeiliColor.ink2)
-                Text("美丽陪伴")
+                Text("美业私教")
                     .font(MeiliFont.title).foregroundStyle(MeiliColor.clayDeep)
                     .padding(.top, 3)
                 HStack(spacing: 7) {

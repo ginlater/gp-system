@@ -46,9 +46,27 @@ final class PendingViewModel: ObservableObject {
         var checked = false
         var id: String { file.name }
         var title: String {
-            let d = file.recordedAt ?? file.name
-            let dur = file.durationSec > 0 ? String(format: " · %02d:%02d", file.durationSec / 60, file.durationSec % 60) : ""
-            return d + dur
+            // ★对齐安卓2.1.6:显示"日期 · 几点–几点 · 时长"——顾问靠时间段回忆是哪位顾客
+            let durLabel = file.durationSec > 0
+                ? (file.durationSec >= 60 ? "\(file.durationSec / 60)分\(String(format: "%02d", file.durationSec % 60))秒" : "\(file.durationSec)秒")
+                : ""
+            guard let ra = file.recordedAt, ra.count >= 19 else {
+                return [file.recordedAt ?? file.name, durLabel].filter { !$0.isEmpty }.joined(separator: " · ")
+            }
+            let day = String(ra.prefix(10))
+            var range = String(ra.dropFirst(11).prefix(5))
+            if file.durationSec > 0 {
+                let f = DateFormatter()
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+                if let st = f.date(from: ra) {
+                    let hf = DateFormatter()
+                    hf.locale = Locale(identifier: "en_US_POSIX")
+                    hf.dateFormat = "HH:mm"
+                    range += " – " + hf.string(from: st.addingTimeInterval(TimeInterval(file.durationSec)))
+                }
+            }
+            return [day, range, durLabel].filter { !$0.isEmpty }.joined(separator: " · ")
         }
         var sizeLabel: String {
             file.sizeBytes > 0 ? String(format: "%.1f MB", Double(file.sizeBytes) / 1024 / 1024) : ""

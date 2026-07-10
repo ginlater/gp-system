@@ -76,6 +76,30 @@ enum ConsultantRepo {
             body: Body(items: items.map { .init(name: $0.name, ra: $0.ra) }))
     }
 
+    // ── 笔归属表(对齐安卓2.1.5:扫描页标"我的笔"置顶/他人笔置灰禁点)──
+
+    struct PenBindings: Decodable {
+        var mine: String?
+        var assignments: [String: String]?
+    }
+
+    static func penBindings() async throws -> PenBindings {
+        try await api.get("api/consultant/pen/bindings")
+    }
+
+    // ── iOS 版本检查(Ad Hoc 分发没有自动更新,启动/设置页查这个提示装新版)──
+
+    struct IosVersion: Decodable {
+        var latestBuild: Int?
+        var latestVersionName: String?
+        var installUrl: String?
+        var updateNote: String?
+    }
+
+    static func iosVersion() async throws -> IosVersion {
+        try await api.get("api/app/ios/version")
+    }
+
     // ── 待整理 ──
 
     static func pending() async throws -> [PendingRecording] {

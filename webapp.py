@@ -4902,6 +4902,25 @@ APP_V2_VERSION_NAME = "2.1.6"
 APP_V2_LATEST_VERSION_CODE = 70   # 2.1.6(70)：同步弹层显示录音起止时间段(认段绑人)(不强更,MIN保持64)
 APP_V2_MIN_VERSION_CODE = 64      # 2026-07-06 全量强更(含补门的64)
 APP_V2_UPDATE_NOTE = "本次更新：陪伴笔同步列表显示每段录音的起止时间（几点到几点），方便对应顾客，建议更新。"
+
+# ============ iOS App 版本（Ad Hoc 分发无自动更新，App 启动/设置页查这个提示重装升级）============
+# 发 iOS 新版时：改 ios_app project.yml 的 CURRENT_PROJECT_VERSION → 归档导出 ad-hoc → 覆盖
+# /var/www/appdist/ios/ 的 ipa+manifest → 把下面 LATEST_BUILD 抬到新 build 号。
+APP_IOS_LATEST_BUILD = 3          # 1.0.0(3)：扫描页笔归属标注+同步列表起止时间+真实版本检查
+APP_IOS_VERSION_NAME = "1.0.0"
+APP_IOS_INSTALL_URL = "https://gp.aibeautyfulwomen.com/download/ios"
+APP_IOS_UPDATE_NOTE = "扫描页自动标出你的录音笔，同步列表显示每段录音起止时间。"
+
+
+@app.route("/api/app/ios/version")
+def api_app_ios_version():
+    return jsonify({
+        "latestBuild": APP_IOS_LATEST_BUILD,
+        "latestVersionName": APP_IOS_VERSION_NAME,
+        "installUrl": APP_IOS_INSTALL_URL,
+        "updateNote": APP_IOS_UPDATE_NOTE,
+    })
+
 # ★下载文件名必须带版本号（在 download_apk() 里由 APP_LATEST_VERSION_* 动态生成）：
 #   每个版本同名("刁姐陪伴.apk")时，上次强更留在手机下载目录里的旧包会顶包——浏览器弹"该文件已下载"
 #   或存成"(1)"副本，顾问点开装的还是旧版 → 版本仍 < MIN → 又弹强更，"点了立即更新还要更新"死循环。

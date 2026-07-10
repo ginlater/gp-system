@@ -10,6 +10,7 @@ struct SettingsView: View {
 
     @State private var editNight = ThemeManager.isNightNow()
     @State private var versionMsg: String?
+    @State private var updateUrl: String?   // ★有新版时=安装页地址,按钮变「去更新」
     @State private var diagMsg: String?
     @State private var diagBusy = false
 
@@ -42,7 +43,7 @@ struct SettingsView: View {
                 SectionLabel("字体大小", icon: MeiliIcons.doc)
                 fontSizeCard
 
-                SectionLabel("关于美丽陪伴", icon: MeiliIcons.info)
+                SectionLabel("关于美业私教", icon: MeiliIcons.info)
                 aboutCard
 
                 MeiliButton(app.me == nil ? "退出登录" : "退出登录", kind: .ghost, icon: MeiliIcons.lock, block: true) {
@@ -50,7 +51,7 @@ struct SettingsView: View {
                 }
                 .padding(.top, 4)
 
-                Text("美丽陪伴 · 高端身体美容陪伴助手")
+                Text("美业私教 · 高端身体美容陪伴助手")
                     .font(.sz(11)).foregroundStyle(MeiliColor.ink3)
                     .frame(maxWidth: .infinity).padding(.top, 4)
             }
@@ -222,8 +223,14 @@ struct SettingsView: View {
                     Text(versionMsg ?? "看看有没有更顺手的新版本").font(.sz(11.5)).foregroundStyle(MeiliColor.ink3)
                 }
                 Spacer()
-                MeiliButton("检查", kind: .ghost, size: .xs) {
-                    versionMsg = "已是最新版本，无需更新"   // iOS 走 App Store;暂无更高版本
+                MeiliButton(updateUrl == nil ? "检查" : "去更新", kind: .ghost, size: .xs) {
+                    // ★真实检查(Ad Hoc 分发没有自动更新):比对服务端 latestBuild 与本机 build,
+                    //   有新版按钮变「去更新」,点击 Safari 打开安装页重装即升级。
+                    if let u = updateUrl, let url = URL(string: u) {
+                        UIApplication.shared.open(url)
+                        return
+                    }
+                    Task { await checkUpdate() }
                 }
             }
             Rectangle().fill(MeiliColor.line).frame(height: 1).padding(.vertical, 11)
@@ -238,6 +245,22 @@ struct SettingsView: View {
                     uploadDiag()
                 }
             }
+        }
+    }
+
+    /// ★真实版本检查(替换原来写死的"已是最新"):比对服务端 /api/app/ios/version 的 latestBuild。
+    private func checkUpdate() async {
+        guard let v = try? await ConsultantRepo.iosVersion() else {
+            versionMsg = "检查失败，请稍后再试"
+            return
+        }
+        let local = Int(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1") ?? 1
+        if let latest = v.latestBuild, latest > local, let url = v.installUrl, !url.isEmpty {
+            versionMsg = "发现新版本 \(v.latestVersionName ?? "") (\(latest))：\(v.updateNote ?? "点「去更新」安装")"
+            updateUrl = url
+        } else {
+            versionMsg = "已是最新版本，无需更新"
+            updateUrl = nil
         }
     }
 
