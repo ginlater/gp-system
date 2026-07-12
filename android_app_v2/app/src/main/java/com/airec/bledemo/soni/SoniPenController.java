@@ -67,6 +67,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         /** 当前后台下载进度(0-100)。 */
         void onPenProgress(int percent);
         /** 手动"从陪伴笔同步"：机身文件列表(JSON 数组)。 */
+        /** ★2.1.9: filesJson=null 表示【拉取失败/笔未连接】(不是"笔里没文件")，上层要区别提示。 */
         void onPenFileList(String filesJson);
         /** 陪伴笔电量(cmd=6)：percent=0–100；charging=是否充电中(充电时 percent 仅供参考)。 */
         default void onPenBattery(int percent, boolean charging) {}
@@ -254,7 +255,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // E6:放弃烧钟 2h→6h——门店一下午没网/笔不在身边是常态,2h 就删占位("同步中"行集体消失)太急
     private static final long FAIL_GIVEUP_MS = 6 * 60 * 60 * 1000L;
     private static final long STALE_GIVEUP_MS = 6 * 60 * 60 * 1000L;   // ★v24:僵尸任务按入队龄直接清
-    private static final long FILE_KEEP_MS = 30L * 24 * 3600 * 1000;
+    // ★2.1.9 笔上文件保留策略(老板 2026-07-12 拍板):
+    //   ① 已完整传上服务器的段 → 从笔里删掉(空间还给笔,同步清单不再越攒越长);
+    //   ② 还没传上去的段 → 保留 10 天(绑定窗口只有7天,超10天的录音绑不了顾客、出不了报告,留着无用)。
+    //   安全阀:截断件(truncatedFlag,断流后传的"诚实部分件")【不删】——留着等完整版覆盖,删了补不回来。
+    private static final long FILE_KEEP_MS = 10L * 24 * 3600 * 1000;
+    /** 完整上传成功(非截断)的机身文件名——清理时可安全删除。截断件不进这个集合。 */
+    private final java.util.Set<String> fullyUploadedNames = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
     private volatile boolean pendingCleanup = false;
     private volatile boolean pendingSyncList = false;
     private volatile boolean autoRetryScan = false;   // 点"重试"触发的重扫:回包时自动把未传段入队补传
@@ -277,7 +284,23 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private static final class PenFileEntry { String name; long size; int timeSec; }
     private final List<PenFileEntry> fileListBuf = new ArrayList<>();
     private volatile boolean fileListCollecting = false;
+    // ★2.1.9 清单读取健壮性：笔忙时"要清单"这条蓝牙命令可能被直接吞掉(没有任何回包)，
+    //   原来只发一次就干等 → 顾问看到转圈到超时、空白。现在:8s 没有任何一批到达就重发(最多2次);
+    //   全程一批都没收到 = 真失败(回 null,让 UI 明说"读取失败,请重试")，而不是回空列表(会被当成"笔里没文件")。
+    private volatile boolean fileListGotAnyBatch = false;
+    private volatile int fileListRetries = 0;
     private volatile boolean pendingChainProbe = false;   // ★2.1.7:接管中途会话后,查文件列表回溯这条连续录音链已录多久
+    // ★2.1.9 机身清单缓存：笔吐清单是【分批】的,文件多时要读好几秒~十几秒(蓝牙包小)。
+    //   同一次连接期间短时间内重复点"从陪伴笔同步"不必再问笔一遍——直接用缓存秒开。
+    //   失效时机:超过 TTL / 断开连接 / 录完新段 / 导入了段(内容变了),见 invalidateFileListCache()。
+    private volatile List<PenFileEntry> fileListCache = null;
+    private volatile long fileListCacheAtMs = 0;
+    private static final long FILE_LIST_CACHE_TTL_MS = 90 * 1000L;
+
+    // ★2.1.8:连接请求去重(防定向扫描与SDK扫描同时命中→双 connectDevice→蓝牙栈被撞断)
+    private volatile String connectingMac = null;
+    private volatile long connectingUntilMs = 0;
+    private static final long CONNECT_DEDUP_MS = 8000;
 
     // 持久化恢复
     private static final class PersistedDl {
@@ -304,6 +327,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             Log.e(TAG, "PNote.init failed", t);
         }
         loadUploadedNames();
+        loadFullyUploadedNames();   // ★2.1.9
         loadPendingQueue();
         registerBtReceiver();
         startMainFreezeWatchdog();
@@ -465,6 +489,17 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     /** 扫描页点连接 / 自动重连命中：连接指定设备。 */
     public void connectTo(String name, String address) {
         if (TextUtils.isEmpty(address)) return;
+        // ★2.1.8 连接请求去重：2.1.4 加的定向过滤扫描会与 SDK 自带扫描【同时命中同一支笔】，
+        //   于是对同一 MAC 连发两次 connectDevice —— 蓝牙栈被撞得当场断开重来（真机日志实锤：
+        //   connectTo → 定向命中 → connectTo → cmd2 断开 ×2）。连接窗口内同一支笔只放行一次；
+        //   窗口(8s)过期说明连接确实没成，照常重试，不影响真正的重连。
+        long dedupNow = SystemClock.elapsedRealtime();
+        if (!linkUp && address.equalsIgnoreCase(connectingMac) && dedupNow < connectingUntilMs) {
+            penLog("★忽略重复连接请求(正在连同一支笔) " + address);
+            return;
+        }
+        connectingMac = address;
+        connectingUntilMs = dedupNow + CONNECT_DEDUP_MS;
         // A1(复审):不再乐观预写 currentMac/lastConnectedMac/prefs——那会把 B4 双笔校验变成自己骗自己
         //   (connectWatch 拿笔A的心跳+被覆写成B的mac 秒判"连B成功")。这些只在 cmd2 真连上时写。
         // 已连着另一支笔时先主动断开(对齐 iOS)，否则 SDK 可能保持旧连接、新连接请求被吞
@@ -688,6 +723,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     // B1:蓝牙关了→SDK可能发不出cmd2断开(btReady=false连closeConnect都跳),强制清理,
                     //   否则linkUp残留true,重开蓝牙STATE_ON因!linkUp不成立→永不重连(死链到杀进程)
                     if (linkUp || verifiedConnected) {
+                        invalidateFileListCache();   // ★2.1.9
                         penLog("★蓝牙关闭→强制清理连接态(防linkUp残留死链)");
                         linkUp = false; verifiedConnected = false;
                         stopHeartbeat();
@@ -1090,6 +1126,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     // ============ 会话收尾：入队后台上传，立刻回 idle ============
 
     private void finishSessionEnqueue(String fileName, int durSec, long startWallMs) {
+        invalidateFileListCache();   // ★2.1.9:笔上多了新段,清单作废
         stopConfirmGen = -1;   // B2:会话收尾,停止确认作废
         cmd9NotRecCount = 0;   // A2:抖动计数不跨会话
         reconnectGraceUntilMs = 0;   // A4:真收尾即结束宽限
@@ -1525,6 +1562,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         boolean connected = "true".equals(cs) || "1".equals(cs);
         if (connected) {
             stopFilteredReconnectScan();   // ★2.1.4:已连上,定向重连扫描收工
+            connectingMac = null; connectingUntilMs = 0;   // ★2.1.8:连上了,去重锁释放(真断开后能立刻重连)
             String name = String.valueOf(data.opt("name"));
             String address = String.valueOf(data.opt("address"));
             if (!"null".equals(address) && !TextUtils.isEmpty(address)) {
@@ -1861,12 +1899,54 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     private void requestFileListInternal() {
         fileListCollecting = true;
+        fileListGotAnyBatch = false;
+        fileListRetries = 0;
         synchronized (fileListBuf) { fileListBuf.clear(); }
         try { PNote.getRecordFileList(); }
-        catch (Throwable e) { Log.e(TAG, "getRecordFileList failed", e); fileListCollecting = false; }
+        catch (Throwable e) { Log.e(TAG, "getRecordFileList failed", e); fileListCollecting = false; return; }
+        main.removeCallbacks(fileListNoReplyWatch);
+        main.postDelayed(fileListNoReplyWatch, 8000);
     }
 
+    /** ★2.1.9:8s 一批都没回 → 命令多半被笔忙时吞了,重发(最多2次);再不回就判失败,不再无限干等。 */
+    private final Runnable fileListNoReplyWatch = new Runnable() {
+        @Override public void run() {
+            if (!fileListCollecting || fileListGotAnyBatch) return;
+            if (!linkUp) { failFileList(); return; }
+            if (fileListRetries >= 2) {
+                penLog("★要清单命令连发3次无回应→判失败(笔忙/链路差)");
+                failFileList();
+                return;
+            }
+            fileListRetries++;
+            penLog("★要清单8s无回应→重发第" + fileListRetries + "次");
+            try { PNote.getRecordFileList(); } catch (Throwable ignore) {}
+            main.postDelayed(this, 8000);
+        }
+    };
+
+    /** 清单彻底读不到：回 null 让 UI 明说"读取失败/重试"（不是回空列表——那会被当成"笔里没文件"）。 */
+    private void failFileList() {
+        fileListCollecting = false;
+        main.removeCallbacks(fileListDebounce);
+        main.removeCallbacks(fileListNoReplyWatch);
+        synchronized (fileListBuf) { fileListBuf.clear(); }
+        boolean wantSync = pendingSyncList;
+        pendingSyncList = false; pendingCleanup = false; autoRetryScan = false; pendingChainProbe = false;
+        main.postDelayed(this::kickWorker, 500);   // 让路暂停的后台补传继续
+        if (wantSync && listener != null) main.post(() -> listener.onPenFileList(null));
+    }
+
+    /** ★2.1.9:UI 用——清单已经读到几条了(超时提示"已读到 N 段",避免把"马上就好"误判成失败)。 */
+    public int fileListProgress() {
+        synchronized (fileListBuf) { return fileListBuf.size(); }
+    }
+
+    public boolean isFileListCollecting() { return fileListCollecting; }
+
     private void handleFileList(JSONObject map) {
+        fileListGotAnyBatch = true;                      // ★2.1.9:笔回话了
+        main.removeCallbacks(fileListNoReplyWatch);      // 撤销"无回应重发"
         JSONArray arr = map.optJSONArray("data");
         if (arr != null) {
             synchronized (fileListBuf) {
@@ -1898,12 +1978,18 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         if (!fileListCollecting) return;
         fileListCollecting = false;
         main.removeCallbacks(fileListDebounce);
+        main.removeCallbacks(fileListNoReplyWatch);
         List<PenFileEntry> snapshot;
         synchronized (fileListBuf) { snapshot = new ArrayList<>(fileListBuf); fileListBuf.clear(); }
         onFileListComplete(snapshot);
     }
 
     private void onFileListComplete(List<PenFileEntry> files) {
+        // ★2.1.9:整份清单到手 → 存进缓存(90s内重复点同步秒开)
+        if (files != null && !files.isEmpty()) {
+            fileListCache = new ArrayList<>(files);
+            fileListCacheAtMs = SystemClock.elapsedRealtime();
+        }
         if (pendingCleanup) { pendingCleanup = false; cleanupOldFiles(files); }
         if (pendingSyncList) { pendingSyncList = false; deliverPenFileList(files); }
         if (autoRetryScan) { autoRetryScan = false; enqueueUnuploadedForRetry(files); }
@@ -2274,12 +2360,21 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private void workerTaskDone(final UploadTask task, final long recId) {
         main.post(() -> {
             uploadQueue.remove(task);
-            if (task.fileName != null) markUploaded(task.fileName);
+            if (task.fileName != null) {
+                markUploaded(task.fileName);
+                // ★2.1.9:完整传成功的才允许从笔里删;截断件留着等完整版
+                if (!task.truncatedFlag && looksLikePenFile(task.fileName)) {
+                    fullyUploadedNames.add(task.fileName);
+                    markFullyUploaded(task.fileName);
+                }
+            }
             try { partFileFor(task.fileName).delete(); } catch (Exception ignore) {}
             workerBusy = false; currentTask = null; inflightTask = null; waitingForFile = false;
             Log.d(TAG, "后台完成 file=" + task.fileName + " recId=" + recId + " 剩余=" + uploadQueue.size());
             if (recId > 0 && listener != null) listener.onPenUploaded(recId);
             notifyPending();
+            // ★2.1.9:队列清空后触发一次清理——刚完整传上去的段立刻从笔里删,笔不再越攒越满
+            if (uploadQueue.isEmpty()) main.postDelayed(() -> triggerCleanup(0), 5000);
             kickWorker();
         });
     }
@@ -2583,10 +2678,34 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
 
     // ============ 手动"从陪伴笔同步" + 清理 ============
 
+    /**
+     * 同步弹层要机身文件列表。
+     *
+     * ★2.1.9 两处修复（真机病案：顾问点"从陪伴笔同步"→有时特别慢、有时直接空白）：
+     *  ① 笔没连上时【别再回空列表】——空列表被 UI 当成"笔里没东西"，顾问一脸懵；
+     *     回 null 让上层显示"陪伴笔未连接"并给重试（蓝牙抖动瞬间点同步就会撞上这个）。
+     *  ② 拉列表前先暂停后台下载 worker——蓝牙同一时刻只干一件事，
+     *     后台正在补传大文件时，列表命令排在它后面，12s 等不到就被判超时=空白。
+     *     列表是【用户正在等的前台操作】，优先级最高；拿到列表后 worker 自动继续。
+     */
     public void requestPenFileList() {
-        if (!linkUp) { if (listener != null) main.post(() -> listener.onPenFileList("[]")); return; }
+        if (!linkUp) { if (listener != null) main.post(() -> listener.onPenFileList(null)); return; }
+        // ★2.1.9 缓存命中：90s 内问过一次且笔上内容没变 → 秒开,不再走一遍分批蓝牙读取
+        List<PenFileEntry> cached = fileListCache;
+        if (cached != null && SystemClock.elapsedRealtime() - fileListCacheAtMs < FILE_LIST_CACHE_TTL_MS) {
+            penLog("★同步清单走缓存(" + cached.size() + "个,免去重读笔)");
+            deliverPenFileList(cached);
+            return;
+        }
         pendingSyncList = true;
+        pauseWorker();   // ★让路：前台要列表优先于后台补传
         requestFileListInternal();
+    }
+
+    /** ★2.1.9:笔上内容变了(录完新段/导入/断连) → 清单缓存作废,下次同步重新问笔。 */
+    private void invalidateFileListCache() {
+        fileListCache = null;
+        fileListCacheAtMs = 0;
     }
 
     private void deliverPenFileList(List<PenFileEntry> files) {
@@ -2611,10 +2730,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         }
         sb.append("]");
         final String json = sb.toString();
+        // ★2.1.9:列表已到手 → 让暂停的后台补传接着干(requestPenFileList 里为让路暂停过)
+        main.postDelayed(this::kickWorker, 500);
         if (listener != null) main.post(() -> listener.onPenFileList(json));
     }
 
     public void uploadPenFiles(String namesJson) {
+        invalidateFileListCache();   // ★2.1.9:导入后清单状态变了(这些段变"已传"),下次同步重新问笔
         if (cookie == null || uploadUrl == null) return;
         List<String> names = new ArrayList<>();
         try {
@@ -2662,8 +2784,22 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         return false;
     }
 
-    private void triggerCleanup() {
-        if (!linkUp || penRecording || sessionActive || appStartPending || workerBusy) return;
+    /**
+     * ★2.1.9：清理笔上文件（已完整上传的删掉 / 超 10 天未传的删掉）。
+     *
+     * 原来的毛病：只在"连上笔 9 秒后"试一次，只要那一刻后台正在传文件(workerBusy)就【直接放弃】，
+     * 要等下次重新连笔才有机会——而后台一忙常常就是好几分钟，清理很容易一直轮空。
+     * 现在改成：忙就 60 秒后再试（最多重试 10 次≈10 分钟），录音中/正在开录则等下一轮，不硬闯。
+     */
+    private void triggerCleanup() { triggerCleanup(0); }
+
+    private void triggerCleanup(final int attempt) {
+        if (!linkUp) return;                       // 断了就算了,下次连上会重新排
+        if (attempt >= 10) return;                 // 兜底:别无限重排
+        if (penRecording || sessionActive || appStartPending || workerBusy) {
+            main.postDelayed(() -> triggerCleanup(attempt + 1), 60_000);   // 忙 → 稍后再来
+            return;
+        }
         pendingCleanup = true;
         requestFileListInternal();
     }
@@ -2671,19 +2807,86 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private void cleanupOldFiles(List<PenFileEntry> files) {
         if (files == null) return;
         long now = System.currentTimeMillis();
-        int deleted = 0;
+        String recordingFn = sessionActive ? sessionFileName : null;
+        int delUploaded = 0, delStale = 0;
         for (PenFileEntry f : files) {
             if (f == null || TextUtils.isEmpty(f.name)) continue;
+            if (recordingFn != null && recordingFn.equals(f.name)) continue;   // 正在录的那段绝不碰
+            if (isQueuedByName(f.name)) continue;                              // 还在待传队列里的不碰
+            boolean uploadedFull = fullyUploadedNames.contains(f.name);
             long ts = parseFileTimestamp(f.name);
-            if (ts > 0 && now - ts > FILE_KEEP_MS) {
-                try {
-                    PNote.deleteReordFile(f.name);
-                    deleted++;
-                    Log.d(TAG, "清理笔上 >30天 旧文件 " + f.name);
-                } catch (Throwable e) { Log.e(TAG, "deleteReordFile failed " + f.name, e); }
-            }
+            boolean stale = ts > 0 && (now - ts) > FILE_KEEP_MS;
+            if (!uploadedFull && !stale) continue;
+            try {
+                PNote.deleteReordFile(f.name);
+                if (uploadedFull) delUploaded++; else delStale++;
+            } catch (Throwable e) { Log.e(TAG, "deleteReordFile failed " + f.name, e); }
         }
-        if (deleted > 0) Log.d(TAG, "本次共清理 " + deleted + " 个超期文件");
+        if (delUploaded + delStale > 0) {
+            invalidateFileListCache();
+            penLog("★清理笔上文件:已完整上传删" + delUploaded + "个, 超" + (FILE_KEEP_MS / 86400000L) + "天未传删" + delStale + "个");
+        }
+    }
+
+    /**
+     * ★2.1.9：按【服务端判定】删除笔上的重复文件（老板 2026-07-12 需求）。
+     *
+     * 打开"从陪伴笔同步"时，服务端预检已经逐条告诉我们每个机身文件的状态：
+     *   uploaded=服务器已完整收到 / deleted=顾问已删(墓碑,别复活) / new=还没传。
+     * 前两类留在笔里纯属占地方（还会让清单越读越慢），这里顺手删掉。
+     * 服务端天然安全：断流"部分件"会被判为 new（放行重导完整版），绝不会被误删。
+     *
+     * 开销极小：删除是一条很小的蓝牙命令（不传数据），几十个文件也就几百毫秒，不拖慢同步。
+     */
+    public void deleteSyncedPenFiles(String namesJson) {
+        if (!linkUp || TextUtils.isEmpty(namesJson)) return;
+        final List<String> names = new ArrayList<>();
+        try {
+            JSONArray arr = new JSONArray(namesJson);
+            for (int i = 0; i < arr.length(); i++) {
+                String n = arr.optString(i, null);
+                if (!TextUtils.isEmpty(n)) names.add(n);
+            }
+        } catch (Exception e) { return; }
+        if (names.isEmpty()) return;
+        main.post(() -> {
+            String recordingFn = sessionActive ? sessionFileName : null;
+            int n = 0;
+            for (String name : names) {
+                if (recordingFn != null && recordingFn.equals(name)) continue;   // 正在录的不碰
+                if (isQueuedByName(name)) continue;                              // 还在待传队列的不碰
+                try { PNote.deleteReordFile(name); n++; }
+                catch (Throwable e) { Log.e(TAG, "deleteReordFile failed " + name, e); }
+            }
+            if (n > 0) {
+                invalidateFileListCache();
+                penLog("★同步时顺手清理:服务器已有的 " + n + " 个段已从笔里删除");
+            }
+        });
+    }
+
+    private void markFullyUploaded(String fn) {
+        try {
+            android.content.SharedPreferences sp = appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE);
+            java.util.Set<String> cur = new java.util.HashSet<>(
+                    sp.getStringSet("fully_uploaded_files", java.util.Collections.emptySet()));
+            cur.add(fn);
+            // 防无界增长:只留最近 500 个(按文件名时间戳倒序,笔上文件也就几十个,足够)
+            if (cur.size() > 500) {
+                java.util.List<String> l = new java.util.ArrayList<>(cur);
+                java.util.Collections.sort(l, (a, b) -> Long.compare(parseFileTimestamp(b), parseFileTimestamp(a)));
+                cur = new java.util.HashSet<>(l.subList(0, 500));
+            }
+            sp.edit().putStringSet("fully_uploaded_files", cur).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private void loadFullyUploadedNames() {
+        try {
+            java.util.Set<String> s = appCtx.getSharedPreferences("pen_prefs", Context.MODE_PRIVATE)
+                    .getStringSet("fully_uploaded_files", null);
+            if (s != null) fullyUploadedNames.addAll(s);
+        } catch (Exception ignored) {}
     }
 
     // ============ SN 归属校验（fail-open，同杰理版） ============

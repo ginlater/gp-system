@@ -51,6 +51,8 @@ data class PenSyncUiState(
     val penUnavailable: Boolean = false,
     val penBusy: Boolean = false,
     val loadFailed: Boolean = false,
+    /** ★2.1.9:读取中的进度提示（文件多时显示"已读到 N 段…"，避免顾问以为卡死）。 */
+    val loadingHint: String? = null,
 ) {
     val selectableRows: List<PenSyncRow> get() = rows.filter { it.importable }
     val selectedCount: Int get() = rows.count { it.selected && it.importable }
@@ -58,6 +60,16 @@ data class PenSyncUiState(
         get() = selectableRows.isNotEmpty() && selectableRows.all { it.selected }
 
     val totalPages: Int get() = if (rows.isEmpty()) 1 else (rows.size + PEN_SYNC_PAGE_SIZE - 1) / PEN_SYNC_PAGE_SIZE
+
+    /**
+     * ★2.1.9 按日期分组（对齐 iOS，2026-07-04 就有的需求，安卓一直没做）：
+     * 本页的行按"录音日期"归组，顺序保持 rows 的倒序（最近的日期在上）。
+     * 顾问点日期头即可一键勾选/取消那一天——笔里攒了几十段时不用一条条点。
+     */
+    val pageGroups: List<Pair<String, List<PenSyncRow>>>
+        get() = pageRows
+            .groupBy { it.file.recordedAt.take(10).ifBlank { "时间未知" } }
+            .toList()
     /** 当前页要展示的行（分页）。 */
     val pageRows: List<PenSyncRow> get() = rows.drop((page - 1) * PEN_SYNC_PAGE_SIZE).take(PEN_SYNC_PAGE_SIZE)
 }
@@ -67,7 +79,8 @@ data class PenSyncUiState(
  * 因为 ModalBottomSheet 对自定义内容不可靠地滚动（会吞掉滑动手势）。每页 4 段刚好留出翻页器和
  * 导入按钮的可见空间，机身片段多时翻页看，避免"显示不全 / 翻页器掉屏外"。
  */
-const val PEN_SYNC_PAGE_SIZE = 4
+const val PEN_SYNC_PAGE_SIZE = 12   // ★2.1.9:4→12(配合日期分组,少翻页)
+const val PEN_PREVIEW_BATCH = 30    // ★2.1.9:服务端去重预检分批大小(防大请求超时)
 
 /**
  * 一条 toast（对应 warm_2 .toast）：文案 + 可选语义图标 + 是否危险态。
@@ -297,15 +310,37 @@ class PendingViewModel(
         _penSync.update { it.copy(visible = true, loading = true, penUnavailable = false, penBusy = false, loadFailed = false) }
         c.syncPenFiles { files ->
             penListTimeoutJob?.cancel()
+            if (files == null) {
+                // ★2.1.9:拉取失败/笔未连接 → 明说并给重试(旧版回空列表,被渲染成"笔里没东西",顾问一脸懵)
+                _penSync.update { it.copy(loading = false, rows = emptyList(), loadFailed = true) }
+                return@syncPenFiles
+            }
             // 回调可能在非主线程；用 viewModelScope 切回协程上下文做后续网络查询。
             viewModelScope.launch { onPenFiles(files) }
         }
-        // E3：12s 无回调 → 超时给重试，不再永久转圈（后台在传大文件时 BLE 列表常被压住）
+        // ★2.1.9 超时改成【进度感知】，不再一刀切：
+        //   笔吐清单是分批的，文件多时要十几秒——只要还在陆续到达，就继续等并显示"已读到 N 段…"；
+        //   只有【20s 后仍一条都没收到】或【读到一半彻底卡住 15s 不动】才判失败给重试。
+        //   （引擎侧还有一层：8s 无回应自动重发命令 ×2，多数"命令被笔忙时吞掉"已在那层救回来。）
         penListTimeoutJob?.cancel()
         penListTimeoutJob = viewModelScope.launch {
-            delay(12_000)
+            var waited = 0
+            var lastProgress = 0
+            var stalled = 0
+            while (waited < 90_000) {
+                delay(2_000); waited += 2_000
+                val st0 = _penSync.value
+                if (!st0.visible || !st0.loading) return@launch   // 已经拿到清单/关掉了
+                val p = controller?.penFileListProgress() ?: 0
+                if (p > lastProgress) { lastProgress = p; stalled = 0 } else stalled += 2_000
+                if (waited >= 8_000 && p > 0) {
+                    _penSync.update { it.copy(loadingHint = "笔里文件较多，正在读取（已读到 $p 段）…") }
+                }
+                if (p == 0 && waited >= 20_000) break            // 一条都没来 → 真失败
+                if (p > 0 && stalled >= 15_000) break            // 读到一半彻底卡住 → 失败
+            }
             if (_penSync.value.visible && _penSync.value.loading) {
-                _penSync.update { it.copy(loading = false, rows = emptyList(), loadFailed = true) }
+                _penSync.update { it.copy(loading = false, rows = emptyList(), loadFailed = true, loadingHint = null) }
             }
         }
     }
@@ -317,14 +352,29 @@ class PendingViewModel(
         }
         // E2：去重预检失败不再按本地标记瞎渲染——换机/重装会全按"新"引导重复导入，
         // 本机已传但服务端放行重导的截断件反被隐藏。失败就明说，给「重试」。
-        val statusByName: Map<String, String?> =
-            when (val r = repo.penSyncPreview(files.map { PenSyncQueryItem(name = it.name, ra = it.recordedAt.ifBlank { null }) })) {
-                is ApiResult.Success -> r.data.items.orEmpty().associate { it.name.orEmpty() to it.status }
+        // ★2.1.9 分批查重(每批 30)：笔里攒了几十段时,一次性把全部文件名塞进一个请求
+        //   → 请求大、服务端查得久、弱网必超时(顾问看到的"网络异常")。拆批后每个请求都小而快。
+        val statusByName: MutableMap<String, String?> = mutableMapOf()
+        for (chunk in files.chunked(PEN_PREVIEW_BATCH)) {
+            when (val r = repo.penSyncPreview(chunk.map { PenSyncQueryItem(name = it.name, ra = it.recordedAt.ifBlank { null }) })) {
+                is ApiResult.Success ->
+                    r.data.items.orEmpty().forEach { statusByName[it.name.orEmpty()] = it.status }
                 is ApiResult.Failure -> {
+                    // 任一批失败仍判失败(状态不全就不能瞎渲染,会重复导入),但只需重试一次、且请求已变小更容易成功
                     _penSync.update { it.copy(loading = false, rows = emptyList(), loadFailed = true) }
                     return
                 }
             }
+        }
+        // ★2.1.9：顺手清理笔——服务器已确认收到(uploaded)或顾问已删(deleted)的段，留在笔里纯占地方，
+        //   还会让下次读清单越来越慢。删除只是一条很小的蓝牙命令(不传数据)，几十个也就几百毫秒。
+        //   安全：服务端把"断流部分件"判为 new（要重导完整版），所以绝不会误删还需要的段。
+        val doneOnServer = files.map { it.name }.filter { n ->
+            val st = statusByName[n]
+            st == "uploaded" || st == "deleted"
+        }
+        if (doneOnServer.isNotEmpty()) controller?.deleteSyncedPenFiles(doneOnServer)
+
         val rows = files.map { f ->
             // 以服务端判定为准（本地 uploaded 标记只在服务端没提到该文件时兜底不了什么——没提到即当 new，
             // 上传侧仍有 pen_file 排重，最多被服务端吞掉一次重复，不会重复入库）。
@@ -336,7 +386,7 @@ class PendingViewModel(
             .filter { it.status == "new" }
             // 从最近的开始，从上往下（按录音时间倒序；时间为空的排末尾）
             .sortedByDescending { it.file.recordedAt }
-        _penSync.update { it.copy(loading = false, rows = rows, page = 1, penUnavailable = false, loadFailed = false) }
+        _penSync.update { it.copy(loading = false, rows = rows, page = 1, penUnavailable = false, loadFailed = false, loadingHint = null) }
     }
 
     /** 同步 sheet 翻页。 */
@@ -357,6 +407,19 @@ class PendingViewModel(
         _penSync.update { s ->
             val turnOn = !s.allSelected
             s.copy(rows = s.rows.map { if (it.importable) it.copy(selected = turnOn) else it })
+        }
+    }
+
+    /** ★2.1.9：点日期头一键勾选/取消那一天（对齐 iOS）。那天全选中 → 再点取消全选。 */
+    fun togglePenDay(day: String) {
+        _penSync.update { s ->
+            fun dayOf(r: PenSyncRow) = r.file.recordedAt.take(10).ifBlank { "时间未知" }
+            val inDay = s.rows.filter { it.importable && dayOf(it) == day }
+            if (inDay.isEmpty()) return@update s
+            val turnOn = !inDay.all { it.selected }
+            s.copy(rows = s.rows.map {
+                if (it.importable && dayOf(it) == day) it.copy(selected = turnOn) else it
+            })
         }
     }
 

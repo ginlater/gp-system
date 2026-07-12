@@ -148,7 +148,7 @@ class RecordingControllerImpl(
     }
 
     // 手动「从陪伴笔同步」的一次性回调：拉到列表后回调并清空。
-    @Volatile private var penFilesCallback: ((List<PenFile>) -> Unit)? = null
+    @Volatile private var penFilesCallback: ((List<PenFile>?) -> Unit)? = null
 
     // ============ 「未连接点开启陪伴 → 连上后自动开录」意图（对齐旧宿主 pendingRecordAfterConnect） ============
 
@@ -283,10 +283,11 @@ class RecordingControllerImpl(
             _progressPercent.value = percent
         }
 
-        override fun onPenFileList(filesJson: String) {
+        override fun onPenFileList(filesJson: String?) {
             val cb = penFilesCallback
             penFilesCallback = null
-            cb?.invoke(parsePenFiles(filesJson))
+            // ★2.1.9:null = 拉取失败/笔未连接 → 传 null 让上层给"未连接/重试",别当成"笔里没文件"渲染成空白
+            cb?.invoke(if (filesJson == null) null else parsePenFiles(filesJson))
         }
 
         // 声云笔没有「开机自动录制」设置项，杰理版的 onPenPowerOnRecordDisabled 在此引擎不存在。
@@ -513,7 +514,15 @@ class RecordingControllerImpl(
     override fun pendingInfo(): PendingInfo =
         PendingInfo(penController.pendingCount(), penController.pendingFailedCount())
 
-    override fun syncPenFiles(onPenFiles: (List<PenFile>) -> Unit) {
+    override fun penFileListProgress(): Int = penController.fileListProgress()
+
+    override fun deleteSyncedPenFiles(names: List<String>) {
+        if (names.isEmpty()) return
+        val json = names.joinToString(",", "[", "]") { "\"" + it.replace("\"", "\\\"") + "\"" }
+        penController.deleteSyncedPenFiles(json)
+    }
+
+    override fun syncPenFiles(onPenFiles: (List<PenFile>?) -> Unit) {
         // TODO(集成): 上传 URL 必须先 setUploadContext，否则 uploadPenFiles 阶段引擎会静默忽略。
         //  拉列表本身只需连接；导入勾选时才用到上下文。
         penFilesCallback = onPenFiles

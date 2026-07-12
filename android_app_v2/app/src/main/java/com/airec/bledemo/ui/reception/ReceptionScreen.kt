@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -459,6 +460,7 @@ fun ReceptionScreen(
         onDismiss = pendingVm::closePenSync,
         onToggleRow = pendingVm::togglePenRow,
         onToggleAll = pendingVm::togglePenAll,
+        onToggleDay = pendingVm::togglePenDay,
         onImport = { confirmImport = true },
         onPrevPage = pendingVm::penPrevPage,
         onNextPage = pendingVm::penNextPage,
@@ -1333,6 +1335,7 @@ private fun PenSyncSheet(
     onDismiss: () -> Unit,
     onToggleRow: (String) -> Unit,
     onToggleAll: () -> Unit,
+    onToggleDay: (String) -> Unit = {},
     onImport: () -> Unit,
     onPrevPage: () -> Unit,
     onNextPage: () -> Unit,
@@ -1346,8 +1349,20 @@ private fun PenSyncSheet(
     ) {
         when {
             state.loading -> {
-                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 36.dp), contentAlignment = Alignment.Center) {
+                // ★2.1.9:文件多时读清单要十几秒——显示"已读到 N 段…"让顾问知道在动,不是卡死了
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                     CircularProgressIndicator(color = MeiliPalette.Clay, strokeWidth = 2.5.dp, modifier = Modifier.size(28.dp))
+                    state.loadingHint?.let { hint ->
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = hint,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MeiliPalette.Ink3,
+                        )
+                    }
                 }
             }
             state.penUnavailable || state.penBusy || state.loadFailed || state.rows.isEmpty() -> {
@@ -1401,14 +1416,35 @@ private fun PenSyncSheet(
                         .heightIn(max = 300.dp)
                         .verticalScroll(rememberScrollState()),
                 ) {
-                    state.pageRows.forEach { row ->
+                    state.pageGroups.forEach { (day, dayRows) ->
+                        // ★2.1.9 日期头：点它一键勾选/取消这一天(笔里攒几十段时不用一条条点)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onToggleDay(day) }
+                                .padding(top = 4.dp, bottom = 6.dp),
+                        ) {
+                            Text(
+                                text = day,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MeiliPalette.ClayDeep,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "${dayRows.size} 段 · 点这里全选",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MeiliPalette.Ink3,
+                            )
+                        }
+                        dayRows.forEach { row ->
                         CheckRow(
-                            // ★2.1.6:标题带"几点–几点"时间段——顾问靠时段回忆是哪位顾客,不然只见日期+时长没法认段绑人
+                            // ★2.1.6:标题带"几点–几点"时间段——顾问靠时段回忆是哪位顾客;
+                            //   2.1.9:日期已在分组头上,行里不再重复,只留"时段 · 时长"
                             title = listOfNotNull(
-                                penDateLabel(row.file.recordedAt),
                                 penTimeRange(row.file.recordedAt, row.file.durationSec),
                                 secToLabel(row.file.durationSec),
-                            ).joinToString(" · "),
+                            ).joinToString(" · ").ifBlank { penDateLabel(row.file.recordedAt) },
                             meta = penMeta(row.file.sizeBytes),
                             checked = row.selected,
                             enabled = row.importable,
@@ -1416,6 +1452,7 @@ private fun PenSyncSheet(
                             trailing = { StatusPill(text = penStatusText(row.status), kind = penStatusKind(row.status)) },
                             modifier = Modifier.padding(bottom = 10.dp),
                         )
+                    }
                     }
                 }
                 // 翻页导航（机身片段多于一页时）

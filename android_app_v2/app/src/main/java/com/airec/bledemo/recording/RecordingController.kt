@@ -121,7 +121,14 @@ interface RecordingController {
      * 从陪伴笔同步：拉机身文件列表（脱机本地保存、尚未导入的片段），异步经 [onPenFiles] 回调。
      * 对应 Host.bridgeSyncPenFiles。
      */
-    fun syncPenFiles(onPenFiles: (List<PenFile>) -> Unit)
+    /** ★2.1.9:回调参数 null = 拉取失败/笔未连接；空列表 = 笔里确实没文件。 */
+    fun syncPenFiles(onPenFiles: (List<PenFile>?) -> Unit)
+
+    /** ★2.1.9:把【服务器已确认收到/已删除】的机身文件从笔里删掉（同步时顺手清理，开销极小）。 */
+    fun deleteSyncedPenFiles(names: List<String>)
+
+    /** ★2.1.9:机身清单已读到几条（读取中的进度；用于超时提示"已读到 N 段"而不是误判失败）。 */
+    fun penFileListProgress(): Int
 
     /** 上传选中的机身文件（从同步列表勾选导入到「待整理」）。对应 Host.bridgeUploadPenFiles。 */
     fun uploadPenFiles(fileNames: List<String>)
