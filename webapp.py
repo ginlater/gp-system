@@ -4894,14 +4894,14 @@ def terms_of_service():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.2.0"
+APP_V2_VERSION_NAME = "2.2.1"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 74   # 2.2.0(74)：紧急修复2.1.9的误删bug(同步时按模糊匹配删笔上文件)+同步中显示时段+删除不复活
+APP_V2_LATEST_VERSION_CODE = 75   # 2.2.1(75)：复查修正——笔上文件保护增强(服务器真存了才允许删)+手动导入补时段时长+进程重启后结束陪伴停错设备修复
 APP_V2_MIN_VERSION_CODE = 64      # 2026-07-06 全量强更(含补门的64)
-APP_V2_UPDATE_NOTE = "本次更新：同步中的录音显示日期时段（可直接绑定顾客）、删除后不再复活、陪伴笔同步更快。建议更新。"
+APP_V2_UPDATE_NOTE = "本次更新：同步中的录音补全时段和时长显示、陪伴笔录音保护增强、若干稳定性修复。建议更新。"
 
 # ============ iOS App 版本（Ad Hoc 分发无自动更新，App 启动/设置页查这个提示重装升级）============
 # 发 iOS 新版时：改 ios_app project.yml 的 CURRENT_PROJECT_VERSION → 归档导出 ad-hoc → 覆盖
