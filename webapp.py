@@ -9989,17 +9989,23 @@ def api_consultant_upload():
                          "AND uploader_user_id=? AND session_id IS NULL", (placeholder_id, u["id"]))
             return jsonify({"discarded": True, "reason": "deleted_by_user"}), 200
     dup = None
+    dup_exact = False   # True=按机身文件名精确命中；False=按录音时刻认的(可能认错文件)
     if pen_file:
         dup = db_fetchone(
             "SELECT id, truncate_note, oss_key, session_id FROM recordings "
             "WHERE uploader_user_id=? AND pen_file=? "
             "AND upload_status!='processing' LIMIT 1", (u["id"], pen_file))
+        dup_exact = dup is not None
+    # ★★2026-07-13 复查修正:同秒退路是"时间当身份",只许命中【没有 pen_file 的老行】(该字段
+    #   上线前传的旧录音)或同名行。两边都有 pen_file 且不同名=两个不同的机身文件,开始时刻同秒
+    #   (如笔时钟重置后撞车)也绝不能互认——App 会把 deduped 记入可删名单,认错即删丢原件。
     if not dup and recorded_at_form:
         dup = db_fetchone(
             "SELECT id, truncate_note, oss_key, session_id FROM recordings "
             "WHERE uploader_user_id=? AND recorded_at=? "
-            "AND source LIKE 'consultant-pen%' AND upload_status!='processing' LIMIT 1",
-            (u["id"], recorded_at_form))
+            "AND source LIKE 'consultant-pen%' AND upload_status!='processing' "
+            "AND (pen_file IS NULL OR pen_file=?) LIMIT 1",
+            (u["id"], recorded_at_form, pen_file))
     # 安卓批次五C2：占位已被绑定(bind-before-upload)时【跳过整个去重分支】——原逻辑会把已绑
     # 占位 DELETE 掉(刚绑好的段凭空蒸发)。绑定优先：音频回填进已绑占位；未绑的 dup 行留待整理。
     if dup and placeholder_id:
@@ -10044,8 +10050,9 @@ def api_consultant_upload():
         if placeholder_id:
             db_write("DELETE FROM recordings WHERE id=? AND upload_status='processing' AND uploader_user_id=? AND session_id IS NULL",
                      (placeholder_id, u["id"]))
-        app.logger.info("[upload] 去重跳过 pen_file=%s ra=%s → 已存在 rec %s", pen_file, recorded_at_form, dup["id"])
-        return jsonify({"id": dup["id"], "deduped": True})
+        app.logger.info("[upload] 去重跳过 pen_file=%s ra=%s exact=%s → 已存在 rec %s", pen_file, recorded_at_form, dup_exact, dup["id"])
+        # pen_exact=False(按时刻认的) → App 不得据此把机身文件记入"已完整上传"可删名单
+        return jsonify({"id": dup["id"], "deduped": True, "pen_exact": dup_exact})
     if placeholder_id:
         prow = db_fetchone(
             "SELECT id, uploader_user_id, upload_status, source, session_id FROM recordings WHERE id=?",
@@ -10056,7 +10063,8 @@ def api_consultant_upload():
         # (重复行可能被分别绑到两位顾客)。
         if prow and prow["uploader_user_id"] == u["id"] and prow["upload_status"] == "done":
             app.logger.info("[upload] 占位 %s 已回填过→幂等去重返回", placeholder_id)
-            return jsonify({"id": prow["id"], "deduped": True})
+            # 同一 placeholder_id=就是本任务上次传成的那份 → 精确身份,可记可删
+            return jsonify({"id": prow["id"], "deduped": True, "pen_exact": True})
         if prow and prow["uploader_user_id"] == u["id"] and prow["upload_status"] == "processing":
             try:
                 oss_bucket.put_object(oss_key, data)

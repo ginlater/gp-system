@@ -29,9 +29,18 @@ public final class Uploader {
         public final long recordingId;   // 成功时为后端返回的录音 id，否则 -1
         public final String error;
         public final boolean transientFail;  // true=临时故障(网络/5xx)可重试；false=成功或永久失败(4xx/拒绝)
+        // ★2026-07-13 复查修正:下面俩=服务端"收下了请求但没存这份音频"。上传任务算完成,
+        //   但绝不能把机身文件记入"已完整上传"可删名单——那名单是删机身原件的唯一依据。
+        public final boolean discarded;      // 命中墓碑被丢弃(顾问删过该段),未入库
+        public final boolean dedupFuzzy;     // 去重命中但非机身文件名精确匹配(按录音时刻认的),可能认错文件
         Result(boolean ok, long recordingId, String error) { this(ok, recordingId, error, false); }
         Result(boolean ok, long recordingId, String error, boolean transientFail) {
+            this(ok, recordingId, error, transientFail, false, false);
+        }
+        Result(boolean ok, long recordingId, String error, boolean transientFail,
+               boolean discarded, boolean dedupFuzzy) {
             this.ok = ok; this.recordingId = recordingId; this.error = error; this.transientFail = transientFail;
+            this.discarded = discarded; this.dedupFuzzy = dedupFuzzy;
         }
     }
 
@@ -221,7 +230,10 @@ public final class Uploader {
                         return new Result(false, -1, obj.optString("error"));
                     }
                     long id = obj.optLong("id", -1);
-                    return new Result(true, id, null);
+                    boolean discarded = obj.optBoolean("discarded", false);
+                    // 老服务端的 deduped 响应没有 pen_exact 字段 → 按"非精确"处理(宁可不删机身文件)
+                    boolean dedupFuzzy = obj.optBoolean("deduped", false) && !obj.optBoolean("pen_exact", false);
+                    return new Result(true, id, null, false, discarded, dedupFuzzy);
                 } catch (Exception parseErr) {
                     // A4(P0):2xx 但响应不是 JSON——多半是酒店/医院 captive-portal WiFi 返回 200 HTML。
                     //   绝不能当成功(那样音频已删、服务端没收到、占位永挂"同步中")→ 按临时故障重试。

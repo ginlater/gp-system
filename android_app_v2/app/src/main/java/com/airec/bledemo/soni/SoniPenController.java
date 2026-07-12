@@ -260,6 +260,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     //   ② 还没传上去的段 → 保留 10 天(绑定窗口只有7天,超10天的录音绑不了顾客、出不了报告,留着无用)。
     //   安全阀:截断件(truncatedFlag,断流后传的"诚实部分件")【不删】——留着等完整版覆盖,删了补不回来。
     private static final long FILE_KEEP_MS = 10L * 24 * 3600 * 1000;
+    // ★2026-07-13 复查修正:"超10天未传即删"只信落在合理区间的文件名时间戳——笔电池耗尽RTC重置
+    //   (跳回出厂旧年份)时新录的段会被算成"10天前",连上9秒即遭清理;时间戳不可信时宁可不删。
+    private static final long FILE_TS_SANE_MIN_MS = 1704038400000L;   // 2024-01-01,早于此=笔时钟不可信
     /** 完整上传成功(非截断)的机身文件名——清理时可安全删除。截断件不进这个集合。 */
     private final java.util.Set<String> fullyUploadedNames = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
     private volatile boolean pendingCleanup = false;
@@ -1610,6 +1613,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             main.postDelayed(this::triggerCleanup, 9000);
         } else {
             penLog("cmd2 断开 reason=" + cs);
+            invalidateFileListCache();   // ★2.1.9补:断连也失效(笔可能离线单独录新段,2749行注释本就承诺)
             boolean wasUp = linkUp;
             linkUp = false;
             verifiedConnected = false; lastRxMs = 0;
@@ -2023,7 +2027,18 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         main.removeCallbacks(fileListNoReplyWatch);
         List<PenFileEntry> snapshot;
         synchronized (fileListBuf) { snapshot = new ArrayList<>(fileListBuf); fileListBuf.clear(); }
-        onFileListComplete(snapshot);
+        // ★2026-07-13:"8s无回应重发"没考虑笔只是慢——两条要清单命令都被回话时,
+        //   两份清单的分批会交错拼进同一个 buf,同步弹层每段显示两行。按文件名去重(保留先到的)。
+        java.util.Set<String> seenNames = new java.util.HashSet<>();
+        List<PenFileEntry> deduped = new ArrayList<>(snapshot.size());
+        for (PenFileEntry f : snapshot) {
+            if (f == null || f.name == null) continue;
+            if (seenNames.add(f.name)) deduped.add(f);
+        }
+        if (deduped.size() < snapshot.size()) {
+            penLog("★清单去重:重发拼出的重复条目已合并 " + snapshot.size() + "→" + deduped.size());
+        }
+        onFileListComplete(deduped);
     }
 
     private void onFileListComplete(List<PenFileEntry> files) {
@@ -2266,7 +2281,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             writeProbeStatus("[" + tag + "ogg] " + name + " ogg=" + oggFile.length() + "B 上传" + ms + "ms ok=" + r.ok + " recId=" + r.recordingId + " err=" + r.error);
             if (r.ok) {
                 try { raw.delete(); oggFile.delete(); } catch (Exception ignore) {}
-                workerTaskDone(task, r.recordingId);
+                // ★2026-07-13 复查修正:penStored=服务器【真存了这份音频】。墓碑丢弃(discarded)和
+                //   按录音时刻认亲的去重(dedupFuzzy)都算任务完成,但不配进"已完整上传"可删名单——
+                //   那名单是 cleanupOldFiles 删机身原件的唯一依据,认错一次=原件永久丢失。
+                final boolean penStored = r.recordingId > 0 && !r.discarded && !r.dedupFuzzy;
+                if (r.discarded) penLog("★服务端墓碑丢弃(顾问已删该段)→任务完成但不记可删 " + task.fileName);
+                else if (r.dedupFuzzy) penLog("★服务端按时刻去重(非文件名精确)→任务完成但不记可删 " + task.fileName);
+                workerTaskDone(task, r.recordingId, penStored);
             } else if (r.error != null && r.error.contains("登录已失效")) {
                 // ★401/403 绝不丢段(失败模式审计毒点#1)：留 raw+占位，请上层刷新 Cookie 后退避重试。
                 //   音频已经拿到手了，丢了才是事故；登录态恢复后迟早传上。
@@ -2399,13 +2420,14 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         }
     }
 
-    private void workerTaskDone(final UploadTask task, final long recId) {
+    private void workerTaskDone(final UploadTask task, final long recId, final boolean penStored) {
         main.post(() -> {
             uploadQueue.remove(task);
             if (task.fileName != null) {
                 markUploaded(task.fileName);
                 // ★2.1.9:完整传成功的才允许从笔里删;截断件留着等完整版
-                if (!task.truncatedFlag && looksLikePenFile(task.fileName)) {
+                // ★2026-07-13:且必须 penStored(服务器真存了)——墓碑丢弃/按时刻去重不算
+                if (penStored && !task.truncatedFlag && looksLikePenFile(task.fileName)) {
                     fullyUploadedNames.add(task.fileName);
                     markFullyUploaded(task.fileName);
                 }
@@ -2779,6 +2801,10 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     }
 
     public void uploadPenFiles(String namesJson) {
+        // ★2026-07-13:先抓一份清单快照再失效缓存——每段的时长(timeSec)要从这里查,
+        //   否则手动导入的占位 durSec 恒为 0,"同步中"那行只有开始时刻、没有"几点-几点·时长"
+        //   (2.2.0 的时段识别就是给手动导入这个主场景做的,之前唯独这条路没带时长)。
+        final List<PenFileEntry> lastList = fileListCache;
         invalidateFileListCache();   // ★2.1.9:导入后清单状态变了(这些段变"已传"),下次同步重新问笔
         if (cookie == null || uploadUrl == null) return;
         List<String> names = new ArrayList<>();
@@ -2793,7 +2819,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         for (String name : names) {
             if (isQueuedByName(name)) continue;
             long startMs = parseFileTimestamp(name);
-            UploadTask t = new UploadTask(name, cookie, uploadUrl, penSn(), 0, startMs, false);
+            int durSec = 0;
+            if (lastList != null) {
+                for (PenFileEntry f : lastList) {
+                    if (f != null && name.equals(f.name)) { durSec = Math.max(f.timeSec, 0); break; }
+                }
+            }
+            UploadTask t = new UploadTask(name, cookie, uploadUrl, penSn(), durSec, startMs, false);
             t.penMac = currentMac;   // A11
             t.firstSeenMs = System.currentTimeMillis();   // 手动重导=新任务，从现在重新计 2h
             uploadQueue.add(t);
@@ -2859,7 +2891,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             if (isQueuedByName(f.name)) continue;                              // 还在待传队列里的不碰
             boolean uploadedFull = fullyUploadedNames.contains(f.name);
             long ts = parseFileTimestamp(f.name);
-            boolean stale = ts > 0 && (now - ts) > FILE_KEEP_MS;
+            boolean stale = ts > FILE_TS_SANE_MIN_MS && (now - ts) > FILE_KEEP_MS;
             if (!uploadedFull && !stale) continue;
             try {
                 PNote.deleteReordFile(f.name);
@@ -2872,42 +2904,9 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         }
     }
 
-    /**
-     * ★2.1.9：按【服务端判定】删除笔上的重复文件（老板 2026-07-12 需求）。
-     *
-     * 打开"从陪伴笔同步"时，服务端预检已经逐条告诉我们每个机身文件的状态：
-     *   uploaded=服务器已完整收到 / deleted=顾问已删(墓碑,别复活) / new=还没传。
-     * 前两类留在笔里纯属占地方（还会让清单越读越慢），这里顺手删掉。
-     * 服务端天然安全：断流"部分件"会被判为 new（放行重导完整版），绝不会被误删。
-     *
-     * 开销极小：删除是一条很小的蓝牙命令（不传数据），几十个文件也就几百毫秒，不拖慢同步。
-     */
-    public void deleteSyncedPenFiles(String namesJson) {
-        if (!linkUp || TextUtils.isEmpty(namesJson)) return;
-        final List<String> names = new ArrayList<>();
-        try {
-            JSONArray arr = new JSONArray(namesJson);
-            for (int i = 0; i < arr.length(); i++) {
-                String n = arr.optString(i, null);
-                if (!TextUtils.isEmpty(n)) names.add(n);
-            }
-        } catch (Exception e) { return; }
-        if (names.isEmpty()) return;
-        main.post(() -> {
-            String recordingFn = sessionActive ? sessionFileName : null;
-            int n = 0;
-            for (String name : names) {
-                if (recordingFn != null && recordingFn.equals(name)) continue;   // 正在录的不碰
-                if (isQueuedByName(name)) continue;                              // 还在待传队列的不碰
-                try { PNote.deleteReordFile(name); n++; }
-                catch (Throwable e) { Log.e(TAG, "deleteReordFile failed " + name, e); }
-            }
-            if (n > 0) {
-                invalidateFileListCache();
-                penLog("★同步时顺手清理:服务器已有的 " + n + " 个段已从笔里删除");
-            }
-        });
-    }
+    // ★2026-07-13 复查:原 deleteSyncedPenFiles(按 sync-preview 判定删机身文件)整链移除——
+    //   预检含 ±90s 时刻模糊匹配,只配决定"列表显示与否",做删除依据即 2026-07-12 事故根因。
+    //   机身文件删除只剩 cleanupOldFiles 一个入口(文件名精确匹配的规则① + 10天规则②)。
 
     private void markFullyUploaded(String fn) {
         try {

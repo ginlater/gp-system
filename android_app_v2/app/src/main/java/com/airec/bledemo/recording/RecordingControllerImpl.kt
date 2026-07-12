@@ -125,7 +125,11 @@ class RecordingControllerImpl(
 
     // ============ 当前来源（仅用于 Recording 态打标，引擎本身以镜像为准） ============
 
-    @Volatile private var currentSource: CompanionSource = CompanionSource.Phone
+    // ★2026-07-13:默认值 Phone→Pen。手机麦与 App 同进程且 START_NOT_STICKY——进程死了手机录音
+    //   必然一起死、服务不复活;重启后"还在录"的只可能是笔。默认 Phone 会让重启接管的笔录音被
+    //   B7 仲裁误判成"手机在录"而不翻转来源,点「结束陪伴」走 stopPhoneMic,笔停不下来。
+    //   手机路径在 startCompanion 里显式设 Phone,不依赖默认值,双录仲裁行为不变。
+    @Volatile private var currentSource: CompanionSource = CompanionSource.Pen
 
     // ============ 录音时间「同步中」判定（重连到已在录的笔时，先别显示从0跳的假计时） ============
     // 本进程内用户主动开的录 → 时长天然从0真实自走，无需「同步中」。
@@ -184,8 +188,9 @@ class RecordingControllerImpl(
 
         override fun onPenRecordStatus(recording: Boolean) {
             // 连上后查到的笔真实录音状态——状态本身由 RecordingBus 驱动，这里无需重复改 _state。
-            // ★笔在录（接管中途会话/笔自发）：来源必须切到 Pen——进程重启后 currentSource 默认手机麦，
-            //   不切的话点「结束陪伴」会走 stopPhoneMic，笔上的录音根本停不下来（真机已踩）。
+            // ★笔在录（接管中途会话/笔自发）：来源必须切到 Pen——上一段手机麦会话结束后
+            //   currentSource 停留在 Phone，不切的话点「结束陪伴」会走 stopPhoneMic（真机已踩）。
+            //   （2026-07-13 起默认值已是 Pen，进程重启接管笔录音不再经过误判窗口。）
             // B7 双录仲裁：手机麦正录着时笔又开录 → 不翻转来源（否则点「结束」停错设备，
             //   手机麦这段无人掌控直到进程死）。笔那段由引擎镜像自动收尾上传，两段都不丢；提示顾问知情。
             if (recording) {
@@ -523,12 +528,6 @@ class RecordingControllerImpl(
     }
 
     override fun penFileListProgress(): Int = penController.fileListProgress()
-
-    override fun deleteSyncedPenFiles(names: List<String>) {
-        if (names.isEmpty()) return
-        val json = names.joinToString(",", "[", "]") { "\"" + it.replace("\"", "\\\"") + "\"" }
-        penController.deleteSyncedPenFiles(json)
-    }
 
     override fun syncPenFiles(onPenFiles: (List<PenFile>?) -> Unit) {
         // TODO(集成): 上传 URL 必须先 setUploadContext，否则 uploadPenFiles 阶段引擎会静默忽略。
