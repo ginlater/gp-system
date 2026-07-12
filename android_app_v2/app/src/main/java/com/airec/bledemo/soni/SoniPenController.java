@@ -1255,7 +1255,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 String phPenFile = looksLikePenFile(task.fileName) ? task.fileName : null;
                 // ★用【当前最新】Cookie 建占位(与上传路径 liveCk 一致)：task 里冻结的 Cookie 可能已过期→占位 401。
                 String phCk = (cookie != null && !cookie.isEmpty()) ? cookie : task.cookie;
-                long pid = Uploader.createPlaceholder(phCk, phUrl, recStart, phPenFile, null);
+                long pid = Uploader.createPlaceholder(phCk, phUrl, recStart, phPenFile, null,
+                        task.durSec);   // ★2.2.0:占位带时长
                 if (pid > 0) {
                     if (task.dropped) {
                         // B2:任务已被放弃,迟到的占位立即取消,不留孤儿"同步中"
@@ -1937,6 +1938,47 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         if (wantSync && listener != null) main.post(() -> listener.onPenFileList(null));
     }
 
+    /**
+     * ★2.2.0：顾问删掉了"同步中"的那段 → 把还在搬运/待传的那个任务从队列里扔掉。
+     *
+     * 病案：删除只删了服务器上的占位，App 后台【毫不知情】，继续把这段音频从笔里搬出来传上去；
+     * 传完服务器发现占位没了 → 当成新录音【新建一行】→ 删掉的录音又活过来了，
+     * 顾问再点删除就打到了已经不存在的旧 id → 报"录音不存在"。
+     * 这里主动取消：不搬了、不传了（省蓝牙、省流量、省转写费）。服务端另有墓碑兜底（双保险）。
+     */
+    public void cancelTaskByPlaceholder(final long placeholderId) {
+        if (placeholderId <= 0) return;
+        main.post(() -> {
+            int n = 0;
+            for (UploadTask t : new ArrayList<>(uploadQueue)) {
+                if (t != null && t.placeholderId == placeholderId) {
+                    t.dropped = true;
+                    uploadQueue.remove(t);
+                    try { partFileFor(t.fileName).delete(); } catch (Exception ignore) {}
+                    n++;
+                }
+            }
+            UploadTask cur = currentTask;
+            if (cur != null && cur.placeholderId == placeholderId) {
+                cur.dropped = true;
+                DownloadState dl = dlState;
+                if (dl != null && dl.task == cur) {
+                    try { PNote.stopGetFile(dl.task.fileName); } catch (Throwable ignore) {}
+                    closeDownload(dl);
+                    dlState = null;
+                }
+                workerBusy = false; currentTask = null; waitingForFile = false;
+                n++;
+            }
+            if (n > 0) {
+                penLog("★顾问已删除该段→取消后台传输任务(占位" + placeholderId + "),不再搬运上传");
+                persistPendingQueue();
+                notifyPending();
+                main.postDelayed(this::kickWorker, 500);
+            }
+        });
+    }
+
     /** ★2.1.9:UI 用——清单已经读到几条了(超时提示"已读到 N 段",避免把"马上就好"误判成失败)。 */
     public int fileListProgress() {
         synchronized (fileListBuf) { return fileListBuf.size(); }
@@ -2531,7 +2573,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             for (final UploadTask t : added) {
                 phWorker.submit(() -> {   // E8:独立线程
                     long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs,
-                            looksLikePenFile(t.fileName) ? t.fileName : null, null);   // E1:占位带机身文件名
+                            looksLikePenFile(t.fileName) ? t.fileName : null, null,
+                            t.durSec);   // E1:占位带机身文件名; ★2.2.0:再带时长(同步中那行能显示"几点-几点·时长")
                     if (pid > 0) {
                         t.placeholderId = pid;
                         main.post(SoniPenController.this::persistPendingQueue);   // E5
@@ -2762,7 +2805,8 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             for (final UploadTask t : added) {
                 phWorker.submit(() -> {   // E8:独立线程
                     long pid = Uploader.createPlaceholder(t.cookie, phUrl, t.startWallMs,
-                            looksLikePenFile(t.fileName) ? t.fileName : null, null);   // E1:占位带机身文件名
+                            looksLikePenFile(t.fileName) ? t.fileName : null, null,
+                            t.durSec);   // E1:占位带机身文件名; ★2.2.0:再带时长(同步中那行能显示"几点-几点·时长")
                     if (pid > 0) {
                         t.placeholderId = pid;
                         main.post(SoniPenController.this::persistPendingQueue);   // E5

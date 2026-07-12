@@ -962,6 +962,7 @@ private fun TriageRecordingCard(
         rec.deleteRequestStatus == "pending" -> DeletePendingCard(busy, onWithdrawDelete, modifier)
         // 同步中占位：audio_url 为空，不可试听（可重试补传）；D4：同步中也能先绑定（bind-before-upload）
         rec.isProcessing -> ProcessingCard(
+            rec = rec,
             canRetry = canRetry,
             onRetry = onRetry,
             onBind = { onBindCustomer(rec.id) },
@@ -1143,6 +1144,7 @@ private fun TriageNormalCard(
 
 @Composable
 private fun ProcessingCard(
+    rec: PendingRecording,   // ★2.2.0:显示"日期 · 几点–几点 · 时长"要用
     canRetry: Boolean,
     onRetry: () -> Unit,
     onBind: () -> Unit,
@@ -1160,8 +1162,18 @@ private fun ProcessingCard(
                 color = MeiliPalette.Ink2,
             )
         }
+        // ★2.2.0:同步中也显示"日期 · 几点–几点 · 时长"——音频还没传完没法试听,
+        //   顾问只能靠时段回忆是哪位顾客;以前这里只有"同步中…"三个字,根本没法绑人。
+        syncingWhenLabel(rec)?.let { whenLabel ->
+            Text(
+                text = whenLabel,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                color = MeiliPalette.Ink,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
         Text(
-            text = "后台同步中，传完后补时段 / 时长。可先绑定顾客，音频传完自动归位。",
+            text = "后台同步中，可先绑定顾客，音频传完自动归位。",
             style = MaterialTheme.typography.bodySmall,
             color = MeiliPalette.Ink3,
             modifier = Modifier.padding(top = 4.dp),
@@ -1591,6 +1603,33 @@ private fun timeRangeLabel(rec: PendingRecording): String {
         rec.recordedAt != null -> rec.recordedAt.takeLast(8).take(5).ifBlank { rec.recordedAt }
         else -> "时段待补"
     }
+}
+
+/**
+ * ★2.2.0：「同步中」占位行的时间标签——"2026-07-12 · 15:40 – 15:45 · 4分23秒"。
+ * 占位建的时候就带了录音开始时间和时长（笔的文件列表里本来就有），所以音频虽然还在路上，
+ * 顾问已经能靠时段认出是哪位顾客并直接绑定。拿不到时间就返回 null（不显示，不瞎编）。
+ */
+private fun syncingWhenLabel(rec: PendingRecording): String? {
+    val ra = rec.recordedAt ?: return null
+    if (ra.length < 16) return null
+    val day = ra.take(10)
+    val startHm = ra.substring(11, 16)
+    val durLabel = rec.durationLabel
+    val durSec: Int? = durLabel?.let { l ->
+        val mm = Regex("(\\d+)分(\\d+)秒").find(l)
+        if (mm != null) mm.groupValues[1].toInt() * 60 + mm.groupValues[2].toInt()
+        else Regex("(\\d+)秒").find(l)?.groupValues?.get(1)?.toIntOrNull()
+    }
+    val range = if (durSec != null && durSec > 0) {
+        runCatching {
+            val f = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+            val st = f.parse(ra)!!
+            val hm = java.text.SimpleDateFormat("HH:mm", java.util.Locale.US)
+            startHm + " – " + hm.format(java.util.Date(st.time + durSec * 1000L))
+        }.getOrDefault(startHm)
+    } else startHm
+    return listOfNotNull(day, range, durLabel).joinToString(" · ")
 }
 
 private fun subLabel(rec: PendingRecording, crossDay: Boolean, beyond7: Boolean = false): String {

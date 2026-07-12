@@ -193,7 +193,11 @@ class RecordingControllerImpl(
                 val phoneBusy = currentSource == CompanionSource.Phone &&
                     (cur is RecordingState.Recording || cur is RecordingState.Paused)
                 if (phoneBusy) {
-                    _penEvents.tryEmit("注意：手机录音进行中，陪伴笔也开始了录音——手机这段继续，笔上那段会自动另存同步")
+                    // ★2.2.0：这里【不再弹提示】(老板 2026-07-13)。
+                    //   原来会弹"手机录音进行中,陪伴笔也开始了录音…"——但 currentSource 默认就是 Phone,
+                    //   App 进程被杀/重启后它回到默认值,此时笔在录(状态=录音中)就会被误判成"双录",
+                    //   顾问明明只用了笔却收到莫名其妙的警告(文案还长到显示不全)。
+                    //   仲裁逻辑保留(不翻转来源,否则点"结束"会停错设备),只是不再打扰顾问。
                 } else {
                     currentSource = CompanionSource.Pen
                 }
@@ -513,6 +517,10 @@ class RecordingControllerImpl(
 
     override fun pendingInfo(): PendingInfo =
         PendingInfo(penController.pendingCount(), penController.pendingFailedCount())
+
+    override fun cancelPenTaskByPlaceholder(placeholderId: Long) {
+        penController.cancelTaskByPlaceholder(placeholderId)
+    }
 
     override fun penFileListProgress(): Int = penController.fileListProgress()
 

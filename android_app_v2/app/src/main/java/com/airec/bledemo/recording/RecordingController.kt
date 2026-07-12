@@ -127,6 +127,9 @@ interface RecordingController {
     /** ★2.1.9:把【服务器已确认收到/已删除】的机身文件从笔里删掉（同步时顺手清理，开销极小）。 */
     fun deleteSyncedPenFiles(names: List<String>)
 
+    /** ★2.2.0:顾问删了"同步中"的段 → 取消后台还在搬运/待传的那个任务（不再传、不再复活）。 */
+    fun cancelPenTaskByPlaceholder(placeholderId: Long)
+
     /** ★2.1.9:机身清单已读到几条（读取中的进度；用于超时提示"已读到 N 段"而不是误判失败）。 */
     fun penFileListProgress(): Int
 

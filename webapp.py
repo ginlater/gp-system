@@ -4894,14 +4894,14 @@ def terms_of_service():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.1.6"
+APP_V2_VERSION_NAME = "2.2.0"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 70   # 2.1.6(70)：同步弹层显示录音起止时间段(认段绑人)(不强更,MIN保持64)
+APP_V2_LATEST_VERSION_CODE = 74   # 2.2.0(74)：紧急修复2.1.9的误删bug(同步时按模糊匹配删笔上文件)+同步中显示时段+删除不复活
 APP_V2_MIN_VERSION_CODE = 64      # 2026-07-06 全量强更(含补门的64)
-APP_V2_UPDATE_NOTE = "本次更新：陪伴笔同步列表显示每段录音的起止时间（几点到几点），方便对应顾客，建议更新。"
+APP_V2_UPDATE_NOTE = "本次更新：同步中的录音显示日期时段（可直接绑定顾客）、删除后不再复活、陪伴笔同步更快。建议更新。"
 
 # ============ iOS App 版本（Ad Hoc 分发无自动更新，App 启动/设置页查这个提示重装升级）============
 # 发 iOS 新版时：改 ios_app project.yml 的 CURRENT_PROJECT_VERSION → 归档导出 ad-hoc → 覆盖
@@ -9969,6 +9969,25 @@ def api_consultant_upload():
     # ★录音笔文件去重：扫描补传/重连补传可能把同一支笔文件再传一次。命中 (上传人,pen_file)
     #   或 (上传人,recorded_at 同秒) 已存在的真录音 → 跳过，不重复传 OSS/入库（清掉本次占位）。
     pen_file = (request.form.get("pen_file") or "").strip() or None
+    # ★2.2.0 防"删了又复活"：顾问删掉"同步中"的占位后，App 后台可能仍在把这段音频往上传
+    #   （蓝牙搬运要几分钟）。占位已被删 → 老逻辑把它当新录音【新建一行】，删掉的录音就活过来了，
+    #   顾问再点删除会打到已经不存在的旧 id → 报"录音不存在"。这里查墓碑（顾问删除时立的）：
+    #   命中就直接丢弃，不入库、不计费、不占 OSS。App 侧也会取消该上传任务（双保险）。
+    # ★★2.2.0 事故修正(2026-07-13)：这里【只按 pen_file 精确匹配】。
+    #   原先我抄了 sync-preview 的"recorded_at 相差90秒内也算同一段"模糊匹配——那是给"列表要不要显示"
+    #   用的(判错顶多少显示一条,无害)，拿来做【丢弃音频】的依据是致命的：
+    #   顾问删掉一段误录(15:00:00) → 一分钟后开录真实接诊(15:01:00,在90秒窗口内) →
+    #   上传时命中墓碑 → 真实接诊被直接丢弃、永久丢失。丢弃不可逆,只能建立在精确依据上。
+    if pen_file:
+        _tomb = db_fetchone(
+            "SELECT id FROM pen_tombstone WHERE uploader_user_id=? AND pen_file=? LIMIT 1",
+            (u["id"], pen_file))
+        if _tomb:
+            app.logger.info("[upload] 命中墓碑(顾问已删)→丢弃不入库 pen_file=%s ra=%s", pen_file, recorded_at_form)
+            if placeholder_id:
+                db_write("DELETE FROM recordings WHERE id=? AND upload_status='processing' "
+                         "AND uploader_user_id=? AND session_id IS NULL", (placeholder_id, u["id"]))
+            return jsonify({"discarded": True, "reason": "deleted_by_user"}), 200
     dup = None
     if pen_file:
         dup = db_fetchone(
@@ -10261,6 +10280,13 @@ def api_consultant_placeholder():
     # 批次二 D6:同步占位带机身文件名 → 预检可精确匹配"正在传的段"(不再赌 ±90s 时刻吻合,
     # 时刻解析失败/退避超2h的段不会再以"new"重现导致重复导入)
     ph_pen_file = (request.form.get("pen_file") or "").strip() or None
+    # ★2.2.0 占位带时长：顾问在"同步中"那行就能看到"15:40 – 15:45 · 4分23秒"，靠时段认出是哪位顾客
+    #   直接绑定（音频还没传完本来就没法试听，时段是唯一识别依据）。时长 App 导入时从笔的文件列表已知。
+    try:
+        ph_dur = int(request.form.get("duration_sec") or 0)
+    except (TypeError, ValueError):
+        ph_dur = 0
+    ph_dur_label = _format_duration_label(ph_dur) if ph_dur > 0 else None
     ts14 = now.strftime("%Y%m%d%H%M%S")
     # 占位 oss_key：唯一、不真传 OSS，上传完成时会被换成真 key
     placeholder_key = f"pending-uploads/{company_id}/{u['id']}/{ts14}_{_uuid.uuid4().hex[:8]}.pending"
@@ -10282,7 +10308,7 @@ def api_consultant_placeholder():
             upload_status, asr_status, created_at, pen_file)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (None, placeholder_key, advisor, None, recorded_at,
-         None, 0, ph_source, company_id, u["id"],
+         ph_dur_label, 0, ph_source, company_id, u["id"],
          "processing", "awaiting_intake", recorded_at, ph_pen_file),
     )
     return jsonify({"id": rid})

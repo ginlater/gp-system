@@ -273,6 +273,16 @@ public final class Uploader {
      */
     public static long createPlaceholder(String cookie, String placeholderUrl, long recordedAtWallMs,
                                          String penFile, String source) {
+        return createPlaceholder(cookie, placeholderUrl, recordedAtWallMs, penFile, source, 0);
+    }
+
+    /**
+     * ★2.2.0：占位再带上【时长】——顾问在"同步中"那行就能看到"15:40 – 15:45 · 4分23秒"，
+     * 靠时段认出是哪位顾客直接绑定（音频还没传完时本来就没法试听，这是唯一的识别依据）。
+     * 时长从笔的机身文件列表就能拿到（导入时已知），以前白白丢掉了。durSec<=0 时不带该字段。
+     */
+    public static long createPlaceholder(String cookie, String placeholderUrl, long recordedAtWallMs,
+                                         String penFile, String source, int durSec) {
         if (placeholderUrl == null || placeholderUrl.isEmpty()) return -1;
         HttpURLConnection conn = null;
         String boundary = "----gongpaiPH" + System.currentTimeMillis();
@@ -293,6 +303,13 @@ public final class Uploader {
                 out.writeBytes("Content-Disposition: form-data; name=\"recorded_at\"" + CRLF + CRLF);
                 out.write(recordedAt.getBytes(StandardCharsets.UTF_8));
                 out.writeBytes(CRLF);
+                // ★2.2.0 duration_sec：占位就带上时长 → "同步中"那行能显示"15:40 – 15:45 · 4分23秒"
+                if (durSec > 0) {
+                    out.writeBytes("--" + boundary + CRLF);
+                    out.writeBytes("Content-Disposition: form-data; name=\"duration_sec\"" + CRLF + CRLF);
+                    out.write(String.valueOf(durSec).getBytes(StandardCharsets.UTF_8));
+                    out.writeBytes(CRLF);
+                }
                 if (penFile != null && !penFile.isEmpty()) {
                     out.writeBytes("--" + boundary + CRLF);
                     out.writeBytes("Content-Disposition: form-data; name=\"pen_file\"" + CRLF + CRLF);

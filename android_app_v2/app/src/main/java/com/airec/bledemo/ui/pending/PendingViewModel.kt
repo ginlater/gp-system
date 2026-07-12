@@ -146,6 +146,22 @@ class PendingViewModel(
     private val _state = MutableStateFlow(PendingUiState(loading = true))
     val state: StateFlow<PendingUiState> = _state.asStateFlow()
 
+    // ★2.2.0 防"删了又冒出来"：待整理列表每几秒静默刷新一次。点删除的瞬间若已有一个刷新请求在路上
+    //   (它拿的是删除前的数据)，回来就会把删掉的那行【又盖回列表】——顾问再点删除就打到已不存在的 id,
+    //   报"录音不存在"。这里记下刚删的 id，之后 15 秒内任何列表更新都把它们过滤掉。
+    private val recentlyDeleted = mutableMapOf<Long, Long>()   // rid → 删除时刻(ms)
+
+    private fun pruneDeleted() {
+        val now = System.currentTimeMillis()
+        recentlyDeleted.entries.removeAll { now - it.value > 15_000 }
+    }
+
+    private fun filterDeleted(list: List<PendingRecording>): List<PendingRecording> {
+        pruneDeleted()
+        if (recentlyDeleted.isEmpty()) return list
+        return list.filter { it.id !in recentlyDeleted.keys }
+    }
+
     private val _penSync = MutableStateFlow(PenSyncUiState())
     val penSync: StateFlow<PenSyncUiState> = _penSync.asStateFlow()
 
@@ -169,7 +185,7 @@ class PendingViewModel(
             when (val r = repo.pending()) {
                 is ApiResult.Success ->
                     _state.update {
-                        val sorted = r.data.sortedByDescending { rec -> recSortKey(rec) }   // 录制时间倒序，最新在最上
+                        val sorted = filterDeleted(r.data).sortedByDescending { rec -> recSortKey(rec) }   // 录制时间倒序，最新在最上
                         val tp = if (sorted.isEmpty()) 1 else (sorted.size - 1) / PendingUiState.PAGE_SIZE + 1
                         it.copy(loading = false, recordings = sorted, error = null, page = it.page.coerceIn(1, tp))
                     }
@@ -220,13 +236,27 @@ class PendingViewModel(
                 is ApiResult.Success -> {
                     setBusy(rid, false)
                     // 不足5分钟→后端免审批直接删(deleted=true)；否则进入审批。
-                    if (r.data.deleted == true) showToast("已删除", ToastIcon.Check)
-                    else showToast("已提交删除申请，等待审批", ToastIcon.Check)
+                    if (r.data.deleted == true) {
+                        // ★2.2.0：真删掉了 → ① 记入"刚删"名单(15s 内轮询不许刷回来)
+                        //   ② 通知引擎取消这段还在搬运/待传的任务(不再传、不再复活、省蓝牙省费用)
+                        recentlyDeleted[rid] = System.currentTimeMillis()
+                        controller?.cancelPenTaskByPlaceholder(rid)
+                        _state.update { st -> st.copy(recordings = st.recordings.filter { it.id != rid }) }
+                        showToast("已删除", ToastIcon.Check)
+                    } else showToast("已提交删除申请，等待审批", ToastIcon.Check)
                     load(initial = false)
                 }
                 is ApiResult.Failure -> {
                     setBusy(rid, false)
-                    showToast(r.message, ToastIcon.Warn, danger = true)
+                    // ★2.2.0：服务端说"录音不存在"= 这段其实早就删掉了（列表是旧的）→ 不吓唬顾问，
+                    //   静默把这行移除并刷新，不再弹红色错误。
+                    if (r.message.contains("不存在")) {
+                        recentlyDeleted[rid] = System.currentTimeMillis()
+                        _state.update { st -> st.copy(recordings = st.recordings.filter { it.id != rid }) }
+                        load(initial = false)
+                    } else {
+                        showToast(r.message, ToastIcon.Warn, danger = true)
+                    }
                 }
             }
         }
@@ -366,14 +396,14 @@ class PendingViewModel(
                 }
             }
         }
-        // ★2.1.9：顺手清理笔——服务器已确认收到(uploaded)或顾问已删(deleted)的段，留在笔里纯占地方，
-        //   还会让下次读清单越来越慢。删除只是一条很小的蓝牙命令(不传数据)，几十个也就几百毫秒。
-        //   安全：服务端把"断流部分件"判为 new（要重导完整版），所以绝不会误删还需要的段。
-        val doneOnServer = files.map { it.name }.filter { n ->
-            val st = statusByName[n]
-            st == "uploaded" || st == "deleted"
-        }
-        if (doneOnServer.isNotEmpty()) controller?.deleteSyncedPenFiles(doneOnServer)
+        // ★★2.2.0 紧急下线（2026-07-13 事故）：这里原本按服务端预检的 uploaded/deleted 状态
+        //   顺手删除笔上的文件——但服务端的判定【含"录音时刻相差90秒内"的模糊匹配】，
+        //   它本是给"列表要不要显示"用的(误判顶多少显示一条,无害)，我却拿它当【删除依据】。
+        //   真实事故：顾问蓝牙关掉后单独用笔录了30分钟，这段的开始时刻恰好落在前面几段测试录音的
+        //   90秒窗口内 → 服务端回"uploaded" → 这里把【从未上传的原件】从笔里删了，音频永久丢失。
+        //   删除不可逆，绝不能建立在模糊匹配上。改为：只删【我们自己完整上传成功、文件名精确匹配】的段
+        //   （引擎侧 fullyUploadedNames + cleanupOldFiles 已经在做，安全且够用）。
+        //   —— 服务端补上"精确匹配"标记之前，这里一律不删。
 
         val rows = files.map { f ->
             // 以服务端判定为准（本地 uploaded 标记只在服务端没提到该文件时兜底不了什么——没提到即当 new，
