@@ -258,8 +258,9 @@ class RecordingControllerImpl(
         }
 
         override fun onPenAutoStopped() {
-            // 录满 90 分钟自动结束这一段 → 一次性提示顾问（这段已正常保存上传；要继续得手动再开启）。
-            _penEvents.tryEmit("已录满 90 分钟，已自动保存并结束这一段。要继续请点「开启陪伴」💛")
+            // 连续录音累计满 90 分钟（含笔自动切出的前序段）→ 命令笔停止并提示。
+            // 2.1.7：笔误触后无人操作会一路连录（固件每 60 分钟切一段），这里是唯一的刹车。
+            _penEvents.tryEmit("陪伴笔已连续录音超过 90 分钟，已自动停止并保存。若是误触请检查笔的按键；要继续请点「开启陪伴」💛")
         }
 
         override fun onPenUploaded(recordingId: Long) {

@@ -200,6 +200,13 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     //   笔没报时退回 elapsedSec()（startElapsedMs 为 0 时它返回 0，不会像旧 V1 那样用墙钟算出天文数字误触发）。
     private static final int MAX_REC_SEC = 90 * 60;
     private volatile boolean autoStoppedAt90 = false;   // 本段是否已触发90分钟自动结束(防重复)
+    // ★2.1.7 失控录音闸(病案:张贵瑶7-11笔误触,无人操作连录5小时=4段"60分01秒"+1段57分):
+    //   90分钟上限原来【只按单段算】,而笔固件每60分钟自动切一段——单段永远够不到90分钟,
+    //   这道保护对"笔上按键录的"从来没生效过。改成【跨段累计】:连续录音链的总时长≥90分钟就停笔。
+    //   chainRecSec = 本条连续录音链中【已收尾的前序段】总秒数(不含当前段)。
+    private volatile int chainRecSec = 0;
+    // 相邻两段间隔 ≤ 此值 视为"笔自动切段的同一条连续录音"(而非顾问停了又重开的新接诊)
+    private static final long CHAIN_GAP_MS = 3 * 60 * 1000L;
     private volatile int stopConfirmGen = -1;           // B2:停止确认中的会话代际(-1=无)
     private volatile int stopConfirmRetries = 0;
     private volatile boolean healthWatchdogArmed = false;
@@ -270,6 +277,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private static final class PenFileEntry { String name; long size; int timeSec; }
     private final List<PenFileEntry> fileListBuf = new ArrayList<>();
     private volatile boolean fileListCollecting = false;
+    private volatile boolean pendingChainProbe = false;   // ★2.1.7:接管中途会话后,查文件列表回溯这条连续录音链已录多久
 
     // 持久化恢复
     private static final class PersistedDl {
@@ -812,18 +820,20 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     private void checkMaxRecordLimit() {
         if (autoStoppedAt90 || penPaused || !penRecording) return;
         int dur = lastPenDurationSec > 0 ? lastPenDurationSec : elapsedSec();
-        if (dur >= MAX_REC_SEC) maybeAutoStopAt90(dur);
+        // ★2.1.7:算【整条连续录音链】的总时长——笔每60分钟切一段,只看当前段永远到不了90分钟
+        if (dur + chainRecSec >= MAX_REC_SEC) maybeAutoStopAt90(dur + chainRecSec);
     }
 
     /** 到 90 分钟：笔 endRecord + App 收尾上传（这段照常保存），并通知 UI 提示"已自动结束，要继续请点开始陪伴"。 */
-    private void maybeAutoStopAt90(int durSec) {
-        if (durSec < MAX_REC_SEC) return;
+    private void maybeAutoStopAt90(int totalSec) {
+        if (totalSec < MAX_REC_SEC) return;
         main.post(() -> {
             if (autoStoppedAt90 || !penRecording) return;
             autoStoppedAt90 = true;
-            Log.w(TAG, "录满90分钟 → 自动结束 dur=" + durSec);
-            penLog("★录满90分钟,自动结束保存(要继续请点开始陪伴)");
+            Log.w(TAG, "连续录音满90分钟 → 自动结束 total=" + totalSec);
+            penLog("★连续录音累计" + (totalSec / 60) + "分钟(含笔自动切的前序段)→命令笔停止,自动结束保存");
             stopRecording();   // 走正常结束流程：笔停 + 这段照常收尾上传
+            chainRecSec = 0;   // 链结束
             final Listener l = listener;
             if (l != null) main.post(l::onPenAutoStopped);
         });
@@ -1621,6 +1631,17 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                 penPaused = false;
                 resetPauseClock();   // F13:新段清零暂停账
                 lastPenDurationSec = 0;   // A9:清上段残值(断链复位不清它,笔键新段会显示旧时长)
+                // ★2.1.7 连续录音链：App 点开始 = 顾问的新接诊,链清零;
+                //   笔上按键/笔自发开的段,可能是"无人操作连录"里自动切出来的下一段——查机身列表回溯链长。
+                chainRecSec = 0;
+                if (!wasAppStart) {
+                    main.postDelayed(() -> {
+                        if (sessionActive && penRecording && !fileListCollecting) {
+                            pendingChainProbe = true;
+                            requestFileListInternal();
+                        }
+                    }, 3000);
+                }
                 pauseWorker();
                 startStreamCapture();
                 startRecordDurationPoll();
@@ -1646,6 +1667,11 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
                     // B5(批次六):停止帧丢到新cmd3到达之间,新段的帧已写进旧段buffer(旧段尾混入下段开头)
                     // ——旧段流标不完整,一律走补下载拿机身干净版,不直传混了音的buffer
                     sessionStreamComplete = false;
+                    // ★2.1.7:笔自动切段=同一条连续录音的下一段→把刚收尾这段累加进链,
+                    //   否则每段各自从0计时,90分钟闸永远够不到(笔60分钟就切段)。
+                    int prevSeg = lastPenDurationSec > 0 ? lastPenDurationSec : elapsedSec();
+                    chainRecSec += Math.max(prevSeg, 0);
+                    penLog("★笔自动切段→连续录音链累计" + (chainRecSec / 60) + "分钟");
                     finishSessionEnqueue(sessionFileName, elapsedSec(), sessionStartWallMs);
                     penRecording = true; sessionActive = true; sessionAdopted = false;
                     enterRecordingKeepAlive(); sessionAppInitiated = false; sessionGen++; failedCount = 0;
@@ -1730,10 +1756,19 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
             sessionStartWallMs = 0;   // 更早开始的，不做旧文件拒收
             if (startElapsedMs == 0) { startElapsedMs = SystemClock.elapsedRealtime(); resetPauseClock(); }   // F13
             autoStoppedAt90 = false;   // A9:接管段恢复90分钟保护(上段自动停的残值)
+            chainRecSec = 0;           // ★2.1.7:先清零,待文件名到手后查列表回溯真实链长
             pauseWorker();
             startStreamCapture();
             startRecordDurationPoll();
             try { PNote.getFileNameOnlyRecording(); } catch (Throwable ignore) {}
+            // ★2.1.7:接管的是"笔自己在录"的段——它前面可能已经连着录了几小时(笔60分钟切一段)。
+            //   等文件名(cmd11)到手后查一次机身列表,回溯这条链的真实总时长 → 超90分钟立即停笔。
+            main.postDelayed(() -> {
+                if (sessionActive && penRecording && !fileListCollecting) {
+                    pendingChainProbe = true;
+                    requestFileListInternal();
+                }
+            }, 3000);
             post(PhoneMicService.STATE_RECORDING, "录音中…（录音笔）", 0, -1);
             main.removeCallbacks(reconnectGiveUp);
         } else if (!recording && sessionActive && !appStartPending && !penPaused) {
@@ -1777,6 +1812,52 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
     }
 
     // ============ 文件列表（cmd=4 分批攒收） ============
+
+    /**
+     * ★2.1.7：接管一段"笔自己在录"的会话后，从笔的文件列表回溯这条【连续录音链】已经录了多久。
+     *
+     * 病案（张贵瑶 7-11）：笔误触后无人操作连录 5 小时——固件每 60 分钟自动切一段，
+     * 于是攒出 4 段"60分01秒"。App 不在场时管不着；但只要 App 再连上，就该发现"这支笔已经
+     * 录了几个小时"并立刻停掉，而不是接着让它录（也不是傻等当前段自己录到 90 分钟——永远等不到）。
+     *
+     * 算法：按开始时刻(文件名时间戳)倒序，从"当前正在录的这段"往前走，
+     * 若前一段的 [开始+时长] 与后一段的开始时刻间隔 ≤ CHAIN_GAP_MS，视为同一条连续录音，累加；
+     * 一旦断开（顾问真的停过、隔了一段时间才重开）就停止回溯。累加结果进 chainRecSec，
+     * 随后由 checkMaxRecordLimit 在下一拍心跳统一裁决（≥90 分钟 → 命令笔停止 + 通知顾问）。
+     */
+    private void computeChainFromFileList(List<PenFileEntry> files) {
+        if (!sessionActive || !penRecording || files == null || files.isEmpty()) return;
+        String cur = sessionFileName;
+        long curStart = (cur != null) ? parseFileTimestamp(cur) : sessionStartWallMs;
+        if (curStart <= 0) return;
+
+        List<PenFileEntry> prior = new ArrayList<>();
+        for (PenFileEntry f : files) {
+            if (f == null || f.name == null) continue;
+            if (cur != null && cur.equals(f.name)) continue;   // 排除当前正在录的这段
+            long st = parseFileTimestamp(f.name);
+            if (st > 0 && st < curStart && f.timeSec > 0) prior.add(f);
+        }
+        if (prior.isEmpty()) return;
+        // 按开始时刻【倒序】：先看紧挨着当前段的那一段
+        java.util.Collections.sort(prior, (a, b) ->
+                Long.compare(parseFileTimestamp(b.name), parseFileTimestamp(a.name)));
+
+        int accum = 0;
+        long anchor = curStart;   // 往前回溯的锚点：当前这一环的开始时刻
+        for (PenFileEntry f : prior) {
+            long st = parseFileTimestamp(f.name);
+            long end = st + f.timeSec * 1000L;
+            if (anchor - end > CHAIN_GAP_MS) break;   // 断链：顾问真的停过 → 不再往前算
+            accum += f.timeSec;
+            anchor = st;
+            if (accum > 12 * 3600) break;   // 护栏：荒谬值不再累加
+        }
+        if (accum <= 0) return;
+        chainRecSec = accum;
+        penLog("★接管中途会话:回溯到连续录音链前序" + (accum / 60) + "分钟(笔自动切段),纳入90分钟闸");
+        checkMaxRecordLimit();   // 立刻裁决，不等下一拍
+    }
 
     private void requestFileListInternal() {
         fileListCollecting = true;
@@ -1826,6 +1907,7 @@ public class SoniPenController implements com.wind.pnote.ui.DeviceDataListener {
         if (pendingCleanup) { pendingCleanup = false; cleanupOldFiles(files); }
         if (pendingSyncList) { pendingSyncList = false; deliverPenFileList(files); }
         if (autoRetryScan) { autoRetryScan = false; enqueueUnuploadedForRetry(files); }
+        if (pendingChainProbe) { pendingChainProbe = false; computeChainFromFileList(files); }
         final UploadTask task = currentTask;
         if (!waitingForFile || task == null) return;
         PenFileEntry target = null;
