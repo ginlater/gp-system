@@ -1570,26 +1570,32 @@ def _ensure_clean_audio(recording_id, oss_key):
     """ASR/播放/分割前确保音频是带正确时长头与时间戳的干净格式。
     浏览器 webm/opus 录音常无时长头 → 三连坑：(1)DashScope 解码会提前停、转录覆盖不全；
     (2)ffmpeg 按时间 seek 的切点与 ASR 时间轴对不上、分割后音频/文字错位；(3)播放器 duration=Infinity。
-    这里在 ASR 前把这类文件用 ffmpeg 转成 wav(无损 PCM，带时长+时间戳)，替换 OSS 对象与 oss_key/duration_label，
-    后续 ASR/播放/分割全部基于干净文件。用 wav 而非 mp3：不对音频做有损压缩(录音笔本身也是 wav)。
+    这里在 ASR 前把这类文件用 ffmpeg 转成 m4a(16kHz 单声道 AAC 48k，带时长+时间戳)，替换 OSS 对象与
+    oss_key/duration_label，后续 ASR/播放/分割全部基于干净文件。
+    ★2026-07-13 输出由 16k PCM wav 改 AAC m4a：wav 约 2MB/分钟，9 分钟=17MB，iPhone AVPlayer
+    默认"防卡顿等待"要拉很久才开播（试听转圈数十秒）；m4a 同内容缩 ~85%，网页/安卓/iOS 试听全提速，
+    语音 48k AAC 对 DashScope 识别无感。wav 一并纳入转码（老 v1 直传 wav + 历史 _clean.wav 存量重压缩）。
     转码失败则回退用原文件，不阻断 ASR。返回最终使用的 oss_key。"""
     if not oss_key or "." not in oss_key:
         return oss_key
     ext = oss_key.rsplit(".", 1)[-1].lower()
-    if ext in ("wav", "mp3", "m4a"):
-        return oss_key  # 已是带正确头的格式，无需转码
+    if ext in ("mp3", "m4a"):
+        return oss_key  # 已是紧凑带头格式，无需转码
     import tempfile, shutil
     tmpdir = tempfile.mkdtemp(prefix="reclean_")
     src = os.path.join(tmpdir, f"src.{ext}")
-    out = os.path.join(tmpdir, "clean.wav")
+    out = os.path.join(tmpdir, "clean.m4a")
     new_key = None
     try:
         oss_bucket.get_object_to_file(oss_key, src)
-        _run_ffmpeg(["-i", src, "-vn", "-ac", "1", "-ar", "16000", "-acodec", "pcm_s16le", out])  # 16kHz单声道无损PCM wav
+        _run_ffmpeg(["-i", src, "-vn", "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "48k", out])  # 16kHz单声道 AAC m4a
         dur = _ffprobe_duration(out)
         if not dur or dur < 0.2:
             return oss_key  # 转码异常，回退原文件
-        new_key = (oss_key.rsplit(".", 1)[0]) + "_clean.wav"
+        _stem = oss_key.rsplit(".", 1)[0]
+        if _stem.endswith("_clean"):
+            _stem = _stem[:-len("_clean")]  # 存量 xxx_clean.wav 重压缩，别叠成 _clean_clean
+        new_key = _stem + "_clean.m4a"
         oss_bucket.put_object_from_file(new_key, out)
         # ★兜底检测：蓝牙补下载/实时流丢字节 → KA 块错位 → 后段全是乱码噪声（顾问以为录好了实则乱码）。
         #   命中就把损坏说明写进 truncate_note，未归档/未绑定列表会标红，绝不当成正常录音静默放过。
@@ -1602,6 +1608,10 @@ def _ensure_clean_audio(recording_id, oss_key):
                      f"原始音频多半还在录音笔机身，建议用 USB 从笔重新导出该文件")
             app.logger.warning("[garble] rec %s 检测到后段损坏：起%ss 计%ss key=%s",
                                recording_id, gbad_start, gbad_sec, new_key)
+        if gnote is None:
+            # 本次没检出乱码 → 保留行上已有标注（上传时的断流/诚实部分件说明），别抹掉
+            _old = db_fetchone("SELECT truncate_note FROM recordings WHERE id=?", (recording_id,))
+            gnote = _old["truncate_note"] if _old else None
         db_write(
             "UPDATE recordings SET oss_key=?, duration_label=?, size_bytes=?, truncate_note=? WHERE id=?",
             (new_key, _format_duration_label(dur), os.path.getsize(out), gnote, recording_id),
@@ -12229,15 +12239,16 @@ def api_admin_recording_split(rid):
     src_ext = (base.rsplit(".", 1)[-1] if "." in base else "webm").lower()
     tmpdir = tempfile.mkdtemp(prefix="recsplit_")
     src_path = os.path.join(tmpdir, f"src.{src_ext}")
-    p1 = os.path.join(tmpdir, "p1.wav")
-    p2 = os.path.join(tmpdir, "p2.wav")
+    p1 = os.path.join(tmpdir, "p1.m4a")
+    p2 = os.path.join(tmpdir, "p2.m4a")
     k1 = k2 = None
     parts_created = False
     try:
         oss_bucket.get_object_to_file(rec["oss_key"], src_path)
-        # 不读源文件时长（浏览器 webm 常无时长头会返回 N/A）。直接切，再读切出的 mp3 时长校验。
-        _run_ffmpeg(["-i", src_path, "-t", f"{at:.3f}", "-vn", "-acodec", "pcm_s16le", p1])
-        _run_ffmpeg(["-i", src_path, "-ss", f"{at:.3f}", "-vn", "-acodec", "pcm_s16le", p2])
+        # 不读源文件时长（浏览器 webm 常无时长头会返回 N/A）。直接切，再读切出的时长校验。
+        # ★2026-07-13 切片输出同步改 AAC m4a(见 _ensure_clean_audio)：wav 体积大,iPhone 试听加载慢。
+        _run_ffmpeg(["-i", src_path, "-t", f"{at:.3f}", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "48k", p1])
+        _run_ffmpeg(["-i", src_path, "-ss", f"{at:.3f}", "-vn", "-ac", "1", "-ar", "16000", "-c:a", "aac", "-b:a", "48k", p2])
         d1, d2 = _ffprobe_duration(p1), _ffprobe_duration(p2)
         if not d1 or d1 < 0.3:
             return jsonify({"error": "切分位置太靠近开头，请往后一点"}), 400
@@ -12251,8 +12262,8 @@ def api_admin_recording_split(rid):
         reasr = split_asr is None
 
         stem = rec["oss_key"][:-(len(src_ext) + 1)] if "." in base else rec["oss_key"]
-        k1 = f"{stem}_p1_{_uuid.uuid4().hex[:8]}.wav"
-        k2 = f"{stem}_p2_{_uuid.uuid4().hex[:8]}.wav"
+        k1 = f"{stem}_p1_{_uuid.uuid4().hex[:8]}.m4a"
+        k2 = f"{stem}_p2_{_uuid.uuid4().hex[:8]}.m4a"
         # 仅 OSS 双写在 DB 提交前发生；失败会在 except 里清掉 k1/k2
         oss_bucket.put_object_from_file(k1, p1)
         oss_bucket.put_object_from_file(k2, p2)

@@ -52,7 +52,7 @@ body{background:#F4EEE6}
         {% endif %}
         <div class="nav-tag">销售复盘 · 内部机密</div>
         <div class="nav-tag {% if sess.display_status == 'running' %}live{% endif %}" id="analysisStatusTag">
-          分析: {{ {'idle':'未分析','queued':'排队中','running':'分析中','done':'已完成','failed':'失败','stuck':'中断'}.get(sess.display_status, sess.display_status) }}
+          分析: {% if sess.display_status == 'queued' and sess.upload_pending %}录音上传中{% else %}{{ {'idle':'未分析','queued':'排队中','running':'分析中','done':'已完成','failed':'失败','stuck':'中断'}.get(sess.display_status, sess.display_status) }}{% endif %}
           {% if sess.analysis_model %} · {{ sess.analysis_model }}{% endif %}
         </div>
       </div>
@@ -166,7 +166,7 @@ body{background:#F4EEE6}
       <div class="progress-card">
         <div class="progress-spinner"></div>
         <div class="progress-title" id="progressTitle">
-          {{ '排队中…' if sess.display_status == 'queued' else '分析正在进行中…' }}
+          {% if sess.display_status == 'queued' and sess.upload_pending %}录音上传中·请保持App打开{% elif sess.display_status == 'queued' %}排队中…{% else %}分析正在进行中…{% endif %}
         </div>
         <div class="progress-detail" id="progressDetail">{{ sess.analysis_progress or '正在初始化…' }}</div>
         <div class="progress-hint">
@@ -1497,7 +1497,7 @@ setInterval(() => {
     }
     const title = document.getElementById('progressTitle');
     const detail = document.getElementById('progressDetail');
-    if (title) title.textContent = (d.display_status === 'queued') ? '排队中…' : '分析正在进行中…';
+    if (title) title.textContent = (d.display_status === 'queued') ? (d.upload_pending ? '录音上传中·请保持App打开' : '排队中…') : '分析正在进行中…';
     if (detail) detail.textContent = d.analysis_progress || '正在初始化…';
     highlightStep(d.analysis_progress);
   }).catch(()=>{});
