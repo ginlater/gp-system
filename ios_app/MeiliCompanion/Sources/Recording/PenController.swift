@@ -35,6 +35,8 @@ final class PenController {
     func startSync(files: [PenFile]) {}
     func cancelSync(fileName: String) {}
     func triggerCleanup(attempt: Int = 0) {}
+    func triggerAutoImport(attempt: Int = 0) {}
+    var queuedSyncNames: Set<String> { [] }
     var isSyncBusy: Bool { false }
     func appDidBecomeActive() {}
     func appDidEnterBackground() {}
@@ -325,6 +327,10 @@ final class PenController: NSObject, WindBleDelegate {
                 self.scheduleReconnect()
             }
             self.kickSync()
+        }
+        // ★2.2.2:回前台也扫一次笔上未传的段——挂起期间笔可能自己录过(节流5分钟,不扰民)
+        q.asyncAfter(deadline: .now() + 4) { [weak self] in
+            self?.triggerAutoImport()
         }
     }
 
@@ -705,6 +711,16 @@ final class PenController: NSObject, WindBleDelegate {
         q.sync { recording ? penFileName : nil }
     }
 
+    /// 已在同步队列/在下载的机身文件名(自动补传要跳过它们,别重复排队)。
+    var queuedSyncNames: Set<String> {
+        q.sync {
+            var s = Set(syncQueue.map(\.name))
+            if let c = currentSyncFile?.name { s.insert(c) }
+            if let r = pendingRecovery?.fileName { s.insert(r) }
+            return s
+        }
+    }
+
     /// 把选中的机身文件排队下载→包.ogg→上传(带 pen_file 去重)。补取任务优先。
     func startSync(files: [PenFile]) {
         q.async {
@@ -745,6 +761,41 @@ final class PenController: NSObject, WindBleDelegate {
             self.persistSyncQueue()
             self.updatePenWorkKeepAlive()
             PenLog.d("★顾问已删除该段→取消同步任务 \(fileName)")
+        }
+    }
+
+    // ── ★2.2.2:自动补传(治"App 不在场时笔单飞录的段永远躺在笔里") ──
+    // iOS 后台不录音就会被系统挂起,顾问按笔上按键开录时 App 常常根本不在场(刘亚红 7-13 病案:
+    // 笔自录 12 分钟,App 全程被挂起,录音躺了 3 小时直到她手动点同步)。这里补上自动路径:
+    // 连上笔且空闲 → 拉机身列表 → 交给 RecordingManager 走服务端预检,只补"从没传上来过"的段。
+
+    private var lastAutoImportAt = Date(timeIntervalSince1970: 0)
+
+    /// 触发时机:连接验证后空闲 ~9s、回前台(且已连笔)。忙则 60s 后重试(≤10 次);5 分钟内不重复扫。
+    func triggerAutoImport(attempt: Int = 0) {
+        guard attempt < 10 else { return }
+        q.async {
+            guard self.linkUp else { return }
+            if self.recording || self.downloading || self.pendingRecovery != nil || !self.syncQueue.isEmpty {
+                self.q.asyncAfter(deadline: .now() + 60) { [weak self] in
+                    self?.triggerAutoImport(attempt: attempt + 1)
+                }
+                return
+            }
+            // 5分钟节流(回前台可能频繁触发);跳过补传也别把清理一起跳过
+            guard Date().timeIntervalSince(self.lastAutoImportAt) > 300 else {
+                self.triggerCleanup()
+                return
+            }
+            self.lastAutoImportAt = Date()
+            self.fetchFileList { files in
+                guard !files.isEmpty else { return }
+                Task { @MainActor in
+                    await RecordingManager.shared.autoImportUnuploaded(files)
+                    // 补传排完队再清理(刚入队的段在 syncQueue 里,清理会自动跳过,不会误删)
+                    PenController.shared.triggerCleanup()
+                }
+            }
         }
     }
 
@@ -1093,9 +1144,10 @@ final class PenController: NSObject, WindBleDelegate {
         q.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.kickSync()
         }
-        // ★2.2.1:连接后空闲~9s 触发一次笔上文件清理(忙则自动延后,对齐安卓)
+        // ★2.2.2:连接后空闲~9s 先自动补传笔上没传上来的段(补完它会接着触发笔上文件清理)。
+        // 这条是"App 不在场时笔单飞录音"的唯一救回路径——iOS 后台会被挂起,不能指望 App 在场。
         q.asyncAfter(deadline: .now() + 9) { [weak self] in
-            self?.triggerCleanup()
+            self?.triggerAutoImport()
         }
     }
 

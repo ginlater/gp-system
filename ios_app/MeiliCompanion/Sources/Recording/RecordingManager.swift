@@ -411,6 +411,56 @@ final class RecordingManager: ObservableObject {
         }
     }
 
+    /// ★2.2.2:连上笔后自动把「机身上还没传上来的段」补传回来(对齐安卓的自动补传路径)。
+    ///
+    /// 病案(刘亚红 2026-07-13):她点开 App 5 秒后直接按笔上按键开录,App 还没连上笔就被 iOS 挂起
+    /// (后台不录音就没有保活)——笔自己录了 12 分钟,App 全程不在场,回来时笔已停,那段录音
+    /// 就一直躺在笔里,直到 3 小时后她自己想起来点「从陪伴笔同步」才回来。
+    /// iOS 原来只有手动同步这一条路;这里补上自动的:连上笔且空闲 → 拉机身列表 → 服务端预检
+    /// 查出「从没传上来过」的 → 自动建占位 + 排队下载上传。顾问什么都不用做。
+    ///
+    /// 安全边界(不敢乱传):① 只补最近 7 天的(超 7 天服务端本来就不可绑,重导无意义);
+    /// ② 正在录的那段不碰;③ 已在队列/在传的不碰;④ 一律走服务端 sync-preview 判定,只补
+    /// status=new 的(已上传/顾问删过的一律不补,墓碑挡着);⑤ 一轮最多 20 段,防笔里积压太多时刷屏。
+    func autoImportUnuploaded(_ files: [PenFile]) async {
+        guard !files.isEmpty else { return }
+        let cur = PenController.shared.currentRecordingPenFile
+        let busy = PenController.shared.queuedSyncNames
+            .union(UploadQueue.shared.pendingPenFiles)
+            .union(syncPlaceholders.keys)
+        let cutoff = Date().addingTimeInterval(-7 * 86400)
+        let candidates = files.filter { f in
+            f.name != cur && f.sizeBytes > 0 && !busy.contains(f.name)
+                && (PenFileLedger.fileTimestamp(f.name).map { $0 > cutoff } ?? false)
+        }
+        guard !candidates.isEmpty else { return }
+
+        // 预检分批(每批30),任一批失败即整体放弃——宁可不补,也不能凭猜测重复导入
+        var statusByName: [String: String] = [:]
+        var idx = 0
+        while idx < candidates.count {
+            let batch = Array(candidates[idx ..< min(idx + 30, candidates.count)])
+            guard let p = try? await ConsultantRepo.penSyncPreview(batch.map { ($0.name, $0.recordedAt) }) else {
+                PenLog.d("★自动补传:预检失败(弱网/未登录)→ 本轮放弃,下次连上再试")
+                return
+            }
+            for i in p.items ?? [] { if let n = i.name { statusByName[n] = i.status ?? "new" } }
+            idx += 30
+        }
+        let fresh = candidates
+            .filter { (statusByName[$0.name] ?? "") == "new" }
+            .sorted { ($0.recordedAt ?? "") > ($1.recordedAt ?? "") }
+        guard !fresh.isEmpty else {
+            PenLog.d("★自动补传:笔上没有未上传的段(都传过了)")
+            return
+        }
+        let picked = Array(fresh.prefix(20))
+        PenLog.d("★自动补传:发现 \(fresh.count) 段从未上传的录音 → 自动导入 \(picked.count) 段")
+        for f in picked { await registerSyncPlaceholder(for: f) }
+        PenController.shared.startSync(files: picked)
+        toast = "发现 \(picked.count) 段还没上传的陪伴录音，正在自动同步…"
+    }
+
     /// ★2.2.1 对齐:顾问删掉"同步中"的行 → 取消这段一切在途任务(对齐安卓 cancelPenTaskByPlaceholder)。
     /// 覆盖两条腿:① UploadQueue 里待传/在传的(手机麦段无 pen_file,墓碑兜不住,必须掐);
     /// ② 还没从笔里搬完的同步下载(掐了省蓝牙省流量,墓碑按 pen_file 精确兜底做双保险)。
