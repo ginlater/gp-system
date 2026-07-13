@@ -117,7 +117,8 @@ final class PendingViewModel: ObservableObject {
         guard !syncBusy else { syncRows = []; scheduleSyncRecheck(); return }
         guard syncRows.isEmpty else { return }   // 列表已加载就别打扰用户勾选
         syncLoading = true
-        PenController.shared.fetchFileList { [weak self] files in
+        // ★2.2.2(对齐安卓2.1.9):走 90s 缓存——刚连上笔时自动补传已经读过一次清单,这里秒开
+        PenController.shared.fetchFileList(allowCache: true) { [weak self] files in
             Task { @MainActor in await self?.onPenFiles(files) }
         }
     }

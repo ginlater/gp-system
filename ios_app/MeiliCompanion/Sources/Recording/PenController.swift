@@ -31,7 +31,7 @@ final class PenController {
     func stopRecord() {}
     func endRecordingOnDisconnect() {}
     func forgetAndDisconnect() {}
-    func fetchFileList(_ completion: @escaping ([PenFile]) -> Void) { completion([]) }
+    func fetchFileList(allowCache: Bool = false, _ completion: @escaping ([PenFile]) -> Void) { completion([]) }
     func startSync(files: [PenFile]) {}
     func cancelSync(fileName: String) {}
     func triggerCleanup(attempt: Int = 0) {}
@@ -162,6 +162,11 @@ final class PenController: NSObject, WindBleDelegate {
     // ★2.2.1(#7):列表读取健壮性——重发/进度感知超时,治"文件多/链路差时清单静默截断"
     private var fileListResends = 0          // 无任何分包时的重发次数(≤2)
     private var fileListStartAt: Date?       // 本轮查询开始时刻(90s 封顶)
+    // ★2.2.2(对齐安卓2.1.9):清单缓存——90s 内重复要列表直接给缓存,同步弹层秒开不用重读笔。
+    // 失效时机:录完新段 / 导入了段 / 删了机身文件 / 断开连接(笔可能离线又录了新段)。
+    private static let fileListCacheTTL: TimeInterval = 90
+    private var fileListCache: [PenFile]?
+    private var fileListCacheAt = Date(timeIntervalSince1970: 0)
 
     func setup() {
         pen.delegate = self
@@ -579,9 +584,17 @@ final class PenController: NSObject, WindBleDelegate {
     /// ★2.2.1(#7,对齐安卓2.1.9/2.2.1):原来单发+10s硬超时"收到多少算多少"——文件多/链路差时
     /// 清单静默截断,顾问以为笔里只有这些。现在:5s 无任何分包重发(≤2次);有分包后每个新分包
     /// 续期 15s(进度感知,没收完就一直等);全程 90s 封顶;收尾按文件名去重(重发会产生重复条目)。
-    func fetchFileList(_ completion: @escaping ([PenFile]) -> Void) {
+    /// allowCache=true(同步弹层用):90s 内问过一次且笔上内容没变 → 秒开,不再走一遍蓝牙分批读取。
+    /// 内部任务(自动补传/清理)一律传 false,拿最新的真实清单。
+    func fetchFileList(allowCache: Bool = false, _ completion: @escaping ([PenFile]) -> Void) {
         q.async {
             guard self.linkUp else { DispatchQueue.main.async { completion([]) }; return }
+            if allowCache, let c = self.fileListCache,
+               Date().timeIntervalSince(self.fileListCacheAt) < Self.fileListCacheTTL {
+                PenLog.d("★同步清单走缓存(\(c.count)个,免去重读笔)")
+                DispatchQueue.main.async { completion(c) }
+                return
+            }
             // 重入(审计 L14):先把上一个等待中的回调以空结果放行,别让旧 UI 卡加载态
             if let old = self.fileListCompletion {
                 self.fileListCompletion = nil
@@ -629,7 +642,17 @@ final class PenController: NSObject, WindBleDelegate {
         var seen = Set<String>()
         let entries = fileListEntries.filter { seen.insert($0.name).inserted }
         PenLog.d("cmd4 文件列表完成,共\(entries.count)个")
+        if !entries.isEmpty {          // 整份清单到手 → 存缓存(90s 内重复要列表秒开)
+            fileListCache = entries
+            fileListCacheAt = Date()
+        }
         DispatchQueue.main.async { cb(entries) }
+    }
+
+    /// 笔上内容变了(录完新段/导入/删机身文件/断连)→ 清单缓存作废,下次重新问笔。
+    private func invalidateFileListCache() {
+        fileListCache = nil
+        fileListCacheAt = Date(timeIntervalSince1970: 0)
     }
 
     /// cmd=4 文件列表(data 是数组,可能分多包,finish=1 结束)。
@@ -724,6 +747,7 @@ final class PenController: NSObject, WindBleDelegate {
     /// 把选中的机身文件排队下载→包.ogg→上传(带 pen_file 去重)。补取任务优先。
     func startSync(files: [PenFile]) {
         q.async {
+            self.invalidateFileListCache()   // 导入后这些段的状态变了 → 清单作废
             for f in files where !self.syncQueue.contains(where: { $0.name == f.name })
                     && self.currentSyncFile?.name != f.name {
                 var nf = f
@@ -856,6 +880,7 @@ final class PenController: NSObject, WindBleDelegate {
             if uploadedFull { delUploaded += 1 } else { delStale += 1 }
         }
         if delUploaded + delStale > 0 {
+            if !Self.cleanupDryRun { invalidateFileListCache() }   // 机身文件少了 → 清单作废
             PenLog.d("★清理笔上文件\(Self.cleanupDryRun ? "(干跑,未真删)" : ""):已完整上传删\(delUploaded)个, 超7天未传删\(delStale)个")
         }
     }
@@ -1192,6 +1217,7 @@ final class PenController: NSObject, WindBleDelegate {
                     let wasRecording = self.recording
                     self.verifiedConnected = false
                     self.linkUp = false
+                    self.invalidateFileListCache()   // 断连期间笔可能自己又录了新段 → 清单作废
                     self.pen.closeConnect()
                     DispatchQueue.main.async {
                         self.manager?.penConnected = false
@@ -1438,6 +1464,7 @@ final class PenController: NSObject, WindBleDelegate {
             if recording {
                 recording = false
                 recPaused = false
+                invalidateFileListCache()   // 笔上多了新段 → 清单作废
                 PenLog.d("cmd3 录音停止 → 结束并上传")
                 DispatchQueue.main.async { self.manager?.penRecordingStopped() }
                 finishUpload()
