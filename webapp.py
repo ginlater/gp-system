@@ -4966,22 +4966,22 @@ def terms_of_service():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.2.1"
+APP_V2_VERSION_NAME = "2.2.2"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 75   # 2.2.1(75)：复查修正——笔上文件保护增强(服务器真存了才允许删)+手动导入补时段时长+进程重启后结束陪伴停错设备修复
+APP_V2_LATEST_VERSION_CODE = 76   # 2.2.2(76)：新客/老客客型标注(接诊包预览页可切换,评分维度按客型二选一)
 APP_V2_MIN_VERSION_CODE = 64      # 2026-07-06 全量强更(含补门的64)
-APP_V2_UPDATE_NOTE = "本次更新：同步中的录音补全时段和时长显示、陪伴笔录音保护增强、若干稳定性修复。建议更新。"
+APP_V2_UPDATE_NOTE = "本次更新：开始分析前可选「新客／老客」——老客按交付复盘维度评分（破冰对效、当天方案调整、方案重规划与返邀）。"
 
 # ============ iOS App 版本（Ad Hoc 分发无自动更新，App 启动/设置页查这个提示重装升级）============
 # 发 iOS 新版时：改 ios_app project.yml 的 CURRENT_PROJECT_VERSION → 归档导出 ad-hoc → 覆盖
 # /var/www/appdist/ios/ 的 ipa+manifest → 把下面 LATEST_BUILD 抬到新 build 号。
-APP_IOS_LATEST_BUILD = 6          # 1.0.0(6)：自动补传+同步清单缓存+蓝牙未开红条+删除不复活
+APP_IOS_LATEST_BUILD = 7          # 1.0.0(7)：新客/老客客型标注+自动补传+清单缓存+蓝牙红条
 APP_IOS_VERSION_NAME = "1.0.0"
 APP_IOS_INSTALL_URL = "https://gp.aibeautyfulwomen.com/download/ios"
-APP_IOS_UPDATE_NOTE = "重要更新：笔里没传上来的录音，连上笔会自动补传，不用再手动同步；蓝牙没开会明确提醒。"
+APP_IOS_UPDATE_NOTE = "本次更新：开始分析前可选「新客／老客」——老客按交付复盘维度评分；笔里没传上来的录音会自动补传。"
 
 
 @app.route("/api/app/ios/version")
