@@ -492,6 +492,13 @@ body.skin-cute .dlg{border-radius:16px}
     <h3 id="pkgTitle">接诊包</h3>
     <div class="muted" id="pkgSubtitle" style="font-size:12px;margin-bottom:8px"></div>
     <div id="pkgProgress" style="display:none;background:#f5f7fa;border:1px solid #e3e8ee;border-radius:6px;padding:10px 12px;margin-bottom:10px"></div>
+    <!-- ★2026-07-13 老客评分维度:分析前核对客型(默认老客,评分维度按它二选一) -->
+    <div id="pkgCtypeRow" style="display:none;align-items:center;gap:8px;margin:4px 0 6px">
+      <span style="font-weight:600;font-size:13px;color:var(--navy)">客型</span>
+      <button class="btn sec" id="pkgCtypeBtn" onclick="togglePkgCustomerType()"
+              style="padding:3px 12px;font-size:12px"></button>
+      <span style="font-size:11px;color:#8a94a3">评分维度按客型二选一，分析前请核对（默认老客）</span>
+    </div>
     <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">本次将分析的录音</div>
     <div id="pkgBound"></div>
     <div style="font-weight:600;font-size:13px;color:var(--navy);margin:12px 0 4px" id="pkgUnboundTitle">本人当日未绑定录音（可加入本接诊包）</div>
@@ -1925,6 +1932,21 @@ function closePkg(){
   if (window._pkgPollTimer) { clearTimeout(window._pkgPollTimer); window._pkgPollTimer = null; }
 }
 
+/* ★2026-07-13 老客评分维度:预览弹窗里切换客型(改完自动刷新;已出报告的需重新分析生效) */
+async function togglePkgCustomerType() {
+  if (!pkgSessionId) return;
+  const next = (window._pkgCtype === 'new') ? 'returning' : 'new';
+  try {
+    const r = await fetch(BASE + '/api/session/' + pkgSessionId + '/customer_type', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type: next})
+    });
+    const d = await r.json();
+    if (d.ok) { await refreshPkg(); }
+    else { document.getElementById('pkgMsg').textContent = d.error || '客型修改失败'; }
+  } catch (e) { document.getElementById('pkgMsg').textContent = '网络异常，客型未修改'; }
+}
+
 function _fmtElapsed(sec) {
   if (sec == null || sec < 0) return '';
   const m = Math.floor(sec / 60), s = sec % 60;
@@ -1991,6 +2013,14 @@ async function refreshPkg() {
   if (d.error) { document.getElementById('pkgBound').innerHTML = '<div class="msg err">'+d.error+'</div>'; return; }
   pkgLocked = !!d.locked;
   pkgSessionId = d.session_id || null;
+  // ★老客评分维度:渲染客型切换(session 还没建时不显示,绑定后就有了)
+  window._pkgCtype = d.customer_type || 'returning';
+  const ctr = document.getElementById('pkgCtypeRow');
+  if (ctr) {
+    ctr.style.display = pkgSessionId ? 'flex' : 'none';
+    const cb = document.getElementById('pkgCtypeBtn');
+    if (cb) cb.textContent = window._pkgCtype === 'new' ? '🆕 新客 ▾' : '🔁 老客 ▾';
+  }
   document.getElementById('pkgTitle').textContent = '接诊包 · ' + d.customer.name;
   const ubt = document.getElementById('pkgUnboundTitle');
   if (ubt) ubt.textContent = `本人 ${d.service_date} 未绑定录音（可加入本接诊包）`;

@@ -454,6 +454,10 @@ def init_db():
         conn.execute("ALTER TABLE sessions ADD COLUMN analysis_progress TEXT")
     if "task_status" not in existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN task_status TEXT")
+    # 2026-07-13 老客评分维度：客型标注（'new'=新客 / 'returning'=老客）。
+    # NULL 视同 'returning'——老板拍板默认老客，顾问手动标新客。评分 prompt 按它二选一。
+    if "customer_type" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN customer_type TEXT")
     # 历史 evaluations 表是 UNIQUE(session_id)，迁移到允许多条
     eval_cols = {r[1] for r in conn.execute("PRAGMA table_info(evaluations)").fetchall()}
     if "comment" not in eval_cols:
@@ -2026,7 +2030,7 @@ REPORT_TOOL = {
                     "stages": {
                         "type": "array",
                         "minItems": 3, "maxItems": 3,
-                        "description": "三阶段（壹 一咨找需求 / 贰 确认加大意愿 / 叁 成交阶段）",
+                        "description": "三阶段（新客：壹 一咨找需求/贰 确认加大意愿/叁 成交阶段；老客：壹 破冰与对效/贰 当天方案调整与操作对比/叁 方案重规划与返邀。按任务提示里给定的一套执行）",
                         "items": {
                             "type": "object",
                             "required": ["name", "score", "sub"],
@@ -2468,7 +2472,11 @@ TOOL_CALL2 = {
                                 "name": {"type": "string",
                                          "enum": ["壹 一咨找需求",
                                                   "贰 确认加大意愿",
-                                                  "叁 成交阶段"]},
+                                                  "叁 成交阶段",
+                                                  # 老客三阶段(2026-07-13):prompt 按 session.customer_type 二选一
+                                                  "壹 破冰与对效",
+                                                  "贰 当天方案调整与操作对比",
+                                                  "叁 方案重规划与返邀"]},
                                 "score": {"type": "number", "minimum": 0, "maximum": 10},
                                 "sub": {
                                     "type": "array",
@@ -3119,6 +3127,42 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
 """,
     },
 }
+
+
+# ★2026-07-13 老客评分维度(老板拍板):质检评分按 session.customer_type 二选一——
+#   新客走 T5 原三阶段(咨找需求/确认加大意愿/成交阶段),老客走下面这套(不含报价/异议处理)。
+#   {monthly_brief} 由装配时注入当月重点活动清单(monthly_projects 表,3.3 的判断依据)。
+T5_PROMPT_RETURNING = """【任务5】质检评分 · 老客三大接待阶段
+本单为【老客回访接待】,评分维度与新客不同,按下面三阶段执行。
+综合评分 0-10，必须有区分度（差 2-3 分，一般 4-5 分，好 7-8 分，很好 9 分）。
+
+⚠ scoring.stages 必须是 3 个阶段，阶段名逐字使用下面的，每个阶段必须包含所有子项，不能省略：
+
+壹 破冰与对效（4 子项）：
+  1.1 信任破冰（老客关系维护式破冰，增强信任）
+  1.2 上次项目对效（主动回顾并与顾客确认上一次项目的效果）
+  1.3 小周期交付呈现（顾客做到约5次时，用对比照片/图片做阶段性交付展示）
+  1.4 当下状态评估（通过检测或状态观察，评定顾客今天的起点状态）
+
+贰 当天方案调整与操作对比（2 子项）：
+  2.1 当天调整说明（基于状态评估讲清今天项目怎么调；调整维度：仪器/产品/能量/手法）
+  2.2 操作效果对比（操作前/中/后三段效果对比，让顾客可感知）
+
+叁 方案重规划与返邀（5 子项）：
+  3.1 方案重规划（根据本次效果提出增加/升级/调整方案之一，给顾客重新规划）
+  3.2 周期交付节奏（每成交一单约对应3次周期交付，前3~5次是关键交付期，节奏是否有安排）
+  3.3 本月重点活动触达（本次接待中是否向顾客讲解了当月主推活动项目）
+  3.4 好评引导（引导顾客好评/转介绍）
+  3.5 返邀约（离店前完成下次到店邀约或回电约定）
+
+{monthly_brief}
+每个子项 detail 只写一句本次事实（不写定义不写建议，20-40 字）。
+good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
+
+⚠ 计分规则（严格执行）：
+- 每个 sub 子项只打分（0-10），stage 的 score 字段固定填 0，overall 字段固定填 0
+- 不要自己算平均分，系统会自动根据子项均值重新计算 stage 分和总分
+"""
 
 
 CALL_GROUPS = {
@@ -4098,11 +4142,25 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         return
 
     sess = db_fetchone(
-        "SELECT advisor, customer, service_date, company_id FROM sessions WHERE id=?", (session_id,)
+        "SELECT advisor, customer, service_date, company_id, customer_type FROM sessions WHERE id=?", (session_id,)
     )
     if not sess:
         return
     company_id = (sess["company_id"] if sess else None) or 1
+    # ★2026-07-13 老客评分维度:客型二选一(NULL=老客,老板拍板默认);老客再注入当月重点活动清单(3.3 判断依据)
+    customer_type = (sess["customer_type"] or "returning")
+    monthly_brief = ""
+    if customer_type != "new":
+        _month = (sess["service_date"] or "")[:7]
+        _prows = db_fetchall(
+            "SELECT name FROM monthly_projects WHERE company_id=? AND month=?",
+            (company_id, _month)) if _month else []
+        _pnames = [p["name"] for p in _prows if p["name"]]
+        if _pnames:
+            monthly_brief = (f"本月重点活动项目：{'、'.join(_pnames)}"
+                             f"（3.3 依据此判断：录音中向顾客讲解过其中任一项目即算本次触达）\n")
+        else:
+            monthly_brief = "本月未配置重点活动清单：3.3 按「是否向顾客介绍了本店当前活动/主推项目」如实判断，没讲就低分，不要臆测。\n"
     recs = db_fetchall(
         """SELECT id, recorded_at, duration_label, asr_transcript
            FROM recordings WHERE session_id=? AND asr_status='done'
@@ -4341,7 +4399,11 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         all_schema_keys = []
         for tid in tids:
             t = TASK_REGISTRY[tid]
-            task_prompts.append(t["prompt_snippet"].format(customer_name=customer_name))
+            snippet = t["prompt_snippet"]
+            # ★老客评分维度:T5 按客型二选一(默认老客);当月活动清单在这里注入
+            if tid == "T5" and customer_type != "new":
+                snippet = T5_PROMPT_RETURNING.replace("{monthly_brief}", monthly_brief)
+            task_prompts.append(snippet.format(customer_name=customer_name))
             all_schema_keys.extend(t["schema_keys"])
 
         # 受控词表：T3（顾客标签）出现时，把本公司现有标准词清单注入，
@@ -5238,6 +5300,17 @@ def session_detail(sid):
         r.get("asr_status") == "awaiting_intake" for r in recordings
     )
 
+    # ★2026-07-13 老客评分维度:客型(NULL=老客默认) + 本月活动触达 N/3(跨接待、按顾客按自然月累计)
+    sess_d["customer_type_eff"] = (sess_d.get("customer_type") or "returning")
+    sess_d["monthly_touch"] = None
+    if sess_d["customer_type_eff"] != "new":
+        try:
+            sess_d["monthly_touch"] = _monthly_activity_touch(
+                sess_d.get("company_id") or 1, sess_d.get("customer_id"),
+                sess_d.get("customer"), sess_d.get("service_date"))
+        except Exception as _mt_err:
+            print(f"[monthly_touch] session={sid} 统计失败：{_mt_err}")
+
     # 顾客标签（本次/历史累积、按服务次数、时间区间）改由前端调
     # /api/session/<sid>/customer_tags 动态加载，这里不再服务端计算。
 
@@ -5611,6 +5684,25 @@ def api_sessions_status_counts():
     return jsonify({"counts": counts})
 
 
+@app.route("/api/session/<int:sid>/customer_type", methods=["POST"])
+@login_required
+def api_set_customer_type(sid):
+    """★2026-07-13 老客评分维度:标注本单客型('new'新客/'returning'老客,默认老客)。
+    评分维度在【下一次分析】按它二选一——改完已出报告的单子,点重新分析即按新维度重出。"""
+    sess = db_fetchone("SELECT id, company_id FROM sessions WHERE id=?", (sid,))
+    if not sess:
+        return jsonify({"error": "not found"}), 404
+    u = current_user()
+    if u and u["role"] != "super" and sess["company_id"] is not None and sess["company_id"] != u["company_id"]:
+        return jsonify({"error": "无权访问"}), 403
+    body = request.get_json(silent=True) or {}
+    ctype = (body.get("type") or "").strip()
+    if ctype not in ("new", "returning"):
+        return jsonify({"error": "type 必须是 new 或 returning"}), 400
+    db_write("UPDATE sessions SET customer_type=? WHERE id=?", (ctype, sid))
+    return jsonify({"ok": True, "customer_type": ctype})
+
+
 @app.route("/api/session/<int:sid>")
 @login_required
 def api_session_get(sid):
@@ -5658,6 +5750,16 @@ def api_session_get(sid):
     out["upload_pending"] = any(
         rr.get("asr_status") == "awaiting_intake" for rr in out["recordings"]
     )
+    # ★2026-07-13 老客评分维度:客型生效值(NULL=老客默认) + 本月活动触达 N/3
+    out["customer_type_eff"] = (out.get("customer_type") or "returning")
+    out["monthly_touch"] = None
+    if out["customer_type_eff"] != "new":
+        try:
+            out["monthly_touch"] = _monthly_activity_touch(
+                out.get("company_id") or 1, out.get("customer_id"),
+                out.get("customer"), out.get("service_date"))
+        except Exception as _mt_err:
+            print(f"[monthly_touch] api session={sid} 统计失败：{_mt_err}")
     return jsonify(out)
 
 
@@ -9355,6 +9457,42 @@ def _customer_session_clause(customer_id, name, company_id):
     return clause, [customer_id, name, company_id]
 
 
+def _monthly_activity_touch(company_id, customer_id, customer_name, service_date):
+    """★2026-07-13 老客评分维度:当月重点活动对该顾客的触达次数。
+    口径(老板拍板)=每个顾客每自然月触达 3 次左右;单次录音只能判"本次有没有讲",
+    这里跨接待累计:该顾客当月每个 session 的转写命中 monthly_projects 关键词即算触达 1 次。
+    当月没配置项目返回 None(报告不显示这一行)。"""
+    month = (service_date or "")[:7]
+    if not month:
+        return None
+    prows = db_fetchall(
+        "SELECT name, keywords FROM monthly_projects WHERE company_id=? AND month=?",
+        (company_id, month))
+    projects = []
+    for pr in prows:
+        try:
+            kws = json.loads(pr["keywords"] or "[]") or []
+        except (json.JSONDecodeError, TypeError):
+            kws = []
+        # 项目名本身也算关键词(没配关键词的项目按名字兜底匹配)
+        if pr["name"]:
+            projects.append({"name": pr["name"], "keywords": list(kws) + [pr["name"]]})
+    if not projects:
+        return None
+    clause, params = _customer_session_clause(customer_id, customer_name, company_id)
+    rows = db_fetchall(
+        f"SELECT s.id FROM sessions s WHERE {clause} AND s.service_date LIKE ?",
+        params + [month + "%"])
+    count = 0
+    for r in rows:
+        tr = db_fetchall("SELECT asr_transcript FROM recordings WHERE session_id=?", (r["id"],))
+        transcript = "\n".join((x["asr_transcript"] or "") for x in tr)
+        if _project_hits(transcript, projects):
+            count += 1
+    return {"count": count, "target": 3, "month": month,
+            "projects": [p["name"] for p in projects]}
+
+
 @app.route("/api/admin/customer_profile")
 @login_required  # P1.7：档案"看"对所有登录角色开放；下方 company_id 作用域仍生效（顾问不能跨公司，super 跨公司）
 def api_customer_profile():
@@ -12630,7 +12768,8 @@ def api_consultant_session_preview():
         return jsonify({"error": "顾客不存在"}), 404
     advisor = u["advisor_name"] or u["username"]
     sess = db_fetchone(
-        """SELECT id, locked, analysis_status, analysis_progress, analysis_started_at
+        """SELECT id, locked, analysis_status, analysis_progress, analysis_started_at,
+                  customer_type
            FROM sessions
            WHERE advisor=? AND customer=? AND service_date=?
              AND (company_id IS NULL OR company_id=?)""",
@@ -12752,6 +12891,8 @@ def api_consultant_session_preview():
         "session_id": sess["id"] if sess else None,
         "locked": bool(sess["locked"]) if sess else False,
         "analysis_status": sess["analysis_status"] if sess else None,
+        # ★2026-07-13 老客评分维度:客型(NULL=老客默认),预览弹窗里分析前可切换
+        "customer_type": ((sess["customer_type"] if sess else None) or "returning"),
         "task_progress": task_progress,
         "bound": bound,
         "unbound": unbound,

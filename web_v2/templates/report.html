@@ -40,6 +40,16 @@ body{background:#F4EEE6}
       </div>
       <div class="nav-meta">
         <div class="nav-tag"><span class="circle"></span> {{ sess.service_date or '日期未知' }}</div>
+        {# ★2026-07-13 老客评分维度:客型徽标,点击切换(默认老客);改后评分维度在下次分析生效 #}
+        <div class="nav-tag" id="customerTypeTag" onclick="toggleCustomerType()" style="cursor:pointer"
+             title="点击切换 新客/老客。评分维度按客型二选一,改完点「重新分析」按新维度重出报告">
+          {{ '🆕 新客' if sess.customer_type_eff == 'new' else '🔁 老客' }} ▾
+        </div>
+        {% if sess.customer_type_eff != 'new' and sess.monthly_touch %}
+        <div class="nav-tag" title="当月主推活动({{ sess.monthly_touch.projects|join('、') }})对该顾客的讲解触达次数,目标每月3次左右">
+          本月活动触达 {{ sess.monthly_touch.count }}/{{ sess.monthly_touch.target }} 次
+        </div>
+        {% endif %}
         <div class="nav-tag">销售复盘 · 内部机密</div>
         <div class="nav-tag {% if sess.display_status == 'running' %}live{% endif %}" id="analysisStatusTag">
           分析: {{ {'idle':'未分析','queued':'排队中','running':'分析中','done':'已完成','failed':'失败','stuck':'中断'}.get(sess.display_status, sess.display_status) }}
@@ -1089,6 +1099,23 @@ function toggleScoring() {
     detail.style.display = 'none';
     btn.textContent = '查看详细评分 ▾';
   }
+}
+
+/* ★2026-07-13 老客评分维度:点徽标切换客型(默认老客)。评分维度在下次分析生效 */
+async function toggleCustomerType() {
+  const cur = {{ ("'new'" if sess.customer_type_eff == 'new' else "'returning'")|safe }};
+  const next = cur === 'new' ? 'returning' : 'new';
+  const label = next === 'new' ? '新客' : '老客';
+  if (!confirm(`把本单客型改为「${label}」？\n\n评分维度按客型二选一（新客=成交流程 / 老客=交付复盘流程），改完需点「重新分析」按新维度重出报告。`)) return;
+  try {
+    const r = await fetch(`/api/session/{{ sess.id }}/customer_type`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({type: next})
+    });
+    const d = await r.json();
+    if (d.ok) { location.reload(); }
+    else { alert(d.error || '修改失败'); }
+  } catch (e) { alert('网络异常，请重试'); }
 }
 
 
