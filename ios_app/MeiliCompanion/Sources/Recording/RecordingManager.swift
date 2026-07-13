@@ -171,7 +171,7 @@ final class RecordingManager: ObservableObject {
     /// 系统蓝牙不可用(审计 L4):精准提示,替代对着空气扫描。
     func penBluetoothUnavailable(_ unauthorized: Bool) {
         penConnected = false
-        toast = unauthorized ? "请到 设置→美丽陪伴 里允许蓝牙权限，才能连接陪伴笔"
+        toast = unauthorized ? "请到 设置→美业私教 里允许蓝牙权限，才能连接陪伴笔"
                              : "手机蓝牙已关闭，请打开蓝牙后陪伴笔会自动重连"
     }
     func connectPen(_ d: PenDevice) {

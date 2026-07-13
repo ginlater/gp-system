@@ -23,7 +23,7 @@ struct LoginView: View {
                     }
                     .padding(.top, 44)
 
-                    Text("美丽陪伴")
+                    Text("美业私教")
                         .font(MeiliFont.brandTitle).tracking(3)
                         .foregroundStyle(MeiliColor.clayDeep)
                         .padding(.top, 20)

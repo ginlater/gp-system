@@ -13,7 +13,7 @@ struct SplashView: View {
                         .shadow(color: MeiliColor.clay.opacity(0.30), radius: 18, y: 12)
                     MeiliIcon(MeiliIcons.companion, size: 46).foregroundStyle(.white)
                 }
-                Text("美丽陪伴")
+                Text("美业私教")
                     .font(MeiliFont.brandTitle).tracking(3)
                     .foregroundStyle(MeiliColor.clayDeep)
                 ProgressView().tint(MeiliColor.clay).padding(.top, 4)

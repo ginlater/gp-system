@@ -57,7 +57,7 @@ enum ReminderNotifier {
         switch r.refType ?? "" {
         case "recording": return "有陪伴录音待绑定"
         case "session", "report": return "有陪伴报告待查看"
-        default: return "美丽陪伴提醒"
+        default: return "美业私教提醒"
         }
     }
 
