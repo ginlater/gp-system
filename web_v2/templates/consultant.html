@@ -1966,7 +1966,12 @@ function renderPkgProgress(tp, ast, sessionId) {
   else if (ast === 'failed') { stateLabel = '✗ 分析失败'; stateColor = '#c0392b'; }
   else if (ast === 'cancelled') { stateLabel = '⊘ 已中断'; stateColor = '#888'; }
   else if (ast === 'outdated') { stateLabel = '⟳ 录音有变更，需重新分析'; stateColor = '#e67e22'; }
-  else if (ast === 'queued') { stateLabel = '⏳ 排队中'; stateColor = '#e67e22'; }
+  else if (ast === 'queued') {
+    // 细分：有录音还没从手机传上来(awaiting_intake) → 明确提示是"上传"卡着，让顾问保持App打开；
+    // 否则才是真正的等转写/排队。
+    if (tp.upload_pending) { stateLabel = '⏳ 录音上传中·请保持App打开'; stateColor = '#e67e22'; }
+    else { stateLabel = '⏳ 排队中（转写完自动分析）'; stateColor = '#e67e22'; }
+  }
   else if (ast === 'running') { stateLabel = '🔄 分析中'; stateColor = '#1976d2'; }
   else { stateLabel = ''; stateColor = '#666'; }
   const wait = tp.wait_sec != null ? `已等待 ${_fmtElapsed(tp.wait_sec)}` : '';
