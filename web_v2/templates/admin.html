@@ -103,6 +103,7 @@ a{text-decoration:none}
 .kpi .lbl{font-size:13px;color:var(--muted)}
 .kpi .num{font-family:var(--serif);font-size:32px;line-height:1.1}
 .kpi .unit{font-size:13px;color:var(--faint);margin-left:5px}
+.kpi .khint{font-size:11.5px;color:var(--faint);line-height:1.55;margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
 .grid2{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;margin-bottom:22px}
 .lb-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px dashed var(--line)}
 .lb-row:last-child{border-bottom:0}
@@ -224,11 +225,12 @@ a{text-decoration:none}
     <div class="h1">经营总览</div>
     <div class="sub-note" id="ov-range">加载中…</div>
     <div class="kpis">
-      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v10M12 21a4 4 0 004-4V7a4 4 0 00-8 0v10a4 4 0 004 4z"/></svg></div><div class="lbl">人均陪伴时长</div></div><div class="num"><span id="ov-companion">—</span><span class="unit">分钟/人·日</span></div></div>
-      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v12H4zM9 9h6M9 12h4"/></svg></div><div class="lbl">人均学习时长</div></div><div class="num"><span id="ov-study">—</span><span class="unit">分钟/人·日</span></div></div>
-      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.3 3-5.6 7-5.6s7 2.3 7 5.6"/></svg></div><div class="lbl">人均接待客人</div></div><div class="num"><span id="ov-customers">—</span><span class="unit">位/人·日</span></div></div>
-      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div><div class="lbl">人均接诊时长</div></div><div class="num"><span id="ov-intake">—</span><span class="unit">分钟/单</span></div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v10M12 21a4 4 0 004-4V7a4 4 0 00-8 0v10a4 4 0 004 4z"/></svg></div><div class="lbl">人均陪伴时长</div></div><div class="num"><span id="ov-companion">—</span><span class="unit">分钟/人·日</span></div><div class="khint">工牌录了多少音：把大家传完的录音时长全加起来，÷ 顾问人数 ÷ 天数</div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v12H4zM9 9h6M9 12h4"/></svg></div><div class="lbl">人均学习时长</div></div><div class="num"><span id="ov-study">—</span><span class="unit">分钟/人·日</span></div><div class="khint">看报告花了多久：顾问打开 AI 分析报告的停留时间全加起来，÷ 顾问人数 ÷ 天数</div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.3 3-5.6 7-5.6s7 2.3 7 5.6"/></svg></div><div class="lbl">人均接待客人</div></div><div class="num"><span id="ov-customers">—</span><span class="unit">位/人·日</span></div><div class="khint">录音绑定一位客人 = 接待 1 次：接待总次数 ÷ 顾问人数 ÷ 天数</div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div><div class="lbl">人均接诊时长</div></div><div class="num"><span id="ov-intake">—</span><span class="unit">分钟/单</span></div><div class="khint">平均一单聊多久：每单接诊的录音时长加总，再对有录音的单取平均（这项不除人数和天数）</div></div>
     </div>
+    <div class="sub-note" style="margin-top:10px">＊“顾问人数”按系统里全部在岗顾问账号算（没在用工牌的账号也在分母里）；录音要上传完成才计入时长。</div>
     <div class="grid2">
       <div class="card"><h3 style="margin-bottom:12px">各门店经营概览</h3>
         <table class="tbl"><thead><tr><th>门店</th><th>在岗顾问</th><th>人均陪伴</th><th>人均学习</th><th>人均接待</th><th>人均接诊</th></tr></thead><tbody id="ov-stores"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody></table>
