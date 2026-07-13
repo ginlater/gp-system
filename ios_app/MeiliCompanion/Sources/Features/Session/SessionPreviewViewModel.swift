@@ -20,6 +20,9 @@ final class SessionPreviewViewModel: ObservableObject {
     @Published var submitting = false
     @Published var toast: String?
     @Published var navigateToReport: Int?
+    /// ★2026-07-13 老客评分维度:本单客型('new'新客/'returning'老客,老板拍板默认老客,顾问手动标)。
+    /// 新客走成交流程评分,老客走交付复盘流程。分析前改立即生效;已出报告的改完需重新分析。
+    @Published var customerType: String = "returning"
 
     private var loaded = false
 
@@ -55,6 +58,7 @@ final class SessionPreviewViewModel: ObservableObject {
                 customerName = p.customer?.name ?? customerName
                 serviceDate = p.serviceDate ?? serviceDate
                 phase = phaseOf(p.analysisStatus)
+                customerType = p.customerType ?? "returning"   // 后端 NULL=老客(默认)
                 progress = p.taskProgress
                 bound = p.bound ?? []
                 unbound = p.unbound ?? []
@@ -161,6 +165,25 @@ final class SessionPreviewViewModel: ObservableObject {
             } catch let err {
                 submitting = false
                 toast = (err as? APIError)?.errorDescription ?? "换绑失败"
+            }
+        }
+    }
+
+    /// ★2026-07-13 老客评分维度:切换本单客型(新客 ⇄ 老客)。乐观更新,失败回滚。
+    /// session 还没建(录音都没绑)或分析进行中时不可改。
+    func toggleCustomerType() {
+        guard sessionId > 0, !submitting, phase != .running else { return }
+        let old = customerType
+        let next = (old == "new") ? "returning" : "new"
+        customerType = next
+        Task {
+            do {
+                _ = try await ConsultantRepo.setCustomerType(sessionId: sessionId, type: next)
+                toast = next == "new" ? "已标为新客（按成交流程评分）"
+                                      : "已标为老客（按交付复盘流程评分）"
+            } catch let err {
+                customerType = old   // 回滚
+                toast = (err as? APIError)?.errorDescription ?? "客型修改失败"
             }
         }
     }

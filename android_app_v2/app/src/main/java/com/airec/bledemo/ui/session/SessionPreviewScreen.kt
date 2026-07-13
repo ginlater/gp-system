@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -160,6 +161,7 @@ fun SessionPreviewScreen(
                     onStartClick = { showConfirm = true },
                     onCancel = viewModel::cancelAnalysis,
                     onViewReport = { onAnalysisStarted(state.sessionId) },
+                    onToggleCustomerType = viewModel::toggleCustomerType,
                 )
             }
         }
@@ -195,8 +197,13 @@ fun SessionPreviewScreen(
             textContentColor = MeiliPalette.Ink2,
             title = { Text("确认开始分析？", style = MaterialTheme.typography.titleLarge) },
             text = {
+                // ★老客评分维度:确认框复述客型,避免标错了直接跑掉(跑完再改要重新分析)
                 Text(
-                    "本次将分析 ${state.bound.size} 段陪伴。",
+                    "本次将分析 ${state.bound.size} 段陪伴。\n\n" +
+                        if (state.customerType == "new")
+                            "客型：🆕 新客 —— 按「咨找需求 / 确认加大意愿 / 成交阶段」评分。"
+                        else
+                            "客型：🔁 老客 —— 按「破冰与对效 / 当天方案调整 / 方案重规划与返邀」评分。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
             },
@@ -251,6 +258,7 @@ private fun PreviewBody(
     onStartClick: () -> Unit,
     onCancel: () -> Unit,
     onViewReport: () -> Unit,
+    onToggleCustomerType: () -> Unit = {},
 ) {
     val phase = state.phase
     val running = phase == SessionPreviewViewModel.AnalysisPhase.Running
@@ -268,6 +276,38 @@ private fun PreviewBody(
                 style = MaterialTheme.typography.bodySmall,
                 color = MeiliPalette.Ink3,
             )
+        }
+
+        // ★2026-07-13 老客评分维度：分析前核对客型(默认老客)。新客走成交流程，老客走交付复盘流程。
+        // 分析中不给改(改了也不会重跑);session 还没建(没绑录音)时不显示。
+        if (state.sessionId > 0) {
+            val isNew = state.customerType == "new"
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "客型",
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MeiliPalette.Ink,
+                )
+                Spacer(Modifier.width(10.dp))
+                GhostButton(
+                    text = if (isNew) "🆕 新客" else "🔁 老客",
+                    size = MeiliButtonSize.Xs,
+                    enabled = !running,
+                    onClick = onToggleCustomerType,
+                )
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    text = if (isNew) "按成交流程评分" else "按交付复盘流程评分",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MeiliPalette.Ink3,
+                )
+            }
         }
 
         // 任务级进度（进度条 + 已等时长 + 正在跑/失败任务名）—— 非 pending 才展示

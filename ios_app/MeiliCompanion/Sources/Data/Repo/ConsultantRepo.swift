@@ -230,6 +230,10 @@ enum ConsultantRepo {
     static func cancelAnalysis(sessionId: Int) async throws -> SimpleResult {
         try await api.postJSON("api/consultant/session/cancel_analysis", body: CancelAnalysisBody(sessionId: sessionId))
     }
+    /// ★2026-07-13 老客评分维度:标注本单客型。评分维度在下次分析按它二选一。
+    static func setCustomerType(sessionId: Int, type: String) async throws -> SimpleResult {
+        try await api.postJSON("api/session/\(sessionId)/customer_type", body: CustomerTypeBody(type: type))
+    }
 
     static func sessionDeleteRequest(sessionId: Int, reason: String?) async throws -> SimpleResult {
         try await api.postJSON("api/session/\(sessionId)/delete-request", body: DeleteRequestBody(reason: reason))

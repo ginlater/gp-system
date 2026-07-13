@@ -264,6 +264,8 @@ data class SessionPreview(
     @Json(name = "session_id") val sessionId: Long? = null,
     @Json(name = "locked") val locked: Boolean? = null,
     @Json(name = "analysis_status") val analysisStatus: String? = null,
+    /** ★2026-07-13 老客评分维度：'new'=新客 / 'returning'=老客(默认)。评分维度按它二选一。 */
+    @Json(name = "customer_type") val customerType: String? = null,
     @Json(name = "task_progress") val taskProgress: TaskProgress? = null,
     @Json(name = "bound") val bound: List<PreviewRecording>? = null,
     @Json(name = "unbound") val unbound: List<PreviewRecording>? = null,

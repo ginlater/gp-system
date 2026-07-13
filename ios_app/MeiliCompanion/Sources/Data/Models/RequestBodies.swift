@@ -23,6 +23,8 @@ struct ChangeDateBody: Encodable { let date: String }
 struct PreviewRemoveBody: Encodable { let recordingId: Int }
 struct StartAnalysisBody: Encodable { let customerId: Int; var date: String? = nil }
 struct CancelAnalysisBody: Encodable { let sessionId: Int }
+/// ★2026-07-13 老客评分维度:'new'=新客 / 'returning'=老客(默认)。
+struct CustomerTypeBody: Encodable { let type: String }
 struct RerunBody: Encodable { var model: String? = nil }
 struct DeleteRequestBody: Encodable { var reason: String? = nil }
 struct EvaluateBody: Encodable { let comment: String }

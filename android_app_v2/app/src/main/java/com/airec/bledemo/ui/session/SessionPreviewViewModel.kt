@@ -71,6 +71,12 @@ class SessionPreviewViewModel(
         val locked: Boolean = false,
         val analysisStatus: String? = null,
         val phase: AnalysisPhase = AnalysisPhase.Idle,
+        /**
+         * ★2026-07-13 老客评分维度：本单客型（'new'=新客 / 'returning'=老客）。
+         * 老板拍板默认老客、顾问手动标。评分维度按它二选一：新客走成交流程，老客走交付复盘流程。
+         * 分析前改立即生效；已出报告的改完需重新分析才按新维度重出。
+         */
+        val customerType: String = "returning",
         /** 11 任务级进度（分桶计数 + 名称 + 已等时长 + 后端进度文案）。 */
         val progress: TaskProgress? = null,
         /** 已绑定（本次将分析）的片段。 */
@@ -220,6 +226,7 @@ class SessionPreviewViewModel(
                 locked = p.locked == true,
                 analysisStatus = status,
                 phase = phase,
+                customerType = p.customerType ?: "returning",   // 后端 NULL=老客(默认)
                 progress = p.taskProgress,
                 bound = p.bound.orEmpty(),
                 unbound = p.unbound.orEmpty(),
@@ -411,6 +418,31 @@ class SessionPreviewViewModel(
     // ───────────── 触发 / 取消分析 ─────────────
 
     /** 二次确认后：锁定接诊包 + 开始分析；成功跳报告。被前置条件挡住时回填可读原因。 */
+    /**
+     * ★2026-07-13 老客评分维度：切换本单客型（新客 ⇄ 老客）。
+     * 乐观更新本地状态再发请求，失败回滚并提示——顾问点一下要立刻看到变化。
+     * session 还没建（sessionId<=0，录音都还没绑）时不允许切，UI 那边也会隐藏这一行。
+     */
+    fun toggleCustomerType() {
+        val s = _state.value
+        val sid = s.sessionId
+        if (sid <= 0 || s.submitting || s.phase == AnalysisPhase.Running) return
+        val old = s.customerType
+        val next = if (old == "new") "returning" else "new"
+        _state.update { it.copy(customerType = next) }
+        viewModelScope.launch {
+            when (val r = repo.setCustomerType(sid, next)) {
+                is ApiResult.Success ->
+                    _state.update {
+                        it.copy(toast = if (next == "new") "已标为新客（按成交流程评分）"
+                                        else "已标为老客（按交付复盘流程评分）")
+                    }
+                is ApiResult.Failure ->
+                    _state.update { it.copy(customerType = old, toast = r.message) }   // 回滚
+            }
+        }
+    }
+
     fun startAnalysis() {
         val s = _state.value
         val cid = s.customerId ?: return

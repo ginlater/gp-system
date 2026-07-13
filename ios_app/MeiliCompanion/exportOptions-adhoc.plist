@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>method</key><string>ad-hoc</string>
+  <key>teamID</key><string>3JJ9M9T6W3</string>
+  <key>destination</key><string>export</string>
+  <key>manifest</key>
+  <dict>
+    <key>appURL</key><string>https://gp.aibeautyfulwomen.com/download/ios/MeiliCompanion.ipa</string>
+    <key>displayImageURL</key><string>https://gp.aibeautyfulwomen.com/download/ios/icon57.png</string>
+    <key>fullSizeImageURL</key><string>https://gp.aibeautyfulwomen.com/download/ios/icon512.png</string>
+  </dict>
+</dict>
+</plist>

@@ -1,0 +1,44 @@
+{
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/Data/Auth/AuthManager.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AuthManager.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AuthManager.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AuthManager.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AuthManager.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AuthManager.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/DesignSystem/Components/Collapsible.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Collapsible.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Collapsible.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Collapsible.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Collapsible.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Collapsible.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/DesignSystem/Components/CompanionButton.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/CompanionButton.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/CompanionButton.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/CompanionButton.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/CompanionButton.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/CompanionButton.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/Features/Bind/BindCustomerView.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerView.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerView.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerView.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerView.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerView.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/Features/Bind/BindCustomerViewModel.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerViewModel.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerViewModel.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerViewModel.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerViewModel.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/BindCustomerViewModel.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/Features/Report/AudioPlayer.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AudioPlayer.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AudioPlayer.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AudioPlayer.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AudioPlayer.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/AudioPlayer.swiftdeps"
+  }
+}

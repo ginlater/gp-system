@@ -30,6 +30,9 @@ final class AudioPlayer: ObservableObject {
             try? AVAudioSession.sharedInstance().setActive(true)
         }
         let p = AVPlayer(playerItem: AVPlayerItem(url: url))
+        // 试听要"早出声"：关掉 AVPlayer 的防卡顿评估(默认会先估"整个文件能否不卡地放完"，
+        // 网慢/文件大时迟迟不开播)，改为缓到几秒就立即播；中途真跟不上再短暂停顿续播。
+        p.automaticallyWaitsToMinimizeStalling = false
         player = p
         observer = p.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main
@@ -44,7 +47,7 @@ final class AudioPlayer: ObservableObject {
 
     func toggle() {
         guard let player else { return }
-        if playing { player.pause() } else { player.play() }
+        if playing { player.pause() } else { player.playImmediately(atRate: 1.0) }  // 不等评估,立刻开播
         playing.toggle()
     }
 

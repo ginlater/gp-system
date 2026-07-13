@@ -1,0 +1,44 @@
+{
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/Data/Models/Models.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Models.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Models.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Models.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Models.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/Models.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/DesignSystem/Components/MeiliTopBar.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/MeiliTopBar.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/MeiliTopBar.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/MeiliTopBar.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/MeiliTopBar.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/MeiliTopBar.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/DesignSystem/NavSwipeBack.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/NavSwipeBack.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/NavSwipeBack.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/NavSwipeBack.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/NavSwipeBack.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/NavSwipeBack.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/Recording/OggOpusWriter.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/OggOpusWriter.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/OggOpusWriter.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/OggOpusWriter.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/OggOpusWriter.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/OggOpusWriter.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/Recording/PenBluetoothWatch.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenBluetoothWatch.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenBluetoothWatch.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenBluetoothWatch.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenBluetoothWatch.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenBluetoothWatch.swiftdeps"
+  },
+  "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/Sources/Recording/PenController.swift" : {
+    "const-values" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenController.swiftconstvalues",
+    "dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenController.d",
+    "diagnostics" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenController.dia",
+    "object" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenController.o",
+    "swift-dependencies" : "/Users/ginlater/code/persist创业/sm身美/android/gp-system/ios_app/MeiliCompanion/build_verify/Build/Intermediates.noindex/MeiliCompanion.build/Debug-iphoneos/MeiliCompanion.build/Objects-normal/arm64/PenController.swiftdeps"
+  }
+}

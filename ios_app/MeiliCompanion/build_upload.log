@@ -1,0 +1,9 @@
+Running altool at path '/Applications/Xcode.app/Contents/SharedFrameworks/ContentDelivery.framework/Resources/altool'...
+
+2026-07-08 08:25:12.930  INFO: [ContentDelivery.Uploader.AF2C30340] 
+==========================================
+UPLOAD SUCCEEDED with no errors
+Delivery UUID: 0b4dc2b7-48c7-49b3-8ce5-cc33c1bbf18e
+Transferred 3385589 bytes in 0.103 seconds (32.9MB/s, 263.305Mbps)
+==========================================
+No errors uploading archive at 'build_export/MeiliCompanion.ipa'.

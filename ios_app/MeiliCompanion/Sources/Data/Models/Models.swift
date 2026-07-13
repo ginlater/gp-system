@@ -228,6 +228,8 @@ struct SessionPreview: Decodable {
     var sessionId: Int?
     var locked: Bool?
     var analysisStatus: String?
+    /// ★2026-07-13 老客评分维度:'new'=新客 / 'returning'=老客(默认)。评分维度按它二选一。
+    var customerType: String?
     var taskProgress: TaskProgress?
     var bound: [PreviewRecording]?
     var unbound: [PreviewRecording]?

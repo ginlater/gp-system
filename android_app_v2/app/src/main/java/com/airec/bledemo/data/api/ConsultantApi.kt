@@ -264,6 +264,13 @@ interface ConsultantApi {
         @Body body: CancelAnalysisBody,
     ): Response<SimpleResult>
 
+    /** ★2026-07-13 老客评分维度：标注本单客型(新客/老客)，评分维度按它二选一。 */
+    @POST("api/session/{sid}/customer_type")
+    suspend fun setCustomerType(
+        @Path("sid") sid: Long,
+        @Body body: CustomerTypeBody,
+    ): Response<SimpleResult>
+
     // ───────────── 报告 / 任务重跑 ─────────────
 
     @GET("api/session/{sid}")

@@ -80,6 +80,11 @@ data class CancelAnalysisBody(
     @Json(name = "session_id") val sessionId: Long,
 )
 
+/** ★2026-07-13 POST /api/session/<sid>/customer_type：'new'=新客 / 'returning'=老客(默认)。 */
+data class CustomerTypeBody(
+    @Json(name = "type") val type: String,
+)
+
 /** POST /api/session/<sid>/task/<tid>/rerun & /tasks/fill-missing（model 可空）。 */
 data class RerunBody(
     @Json(name = "model") val model: String? = null,

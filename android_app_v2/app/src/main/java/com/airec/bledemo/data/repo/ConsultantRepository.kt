@@ -239,6 +239,10 @@ class ConsultantRepository(
     suspend fun cancelAnalysis(sessionId: Long): ApiResult<SimpleResult> =
         call { api.cancelAnalysis(CancelAnalysisBody(sessionId)) }
 
+    /** ★2026-07-13 老客评分维度：标注本单客型('new'/'returning')。评分维度在下次分析按它二选一。 */
+    suspend fun setCustomerType(sessionId: Long, type: String): ApiResult<SimpleResult> =
+        call { api.setCustomerType(sessionId, CustomerTypeBody(type)) }
+
     // ───────────── 报告 / 任务 ─────────────
 
     suspend fun session(sid: Long): ApiResult<SessionDetail> = call { api.session(sid) }

@@ -80,6 +80,20 @@ struct SessionPreviewView: View {
                 }
                 .frame(height: 7)
             }
+            // ★2026-07-13 老客评分维度:分析前核对客型(默认老客)。分析中不给改(改了也不会重跑)。
+            if vm.sessionId > 0 {
+                Spacer().frame(height: 11)
+                HStack(spacing: 9) {
+                    Text("客型").font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+                    MeiliButton(vm.customerType == "new" ? "🆕 新客" : "🔁 老客",
+                                kind: .ghost, size: .xs, enabled: vm.phase != .running) {
+                        vm.toggleCustomerType()
+                    }
+                    Text(vm.customerType == "new" ? "按成交流程评分" : "按交付复盘流程评分")
+                        .font(.sz(11)).foregroundStyle(MeiliColor.ink3)
+                    Spacer(minLength: 0)
+                }
+            }
         }
     }
 
@@ -204,7 +218,11 @@ struct SessionPreviewView: View {
             Button("确认并开始分析") { vm.startAnalysis() }
         } message: {
             // 李雪雪案帮凶:原来不显示是谁的包,测试/多开时容易替别的顾客确认了分析
-            Text("将分析「\(vm.customerName)」\(vm.serviceDate.isEmpty ? "" : " \(vm.serviceDate) ")的 \(vm.bound.count) 段陪伴，分析会锁定该接诊包直到完成。")
+            // ★老客评分维度:复述客型,标错了直接跑掉的话要重新分析才能改回来
+            Text("将分析「\(vm.customerName)」\(vm.serviceDate.isEmpty ? "" : " \(vm.serviceDate) ")的 \(vm.bound.count) 段陪伴，分析会锁定该接诊包直到完成。\n\n"
+                 + (vm.customerType == "new"
+                    ? "客型：🆕 新客 —— 按「咨找需求 / 确认加大意愿 / 成交阶段」评分。"
+                    : "客型：🔁 老客 —— 按「破冰与对效 / 当天方案调整 / 方案重规划与返邀」评分。"))
         }
     }
 
