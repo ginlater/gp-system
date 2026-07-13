@@ -12,6 +12,17 @@ final class PendingViewModel: ObservableObject {
     let pageSize = 5
     private var loaded = false
 
+    // ★2.2.1 防"删了又冒出来"(对齐安卓 PendingViewModel.kt):点删除的瞬间若已有一个刷新请求
+    //   在路上(它拿的是删除前的数据),回来就会把删掉的那行【又盖回列表】——顾问再点删除就打到
+    //   已不存在的 id,报"录音不存在"。记下刚删的 id,15 秒内任何列表更新都把它们过滤掉。
+    private var recentlyDeleted: [Int: Date] = [:]
+
+    private func filterDeleted(_ list: [PendingRecording]) -> [PendingRecording] {
+        recentlyDeleted = recentlyDeleted.filter { Date().timeIntervalSince($0.value) < 15 }
+        guard !recentlyDeleted.isEmpty else { return list }
+        return list.filter { recentlyDeleted[$0.id] == nil }
+    }
+
     var totalPages: Int { recordings.isEmpty ? 1 : (recordings.count - 1) / pageSize + 1 }
     var pagedRecordings: [PendingRecording] {
         let p = min(max(page, 1), totalPages)
@@ -27,7 +38,7 @@ final class PendingViewModel: ObservableObject {
             do {
                 let recs = try await ConsultantRepo.pending()
                 loading = false
-                recordings = recs.sorted { sortKey($0) > sortKey($1) }   // 录制时间倒序
+                recordings = filterDeleted(recs).sorted { sortKey($0) > sortKey($1) }   // 录制时间倒序
                 page = min(page, totalPages)
             } catch let err {
                 loading = false
@@ -125,15 +136,22 @@ final class PendingViewModel: ObservableObject {
         // D7:正在录的那个机身文件不能出现在列表(导入它=和实时流双传,还白耗几分钟下载)
         let cur = PenController.shared.currentRecordingPenFile
         let candidates = files.filter { $0.name != cur }
-        guard let preview = try? await ConsultantRepo.penSyncPreview(candidates.map { ($0.name, $0.recordedAt) }) else {
-            // D8:预检失败(弱网)绝不能当"全是新的"展示——那会引导用户全选重复导入
-            syncPreviewFailed = true
-            syncLoading = false
-            return
-        }
+        // ★2.2.1(#6,对齐安卓2.1.9):预检按每批30分批——几十段一次性一个请求,弱网必超时,
+        //   顾问看到"网络异常"。任一批失败整体判失败给重试(不半渲染,防引导重复导入)。
         var statusByName: [String: String] = [:]
-        for i in preview.items ?? [] {
-            if let n = i.name { statusByName[n] = i.status ?? "new" }
+        var idx = 0
+        while idx < candidates.count {
+            let batch = Array(candidates[idx ..< min(idx + 30, candidates.count)])
+            guard let preview = try? await ConsultantRepo.penSyncPreview(batch.map { ($0.name, $0.recordedAt) }) else {
+                // D8:预检失败(弱网)绝不能当"全是新的"展示——那会引导用户全选重复导入
+                syncPreviewFailed = true
+                syncLoading = false
+                return
+            }
+            for i in preview.items ?? [] {
+                if let n = i.name { statusByName[n] = i.status ?? "new" }
+            }
+            idx += 30
         }
         syncRows = candidates
             .filter { (statusByName[$0.name] ?? "new") == "new" }
@@ -211,22 +229,38 @@ final class PendingViewModel: ObservableObject {
     }
 
     /// 删除待整理片段:后端裁决——≤5分钟直接删(deleted=true),>5分钟生成审批单(2026-07-04 用户拍板)。
+    /// ★2.2.1:真删掉了 → 记入"刚删"名单(15s 内轮询不许刷回来)+ 取消这段还在传/在搬运的任务
+    ///   (不取消的话后台 URLSession 传完,手机麦段无 pen_file 墓碑兜不住 → 删掉的录音复活)。
     func requestDelete(_ rid: Int) {
         Task {
             do {
                 let r = try await ConsultantRepo.requestDeleteRecording(rid)
                 if let e = r.error {
-                    RecordingManager.shared.toast = e
+                    if e.contains("不存在") { removeDeletedRow(rid) }
+                    else { RecordingManager.shared.toast = e }
                 } else if r.deleted == true {
+                    recentlyDeleted[rid] = Date()
+                    RecordingManager.shared.cancelTasks(placeholderId: rid)
+                    recordings.removeAll { $0.id == rid }
                     RecordingManager.shared.toast = "已删除"
+                    load()
                 } else {
                     RecordingManager.shared.toast = "已提交删除申请，等待管理员审批"
+                    load()
                 }
-                load()
             } catch let err {
-                RecordingManager.shared.toast = (err as? APIError)?.errorDescription ?? "删除失败，请重试"
+                let msg = (err as? APIError)?.errorDescription ?? ""
+                // 服务端说"录音不存在"=这段其实早删掉了(列表是旧的)→ 不吓唬顾问,静默移除该行
+                if msg.contains("不存在") { removeDeletedRow(rid) }
+                else { RecordingManager.shared.toast = msg.isEmpty ? "删除失败，请重试" : msg }
             }
         }
+    }
+
+    private func removeDeletedRow(_ rid: Int) {
+        recentlyDeleted[rid] = Date()
+        recordings.removeAll { $0.id == rid }
+        load()
     }
 
     /// 导入选中:先逐段建「处理中」占位(能看到在同步谁),再交给 PenController 后台逐个下载+上传。
@@ -271,6 +305,38 @@ extension PendingRecording {
         let day = recordedAt.map { String($0.prefix(10)) } ?? serviceDate
         guard let day, !day.isEmpty else { return false }
         return day < DateHelper.today()
+    }
+
+    /// ★2.2.1(对齐安卓 syncingWhenLabel):「同步中」占位行的时间标签——
+    /// "2026-07-12 · 15:40 – 15:45 · 4分23秒"。占位建的时候就带了开始时刻和时长,音频虽然
+    /// 还在路上,顾问已经能靠时段认出是哪位顾客并直接绑定。缺哪样省哪样,拿不到时间返回 nil。
+    var syncingWhenLabel: String? {
+        guard let ra = recordedAt, ra.count >= 16 else { return nil }
+        let day = String(ra.prefix(10))
+        let startHm = String(ra.dropFirst(11).prefix(5))
+        let durLabel = durationLabel?.nilIfBlank
+        var durSec = 0
+        if let l = durLabel {
+            if let m = l.range(of: #"(\d+)分(\d+)秒"#, options: .regularExpression) {
+                let parts = l[m].split(whereSeparator: { !$0.isNumber })
+                if parts.count == 2 { durSec = (Int(parts[0]) ?? 0) * 60 + (Int(parts[1]) ?? 0) }
+            } else if let m = l.range(of: #"(\d+)秒"#, options: .regularExpression) {
+                durSec = Int(l[m].dropLast(1)) ?? 0
+            }
+        }
+        var range = startHm
+        if durSec > 0 {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyy-MM-dd HH:mm:ss"
+            if let st = f.date(from: ra) {
+                let hf = DateFormatter()
+                hf.locale = Locale(identifier: "en_US_POSIX")
+                hf.dateFormat = "HH:mm"
+                range += " – " + hf.string(from: st.addingTimeInterval(TimeInterval(durSec)))
+            }
+        }
+        return [day, range, durLabel].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     /// 待整理片段状态 → (文案, pill)。

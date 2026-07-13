@@ -109,7 +109,9 @@ struct ReceptionView: View {
                     pendingPlayButton(rec)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(rec.recordedAt?.nilIfBlank ?? "陪伴片段").font(MeiliFont.body)
+                    // ★2.2.1:「同步中」行显示"日期 · 时段 · 时长"(占位已带时长),顾问靠时段认段绑人
+                    Text((rec.isProcessing ? rec.syncingWhenLabel : nil)
+                         ?? rec.recordedAt?.nilIfBlank ?? "陪伴片段").font(MeiliFont.body)
                         .foregroundStyle(stale ? MeiliColor.roseText : MeiliColor.ink).lineLimit(1)
                     HStack(spacing: 6) {
                         if let d = rec.durationLabel?.nilIfBlank {

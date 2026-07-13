@@ -50,9 +50,12 @@ enum ConsultantRepo {
 
     /// 录完立即占位:未归档列表几秒内冒「处理中」(补下载再久也有行可盯);上传时带 placeholder_id 回填同一行。
     /// source=phone 必传(手机麦),否则后端按录音笔权限校验会误拦只开手机权限的顾问。
-    static func placeholder(recordedAt: String?, source: String?, penFile: String? = nil) async throws -> PlaceholderResult {
+    /// duration_sec(2.2.1 对齐):>0 时服务端落 duration_label →「同步中」行显示时段·时长,顾问靠它认段绑人。
+    static func placeholder(recordedAt: String?, source: String?, penFile: String? = nil,
+                            durationSec: Int? = nil) async throws -> PlaceholderResult {
         try await api.postForm("api/consultant/placeholder",
-                               fields: ["recorded_at": recordedAt, "source": source, "pen_file": penFile])
+                               fields: ["recorded_at": recordedAt, "source": source, "pen_file": penFile,
+                                        "duration_sec": durationSec.flatMap { $0 > 0 ? String($0) : nil }])
     }
 
     /// 上传失败/内容丢失时清掉占位,不留「处理中」僵尸行。

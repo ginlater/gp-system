@@ -42,7 +42,10 @@ final class RecordingManager: ObservableObject {
             else { RecordKeepAlive.release("record") }
         }
     }
-    @Published var source: CompanionSource = .phone
+    // ★2.2.1 对齐(安卓478a331):默认值 .phone→.pen。手机麦与 App 同进程——进程死了手机录音必然
+    //   一起死;重启后"还在录"的只可能是笔。默认 .phone 会在镜像回调(cmd9)到达前的窗口里让用户
+    //   误开手机麦双录/点「结束」停错设备。手机路径由用户 setSource 显式选择,不依赖默认值。
+    @Published var source: CompanionSource = .pen
     /// 高频计时专用小对象(审计 P7):只有计时文本观察它,每秒 tick 不再让 MainShell 全壳重绘。
     @MainActor final class RecordTicker: ObservableObject {
         @Published var elapsed = 0
@@ -200,10 +203,11 @@ final class RecordingManager: ObservableObject {
         guard source == .pen, state == .recording || state == .starting || state == .paused else { return }
         if let p = pauseBeganAt { pausedAccum += Date().timeIntervalSince(p); pauseBeganAt = nil }
         stopTimer()
+        let dur = elapsed
         elapsed = 0
         state = .uploading
         toast = "陪伴笔已断开；重连后将自动补取这段完整内容"
-        Task { await ensurePlaceholder() }   // 断连收尾也要有「处理中」行可盯
+        Task { await ensurePlaceholder(durationSec: dur) }   // 断连收尾也要有「处理中」行可盯
         PenController.shared.endRecordingOnDisconnect()
     }
 
@@ -304,9 +308,10 @@ final class RecordingManager: ObservableObject {
         guard source == .pen, isLive else { return }
         hapticRecordStop()
         stopTimer()
+        let dur = elapsed
         elapsed = 0
         state = .uploading
-        Task { await ensurePlaceholder() }   // 立即占位:未归档几秒内冒「处理中」,补下载再久也有行可盯
+        Task { await ensurePlaceholder(durationSec: dur) }   // 立即占位:未归档几秒内冒「处理中」,补下载再久也有行可盯
     }
 
     /// PenController 回调:本段流不完整/疑截断,转入后台从笔机身补取全段(可能要几分钟,
@@ -338,14 +343,14 @@ final class RecordingManager: ObservableObject {
         switch source {
         case .phone:
             state = .uploading
-            Task { await ensurePlaceholder() }
+            Task { await ensurePlaceholder(durationSec: dur) }
             phone.stop { [weak self] fileURL in
                 guard let self else { return }
                 Task { await self.upload(fileURL, durationSec: dur, recordedAt: at) }
             }
         case .pen:
             state = .uploading
-            Task { await ensurePlaceholder() }
+            Task { await ensurePlaceholder(durationSec: dur) }
             PenController.shared.stopRecord()
             // 兜底:5s 没等到停止确认(cmd=3=0)→ 先问笔真停没,再决定重发停止/强制收尾
             // (复查 B6:stopRecord 丢包时笔其实还在录,直接按停收尾会劈成部分件+复活镜像段)
@@ -372,7 +377,9 @@ final class RecordingManager: ObservableObject {
         guard syncPlaceholders[f.name] == nil else { return }
         syncPlaceholders[f.name] = -1   // 占坑
         // D6:占位带机身文件名 → 服务端预检可精确屏蔽"正在传的段",不再赌±90s时刻吻合
-        if let id = try? await ConsultantRepo.placeholder(recordedAt: f.recordedAt, source: nil, penFile: f.name).id {
+        // duration_sec(2.2.1):机身文件列表本来就有时长 →「同步中」行直接显示时段·时长
+        if let id = try? await ConsultantRepo.placeholder(recordedAt: f.recordedAt, source: nil,
+                                                          penFile: f.name, durationSec: f.durationSec).id {
             syncPlaceholders[f.name] = id
         } else {
             syncPlaceholders.removeValue(forKey: f.name)
@@ -391,6 +398,19 @@ final class RecordingManager: ObservableObject {
                          contentType: "audio/ogg", penFile: penFile, sn: sn,
                          usePlaceholder: false, explicitPlaceholderId: pid, promptBind: false)
             if remaining == 0 { toast = "陪伴笔同步完成，请到「待整理」绑定顾客" }
+        }
+    }
+
+    /// ★2.2.1 对齐:顾问删掉"同步中"的行 → 取消这段一切在途任务(对齐安卓 cancelPenTaskByPlaceholder)。
+    /// 覆盖两条腿:① UploadQueue 里待传/在传的(手机麦段无 pen_file,墓碑兜不住,必须掐);
+    /// ② 还没从笔里搬完的同步下载(掐了省蓝牙省流量,墓碑按 pen_file 精确兜底做双保险)。
+    func cancelTasks(placeholderId: Int) {
+        guard placeholderId > 0 else { return }
+        UploadQueue.shared.cancel(placeholderId: placeholderId)
+        if let name = syncPlaceholders.first(where: { $0.value == placeholderId })?.key {
+            syncPlaceholders.removeValue(forKey: name)
+            persistPlaceholders()
+            PenController.shared.cancelSync(fileName: name)
         }
     }
 
@@ -441,11 +461,13 @@ final class RecordingManager: ObservableObject {
 
     private var lastPromptedRid = 0   // bind-before-upload:占位已跳过绑定页,上传回填同行不二次弹
 
-    private func ensurePlaceholder() async {
+    /// durationSec(2.2.1 对齐):>0 时「同步中」行能显示时段·时长——实时录音传会话时长。
+    private func ensurePlaceholder(durationSec: Int = 0) async {
         guard !segmentPlaceholderMade else { return }
         segmentPlaceholderMade = true
         if let id = try? await ConsultantRepo.placeholder(
-            recordedAt: recordedAt, source: source == .phone ? "phone" : nil).id {
+            recordedAt: recordedAt, source: source == .phone ? "phone" : nil,
+            durationSec: durationSec).id {
             placeholderIds.append(id)
             persistPlaceholders()
             // bind-before-upload(对齐安卓):占位一到手立刻跳绑定页,不等上传/补取传完——
@@ -484,8 +506,19 @@ final class RecordingManager: ObservableObject {
         UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
     }
 
-    /// 单段录音上限:录满 90 分钟自动结束并保存上传(对齐 android onPenAutoStopped)。
+    /// 连续录音上限:录满 90 分钟自动结束并保存上传(对齐 android onPenAutoStopped)。
+    /// ★2.2.1:算的是【整条连续录音链】——本段墙钟 + 前序段(笔60分钟自动切段)总时长。
     private static let maxRecordSec = 90 * 60
+
+    /// ★2.2.1(对齐安卓2.1.7 chainRecSec):连续录音链前序段总秒数(不含当前段)。
+    /// 接管"笔自己在录"的段后由 PenController 回溯机身文件列表得出;App 点开始=新接诊,清零。
+    private var chainPriorSec = 0
+
+    /// PenController 回溯出链长(主线程回调)。下一拍计时 tick(≤1s)即按 elapsed+chain 裁决。
+    func penChainComputed(_ sec: Int) {
+        guard source == .pen, isLive else { return }
+        chainPriorSec = sec
+    }
 
     // 计时墙钟化(审计 B4):挂起期间 Timer 停走,elapsed 若靠 +1 累加会失真、90分钟自动停失效。
     // 改为"开始时刻墙钟差值 - 暂停累计",每次 tick(含挂起后被唤醒的补跳)都得到真实值。
@@ -498,15 +531,20 @@ final class RecordingManager: ObservableObject {
         segStartAt = Date()
         pausedAccum = 0
         pauseBeganAt = nil
+        chainPriorSec = 0   // 新一段从0算;接管段的链长稍后由 penChainComputed 回填
         hapticRecordStart()
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.state == .recording, let start = self.segStartAt else { return }
                 self.elapsed = max(0, Int(Date().timeIntervalSince(start) - self.pausedAccum))
-                if self.elapsed >= Self.maxRecordSec {
+                // ★2.2.1:按【整条连续录音链】裁决——只看当前段的话,笔60分钟自动切段永远够不到90分钟
+                if self.elapsed + self.chainPriorSec >= Self.maxRecordSec {
+                    let chained = self.chainPriorSec > 0
                     self.stop()   // 正常收尾:保存+上传,与手动停一致
-                    self.toast = "已录满 90 分钟，已自动保存并结束这一段。要继续请点「开启陪伴」💛"
+                    self.toast = chained
+                        ? "陪伴笔连续录音累计已满 90 分钟（含先前自动切的段），已自动保存并结束。要继续请点「开启陪伴」💛"
+                        : "已录满 90 分钟，已自动保存并结束这一段。要继续请点「开启陪伴」💛"
                 }
             }
         }

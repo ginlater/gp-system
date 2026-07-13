@@ -70,6 +70,8 @@ struct UploadResult: Decodable {
     var id: Int?
     var ossKey: String?
     var deduped: Bool?
+    var penExact: Bool?     // deduped 时:是否按机身文件名精确匹配(否=按录音时刻认亲,可能认错)
+    var discarded: Bool?    // 命中墓碑被丢弃(顾问删过该段),未入库
     var error: String?
 }
 

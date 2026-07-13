@@ -31,6 +31,9 @@ final class UploadQueue: NSObject, ObservableObject {
     @Published private(set) var pendingCount = 0
     @Published private(set) var failedCount = 0
 
+    /// ★2.2.1:队列里还没传完的机身文件名(笔上文件清理"永不碰在传的段"闸门用)。
+    var pendingPenFiles: [String] { items.compactMap(\.penFile) }
+
     /// 上传成功回调(recordingId, 是否弹绑定页)。
     var onUploaded: ((Int?, Bool) -> Void)?
     /// 首次失败回调(提示"已加入重传队列")。
@@ -241,6 +244,27 @@ final class UploadQueue: NSObject, ObservableObject {
         task.resume()
     }
 
+    /// ★2.2.1 对齐:顾问删掉了"同步中"的那段 → 把这段还在传/待传的任务整个扔掉。
+    ///
+    /// 病案(安卓原样剧本):删除只删了服务器上的占位,后台 URLSession 毫不知情继续把音频传完;
+    /// 服务端墓碑只按 pen_file 精确兜底,【手机麦录音没有 pen_file】→ 当成新录音入库 →
+    /// 删掉的录音复活。这里主动取消:不传了(省流量、省转写费),服务端墓碑做双保险。
+    func cancel(placeholderId: Int) {
+        guard placeholderId > 0 else { return }
+        let victims = items.filter { $0.placeholderId == placeholderId }
+        guard !victims.isEmpty else { return }
+        let ids = Set(victims.map(\.id))
+        // 在传任务不持引用(后台会话被杀恢复后尤其),按 taskDescription(=item.id)认领后取消
+        session.getAllTasks { tasks in
+            for t in tasks where t.taskDescription.map({ ids.contains($0) }) == true {
+                t.cancel()
+            }
+        }
+        inflight = inflight.filter { !ids.contains($0.value) }
+        for v in victims { remove(v, deleteFiles: true) }
+        PenLog.d("★顾问已删除该段→取消上传任务(占位\(placeholderId)) \(victims.count)个")
+    }
+
     private func remove(_ item: Item, deleteFiles: Bool) {
         items.removeAll { $0.id == item.id }
         if deleteFiles {
@@ -266,10 +290,31 @@ final class UploadQueue: NSObject, ObservableObject {
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let result = try? decoder.decode(UploadResult.self, from: data)
-            PenLog.d("✅ 上传成功 \(item.audioFile) rid=\(result?.id ?? -1)")
+            let rid = result?.id ?? -1
+            // 2.2.1 对齐:下面俩=服务端"收下了请求但没存这份音频"。任务算完成(本地不再重试),
+            // 但绝不能把机身文件记入"已完整上传"可删名单——那名单是删机身原件的唯一依据。
+            let discarded = result?.discarded ?? false
+            // 老服务端的 deduped 响应没有 pen_exact 字段 → 按"非精确"处理(宁可不记可删)
+            let dedupFuzzy = (result?.deduped ?? false) && !(result?.penExact ?? false)
+            if discarded {
+                PenLog.d("★服务端墓碑丢弃(顾问已删该段)→任务完成但不算上传成功 \(item.audioFile)")
+            } else if dedupFuzzy {
+                PenLog.d("★服务端按时刻去重(非文件名精确)→任务完成但不记可删 \(item.audioFile)")
+            } else {
+                PenLog.d("✅ 上传成功 \(item.audioFile) rid=\(rid)")
+            }
+            if rid > 0, !discarded, !dedupFuzzy, item.truncated != true, let pf = item.penFile {
+                PenFileLedger.markFullyUploaded(pf)
+            }
             let prompt = item.promptBind
             remove(item, deleteFiles: true)
-            onUploaded?(result?.id, prompt)
+            // ★2.2.1:队列清空后触发一次笔上清理——刚完整传上去的段按规则①从笔里删,笔不越攒越满
+            if items.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+                    PenController.shared.triggerCleanup()
+                }
+            }
+            if !discarded { onUploaded?(result?.id, prompt) }
             return
         }
 

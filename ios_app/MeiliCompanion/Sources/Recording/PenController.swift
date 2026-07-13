@@ -33,6 +33,8 @@ final class PenController {
     func forgetAndDisconnect() {}
     func fetchFileList(_ completion: @escaping ([PenFile]) -> Void) { completion([]) }
     func startSync(files: [PenFile]) {}
+    func cancelSync(fileName: String) {}
+    func triggerCleanup(attempt: Int = 0) {}
     var isSyncBusy: Bool { false }
     func appDidBecomeActive() {}
     func appDidEnterBackground() {}
@@ -154,6 +156,9 @@ final class PenController: NSObject, WindBleDelegate {
     private var fileListEntries: [PenFile] = []
     private var fileListCompletion: (([PenFile]) -> Void)?
     private var fileListTimeout: DispatchWorkItem?
+    // ★2.2.1(#7):列表读取健壮性——重发/进度感知超时,治"文件多/链路差时清单静默截断"
+    private var fileListResends = 0          // 无任何分包时的重发次数(≤2)
+    private var fileListStartAt: Date?       // 本轮查询开始时刻(90s 封顶)
 
     func setup() {
         pen.delegate = self
@@ -558,7 +563,10 @@ final class PenController: NSObject, WindBleDelegate {
 
     // ── 「从陪伴笔同步」──
 
-    /// 拉取机身文件列表(cmd=4,10s 超时返回已收到的)。回调在主线程。
+    /// 拉取机身文件列表(cmd=4)。回调在主线程。
+    /// ★2.2.1(#7,对齐安卓2.1.9/2.2.1):原来单发+10s硬超时"收到多少算多少"——文件多/链路差时
+    /// 清单静默截断,顾问以为笔里只有这些。现在:5s 无任何分包重发(≤2次);有分包后每个新分包
+    /// 续期 15s(进度感知,没收完就一直等);全程 90s 封顶;收尾按文件名去重(重发会产生重复条目)。
     func fetchFileList(_ completion: @escaping ([PenFile]) -> Void) {
         q.async {
             guard self.linkUp else { DispatchQueue.main.async { completion([]) }; return }
@@ -569,19 +577,45 @@ final class PenController: NSObject, WindBleDelegate {
             }
             self.fileListEntries = []
             self.fileListCompletion = completion
+            self.fileListResends = 0
+            self.fileListStartAt = Date()
             self.pen.getRecordFileList()
-            self.fileListTimeout?.cancel()
-            let w = DispatchWorkItem { [weak self] in self?.finishFileList() }
-            self.fileListTimeout = w
-            self.q.asyncAfter(deadline: .now() + 10, execute: w)
+            self.scheduleFileListWatch(5)
         }
+    }
+
+    /// 在 q 上:重置文件列表看门狗。
+    private func scheduleFileListWatch(_ delay: TimeInterval) {
+        fileListTimeout?.cancel()
+        let w = DispatchWorkItem { [weak self] in self?.fileListWatchFired() }
+        fileListTimeout = w
+        q.asyncAfter(deadline: .now() + delay, execute: w)
+    }
+
+    /// 在 q 上:看门狗到点——无分包则重发,有分包但卡住则按已收的收尾。
+    private func fileListWatchFired() {
+        guard fileListCompletion != nil else { return }
+        if fileListEntries.isEmpty, fileListResends < 2 {
+            fileListResends += 1
+            PenLog.d("★cmd4 5s无任何分包 → 重发第\(fileListResends)次")
+            pen.getRecordFileList()
+            scheduleFileListWatch(5)
+            return
+        }
+        if !fileListEntries.isEmpty {
+            PenLog.d("★cmd4 15s无新分包(已收\(fileListEntries.count)条) → 按已收的收尾")
+        }
+        finishFileList()
     }
 
     private func finishFileList() {
         guard let cb = fileListCompletion else { return }
         fileListCompletion = nil
         fileListTimeout?.cancel()
-        let entries = fileListEntries
+        fileListStartAt = nil
+        // 按文件名去重(重发后笔从头再报一遍,前后两轮会重复;保留先到的)
+        var seen = Set<String>()
+        let entries = fileListEntries.filter { seen.insert($0.name).inserted }
         PenLog.d("cmd4 文件列表完成,共\(entries.count)个")
         DispatchQueue.main.async { cb(entries) }
     }
@@ -601,7 +635,17 @@ final class PenController: NSObject, WindBleDelegate {
             }
         }
         let finish = str(map["finish"])
-        if finish == "1" || finish == "true" { finishFileList() }
+        if finish == "1" || finish == "true" {
+            finishFileList()
+        } else if fileListCompletion != nil {
+            // ★2.2.1(#7):进度感知——每个新分包把看门狗续期15s(没收完就不掐);90s 封顶防永挂
+            if let start = fileListStartAt, Date().timeIntervalSince(start) >= 90 {
+                PenLog.d("★cmd4 90s封顶(已收\(fileListEntries.count)条) → 强制收尾")
+                finishFileList()
+            } else {
+                scheduleFileListWatch(15)
+            }
+        }
     }
 
     // ── 同步队列持久化:App 被杀/重启不丢,连上笔自动续传 ──
@@ -668,6 +712,94 @@ final class PenController: NSObject, WindBleDelegate {
             self.persistSyncQueue()
             self.updatePenWorkKeepAlive()
             self.kickSync()
+        }
+    }
+
+    /// ★2.2.1 对齐:顾问删掉了"同步中"的段 → 从同步队列/在传下载里移除,不再从笔搬运
+    /// (省蓝牙省流量;服务端墓碑按 pen_file 精确兜底做双保险)。
+    func cancelSync(fileName: String) {
+        q.async {
+            var n = 0
+            if self.syncQueue.contains(where: { $0.name == fileName }) {
+                self.syncQueue.removeAll { $0.name == fileName }
+                n += 1
+            }
+            if case .sync(let f) = self.downloadJob, f.name == fileName {
+                self.pen.stopGetFile(fileName)
+                self.downloading = false
+                self.downloadJob = nil
+                self.downloadStallWork?.cancel()
+                self.download.removeAll(keepingCapacity: false)
+                n += 1
+                self.q.asyncAfter(deadline: .now() + 1) { [weak self] in self?.kickSync() }
+            }
+            guard n > 0 else { return }
+            Self.clearPartial(fileName)
+            self.syncAttempts.removeValue(forKey: fileName)
+            self.persistSyncQueue()
+            self.updatePenWorkKeepAlive()
+            PenLog.d("★顾问已删除该段→取消同步任务 \(fileName)")
+        }
+    }
+
+    // ── ★2.2.1:笔上文件自动清理(移植安卓2.1.9 cleanupOldFiles,闸门一个不少) ──
+    // 规则①:【确认完整上传成功】的机身文件(PenFileLedger 名单,文件名精确匹配)→ 删;
+    // 规则②:机身文件超过 7 天仍未上传 → 删(2026-07-13 老板拍板 iOS=7天;安卓现为10天,待统一)。
+    // 时钟闸门:文件名时间戳早于 2024-01-01 = 笔时钟不可信(RTC重置),规则②不删。
+    // 永不碰:正在录的那段、还在待传队列/在传/补取的段。
+    // ⚠️ 第一版【干跑】(吸取2.1.9教训,删除类功能不一步到位):只 penlog"本来会删哪些",
+    //    不真删;真机跑1-2天核对日志全符合预期后,把 cleanupDryRun 改 false 放开真删。
+
+    private static let cleanupDryRun = true
+    private static let fileKeepSec: TimeInterval = 7 * 24 * 3600
+    private static let fileTsSaneMin = Date(timeIntervalSince1970: 1_704_038_400)   // 2024-01-01
+
+    /// 触发时机:连接验证后空闲~9s 一次 + 上传队列清空后一次。录音/传输中不硬闯,忙则 60s 后重试(≤10次)。
+    func triggerCleanup(attempt: Int = 0) {
+        guard attempt < 10 else { return }
+        q.async {
+            guard self.linkUp else { return }   // 断了就算了,下次连上会重新排
+            if self.recording || self.downloading || self.pendingRecovery != nil || !self.syncQueue.isEmpty {
+                self.q.asyncAfter(deadline: .now() + 60) { [weak self] in
+                    self?.triggerCleanup(attempt: attempt + 1)
+                }
+                return
+            }
+            self.fetchFileList { [weak self] files in
+                guard let self, !files.isEmpty else { return }
+                // 待传队列在 MainActor(UploadQueue),先取快照再回 q 做判定
+                Task { @MainActor in
+                    let queued = Set(UploadQueue.shared.pendingPenFiles)
+                    self.q.async { self.cleanupOldFiles(files, queuedNames: queued) }
+                }
+            }
+        }
+    }
+
+    /// 在 q 上:两条规则逐个判定。queuedNames=UploadQueue 里还没传完的机身文件名。
+    private func cleanupOldFiles(_ files: [PenFile], queuedNames: Set<String>) {
+        guard linkUp, !recording else { return }
+        var busy = Set(syncQueue.map(\.name))                      // 排队等下载的
+        if let c = currentSyncFile?.name { busy.insert(c) }        // 在下的
+        if let r = pendingRecovery?.fileName { busy.insert(r) }    // 等补取的
+        if let fn = penFileName, recording { busy.insert(fn) }     // 正在录的(双保险)
+        let now = Date()
+        var delUploaded = 0, delStale = 0
+        for f in files {
+            guard !f.name.isEmpty, !busy.contains(f.name), !queuedNames.contains(f.name) else { continue }
+            let uploadedFull = PenFileLedger.isFullyUploaded(f.name)
+            let ts = PenFileLedger.fileTimestamp(f.name)
+            let stale = ts.map { $0 > Self.fileTsSaneMin && now.timeIntervalSince($0) > Self.fileKeepSec } ?? false
+            guard uploadedFull || stale else { continue }
+            if Self.cleanupDryRun {
+                PenLog.d("🧪[干跑]本来会删笔上文件 \(f.name) 原因=\(uploadedFull ? "已完整上传" : "超7天未传")")
+            } else {
+                pen.delFileData(f.name)
+            }
+            if uploadedFull { delUploaded += 1 } else { delStale += 1 }
+        }
+        if delUploaded + delStale > 0 {
+            PenLog.d("★清理笔上文件\(Self.cleanupDryRun ? "(干跑,未真删)" : ""):已完整上传删\(delUploaded)个, 超7天未传删\(delStale)个")
         }
     }
 
@@ -947,6 +1079,10 @@ final class PenController: NSObject, WindBleDelegate {
         q.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.kickSync()
         }
+        // ★2.2.1:连接后空闲~9s 触发一次笔上文件清理(忙则自动延后,对齐安卓)
+        q.asyncAfter(deadline: .now() + 9) { [weak self] in
+            self?.triggerCleanup()
+        }
     }
 
     private func scheduleHandshakeTimeout() {
@@ -1217,6 +1353,8 @@ final class PenController: NSObject, WindBleDelegate {
                     guard let self, self.recording, self.penFileName == nil else { return }
                     self.pen.getFileNameOnlyRecording()
                 }
+                // ★2.2.1:笔上按键/笔自发开的段——可能是"无人操作连录"里自动切出来的下一段,回溯链长
+                if !segmentHeadPresent { scheduleChainProbe() }
                                 PenLog.d("cmd3 录音开始 → App 进入录音态")
                 DispatchQueue.main.async { self.manager?.penRecordingStarted() }
             } else {
@@ -1245,6 +1383,50 @@ final class PenController: NSObject, WindBleDelegate {
         default:
             break
         }
+    }
+
+    // ── ★2.2.1(对齐安卓2.1.7):90分钟闸的「连续录音链」回溯 ──
+    // 病案(张贵瑶7-11):笔误触无人操作连录5小时——固件每60分钟自动切段,App 接管后若从0起算,
+    // 要再录90分钟才停。接管"笔自己在录"的段后查一次机身列表,按"前段[开始+时长]与后段开始
+    // 间隔≤3分钟即同链"倒推链长,纳入 RecordingManager 的90分钟闸(elapsed+chain≥90min 即停)。
+
+    private static let chainGapSec: TimeInterval = 3 * 60
+
+    /// 笔上按键/笔自发开的段(非 App 点开始)延迟3秒探测链长——等 cmd11 文件名先到手。
+    private func scheduleChainProbe() {
+        q.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, self.recording, !self.downloading else { return }
+            self.fetchFileList { [weak self] files in
+                guard let self else { return }
+                self.q.async { self.computeChainFromFileList(files) }
+            }
+        }
+    }
+
+    /// 在 q 上:按开始时刻倒序从当前段往前回溯,同链累加;断链(顾问真的停过)即止;12h 护栏。
+    private func computeChainFromFileList(_ files: [PenFile]) {
+        guard recording, !files.isEmpty else { return }
+        let cur = penFileName
+        guard let curStart = cur.flatMap({ PenFileLedger.fileTimestamp($0) }) ?? recordStartAt else { return }
+        var prior = files.compactMap { f -> (start: Date, dur: Int)? in
+            guard f.name != cur, f.durationSec > 0,
+                  let st = PenFileLedger.fileTimestamp(f.name), st < curStart else { return nil }
+            return (st, f.durationSec)
+        }
+        guard !prior.isEmpty else { return }
+        prior.sort { $0.start > $1.start }   // 倒序:先看紧挨着当前段的那一段
+        var accum = 0
+        var anchor = curStart                // 往前回溯的锚点:当前这一环的开始时刻
+        for f in prior {
+            let end = f.start.addingTimeInterval(TimeInterval(f.dur))
+            if anchor.timeIntervalSince(end) > Self.chainGapSec { break }   // 断链 → 不再往前算
+            accum += f.dur
+            anchor = f.start
+            if accum > 12 * 3600 { break }   // 护栏:荒谬值不再累加
+        }
+        guard accum > 0 else { return }
+        PenLog.d("★接管中途会话:回溯到连续录音链前序\(accum / 60)分钟(笔自动切段),纳入90分钟闸")
+        DispatchQueue.main.async { self.manager?.penChainComputed(accum) }
     }
 
     /// cmd=5 机身文件传输状态:0完成 4传输中 1文件不在 2offset过大 3其他停止。
@@ -1406,6 +1588,8 @@ final class PenController: NSObject, WindBleDelegate {
             guard let self, self.recording, self.penFileName == nil else { return }
             self.pen.getFileNameOnlyRecording()
         }
+        // ★2.2.1:接管的是"笔自己在录"的段——它前面可能已连着录了几小时(笔60分钟切一段),回溯链长
+        scheduleChainProbe()
         DispatchQueue.main.async { self.manager?.penRecordingStarted() }
     }
 
