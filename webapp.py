@@ -4906,10 +4906,10 @@ APP_V2_UPDATE_NOTE = "本次更新：同步中的录音补全时段和时长显�
 # ============ iOS App 版本（Ad Hoc 分发无自动更新，App 启动/设置页查这个提示重装升级）============
 # 发 iOS 新版时：改 ios_app project.yml 的 CURRENT_PROJECT_VERSION → 归档导出 ad-hoc → 覆盖
 # /var/www/appdist/ios/ 的 ipa+manifest → 把下面 LATEST_BUILD 抬到新 build 号。
-APP_IOS_LATEST_BUILD = 3          # 1.0.0(3)：扫描页笔归属标注+同步列表起止时间+真实版本检查
+APP_IOS_LATEST_BUILD = 6          # 1.0.0(6)：自动补传+同步清单缓存+蓝牙未开红条+删除不复活
 APP_IOS_VERSION_NAME = "1.0.0"
 APP_IOS_INSTALL_URL = "https://gp.aibeautyfulwomen.com/download/ios"
-APP_IOS_UPDATE_NOTE = "扫描页自动标出你的录音笔，同步列表显示每段录音起止时间。"
+APP_IOS_UPDATE_NOTE = "重要更新：笔里没传上来的录音，连上笔会自动补传，不用再手动同步；蓝牙没开会明确提醒。"
 
 
 @app.route("/api/app/ios/version")
