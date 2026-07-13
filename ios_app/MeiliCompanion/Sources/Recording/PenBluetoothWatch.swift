@@ -23,6 +23,20 @@ final class PenBluetoothWatch: NSObject, CBCentralManagerDelegate {
 
     var isPoweredOn: Bool { central.state == .poweredOn }
 
+    /// ★对齐安卓2.1.3"一键打开":iOS 不允许 App 直接开蓝牙——建一个带 ShowPowerAlert 的
+    /// 临时 central,系统会弹"打开蓝牙以允许连接配件"对话框(用户一点即开,不用去设置里翻)。
+    private var powerAlertCentral: CBCentralManager?
+    func promptEnableBluetooth() {
+        powerAlertCentral = CBCentralManager(delegate: nil, queue: nil,
+            options: [CBCentralManagerOptionShowPowerAlertKey: true])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            self?.powerAlertCentral = nil
+        }
+    }
+
+    /// 诊断 meta 用:蓝牙原始状态(对齐安卓2.1.3③——原始值是分辨"蓝牙栈假死"的证据)。
+    var stateRaw: Int { central.state.rawValue }
+
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         PenLog.d("系统蓝牙状态: \(central.state.rawValue)")
         onStateChange?(central.state)

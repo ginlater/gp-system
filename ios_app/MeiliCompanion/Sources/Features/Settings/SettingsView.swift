@@ -277,7 +277,10 @@ struct SettingsView: View {
             let model = UIDevice.current.model
             let sys = UIDevice.current.systemVersion
             let app = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-            let meta = "{\"platform\":\"ios\",\"model\":\"\(model)\",\"system\":\"\(sys)\",\"app\":\"\(app)\"}"
+            // ★对齐安卓2.1.3③:诊断带蓝牙状态——btState 原始值是分辨"用户没开蓝牙"vs"蓝牙栈假死"的证据
+            let btOn = PenBluetoothWatch.shared.isPoweredOn
+            let btState = PenBluetoothWatch.shared.stateRaw
+            let meta = "{\"platform\":\"ios\",\"model\":\"\(model)\",\"system\":\"\(sys)\",\"app\":\"\(app)\",\"btEnabled\":\(btOn),\"btState\":\(btState)}"
             do {
                 _ = try await ConsultantRepo.uploadDiag(penlogURL: penlog, meta: meta)
                 diagMsg = "已上传，工程师可远程查看"

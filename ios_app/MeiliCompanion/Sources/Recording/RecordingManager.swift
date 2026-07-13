@@ -171,12 +171,22 @@ final class RecordingManager: ObservableObject {
         PenController.shared.stopSearch()
     }
 
+    /// ★对齐安卓2.1.3①:蓝牙未开/未授权的**常驻全局红条**(西财店案:toast 一闪而过,
+    /// 启动时蓝牙本来就关着更是只闪一次——顾问全程不知道,以为是笔坏了)。
+    /// 只在用过笔的手机上显示(hasKnownPen,对齐安卓"须 last_mac 才显示"),不打扰纯手机麦用户。
+    enum BtIssue { case off, unauthorized }
+    @Published var btIssue: BtIssue?
+
     /// 系统蓝牙不可用(审计 L4):精准提示,替代对着空气扫描。
-    func penBluetoothUnavailable(_ unauthorized: Bool) {
+    func penBluetoothUnavailable(_ unauthorized: Bool, hasKnownPen: Bool = true) {
         penConnected = false
         toast = unauthorized ? "请到 设置→美业私教 里允许蓝牙权限，才能连接陪伴笔"
                              : "手机蓝牙已关闭，请打开蓝牙后陪伴笔会自动重连"
+        if hasKnownPen { btIssue = unauthorized ? .unauthorized : .off }
     }
+
+    /// 蓝牙恢复可用 → 撤红条。
+    func penBluetoothRestored() { btIssue = nil }
     func connectPen(_ d: PenDevice) {
         penConnecting = true
         penScanning = false

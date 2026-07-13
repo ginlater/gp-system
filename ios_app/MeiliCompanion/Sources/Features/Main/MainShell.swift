@@ -63,6 +63,37 @@ struct MainShell: View {
                     }
                 }
 
+                // ★对齐安卓2.1.3:蓝牙未开/未授权全局红条(常驻任意 tab,toast 会闪没;
+                // 只在用过笔的手机上显示)。「去打开」弹系统开蓝牙对话框;权限被拒则跳设置。
+                if let issue = rec.btIssue {
+                    VStack {
+                        HStack(spacing: 10) {
+                            MeiliIcon(MeiliIcons.warn, size: 16).foregroundStyle(.white)
+                            Text(issue == .unauthorized ? "未允许蓝牙权限，陪伴笔无法连接"
+                                                        : "手机蓝牙未开启，陪伴笔无法连接")
+                                .font(.sz(12.5, weight: .semibold)).foregroundStyle(.white)
+                            Spacer(minLength: 6)
+                            Button(issue == .unauthorized ? "去设置" : "去打开") {
+                                if issue == .unauthorized {
+                                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                                        UIApplication.shared.open(url)
+                                    }
+                                } else {
+                                    PenBluetoothWatch.shared.promptEnableBluetooth()
+                                }
+                            }
+                            .font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.roseDeep)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(.white).clipShape(Capsule())
+                        }
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(MeiliColor.roseDeep)
+                        .clipShape(RoundedRectangle(cornerRadius: MeiliRadius.md, style: .continuous))
+                        .padding(.horizontal, 12).padding(.top, 6)
+                        Spacer()
+                    }
+                }
+
                 // 录音引擎全局 toast(同步进度/断连补取/删除结果等,任何 tab 可见)
                 // .task(id:) + isCancelled 判断(复查 B9):内容变化重启计时,视图移除不误清
                 if let t = rec.toast {

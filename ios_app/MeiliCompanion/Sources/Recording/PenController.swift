@@ -113,6 +113,7 @@ final class PenController: NSObject, WindBleDelegate {
     // ── 断开自动重连(对齐 android closeSuccess 按 MAC 循环扫连;审计 P4 加指数退避)──
     private var reconnectWork: DispatchWorkItem?
     private var reconnectDelay: TimeInterval = 8      // 8→16→32→60 封顶,verify 成功复位
+    private var lastBtOffLogAt = Date(timeIntervalSince1970: 0)   // "蓝牙未开跳过重连"penlog 10分钟限流
 
     // ── 连接闸门(审计 L3:防"连A期间又连B/同一支反复重连打断自己";SN-deny 按实连笔遗忘)──
     private var connectGate = false                   // 连接尝试进行中,忽略一切 cmd1 自动连
@@ -175,6 +176,7 @@ final class PenController: NSObject, WindBleDelegate {
             guard let self else { return }
             switch state {
             case .poweredOn:
+                DispatchQueue.main.async { self.manager?.penBluetoothRestored() }   // 撤全局红条
                 self.q.async {
                     guard !self.linkUp, !self.knownMacs.isEmpty else { return }
                     PenLog.d("蓝牙已打开 → 立即重扫")
@@ -183,9 +185,13 @@ final class PenController: NSObject, WindBleDelegate {
                     self.scheduleReconnect()
                 }
             case .poweredOff, .unauthorized:
-                self.q.async { self.stopReconnect() }
-                DispatchQueue.main.async {
-                    self.manager?.penBluetoothUnavailable(state == .unauthorized)
+                self.q.async {
+                    self.stopReconnect()
+                    // ★2.1.3①对齐:红条只给用过笔的手机看(纯手机麦用户不打扰)
+                    let known = !self.knownMacs.isEmpty
+                    DispatchQueue.main.async {
+                        self.manager?.penBluetoothUnavailable(state == .unauthorized, hasKnownPen: known)
+                    }
                 }
             default: break
             }
@@ -1028,7 +1034,15 @@ final class PenController: NSObject, WindBleDelegate {
     /// 审计 L10:门槛用 knownMacs(多支笔任一支都触发),不再只认"最后一支"。
     private func scheduleReconnect() {
         guard !knownMacs.isEmpty else { return }
-        guard PenBluetoothWatch.shared.isPoweredOn else { return }   // 蓝牙关着,扫也白扫(L4)
+        guard PenBluetoothWatch.shared.isPoweredOn else {
+            // ★2.1.3②对齐:蓝牙未开导致重连跳过要如实记(10分钟限流)——西财店案教训:
+            // 静默跳过让 penlog 里"没有重连尝试"和"用户说连不上"对不上号,排障走弯路
+            if Date().timeIntervalSince(lastBtOffLogAt) > 600 {
+                lastBtOffLogAt = Date()
+                PenLog.d("★自动重连跳过:系统蓝牙未开(等用户打开后自动恢复)")
+            }
+            return   // 蓝牙关着,扫也白扫(L4)
+        }
         // 复查 P#4:已排定就不重排不加档——原先握手超时/cmd2断开/15s兜底连环调用,
         // 一次失败连扣三档直接 60s 慢启动("断了半天不重连")
         guard reconnectWork == nil else { return }
