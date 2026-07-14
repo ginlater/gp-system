@@ -3780,6 +3780,13 @@ def _call_llm(model, system_prompt, user_prompt, tool, max_tokens=None,
     raise RuntimeError(f"未知 provider for model {model}")
 
 
+# ★2026-07-14 AI 余额预警(当天事故:DeepSeek 余额耗尽 → 全公司分析静默停摆,
+#   58 次调用被拒、顾问只看到"分析失败",没有任何预警。这里给老板一个明面上的提示)。
+_balance_cache = {"at": 0.0, "data": None}
+BALANCE_WARN_CNY = 100.0     # 低于这个数就在后台挂红条
+BALANCE_TTL_SEC = 600        # 10 分钟内复用,别每次开页都打服务商接口
+
+
 def _call_llm_with_retry(model, system_prompt, user_prompt, tool, max_tokens=None,
                           enable_thinking=False, stage_label="", max_attempts=3):
     """带通用重试的 LLM 调用。
@@ -3814,6 +3821,13 @@ def _call_llm_with_retry(model, system_prompt, user_prompt, tool, max_tokens=Non
             return result
         except Exception as e:
             last_err = e
+            # ★2026-07-14:余额不足(402/Insufficient Balance)重试多少次都没用,而且原始报错顾问看不懂。
+            #   立刻停 + 换成人话,报告页/接诊包会把它原样显示出来,老板一看就知道要充值。
+            msg = str(e)
+            if "402" in msg or "Insufficient Balance" in msg or "insufficient_quota" in msg:
+                print(f"[{stage_label}] AI 服务余额不足 → 立即中止,不再重试")
+                _balance_cache.update({"at": 0.0, "data": None})   # 让后台红条立刻重查
+                raise RuntimeError("AI 分析服务余额不足，已暂停分析。请管理员到 DeepSeek 平台充值后重新分析。")
             print(f"[{stage_label}] attempt {attempt}/{max_attempts} (temp={temperature:.1f}) 失败: {e}; "
                   + ("即将重试" if attempt < max_attempts else "不再重试"))
     raise last_err if last_err else RuntimeError(f"[{stage_label}] 未知失败")
@@ -7643,6 +7657,43 @@ def api_admin_ops_dashboard():
             "advisors": advisors,
             "recent_failures": fails,
         })
+
+
+def _deepseek_balance():
+    """查 DeepSeek 余额(带缓存)。查不到就返回 None——预警只做加法,绝不因为查询失败而阻断后台。"""
+    import time as _bt
+    now = _bt.time()
+    if _balance_cache["data"] is not None and now - _balance_cache["at"] < BALANCE_TTL_SEC:
+        return _balance_cache["data"]
+    if not DEEPSEEK_API_KEY:
+        return None
+    try:
+        req = urllib_request.Request(
+            f"{DEEPSEEK_API_BASE}/user/balance",
+            headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"})
+        with urllib_request.urlopen(req, timeout=6) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+        infos = raw.get("balance_infos") or []
+        cny = next((i for i in infos if i.get("currency") == "CNY"), infos[0] if infos else None)
+        bal = float((cny or {}).get("total_balance") or 0)
+        out = {
+            "balance": round(bal, 2),
+            "available": bool(raw.get("is_available")),
+            "low": bal < BALANCE_WARN_CNY,
+            "warn_at": BALANCE_WARN_CNY,
+        }
+        _balance_cache.update({"at": now, "data": out})
+        return out
+    except Exception as e:
+        print(f"[balance] 查询 DeepSeek 余额失败(不阻断): {e}")
+        return None
+
+
+@app.route("/api/admin/ai_balance")
+@manager_required
+def api_admin_ai_balance():
+    b = _deepseek_balance()
+    return jsonify(b or {"unknown": True})
 
 
 @app.route("/api/admin/stats")

@@ -215,6 +215,16 @@ a{text-decoration:none}
   </div>
   <div class="wrap">
 
+  <!-- ★2026-07-14 AI 余额预警：余额耗尽会让全公司分析静默停摆（顾问只看到"分析失败"），必须让老板看见 -->
+  <div id="balanceBar" style="display:none;margin:0 0 14px;padding:11px 16px;border-radius:8px;
+       background:#fdecea;border:1px solid #f5c6c2;color:#a03830;font-size:13.5px;line-height:1.6">
+    <b>⚠ AI 分析余额不足</b>
+    <span id="balanceText"></span>
+    —— 余额用完后<b>所有接诊分析都会失败</b>，顾问只会看到「分析失败」。
+    请尽快到 <a href="https://platform.deepseek.com/top_up" target="_blank" rel="noopener"
+       style="color:#a03830;font-weight:700">DeepSeek 平台充值</a>。
+  </div>
+
   <!-- 隐藏计数容器：原来这些 id 在顶部 tab 里，改侧栏后保留它们让既有计数/徽标逻辑不报错 -->
   <div style="display:none">
     <span id="consCount"></span><span id="custCount"></span><span id="storeCount"></span><span id="adminCount"></span><span id="tagDictCount"></span><span id="mergeDupCount"></span><span id="unboundCount"></span><span id="hrBadge"></span><span id="pipelineBadge"></span><span id="drBadge"></span>
@@ -2323,7 +2333,23 @@ function renderOpsSuper(d) {
 
 // 页面初始化：只拉一次轻量统计，更新 tab 标签和待审批 badge；
 // 顾问/顾客列表懒加载（首次进入对应 tab 时才请求）
+// ★2026-07-14 AI 余额预警：低于阈值(默认100元)或服务商已停用 → 后台顶部挂红条
+function checkAiBalance() {
+  fetch(BASE + '/api/admin/ai_balance').then(r => r.json()).then(b => {
+    const bar = document.getElementById('balanceBar');
+    if (!bar || !b || b.unknown || b.error) return;   // 查不到就不打扰
+    const bad = b.low || b.available === false;
+    if (!bad) { bar.style.display = 'none'; return; }
+    document.getElementById('balanceText').textContent =
+      b.available === false
+        ? `（服务商已暂停调用，当前余额 ${b.balance} 元）`
+        : `（当前余额 ${b.balance} 元，低于 ${b.warn_at} 元预警线）`;
+    bar.style.display = '';
+  }).catch(() => {});
+}
+
 function refreshAdminStats() {
+  checkAiBalance();
   fetch(BASE + '/api/admin/stats').then(r => r.json()).then(d => {
     if (d.error) return;
     const fmt = n => (typeof n === 'number') ? `(${n})` : '';
