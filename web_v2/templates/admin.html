@@ -475,7 +475,8 @@ a{text-decoration:none}
       <h3>门店弹药库 · 顾问手里能打的牌</h3>
       <div class="tip">
         把店里<b>真实存在</b>的项目、权益、回店礼配在这里。分析报告会用它做两件事：①老客评分「3.3 门店弹药触达」判断<b>该讲的牌讲了没有</b>（漏讲会点名）；②「下一步动作/黄金窗口」只从这份清单里推荐，不再让 AI 编造店里没有的项目。<br>
-        <b>过期自动失效</b>：填了有效期止，过了那天就不再进报告（例：专车接送只在 7–8 月，9 月自动不提）。<b>不同门店可以配不同的牌</b>，留空=全公司通用。
+        <b>过期自动失效</b>：填了有效期止，过了那天就不再进报告（例：专车接送只在 7–8 月，9 月自动不提）。<b>不同门店可以配不同的牌</b>，留空=全公司通用。<br>
+        <b>分组 = N 选 1</b>：填了同一个组名的牌是互相替代的选项（例：容大霜体 / indiba / mivo 填同一组「主推项目」）——顾问<b>讲了其中任意一个就算讲到</b>，报告推荐时也<b>只挑最适合这位顾客的一个</b>，不会三个并列硬塞。留空=独立的牌，各算各的。
         {% if role == 'store_manager' %}<br><span style="color:#c0392b">你是店长，只能查看，不能修改。</span>{% endif %}
       </div>
       {% if role != 'store_manager' %}
@@ -497,6 +498,7 @@ a{text-decoration:none}
         <input id="amCondVal" placeholder="数值" style="width:90px;display:none">
         <input id="amFrom" type="date" title="生效开始（选填）" style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:13px">
         <input id="amTo" type="date" title="生效截止（选填，过期自动失效）" style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:13px">
+        <input id="amGrp" placeholder="分组（选填，同组=N选1）" title="填了同一个组名的牌互为替代：讲了任一个就算讲到，推荐时只挑最合适的一个" style="min-width:150px">
         <input id="amNote" placeholder="话术备注（选填，给AI参考怎么讲）" style="min-width:180px">
         <button class="btn" onclick="createAmmo()">添加</button>
       </div>
@@ -1648,7 +1650,7 @@ function loadStoreAmmo() {
           <button class="btn danger" style="padding:3px 8px;font-size:12px" onclick="delAmmo(${a.id})">删除</button></td>` : '';
       return `<tr${a.active&&!a.expired?'':' style="opacity:.55"'}>
         <td><span class="muted" style="font-size:12px">${_esc(a.kind_label)}</span></td>
-        <td><b>${_esc(a.name)}</b>${a.note?`<div style="font-size:11.5px;color:#888">${_esc(a.note)}</div>`:''}</td>
+        <td><b>${_esc(a.name)}</b>${a.grp?`<span title="同组N选1：讲了任一个就算讲到，推荐只挑一个" style="margin-left:6px;font-size:11px;padding:1px 6px;border-radius:3px;background:#eef3f7;color:#3f6376;border:1px solid #c7d8e1">${_esc(a.grp)}·N选1</span>`:''}${a.note?`<div style="font-size:11.5px;color:#888">${_esc(a.note)}</div>`:''}</td>
         <td style="font-size:12px">${cond}</td>
         <td style="font-size:12px">${_esc(period)}</td>
         <td style="font-size:12px">${a.store_name ? _esc(a.store_name) : '<span class="muted">全公司</span>'}</td>
@@ -1672,6 +1674,7 @@ function createAmmo() {
     condition_value: cond ? cval : null,
     valid_from: document.getElementById('amFrom').value || null,
     valid_to: document.getElementById('amTo').value || null,
+    grp: document.getElementById('amGrp').value.trim() || null,
     note: document.getElementById('amNote').value.trim() || null,
   };
   fetch(BASE + '/api/admin/store_ammo', {
@@ -1679,7 +1682,7 @@ function createAmmo() {
   }).then(r=>r.json()).then(d=>{
     if (d.error) { showMsg('amMsg', d.error, true); return; }
     showMsg('amMsg','已添加');
-    ['amName','amKw','amCondVal','amFrom','amTo','amNote'].forEach(i=>document.getElementById(i).value='');
+    ['amName','amKw','amCondVal','amFrom','amTo','amNote','amGrp'].forEach(i=>document.getElementById(i).value='');
     loadStoreAmmo();
   });
 }

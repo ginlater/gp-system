@@ -866,6 +866,12 @@ def init_db():
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_ammo_company ON store_ammo(company_id, active)")
+    # ★2026-07-14 老板追加：同组「三选一」。同一 grp 里的牌是互相替代的选项——
+    #   讲了任意一个就算触达(不算漏讲)，推荐时只挑最合适的一个，不再三个并列硬塞给顾客。
+    #   留空=独立的牌，各算各的。
+    _ammo_cols = {r[1] for r in conn.execute("PRAGMA table_info(store_ammo)").fetchall()}
+    if "grp" not in _ammo_cols:
+        conn.execute("ALTER TABLE store_ammo ADD COLUMN grp TEXT")
     # 一次性迁移：老的「当月主推项目」并进弹药库(kind=campaign，按月转成生效期)，
     # 老板以后只在一个地方配。monthly_projects 表保留不动(不删数据)，只是不再作为唯一来源。
     try:
@@ -4238,8 +4244,9 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
             monthly_brief = (
                 f"【本店当前可用的牌】(本次是这位顾客第 {visit_no} 次到店)\n{ammo_brief}\n"
                 f"3.3 依据此清单判断：录音里把上面【该讲的牌】讲给顾客了没有——\n"
+                f"  · 标了「N选1」的组：**讲了组里任意一个就算讲到了，不算漏讲**；一个都没讲才算漏讲（按组算一次，别把组里每个都数成漏讲）；\n"
                 f"  · 无条件的活动/项目：本次有没有介绍；\n"
-                f"  · 带客单价门槛的权益：结合录音里谈到的金额判断这位顾客够不够格，够格却没讲=漏讲；\n"
+                f"  · 带客单价门槛的权益：结合录音里谈到的金额判断这位顾客够不够格，够格却没讲=漏讲；不够格=本来就不该讲，不算漏讲；\n"
                 f"  · 回店阶梯礼：只看和「第 {visit_no} 次」对得上的那张，该送没送=漏讲；\n"
                 f"  · detail 里必须点名【漏讲了哪张牌】，没有可讲的牌就说明情况，不要臆测店里没有的项目。\n")
         else:
@@ -4509,6 +4516,8 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
                 f"⚠ 上面这些是本店【真实存在、当前有效】的项目/权益/回店礼。"
                 f"推荐下一步动作或收割步骤时，只能从这份清单里挑，"
                 f"不要编造清单以外的项目名；带条件的牌要先判断这位顾客够不够格。"
+                f"**标了「N选1」的组：只挑组里最适合这位顾客的一个来推，不要把组里几个并列全推**"
+                f"（老板要求：一位顾客只给一个主推方向，别硬塞）。"
                 f"清单为空时，就只给动作建议、不点名具体项目。\n")
 
         tool_name = {1: "submit_call1", 2: "submit_call2", 3: "submit_call3"}[call_no]
@@ -9580,12 +9589,13 @@ def api_store_ammo_create():
     sid = int(sid) if sid not in (None, "", "0") else None
     pid = db_write(
         """INSERT INTO store_ammo (company_id, store_id, kind, name, keywords,
-                                   valid_from, valid_to, condition_type, condition_value, note, active)
-           VALUES (?,?,?,?,?,?,?,?,?,?,1)""",
+                                   valid_from, valid_to, condition_type, condition_value, note, grp, active)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,1)""",
         (cid, sid, kind, name, json.dumps(kws, ensure_ascii=False),
          (data.get("valid_from") or "").strip() or None,
          (data.get("valid_to") or "").strip() or None,
-         ct, cv, (data.get("note") or "").strip() or None))
+         ct, cv, (data.get("note") or "").strip() or None,
+         (data.get("grp") or "").strip() or None))
     return jsonify({"id": pid, "ok": True})
 
 
@@ -9599,7 +9609,7 @@ def api_store_ammo_update(aid):
         return jsonify({"error": "无权修改"}), 403
     data = request.get_json(silent=True) or {}
     sets, params = [], []
-    for f in ("name", "kind", "valid_from", "valid_to", "note", "condition_type"):
+    for f in ("name", "kind", "valid_from", "valid_to", "note", "condition_type", "grp"):
         if f in data:
             v = (data.get(f) or "").strip() or None
             if f == "kind" and v not in AMMO_KINDS:
@@ -9728,7 +9738,7 @@ def _load_active_ammo(company_id, store_id, service_date):
     day = (service_date or datetime.now().strftime("%Y-%m-%d"))[:10]
     rows = db_fetchall(
         """SELECT id, kind, name, keywords, valid_from, valid_to,
-                  condition_type, condition_value, note, store_id
+                  condition_type, condition_value, note, store_id, grp
            FROM store_ammo
            WHERE company_id=? AND active=1
              AND (store_id IS NULL OR store_id=?)
@@ -9759,8 +9769,29 @@ def _customer_visit_count(company_id, customer_id, customer_name, before_date):
     return int((row["n"] if row else 0) or 0) + 1
 
 
+def _ammo_line(a, visit_no):
+    """单张牌渲染成一行(名字 + 条件 + 有效期 + 话术)。"""
+    bits = [f"「{a['name']}」"]
+    ct, cv = a.get("condition_type"), a.get("condition_value")
+    if ct == "min_ticket" and cv:
+        bits.append(f"（条件：客单价 ≥ {int(cv)} 元才可用——请结合录音里谈到的金额自行判断够不够格）")
+    elif ct == "visit_nth" and cv:
+        nth = int(cv)
+        bits.append("【本次正好是第%d次到店，这张牌就是给她的】" % nth if visit_no == nth
+                    else f"（第 {nth} 次到店才送，本次是第 {visit_no} 次）")
+    if a.get("valid_to"):
+        bits.append(f"[有效期至 {a['valid_to']}]")
+    if a.get("note"):
+        bits.append(f"话术参考：{a['note']}")
+    return " ".join(bits)
+
+
 def _ammo_brief(ammo, visit_no):
-    """把有效弹药清单渲染成给 AI 的说明。没有弹药就返回空串（prompt 里那段整体不出现）。"""
+    """把有效弹药清单渲染成给 AI 的说明。没有弹药就返回空串（prompt 里那段整体不出现）。
+
+    ★2026-07-14 同组「三选一」：同一 grp 的牌是互相替代的选项，合并成一行明写"三选一"——
+    讲了任意一个就算触达、推荐时只挑最合适的一个（老板：别三个并列硬塞给顾客）。
+    """
     if not ammo:
         return ""
     lines = []
@@ -9769,20 +9800,28 @@ def _ammo_brief(ammo, visit_no):
         if not group:
             continue
         lines.append(f"■ {label}")
+        # 先按组聚拢（有 grp 的合并；没 grp 的各自成行）
+        grouped, singles = {}, []
         for a in group:
-            bits = [f"「{a['name']}」"]
-            ct, cv = a.get("condition_type"), a.get("condition_value")
-            if ct == "min_ticket" and cv:
-                bits.append(f"（条件：客单价 ≥ {int(cv)} 元才可用——请结合录音里谈到的金额自行判断够不够格）")
-            elif ct == "visit_nth" and cv:
-                nth = int(cv)
-                hit = "【本次正好是第%d次到店，这张牌就是给她的】" % nth if visit_no == nth else f"（第 {nth} 次到店才送，本次是第 {visit_no} 次）"
-                bits.append(hit)
-            if a.get("valid_to"):
-                bits.append(f"[有效期至 {a['valid_to']}]")
-            if a.get("note"):
-                bits.append(f"话术参考：{a['note']}")
-            lines.append("  · " + " ".join(bits))
+            g = (a.get("grp") or "").strip()
+            if g:
+                grouped.setdefault(g, []).append(a)
+            else:
+                singles.append(a)
+        for gname, items in grouped.items():
+            if len(items) == 1:
+                lines.append("  · " + _ammo_line(items[0], visit_no))
+                continue
+            names = "、".join(f"「{i['name']}」" for i in items)
+            lines.append(f"  · 【{gname}·{len(items)}选1】{names}"
+                         f" —— 这几个是互相替代的选项，**只需挑最适合这位顾客的一个**讲/推即可；"
+                         f"讲了其中任意一个就算讲到了，不要三个并列硬塞给顾客。")
+            for i in items:
+                extra = _ammo_line(i, visit_no).replace(f"「{i['name']}」", "").strip()
+                if extra:
+                    lines.append(f"      - 「{i['name']}」{extra}")
+        for a in singles:
+            lines.append("  · " + _ammo_line(a, visit_no))
     return "\n".join(lines)
 
 
