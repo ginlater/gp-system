@@ -460,22 +460,43 @@ a{text-decoration:none}
       </div>
       <div class="tip"><b>接诊次数</b> = 有多少次接诊提到该标签（去重接诊）；<b>客人数</b> = 涉及多少位不同客人（优先按客户号去重）。两个口径都看：接诊次数反映被提及的频次，客人数反映覆盖的人群。竞品行可一键拉黑，拉黑后不再统计、不再出现在竞品分析里。</div>
     </div>
-    {% if role != 'store_manager' %}
+    <!-- ★2026-07-13 门店弹药库：顾问接诊时手里能打的牌（替代原「当月主推项目清单」） -->
     <div class="card">
-      <h3>当月主推项目清单 · <span id="mpMonth"></span></h3>
-      <div class="tip">设置本月主推的活动/项目 + 命中关键词，系统按录音转写检测客人是否提及，结果显示在「顾客档案」的服务时间线上。不填关键词则默认用项目名。</div>
-      <div class="row">
-        <input id="mpName" placeholder="项目名 *">
-        <input id="mpKw" placeholder="命中关键词（顿号、或逗号分隔）" style="min-width:240px">
-        <button class="btn" onclick="createMonthlyProject()">添加</button>
+      <h3>门店弹药库 · 顾问手里能打的牌</h3>
+      <div class="tip">
+        把店里<b>真实存在</b>的项目、权益、回店礼配在这里。分析报告会用它做两件事：①老客评分「3.3 门店弹药触达」判断<b>该讲的牌讲了没有</b>（漏讲会点名）；②「下一步动作/黄金窗口」只从这份清单里推荐，不再让 AI 编造店里没有的项目。<br>
+        <b>过期自动失效</b>：填了有效期止，过了那天就不再进报告（例：专车接送只在 7–8 月，9 月自动不提）。<b>不同门店可以配不同的牌</b>，留空=全公司通用。
+        {% if role == 'store_manager' %}<br><span style="color:#c0392b">你是店长，只能查看，不能修改。</span>{% endif %}
       </div>
+      {% if role != 'store_manager' %}
+      <div class="row" style="flex-wrap:wrap;gap:6px">
+        <select id="amKind" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
+          <option value="product">项目/产品</option>
+          <option value="perk">权益</option>
+          <option value="return_gift">回店阶梯礼</option>
+          <option value="campaign">当月活动</option>
+        </select>
+        <input id="amName" placeholder="名称 *（如 容大霜体 / 专车接送）" style="min-width:190px">
+        <input id="amKw" placeholder="顾问会怎么说它（顿号分隔，选填）" style="min-width:200px">
+        <select id="amStore" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px"></select>
+        <select id="amCond" onchange="onAmmoCondChange()" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
+          <option value="">无触发条件</option>
+          <option value="min_ticket">客单价满 …</option>
+          <option value="visit_nth">第 … 次到店送</option>
+        </select>
+        <input id="amCondVal" placeholder="数值" style="width:90px;display:none">
+        <input id="amFrom" type="date" title="生效开始（选填）" style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:13px">
+        <input id="amTo" type="date" title="生效截止（选填，过期自动失效）" style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:13px">
+        <input id="amNote" placeholder="话术备注（选填，给AI参考怎么讲）" style="min-width:180px">
+        <button class="btn" onclick="createAmmo()">添加</button>
+      </div>
+      {% endif %}
       <table class="tbl">
-        <thead><tr><th>项目名</th><th>命中关键词</th><th>操作</th></tr></thead>
-        <tbody id="mpBody"><tr><td colspan="3" class="muted">加载中…</td></tr></tbody>
+        <thead><tr><th>类型</th><th>名称</th><th>触发条件</th><th>有效期</th><th>适用门店</th><th>顾问会怎么说</th><th>状态</th>{% if role != 'store_manager' %}<th>操作</th>{% endif %}</tr></thead>
+        <tbody id="amBody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
       </table>
-      <div class="msg" id="mpMsg"></div>
+      <div class="msg" id="amMsg"></div>
     </div>
-    {% endif %}
     <div class="card">
       <h3>顾客标签统计 · 店里在流行什么 <span id="tsCustCount" style="font-size:12px;color:#666;font-weight:normal"></span></h3>
       <table class="tbl">
@@ -1551,7 +1572,7 @@ function tsQuick(days) {
   loadTagStats();
 }
 function loadTagStats() {
-  loadMonthlyProjects();
+  loadStoreAmmo();   // ★门店弹药库(原「当月主推项目」)
   // 门店下拉（仅 admin/super）首次填充
   const st = document.getElementById('tsStore');
   if (st && !_tsStoreFilled) {
@@ -1581,35 +1602,86 @@ function loadTagStats() {
       : '<tr><td colspan="5" class="muted">暂无竞品标签（随接诊分析积累）</td></tr>';
   });
 }
-// 当月主推项目
-function loadMonthlyProjects() {
-  if (!document.getElementById('mpBody')) return;  // 店长无此卡片
-  fetch(BASE + '/api/admin/monthly_projects').then(r=>r.json()).then(d=>{
-    const ml = document.getElementById('mpMonth'); if (ml) ml.textContent = d.month || '';
-    const tb = document.getElementById('mpBody');
-    const ps = d.projects || [];
-    tb.innerHTML = ps.length ? ps.map(p=>`
-      <tr><td><b>${_esc(p.name)}</b></td><td style="font-size:12px;color:#555">${_esc((p.keywords||[]).join('、'))}</td>
-      <td><button class="btn danger" style="padding:3px 8px;font-size:12px" onclick="delMonthlyProject(${p.id})">删除</button></td></tr>`).join('')
-      : '<tr><td colspan="3" class="muted">本月还没设置主推项目</td></tr>';
+// ★2026-07-13 门店弹药库（替代原「当月主推项目」，统一一处配置）
+let _amCanEdit = false;
+function onAmmoCondChange() {
+  const c = document.getElementById('amCond').value;
+  const v = document.getElementById('amCondVal');
+  v.style.display = c ? '' : 'none';
+  v.placeholder = c === 'min_ticket' ? '如 3000' : (c === 'visit_nth' ? '如 1' : '数值');
+}
+function loadStoreAmmo() {
+  if (!document.getElementById('amBody')) return;
+  fetch(BASE + '/api/admin/store_ammo').then(r=>r.json()).then(d=>{
+    _amCanEdit = !!d.can_edit;
+    const sel = document.getElementById('amStore');
+    if (sel && !sel.dataset.filled) {
+      sel.innerHTML = '<option value="">全公司通用</option>' +
+        (d.stores||[]).map(s=>`<option value="${s.id}">仅 ${_esc(s.name)}</option>`).join('');
+      sel.dataset.filled = '1';
+    }
+    const items = d.items || [];
+    const tb = document.getElementById('amBody');
+    const cols = _amCanEdit ? 8 : 7;
+    tb.innerHTML = items.length ? items.map(a => {
+      let cond = '—';
+      if (a.condition_type === 'min_ticket') cond = `客单价 ≥ ${Math.round(a.condition_value)} 元`;
+      else if (a.condition_type === 'visit_nth') cond = `第 ${Math.round(a.condition_value)} 次到店`;
+      const period = (a.valid_from || a.valid_to)
+        ? `${a.valid_from || '不限'} ~ ${a.valid_to || '长期'}` : '长期有效';
+      let state = '<span style="color:#16a085;font-weight:600">生效中</span>';
+      if (!a.active) state = '<span class="muted">已停用</span>';
+      else if (a.expired) state = '<span style="color:#c0392b;font-weight:600">已过期</span>';
+      else if (a.not_started) state = '<span style="color:#e67e22">未开始</span>';
+      const ops = _amCanEdit ? `<td>
+          <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="toggleAmmo(${a.id},${a.active?0:1})">${a.active?'停用':'启用'}</button>
+          <button class="btn danger" style="padding:3px 8px;font-size:12px" onclick="delAmmo(${a.id})">删除</button></td>` : '';
+      return `<tr${a.active&&!a.expired?'':' style="opacity:.55"'}>
+        <td><span class="muted" style="font-size:12px">${_esc(a.kind_label)}</span></td>
+        <td><b>${_esc(a.name)}</b>${a.note?`<div style="font-size:11.5px;color:#888">${_esc(a.note)}</div>`:''}</td>
+        <td style="font-size:12px">${cond}</td>
+        <td style="font-size:12px">${_esc(period)}</td>
+        <td style="font-size:12px">${a.store_name ? _esc(a.store_name) : '<span class="muted">全公司</span>'}</td>
+        <td style="font-size:12px;color:#555">${_esc((a.keywords||[]).join('、'))}</td>
+        <td>${state}</td>${ops}</tr>`;
+    }).join('') : `<tr><td colspan="${cols}" class="muted">还没配置任何牌。先把店里真实有的项目、权益、回店礼加进来。</td></tr>`;
   });
 }
-function createMonthlyProject() {
-  const name = document.getElementById('mpName').value.trim();
-  const kw = document.getElementById('mpKw').value.split(/[、,，]/).map(s=>s.trim()).filter(Boolean);
-  if (!name) { showMsg('mpMsg','项目名必填',true); return; }
-  fetch(BASE + '/api/admin/monthly_projects', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name, keywords: kw}),
+function createAmmo() {
+  const name = document.getElementById('amName').value.trim();
+  if (!name) { showMsg('amMsg','名称必填',true); return; }
+  const cond = document.getElementById('amCond').value;
+  const cval = document.getElementById('amCondVal').value.trim();
+  if (cond && !cval) { showMsg('amMsg','选了触发条件就要填数值',true); return; }
+  const body = {
+    name,
+    kind: document.getElementById('amKind').value,
+    keywords: document.getElementById('amKw').value.split(/[、,，]/).map(s=>s.trim()).filter(Boolean),
+    store_id: document.getElementById('amStore').value || null,
+    condition_type: cond || null,
+    condition_value: cond ? cval : null,
+    valid_from: document.getElementById('amFrom').value || null,
+    valid_to: document.getElementById('amTo').value || null,
+    note: document.getElementById('amNote').value.trim() || null,
+  };
+  fetch(BASE + '/api/admin/store_ammo', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
   }).then(r=>r.json()).then(d=>{
-    if (d.error) showMsg('mpMsg', d.error, true);
-    else { showMsg('mpMsg','已添加'); document.getElementById('mpName').value=''; document.getElementById('mpKw').value=''; loadMonthlyProjects(); }
+    if (d.error) { showMsg('amMsg', d.error, true); return; }
+    showMsg('amMsg','已添加');
+    ['amName','amKw','amCondVal','amFrom','amTo','amNote'].forEach(i=>document.getElementById(i).value='');
+    loadStoreAmmo();
   });
 }
-function delMonthlyProject(id) {
-  if (!confirm('删除该主推项目？')) return;
-  fetch(BASE + '/api/admin/monthly_projects/' + id, {method:'DELETE'})
-    .then(r=>r.json()).then(d=>{ if(d.error) alert(d.error); else loadMonthlyProjects(); });
+function toggleAmmo(id, active) {
+  fetch(BASE + '/api/admin/store_ammo/' + id, {
+    method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({active}),
+  }).then(r=>r.json()).then(d=>{ if(d.error) alert(d.error); else loadStoreAmmo(); });
+}
+function delAmmo(id) {
+  if (!confirm('删除这张牌？删了以后报告里不再出现。（只想暂时不用可以点「停用」）')) return;
+  fetch(BASE + '/api/admin/store_ammo/' + id, {method:'DELETE'})
+    .then(r=>r.json()).then(d=>{ if(d.error) alert(d.error); else loadStoreAmmo(); });
 }
 function blacklistComp(btn) {
   const tag = btn.closest('tr').dataset.tag;

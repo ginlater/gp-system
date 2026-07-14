@@ -8,6 +8,7 @@
 流程（全自动）:
   上传/扫描录音 → 自动 ASR → 同 session 所有录音 ASR 完成 → 自动 Claude 分析
 """
+import calendar
 import hashlib
 import json
 import os
@@ -841,6 +842,48 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now', 'localtime'))
         )
     """)
+
+    # ★2026-07-13「门店弹药库」（老板拍板）：顾问接诊时手里能打的牌，统一一张表。
+    #   老板列的四类都装得下：项目/产品(容大霜体、indiba、mivo)、权益(客单价3000送专车接送·限7-8月)、
+    #   回店阶梯礼(首次泡澡/二次指间胶原/三次女性秘密花园)、当月活动。
+    #   泛化三要素：① valid_from~valid_to 到期自动失效(9月不会再提7-8月的专车) ②按公司+可选门店隔离
+    #   ③后台随时改(admin/super 可改，店长只读)。分析时按【公司+门店+接诊日】捞当时有效的注入 prompt。
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS store_ammo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            store_id INTEGER,                 -- NULL=全公司通用；否则只这家店
+            kind TEXT NOT NULL,               -- product 项目/产品 | perk 权益 | return_gift 回店阶梯礼 | campaign 当月活动
+            name TEXT NOT NULL,
+            keywords TEXT DEFAULT '[]',       -- JSON 数组：录音里命中它的说法
+            valid_from TEXT,                  -- 'YYYY-MM-DD'，空=不限
+            valid_to TEXT,                    -- 'YYYY-MM-DD'，空=长期有效
+            condition_type TEXT,              -- NULL 无条件 | min_ticket 客单价门槛 | visit_nth 第N次回店
+            condition_value REAL,             -- min_ticket=3000 / visit_nth=1,2,3
+            note TEXT,                        -- 话术备注，给 AI 参考怎么讲
+            active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now', 'localtime'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ammo_company ON store_ammo(company_id, active)")
+    # 一次性迁移：老的「当月主推项目」并进弹药库(kind=campaign，按月转成生效期)，
+    # 老板以后只在一个地方配。monthly_projects 表保留不动(不删数据)，只是不再作为唯一来源。
+    try:
+        migrated = conn.execute("SELECT COUNT(*) FROM store_ammo WHERE kind='campaign'").fetchone()[0]
+        if migrated == 0:
+            for r in conn.execute("SELECT company_id, month, name, keywords FROM monthly_projects").fetchall():
+                cid, month, name, kws = r[0], r[1] or "", r[2], r[3] or "[]"
+                if not (month and name):
+                    continue
+                y, m = month.split("-")[0], month.split("-")[1]
+                last = calendar.monthrange(int(y), int(m))[1]
+                conn.execute(
+                    """INSERT INTO store_ammo (company_id, store_id, kind, name, keywords,
+                                               valid_from, valid_to, note)
+                       VALUES (?, NULL, 'campaign', ?, ?, ?, ?, '（由“当月主推项目”自动迁入）')""",
+                    (cid, name, kws, f"{month}-01", f"{month}-{last:02d}"))
+    except Exception as _mig_err:
+        print(f"[store_ammo] 迁移当月主推项目失败(不阻断启动): {_mig_err}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_mp_company_month ON monthly_projects(company_id, month)")
 
     # 2026-05-29 画像-5 客户价值预测缓存（按公司+客人）
@@ -3141,7 +3184,8 @@ good_highlights 和 bad_highlights 各 2-3 条，不能为空数组。
 
 # ★2026-07-13 老客评分维度(老板拍板):质检评分按 session.customer_type 二选一——
 #   新客走 T5 原三阶段(咨找需求/确认加大意愿/成交阶段),老客走下面这套(不含报价/异议处理)。
-#   {monthly_brief} 由装配时注入当月重点活动清单(monthly_projects 表,3.3 的判断依据)。
+#   {monthly_brief} 由装配时注入【门店弹药库】里这单当时有效的牌(store_ammo,3.3 的判断依据)——
+#   含当月活动/权益(带客单价门槛)/回店阶梯礼(第几次到店由系统算好告诉AI)/主推项目。
 T5_PROMPT_RETURNING = """【任务5】质检评分 · 老客三大接待阶段
 本单为【老客回访接待】,评分维度与新客不同,按下面三阶段执行。
 综合评分 0-10，必须有区分度（差 2-3 分，一般 4-5 分，好 7-8 分，很好 9 分）。
@@ -3161,7 +3205,7 @@ T5_PROMPT_RETURNING = """【任务5】质检评分 · 老客三大接待阶段
 叁 方案重规划与返邀（5 子项）：
   3.1 方案重规划（根据本次效果提出增加/升级/调整方案之一，给顾客重新规划）
   3.2 周期交付节奏（每成交一单约对应3次周期交付，前3~5次是关键交付期，节奏是否有安排）
-  3.3 本月重点活动触达（本次接待中是否向顾客讲解了当月主推活动项目）
+  3.3 门店弹药触达（本次接待中，该讲的牌讲了没有——当月活动/权益/回店礼/主推项目）
   3.4 好评引导（引导顾客好评/转介绍）
   3.5 返邀约（离店前完成下次到店邀约或回电约定）
 
@@ -4152,25 +4196,41 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
         return
 
     sess = db_fetchone(
-        "SELECT advisor, customer, service_date, company_id, customer_type FROM sessions WHERE id=?", (session_id,)
+        """SELECT advisor, customer, service_date, company_id, store_id,
+                  customer_type, customer_id
+           FROM sessions WHERE id=?""", (session_id,)
     )
     if not sess:
         return
     company_id = (sess["company_id"] if sess else None) or 1
-    # ★2026-07-13 老客评分维度:客型二选一(NULL=老客,老板拍板默认);老客再注入当月重点活动清单(3.3 判断依据)
+    # ★2026-07-13 老客评分维度:客型二选一(NULL=老客,老板拍板默认)
     customer_type = (sess["customer_type"] or "returning")
+
+    # ★2026-07-13 门店弹药库:捞这单【当时有效】的牌(按公司+门店+接诊日;过期的自动不出现),
+    #   连同【本次是第几次到店】(系统算,不让AI猜)一起注入——供 3.3 判断"该讲的讲了没有",
+    #   也供 T8/T11 从真实存在的牌里挑推荐(以前AI是凭录音瞎编项目名的)。
+    ammo, visit_no, ammo_brief = [], 1, ""
+    try:
+        ammo = _load_active_ammo(company_id, sess["store_id"], sess["service_date"])
+        visit_no = _customer_visit_count(company_id, sess["customer_id"],
+                                         sess["customer"], sess["service_date"])
+        ammo_brief = _ammo_brief(ammo, visit_no)
+    except Exception as _am_err:
+        print(f"[store_ammo] session={session_id} 弹药清单构造失败(降级为无弹药): {_am_err}")
+
     monthly_brief = ""
     if customer_type != "new":
-        _month = (sess["service_date"] or "")[:7]
-        _prows = db_fetchall(
-            "SELECT name FROM monthly_projects WHERE company_id=? AND month=?",
-            (company_id, _month)) if _month else []
-        _pnames = [p["name"] for p in _prows if p["name"]]
-        if _pnames:
-            monthly_brief = (f"本月重点活动项目：{'、'.join(_pnames)}"
-                             f"（3.3 依据此判断：录音中向顾客讲解过其中任一项目即算本次触达）\n")
+        if ammo_brief:
+            monthly_brief = (
+                f"【本店当前可用的牌】(本次是这位顾客第 {visit_no} 次到店)\n{ammo_brief}\n"
+                f"3.3 依据此清单判断：录音里把上面【该讲的牌】讲给顾客了没有——\n"
+                f"  · 无条件的活动/项目：本次有没有介绍；\n"
+                f"  · 带客单价门槛的权益：结合录音里谈到的金额判断这位顾客够不够格，够格却没讲=漏讲；\n"
+                f"  · 回店阶梯礼：只看和「第 {visit_no} 次」对得上的那张，该送没送=漏讲；\n"
+                f"  · detail 里必须点名【漏讲了哪张牌】，没有可讲的牌就说明情况，不要臆测店里没有的项目。\n")
         else:
-            monthly_brief = "本月未配置重点活动清单：3.3 按「是否向顾客介绍了本店当前活动/主推项目」如实判断，没讲就低分，不要臆测。\n"
+            monthly_brief = ("本店未配置任何可用的牌（活动/权益/回店礼）：3.3 按「是否向顾客介绍了本店当前活动或主推项目」"
+                             "如实判断，没讲就低分，不要臆测。\n")
     recs = db_fetchall(
         """SELECT id, recorded_at, duration_label, asr_transcript
            FROM recordings WHERE session_id=? AND asr_status='done'
@@ -4426,6 +4486,17 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
                 print(f"[vocab_brief] session={session_id} 构造失败：{_vb_err}")
                 vocab_brief = ""
 
+        # ★2026-07-13 门店弹药库:T8(黄金窗口)/T11(下一步动作)推荐项目时,只能从【店里真有的牌】里挑——
+        #   以前 AI 是凭录音自己编项目名("药浴疗程卡"之类),顾问照着做根本落不了地。
+        ammo_section = ""
+        if ammo_brief and any(t in tids for t in ("T8", "T11")):
+            ammo_section = (
+                f"\n\n---\n### 本店当前可用的牌（本次是这位顾客第 {visit_no} 次到店）\n{ammo_brief}\n"
+                f"⚠ 上面这些是本店【真实存在、当前有效】的项目/权益/回店礼。"
+                f"推荐下一步动作或收割步骤时，只能从这份清单里挑，"
+                f"不要编造清单以外的项目名；带条件的牌要先判断这位顾客够不够格。"
+                f"清单为空时，就只给动作建议、不点名具体项目。\n")
+
         tool_name = {1: "submit_call1", 2: "submit_call2", 3: "submit_call3"}[call_no]
         user_prompt = (
             f"顾客姓名：{customer_name}\n"
@@ -4435,6 +4506,7 @@ def _run_session_analysis_impl(session_id, signature, model=None, only_tasks=Non
             f"---\n请完成以下 {len(tids)} 个任务，调用 {tool_name} 提交：\n\n"
             + "\n\n".join(task_prompts)
             + vocab_brief
+            + ammo_section
         )
 
         sub_tool = build_subset_tool(call_no, all_schema_keys)
@@ -9392,6 +9464,126 @@ def _this_month():
     return datetime.now().strftime("%Y-%m")
 
 
+# ═══════════ 门店弹药库（2026-07-13 老板拍板）═══════════
+# 顾问接诊时手里能打的牌：项目/产品、权益(带客单价门槛)、回店阶梯礼(第几次到店)、当月活动。
+# 老板/管理员可增删改；店长只读(manager_required 读，admin_required 写)。
+# 分析时按【公司+门店+接诊日】自动捞当时有效的，过期的不再出现。
+
+def _ammo_row_out(r):
+    d = dict(r)
+    try:
+        d["keywords"] = json.loads(r["keywords"] or "[]") or []
+    except (json.JSONDecodeError, TypeError):
+        d["keywords"] = []
+    d["kind_label"] = AMMO_KINDS.get(r["kind"], r["kind"])
+    return d
+
+
+@app.route("/api/admin/store_ammo", methods=["GET"])
+@manager_required
+def api_store_ammo_list():
+    cid = session.get("company_id") or 1
+    if session.get("role") == "super":
+        cid = int(request.args.get("company_id") or cid)
+    rows = db_fetchall(
+        """SELECT a.*, s.name AS store_name FROM store_ammo a
+           LEFT JOIN stores s ON s.id = a.store_id
+           WHERE a.company_id=? ORDER BY a.active DESC, a.kind, a.id DESC""", (cid,))
+    today = datetime.now().strftime("%Y-%m-%d")
+    out = []
+    for r in rows:
+        d = _ammo_row_out(r)
+        vf, vt = (r["valid_from"] or ""), (r["valid_to"] or "")
+        d["expired"] = bool(vt and vt < today)
+        d["not_started"] = bool(vf and vf > today)
+        d["in_effect"] = bool(r["active"] and not d["expired"] and not d["not_started"])
+        out.append(d)
+    return jsonify({"items": out, "kinds": AMMO_KINDS,
+                    "stores": [dict(s) for s in db_fetchall(
+                        "SELECT id, name FROM stores WHERE company_id=? ORDER BY id", (cid,))],
+                    "can_edit": session.get("role") in ("admin", "super")})
+
+
+@app.route("/api/admin/store_ammo", methods=["POST"])
+@admin_required
+def api_store_ammo_create():
+    data = request.get_json(silent=True) or {}
+    cid = session.get("company_id") or 1
+    if session.get("role") == "super" and data.get("company_id"):
+        cid = int(data["company_id"])
+    name = (data.get("name") or "").strip()
+    kind = (data.get("kind") or "product").strip()
+    if not name:
+        return jsonify({"error": "名称必填"}), 400
+    if kind not in AMMO_KINDS:
+        return jsonify({"error": f"类型必须是 {'/'.join(AMMO_KINDS)}"}), 400
+    kws = [k.strip() for k in (data.get("keywords") or []) if isinstance(k, str) and k.strip()]
+    ct = (data.get("condition_type") or "").strip() or None
+    if ct not in (None, "min_ticket", "visit_nth"):
+        return jsonify({"error": "触发条件不合法"}), 400
+    cv = data.get("condition_value")
+    cv = float(cv) if (ct and cv not in (None, "")) else None
+    if ct and cv is None:
+        return jsonify({"error": "选了触发条件就要填数值（客单价门槛 / 第几次到店）"}), 400
+    sid = data.get("store_id")
+    sid = int(sid) if sid not in (None, "", "0") else None
+    pid = db_write(
+        """INSERT INTO store_ammo (company_id, store_id, kind, name, keywords,
+                                   valid_from, valid_to, condition_type, condition_value, note, active)
+           VALUES (?,?,?,?,?,?,?,?,?,?,1)""",
+        (cid, sid, kind, name, json.dumps(kws, ensure_ascii=False),
+         (data.get("valid_from") or "").strip() or None,
+         (data.get("valid_to") or "").strip() or None,
+         ct, cv, (data.get("note") or "").strip() or None))
+    return jsonify({"id": pid, "ok": True})
+
+
+@app.route("/api/admin/store_ammo/<int:aid>", methods=["PATCH"])
+@admin_required
+def api_store_ammo_update(aid):
+    row = db_fetchone("SELECT id, company_id FROM store_ammo WHERE id=?", (aid,))
+    if not row:
+        return jsonify({"error": "不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != (session.get("company_id") or 1):
+        return jsonify({"error": "无权修改"}), 403
+    data = request.get_json(silent=True) or {}
+    sets, params = [], []
+    for f in ("name", "kind", "valid_from", "valid_to", "note", "condition_type"):
+        if f in data:
+            v = (data.get(f) or "").strip() or None
+            if f == "kind" and v not in AMMO_KINDS:
+                return jsonify({"error": "类型不合法"}), 400
+            sets.append(f"{f}=?"); params.append(v)
+    if "keywords" in data:
+        kws = [k.strip() for k in (data.get("keywords") or []) if isinstance(k, str) and k.strip()]
+        sets.append("keywords=?"); params.append(json.dumps(kws, ensure_ascii=False))
+    if "condition_value" in data:
+        cv = data.get("condition_value")
+        sets.append("condition_value=?"); params.append(float(cv) if cv not in (None, "") else None)
+    if "store_id" in data:
+        sid = data.get("store_id")
+        sets.append("store_id=?"); params.append(int(sid) if sid not in (None, "", "0") else None)
+    if "active" in data:
+        sets.append("active=?"); params.append(1 if data.get("active") else 0)
+    if not sets:
+        return jsonify({"error": "没有要改的字段"}), 400
+    params.append(aid)
+    db_write(f"UPDATE store_ammo SET {', '.join(sets)} WHERE id=?", tuple(params))
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/store_ammo/<int:aid>", methods=["DELETE"])
+@admin_required
+def api_store_ammo_delete(aid):
+    row = db_fetchone("SELECT id, company_id FROM store_ammo WHERE id=?", (aid,))
+    if not row:
+        return jsonify({"error": "不存在"}), 404
+    if session.get("role") != "super" and row["company_id"] != (session.get("company_id") or 1):
+        return jsonify({"error": "无权删除"}), 403
+    db_write("DELETE FROM store_ammo WHERE id=?", (aid,))
+    return jsonify({"ok": True})
+
+
 @app.route("/api/admin/monthly_projects", methods=["GET"])
 @manager_required
 def api_monthly_projects_list():
@@ -9467,6 +9659,82 @@ def _customer_session_clause(customer_id, name, company_id):
     return clause, [customer_id, name, company_id]
 
 
+AMMO_KINDS = {
+    "product": "项目/产品",
+    "perk": "权益",
+    "return_gift": "回店阶梯礼",
+    "campaign": "当月活动",
+}
+
+
+def _load_active_ammo(company_id, store_id, service_date):
+    """★2026-07-13 门店弹药库：捞出【这单当时有效】的弹药。
+
+    有效 = active=1 且 公司匹配 且（store_id 为空=全公司通用 或 正好是这家店）
+           且 接诊日落在 valid_from ~ valid_to 之间（空=不限）。
+    时效是自动的：9 月跑的单子，7-8 月的专车接送不会出现在这里。
+    """
+    day = (service_date or datetime.now().strftime("%Y-%m-%d"))[:10]
+    rows = db_fetchall(
+        """SELECT id, kind, name, keywords, valid_from, valid_to,
+                  condition_type, condition_value, note, store_id
+           FROM store_ammo
+           WHERE company_id=? AND active=1
+             AND (store_id IS NULL OR store_id=?)
+             AND (valid_from IS NULL OR valid_from='' OR valid_from<=?)
+             AND (valid_to   IS NULL OR valid_to=''   OR valid_to>=?)
+           ORDER BY kind, id""",
+        (company_id, store_id, day, day))
+    out = []
+    for r in rows:
+        try:
+            kws = json.loads(r["keywords"] or "[]") or []
+        except (json.JSONDecodeError, TypeError):
+            kws = []
+        d = dict(r)
+        d["keywords"] = list(kws) + [r["name"]]   # 项目名本身也算命中词
+        out.append(d)
+    return out
+
+
+def _customer_visit_count(company_id, customer_id, customer_name, before_date):
+    """该顾客在本次之前来过几次（按已建接诊 session 计）。
+    老板拍板：回店阶梯礼的「第几次」由系统算，不让 AI 猜。返回本次是第几次到店（≥1）。"""
+    clause, params = _customer_session_clause(customer_id, customer_name, company_id)
+    row = db_fetchone(
+        f"""SELECT COUNT(*) AS n FROM sessions s
+            WHERE {clause} AND s.service_date IS NOT NULL AND s.service_date < ?""",
+        params + [(before_date or "9999-12-31")[:10]])
+    return int((row["n"] if row else 0) or 0) + 1
+
+
+def _ammo_brief(ammo, visit_no):
+    """把有效弹药清单渲染成给 AI 的说明。没有弹药就返回空串（prompt 里那段整体不出现）。"""
+    if not ammo:
+        return ""
+    lines = []
+    for kind, label in AMMO_KINDS.items():
+        group = [a for a in ammo if a["kind"] == kind]
+        if not group:
+            continue
+        lines.append(f"■ {label}")
+        for a in group:
+            bits = [f"「{a['name']}」"]
+            ct, cv = a.get("condition_type"), a.get("condition_value")
+            if ct == "min_ticket" and cv:
+                bits.append(f"（条件：客单价 ≥ {int(cv)} 元才可用——请结合录音里谈到的金额自行判断够不够格）")
+            elif ct == "visit_nth" and cv:
+                nth = int(cv)
+                hit = "【本次正好是第%d次到店，这张牌就是给她的】" % nth if visit_no == nth else f"（第 {nth} 次到店才送，本次是第 {visit_no} 次）"
+                bits.append(hit)
+            if a.get("valid_to"):
+                bits.append(f"[有效期至 {a['valid_to']}]")
+            if a.get("note"):
+                bits.append(f"话术参考：{a['note']}")
+            lines.append("  · " + " ".join(bits))
+    return "\n".join(lines)
+
+
 def _monthly_activity_touch(company_id, customer_id, customer_name, service_date):
     """★2026-07-13 老客评分维度:当月重点活动对该顾客的触达次数。
     口径(老板拍板)=每个顾客每自然月触达 3 次左右;单次录音只能判"本次有没有讲",
@@ -9475,11 +9743,16 @@ def _monthly_activity_touch(company_id, customer_id, customer_name, service_date
     month = (service_date or "")[:7]
     if not month:
         return None
-    prows = db_fetchall(
-        "SELECT name, keywords FROM monthly_projects WHERE company_id=? AND month=?",
-        (company_id, month))
+    # ★2026-07-13 改读【门店弹药库】里当月有效的「当月活动」(campaign)——老板只在一个地方配
+    last = calendar.monthrange(int(month[:4]), int(month[5:7]))[1]
+    rows = db_fetchall(
+        """SELECT name, keywords FROM store_ammo
+           WHERE company_id=? AND active=1 AND kind='campaign'
+             AND (valid_from IS NULL OR valid_from='' OR valid_from<=?)
+             AND (valid_to   IS NULL OR valid_to=''   OR valid_to>=?)""",
+        (company_id, f"{month}-{last:02d}", f"{month}-01"))
     projects = []
-    for pr in prows:
+    for pr in rows:
         try:
             kws = json.loads(pr["keywords"] or "[]") or []
         except (json.JSONDecodeError, TypeError):
@@ -9541,10 +9814,18 @@ def api_customer_profile():
     months = {(r["service_date"] or "")[:7] for r in sess_rows if r["service_date"]}
     proj_by_month = {}
     if months:
-        qmarks = ",".join("?" * len(months))
-        prows = db_fetchall(
-            f"SELECT month, name, keywords FROM monthly_projects WHERE company_id=? AND month IN ({qmarks})",
-            tuple([comp] + list(months)))
+        # ★2026-07-13 改读【门店弹药库】的当月活动(campaign):老板只在一个地方配。
+        #   按每个月去问一次"那个月有效的活动",生效期跨月的活动会在每个覆盖到的月份都出现。
+        prows = []
+        for _m in months:
+            _last = calendar.monthrange(int(_m[:4]), int(_m[5:7]))[1]
+            for _r in db_fetchall(
+                    """SELECT name, keywords FROM store_ammo
+                       WHERE company_id=? AND active=1 AND kind='campaign'
+                         AND (valid_from IS NULL OR valid_from='' OR valid_from<=?)
+                         AND (valid_to   IS NULL OR valid_to=''   OR valid_to>=?)""",
+                    (comp, f"{_m}-{_last:02d}", f"{_m}-01")):
+                prows.append({"month": _m, "name": _r["name"], "keywords": _r["keywords"]})
         for pr in prows:
             try:
                 kws = json.loads(pr["keywords"] or "[]") or []
