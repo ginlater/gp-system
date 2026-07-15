@@ -539,6 +539,10 @@ def init_db():
         conn.execute("ALTER TABLE users ADD COLUMN allow_phone_rec INTEGER DEFAULT 1")
     if "allow_pen_rec" not in user_cols:
         conn.execute("ALTER TABLE users ADD COLUMN allow_pen_rec INTEGER DEFAULT 1")
+    # ★2026-07-15 多系统整合：这个账号被开通了哪几个系统(JSON 数组，如 ["gongpai","teach"])。
+    #   NULL/空 = 只有工牌录音(存量账号向后兼容，行为不变)。平台开号时按勾选写入，App /api/me 读它决定显示哪些格子。
+    if "enabled_systems" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN enabled_systems TEXT")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pen_sn_sightings (
             user_id INTEGER NOT NULL,
@@ -4889,7 +4893,7 @@ def current_user():
         return None
     return db_fetchone(
         "SELECT id, username, role, company_id, advisor_name, employee_id, phone, store_id, "
-        "allow_phone_rec, allow_pen_rec FROM users WHERE id=?",
+        "allow_phone_rec, allow_pen_rec, enabled_systems FROM users WHERE id=?",
         (uid,),
     )
 
@@ -6994,7 +6998,40 @@ def api_me():
         "store_id": u["store_id"],
         "allow_phone_rec": (0 if u["allow_phone_rec"] == 0 else 1),
         "allow_pen_rec": (0 if u["allow_pen_rec"] == 0 else 1),
+        # ★2026-07-15 多系统整合：这个账号能用哪些系统(App 据此显示工作台格子)
+        "systems": _account_systems(u),
     })
+
+
+# ★2026-07-15 多系统整合 —— 系统注册表(服务端唯一真相，App 只认这里返回的)。
+#   type: native=App 原生实现 / webview=课件正文等内容型用内置网页加载。
+#   工牌永远开通(它就是这个 App 的本体)；其余按 users.enabled_systems 勾选。
+SYSTEM_REGISTRY = {
+    "gongpai": {"key": "gongpai", "name": "智能工牌", "type": "native",
+                "desc": "录音接诊 · 陪伴分析", "url": None},
+    "teach":   {"key": "teach", "name": "美业网课", "type": "hybrid",
+                "desc": "课程学习 · 打卡测验",
+                "url": "https://teach.aibeautyfulwomen.com"},
+    "followup": {"key": "followup", "name": "回访话术", "type": "native",
+                 "desc": "顾客回访 · 话术生成",
+                 "url": "https://www.aibeautyfulwomen.com"},
+    "chat":    {"key": "chat", "name": "销售话术", "type": "native",
+                "desc": "销售场景 · 话术生成",
+                "url": "https://chat.aibeautyfulwomen.com"},
+    "higheq":  {"key": "higheq", "name": "高情商话术", "type": "native",
+                "desc": "情绪价值 · 沟通话术",
+                "url": "http://43.136.130.133"},
+}
+
+
+def _account_systems(u):
+    """这个账号能进的系统列表(工牌恒在 + enabled_systems 勾选的)，按注册表补全展示信息。"""
+    try:
+        enabled = json.loads(u["enabled_systems"]) if ("enabled_systems" in u.keys() and u["enabled_systems"]) else []
+    except (json.JSONDecodeError, TypeError):
+        enabled = []
+    keys = ["gongpai"] + [k for k in enabled if k != "gongpai" and k in SYSTEM_REGISTRY]
+    return [SYSTEM_REGISTRY[k] for k in keys if k in SYSTEM_REGISTRY]
 
 
 # ============ 管理员：顾问账号 ============
@@ -14801,7 +14838,7 @@ def platform_users_list():
     rows = db_fetchall(
         f"""SELECT u.id, u.username, u.role, u.company_id, u.store_id,
                    u.advisor_name, u.employee_id, u.phone, u.pen_sn, u.created_at,
-                   u.allow_phone_rec, u.allow_pen_rec,
+                   u.allow_phone_rec, u.allow_pen_rec, u.enabled_systems,
                    co.name AS company_name, st.name AS store_name
             FROM users u
             LEFT JOIN companies co ON co.id=u.company_id
@@ -14968,6 +15005,14 @@ def platform_users_update(uid):
     for f in ("allow_phone_rec", "allow_pen_rec"):
         if f in data:
             sets.append(f"{f}=?"); params.append(1 if data[f] else 0)
+
+    # ★2026-07-15 多系统整合：平台开号/改号时勾选开通哪些系统(工牌恒开，不需存)
+    if "enabled_systems" in data:
+        syslist = data["enabled_systems"] or []
+        if not isinstance(syslist, list):
+            return jsonify({"error": "enabled_systems 必须是数组"}), 400
+        clean = [s for s in syslist if s in SYSTEM_REGISTRY and s != "gongpai"]
+        sets.append("enabled_systems=?"); params.append(json.dumps(clean, ensure_ascii=False))
 
     if not sets:
         return jsonify({"error": "无修改字段"}), 400
