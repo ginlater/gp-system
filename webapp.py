@@ -5065,7 +5065,7 @@ def terms_of_service():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.2.2"
+APP_V2_VERSION_NAME = "2.3.0"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
