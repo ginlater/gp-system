@@ -7040,7 +7040,10 @@ def _account_systems(u):
         enabled = json.loads(u["enabled_systems"]) if ("enabled_systems" in u.keys() and u["enabled_systems"]) else []
     except (json.JSONDecodeError, TypeError):
         enabled = []
-    keys = ["gongpai"] + [k for k in enabled if k != "gongpai" and k in SYSTEM_REGISTRY]
+    # 伪 key "no_gongpai"：不显示工牌格子(如只用回访/高情商、没有录音需求的员工)。
+    hide_gp = "no_gongpai" in enabled
+    enabled = [k for k in enabled if k != "no_gongpai"]
+    keys = ([] if hide_gp else ["gongpai"]) + [k for k in enabled if k != "gongpai" and k in SYSTEM_REGISTRY]
     return [SYSTEM_REGISTRY[k] for k in keys if k in SYSTEM_REGISTRY]
 
 
