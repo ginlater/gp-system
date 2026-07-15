@@ -51,3 +51,13 @@ recordings.db-wal
 __pycache__/
 .claude/settings.local.json
 output/.DS_Store
+
+# 编译产物(2026-07-14 清理:多系统改造前的存档点)
+ios_app/MeiliCompanion/build_adhoc/
+ios_app/MeiliCompanion/build_archive/
+ios_app/MeiliCompanion/build_export/
+ios_app/MeiliCompanion/*.log
+app-v2-release.apk
+app_store_assets/
+*.zip
+iosapp图片/
