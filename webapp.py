@@ -7024,6 +7024,9 @@ SYSTEM_REGISTRY = {
     "kpi":     {"key": "kpi", "name": "KPI积分", "type": "web",
                 "desc": "晋升积分 · 业绩看板",
                 "url": "https://kpi.beautyshining.com"},
+    "kpi_admin": {"key": "kpi_admin", "name": "KPI记分考核", "type": "web",
+                  "desc": "记分考核 · 管理后台",
+                  "url": "https://kpi.beautyshining.com/admin"},
 }
 
 
