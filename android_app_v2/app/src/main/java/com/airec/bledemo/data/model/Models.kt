@@ -31,6 +31,12 @@ data class Me(
     @Json(name = "allow_pen_rec") val allowPenRec: Int? = null,
     // /api/me 在未登录时返回 {"error":"未登录"} + 401
     @Json(name = "error") val error: String? = null,
+    // 多系统整合：本账号开通的系统清单（P0a 起返回；旧服务端缺省 null=只有工牌，行为不变）
+    @Json(name = "systems") val systems: List<SystemEntry>? = null,
+    // 账号绑定(2026-07-16)：回访/高情商的历史数据在独立 staff 账号名下,
+    // 绑定后 App 用它静默登录(数据零迁移);null/空 = 未绑定,退回统一密码。
+    @Json(name = "script_account") val scriptAccount: String? = null,
+    @Json(name = "script_password") val scriptPassword: String? = null,
 ) {
     val isConsultantOrManager: Boolean
         get() = role == "consultant" || role == "store_manager"
@@ -43,7 +49,26 @@ data class Me(
     /** 管理台角色（管理员 / 超管）。登录后 GateScreen 据此分流到 [com.airec.bledemo.nav.Routes.AdminHome]。 */
     val isAdminOrSuper: Boolean
         get() = role == "admin" || role == "super"
+
+    /**
+     * 是否多系统账号（≥2 个系统 → 登录后先落「工作台」宫格；单系统直进录音首页不变）。
+     * 旧服务端 systems 为 null（只有工牌）→ false，绝大多数顾问不受打扰。
+     */
+    val multiSystem: Boolean
+        get() = (systems?.size ?: 0) >= 2
 }
+
+/**
+ * /api/me 的 systems 元素（P0a SYSTEM_REGISTRY）。
+ * type: native（工牌，原生）| hybrid（teach，原生壳+课件 WebView）| web（后续系统）。
+ */
+data class SystemEntry(
+    @Json(name = "key") val key: String? = null,
+    @Json(name = "name") val name: String? = null,
+    @Json(name = "type") val type: String? = null,
+    @Json(name = "desc") val desc: String? = null,
+    @Json(name = "url") val url: String? = null,
+)
 
 // ─────────────────────────── 版本 / 强制更新 ───────────────────────────
 

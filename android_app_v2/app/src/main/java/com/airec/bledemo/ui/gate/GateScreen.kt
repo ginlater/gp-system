@@ -39,7 +39,8 @@ import com.airec.bledemo.designsystem.MeiliPalette
  * 启动 / 登录成功后统一落到这里，在唯一一处按角色分流（避免在 Activity 与登录回调各判一次）：
  *  - 拉 [AuthManager.currentUser]（suspend，打 /api/me 实判会话 + 拿 role）。
  *  - admin / super        → 管理台首页（onAdmin）
- *  - consultant/store_mgr → 顾问端主壳（onConsultant）
+ *  - 顾问且开通 ≥2 个系统 → 多系统工作台（onWorkspace，宫格选系统）
+ *  - consultant/store_mgr → 顾问端主壳（onConsultant，单系统直进录音首页不变）
  *  - null（未登录/失败）   → 登录页（onLogin）
  *
  * 分流回调里由 NavHost 负责把 Gate 自身 pop 掉（见 AppScaffold）。
@@ -47,6 +48,7 @@ import com.airec.bledemo.designsystem.MeiliPalette
  * 而非白屏 + 裸转圈——缓存自动登录这段空窗看起来是「正在开启」，不是「坏了」。
  *
  * @param onAdmin 进管理台
+ * @param onWorkspace 进多系统工作台（/api/me systems ≥2 的顾问）
  * @param onConsultant 进顾问端主壳
  * @param onLogin 回登录
  * @param modifier 由 AppScaffold 传入
@@ -55,6 +57,7 @@ import com.airec.bledemo.designsystem.MeiliPalette
 @Composable
 fun GateScreen(
     onAdmin: () -> Unit,
+    onWorkspace: () -> Unit,
     onConsultant: () -> Unit,
     onLogin: () -> Unit,
     modifier: Modifier = Modifier,
@@ -66,6 +69,7 @@ fun GateScreen(
         when {
             me == null -> onLogin()
             me.isAdminOrSuper -> onAdmin()
+            me.multiSystem -> onWorkspace()   // 多系统账号先选系统；旧服务端无 systems 字段 → false
             else -> onConsultant()   // consultant / store_manager（及任何其它有效会话兜底进顾问端）
         }
     }

@@ -75,6 +75,7 @@ import com.airec.bledemo.recording.RecordingState
  * @param onBindCustomer 陪伴成功结束后→绑定该段(recordingId)到顾客（引擎回传 lastRecordingId 时触发）
  * @param onOpenReminders 跳「提醒」（提醒 tile）；默认空实现
  * @param onOpenSettings 右上角设置齿轮；默认空实现
+ * @param onSwitchSystem 多系统切换（切换器弹窗选中其它系统时回调 key；单系统账号图标不显示）
  * @param modifier 由 AppScaffold 传入（含底栏避让 padding）
  */
 @Composable
@@ -83,9 +84,13 @@ fun HomeScreen(
     onBindCustomer: (recordingId: Long) -> Unit = {},
     onOpenReminders: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    onSwitchSystem: (String) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: HomeViewModel = viewModel(),
 ) {
+    // 多系统账号才显示顶栏「切换工作台」宫格图标（lastMe 登录时已缓存，读一次即可）
+    val multiSystem = remember { com.airec.bledemo.data.auth.AuthManager.lastMe?.multiSystem == true }
+    val switcherOpen = remember { androidx.compose.runtime.mutableStateOf(false) }
     val header by viewModel.header.collectAsStateWithLifecycle()
     val companion by viewModel.companion.collectAsStateWithLifecycle()
     val source by viewModel.source.collectAsStateWithLifecycle()
@@ -159,7 +164,17 @@ fun HomeScreen(
         onOpenReception = onOpenReception,
         onOpenReminders = onOpenReminders,
         onOpenSettings = onOpenSettings,
+        showSwitcher = multiSystem,
+        onOpenSwitcher = { switcherOpen.value = true },
         modifier = modifier,
+    )
+
+    // 多系统切换弹窗（从工牌切去网课等，不用退出重登）
+    com.airec.bledemo.ui.workspace.SystemSwitcherSheet(
+        visible = switcherOpen.value,
+        currentKey = "gongpai",
+        onDismiss = { switcherOpen.value = false },
+        onSwitch = onSwitchSystem,
     )
 }
 
@@ -178,6 +193,8 @@ private fun HomeContent(
     onOpenReception: () -> Unit,
     onOpenReminders: () -> Unit,
     onOpenSettings: () -> Unit,
+    showSwitcher: Boolean = false,
+    onOpenSwitcher: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -190,6 +207,8 @@ private fun HomeContent(
         AppHeader(
             header = header,
             onOpenSettings = onOpenSettings,
+            showSwitcher = showSwitcher,
+            onOpenSwitcher = onOpenSwitcher,
         )
 
         CompanionCard(
@@ -220,11 +239,13 @@ private fun HomeContent(
 
 // ─────────────────────────── 顶部 appbar ───────────────────────────
 
-/** .appbar：问候 + 「美丽陪伴」衬线标题 + 陪伴师 chip / 名·店；右侧仅设置齿轮。 */
+/** .appbar：问候 + 「美丽陪伴」衬线标题 + 陪伴师 chip / 名·店；右侧（多系统时）工作台宫格 + 设置齿轮。 */
 @Composable
 private fun AppHeader(
     header: HomeHeader,
     onOpenSettings: () -> Unit,
+    showSwitcher: Boolean = false,
+    onOpenSwitcher: () -> Unit = {},
 ) {
     Row(
         modifier = Modifier
@@ -263,7 +284,12 @@ private fun AppHeader(
                 }
             }
         }
-        IconButtonBox(icon = MeiliIcons.Settings, onClick = onOpenSettings)
+        Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            if (showSwitcher) {
+                IconButtonBox(icon = MeiliIcons.Workspace, onClick = onOpenSwitcher)
+            }
+            IconButtonBox(icon = MeiliIcons.Settings, onClick = onOpenSettings)
+        }
     }
 }
 

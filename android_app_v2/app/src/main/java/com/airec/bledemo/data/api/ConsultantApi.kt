@@ -35,6 +35,12 @@ interface ConsultantApi {
     @GET("api/me")
     suspend fun me(): Response<Me>
 
+    /** 顾问改密(工牌主账号)。体 {old_password,new_password}。 */
+    @POST("api/consultant/change-password")
+    suspend fun changePassword(
+        @Body body: Map<String, @JvmSuppressWildcards Any?>,
+    ): Response<ResponseBody>
+
     /** v2 原生包独立版本检查（启动提示更新）。无需登录。 */
     @GET("api/app/v2/version")
     suspend fun appVersionV2(): Response<AppVersion>

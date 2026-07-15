@@ -76,7 +76,12 @@ import com.airec.bledemo.ui.reception.ReceptionScreen
 import com.airec.bledemo.ui.reminders.RemindersScreen
 import com.airec.bledemo.ui.report.ReportScreen
 import com.airec.bledemo.ui.session.SessionPreviewScreen
+import com.airec.bledemo.ui.agentweb.AgentWebScreen
 import com.airec.bledemo.ui.settings.SettingsScreen
+import com.airec.bledemo.ui.teach.TeachHomeScreen
+import com.airec.bledemo.ui.teach.TeachQuizScreen
+import com.airec.bledemo.ui.teach.TeachReaderScreen
+import com.airec.bledemo.ui.workspace.WorkspaceScreen
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
@@ -155,6 +160,27 @@ private fun AppNavHost(
     startDestination: String,
     modifier: Modifier = Modifier,
 ) {
+    // 系统 key → 目的地（工作台格子直接用；切换器先 pop 回工作台再用）
+    val navigateToSystem: (String) -> Unit = { key ->
+        when (key) {
+            "gongpai" -> navController.navigate(Routes.Main)
+            "teach" -> navController.navigate(Routes.TeachHome)
+            "followup", "higheq" -> navController.navigate(Routes.ScriptAgent.build(key))
+            "chat" -> navController.navigate(Routes.ChatHome)
+            "kpi" -> navController.navigate(Routes.KpiHome)
+            "kpi_admin" -> navController.navigate(Routes.KpiAdminHome)
+        }
+    }
+
+    // 多系统切换（P1.1）：先 pop 回工作台（多系统账号的 Gate 落点，必在返回栈），再进目标系统。
+    // 极端情况（进程恢复等）栈里没有工作台就先补一个，保证返回层级始终是 工作台 → 系统。
+    val switchSystem: (String) -> Unit = { key ->
+        if (!navController.popBackStack(Routes.Workspace, false)) {
+            navController.navigate(Routes.Workspace) { launchSingleTop = true }
+        }
+        navigateToSystem(key)
+    }
+
     NavHost(
         navController = navController,
         startDestination = startDestination,
@@ -188,6 +214,11 @@ private fun AppNavHost(
                         popUpTo(Routes.Gate) { inclusive = true }
                     }
                 },
+                onWorkspace = {
+                    navController.navigate(Routes.Workspace) {
+                        popUpTo(Routes.Gate) { inclusive = true }
+                    }
+                },
                 onConsultant = {
                     navController.navigate(Routes.Main) {
                         popUpTo(Routes.Gate) { inclusive = true }
@@ -199,6 +230,77 @@ private fun AppNavHost(
                     }
                 },
             )
+        }
+
+        // ---- 多系统工作台（systems ≥2 的账号；back 键从各系统回到这里再退出） ----
+        composable(Routes.Workspace) {
+            WorkspaceScreen(
+                onOpenSystem = navigateToSystem,
+                onOpenSettings = { navController.navigate(Routes.Settings) },
+            )
+        }
+
+        // ---- teach 网课壳（工作台入口进） ----
+        composable(Routes.TeachHome) {
+            TeachHomeScreen(
+                onBack = { navController.popBackStack() },
+                onOpenReader = { key -> navController.navigate(Routes.TeachReader.build(key)) },
+                onOpenQuiz = { key, idx -> navController.navigate(Routes.TeachQuiz.build(key, idx)) },
+                onSwitchSystem = switchSystem,
+            )
+        }
+        composable(
+            route = Routes.TeachReader.routePattern,
+            arguments = listOf(
+                navArgument(Routes.TeachReader.ARG_CHAPTER_KEY) { type = NavType.StringType },
+            ),
+        ) { entry ->
+            val key = entry.arguments?.getString(Routes.TeachReader.ARG_CHAPTER_KEY).orEmpty()
+            TeachReaderScreen(
+                chapterKey = key,
+                onBack = { navController.popBackStack() },
+            )
+        }
+        composable(
+            route = Routes.TeachQuiz.routePattern,
+            arguments = listOf(
+                navArgument(Routes.TeachQuiz.ARG_CHAPTER_KEY) { type = NavType.StringType },
+                navArgument(Routes.TeachQuiz.ARG_QUIZ_INDEX) { type = NavType.IntType },
+            ),
+        ) { entry ->
+            val key = entry.arguments?.getString(Routes.TeachQuiz.ARG_CHAPTER_KEY).orEmpty()
+            val idx = entry.arguments?.getInt(Routes.TeachQuiz.ARG_QUIZ_INDEX) ?: 1
+            TeachQuizScreen(
+                chapterKey = key,
+                quizIndex = idx,
+                onBack = { navController.popBackStack() },
+            )
+        }
+
+        // ---- 回访 / 高情商话术:规格驱动的原生完整表单(P1.3,规格提取自网页版) ----
+        composable(
+            route = Routes.ScriptAgent.routePattern,
+            arguments = listOf(
+                navArgument(Routes.ScriptAgent.ARG_SYS_KEY) { type = NavType.StringType },
+            ),
+        ) { entry ->
+            val sysKey = entry.arguments?.getString(Routes.ScriptAgent.ARG_SYS_KEY).orEmpty()
+            com.airec.bledemo.ui.followup.FollowupScreen(
+                systemKey = sysKey,
+                onBack = { navController.popBackStack() },
+            )
+        }
+        // ---- 扣子销售话术:仍为整页 WebView + 免登录注入(顶栏带 A±字号) ----
+        composable(Routes.ChatHome) {
+            AgentWebScreen(systemKey = "chat", onBack = { navController.popBackStack() })
+        }
+        // ---- KPI 积分:WebView + cookie 会话(账号体系独立,首次手动登录后常驻) ----
+        composable(Routes.KpiHome) {
+            AgentWebScreen(systemKey = "kpi", onBack = { navController.popBackStack() })
+        }
+        // ---- KPI 记分考核(管理后台,固定管理员账号自动登录) ----
+        composable(Routes.KpiAdminHome) {
+            AgentWebScreen(systemKey = "kpi_admin", onBack = { navController.popBackStack() })
         }
 
         // ---- 管理台 ----
@@ -230,6 +332,7 @@ private fun AppNavHost(
                 onOpenPreview = { cid, date -> navController.navigate(Routes.SessionPreviewByCustomer.build(cid, date)) },
                 onOpenCustomerDetail = { cid -> navController.navigate(Routes.CustomerDetail.build(cid)) },
                 onOpenSettings = { navController.navigate(Routes.Settings) },
+                onSwitchSystem = switchSystem,
             )
         }
 
@@ -249,6 +352,12 @@ private fun AppNavHost(
                 onLoggedOut = {
                     navController.navigate(Routes.Login) {
                         popUpTo(navController.graph.findStartDestination().id) { inclusive = true }
+                    }
+                },
+                // 「切换系统工作台」：pop 回工作台宫格（沿途 Settings/Main 等一并出栈）
+                onSwitchWorkspace = {
+                    if (!navController.popBackStack(Routes.Workspace, false)) {
+                        navController.navigate(Routes.Workspace) { launchSingleTop = true }
                     }
                 },
             )
@@ -346,6 +455,7 @@ private fun MainTabsScaffold(
     onOpenPreview: (customerId: Long, date: String) -> Unit,
     onOpenCustomerDetail: (customerId: Long) -> Unit,
     onOpenSettings: () -> Unit,
+    onSwitchSystem: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val pagerState = rememberPagerState(pageCount = { TAB_COUNT })
@@ -374,6 +484,7 @@ private fun MainTabsScaffold(
                     onBindCustomer = onBindCustomer,
                     onOpenReminders = onOpenReminders,
                     onOpenSettings = onOpenSettings,
+                    onSwitchSystem = onSwitchSystem,
                 )
                 BottomTab.Reception.ordinal -> ReceptionScreen(
                     onBindCustomer = onBindCustomer,

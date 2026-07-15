@@ -119,6 +119,16 @@ object MeiliIcons {
         }
     }
 
+    /** 工作台/多系统切换：四个圆角小方块宫格。 */
+    val Workspace: ImageVector by lazy {
+        stroke("ic_workspace") {
+            roundRect(4f, 4f, 7f, 7f, 2.2f)
+            roundRect(13f, 4f, 7f, 7f, 2.2f)
+            roundRect(4f, 13f, 7f, 7f, 2.2f)
+            roundRect(13f, 13f, 7f, 7f, 2.2f)
+        }
+    }
+
     /** 接诊/今日：日历 + 心。 */
     val Reception: ImageVector by lazy {
         stroke("ic_reception") {

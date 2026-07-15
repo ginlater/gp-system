@@ -20,6 +20,17 @@ class AuthManager(
     private val creds: CredentialStore = CredentialStore(),
 ) {
 
+    companion object {
+        /**
+         * 最近一次 /api/me 成功结果的内存缓存（进程内）。
+         * 工作台（Workspace）等紧跟 Gate 之后的屏读它拿 systems，免得再打一次网络;
+         * 读到 null（如进程被杀后恢复）时调用方自行 [currentUser] 兜底。
+         */
+        @Volatile
+        var lastMe: Me? = null
+            private set
+    }
+
     sealed class LoginResult {
         /** 登录成功，附带 /api/me。 */
         data class Success(val me: Me) : LoginResult()
@@ -69,8 +80,14 @@ class AuthManager(
         } catch (_: Exception) {
             // 忽略：本地清空才是关键
         } finally {
+            lastMe = null
             cookieJar.clear()
             runCatching { creds.clear() }   // 退出登录后不再自动重登
+            // 多系统整合：teach/回访/高情商/扣子 都用同一套凭证静默登录，换人/退出时会话与缓存必须跟着作废
+            runCatching { com.airec.bledemo.data.teach.TeachModule.clear() }
+            runCatching { com.airec.bledemo.data.followup.FollowupModule.clear() }
+            runCatching { com.airec.bledemo.data.chat.ChatModule.clear() }
+            runCatching { com.airec.bledemo.data.kpi.KpiModule.clear() }
             // F3：清提醒已见集——换账号后按"播种不弹"重来，不错配上个账号的已见状态
             runCatching { com.airec.bledemo.notify.ReminderNotifier.clearSeen() }
         }
@@ -116,7 +133,7 @@ class AuthManager(
                 resp.isSuccessful -> {
                     val me = resp.body()
                     if (me == null || me.error != null || me.id == null) MeResult.Unauthorized
-                    else MeResult.Ok(me)
+                    else MeResult.Ok(me).also { lastMe = me }
                 }
                 else -> MeResult.Error("HTTP ${resp.code()}")
             }

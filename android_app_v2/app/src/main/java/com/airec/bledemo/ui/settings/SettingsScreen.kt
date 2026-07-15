@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,8 +22,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import com.airec.bledemo.designsystem.components.MeiliBottomSheet
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,12 +79,14 @@ import com.airec.bledemo.designsystem.components.PillKind
  *
  * @param onBack 返回上一页
  * @param onLoggedOut 退出登录后回调（上层把导航起点切回登录）
+ * @param onSwitchWorkspace 「切换系统工作台」（仅多系统账号显示该区块；回工作台宫格选系统）
  * @param modifier 由 AppScaffold 传入
  */
 @Composable
 fun SettingsScreen(
     onBack: () -> Unit = {},
     onLoggedOut: () -> Unit = {},
+    onSwitchWorkspace: () -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: SettingsViewModel = viewModel(),
 ) {
@@ -130,7 +139,26 @@ fun SettingsScreen(
             SectionLabel("陪伴师", icon = MeiliIcons.Profile)
             Spacer(Modifier.height(9.dp))
             ConsultantCard(state = state)
+            Spacer(Modifier.height(9.dp))
+            // 修改密码(改统一密码,全系统同步)
+            val showChangePwd = remember { mutableStateOf(false) }
+            ChangePasswordEntry(onClick = { showChangePwd.value = true })
+            if (showChangePwd.value) {
+                ChangePasswordSheet(onDismiss = { showChangePwd.value = false })
+            }
             Spacer(Modifier.height(Dimens.CardGap))
+
+            // 多系统工作台（仅 ≥2 系统的账号显示；点击回工作台宫格选系统，不用退出重登）
+            val meCache = com.airec.bledemo.data.auth.AuthManager.lastMe
+            if (meCache?.multiSystem == true) {
+                SectionLabel("工作台", icon = MeiliIcons.Workspace)
+                Spacer(Modifier.height(9.dp))
+                WorkspaceSwitchCard(
+                    systemCount = meCache.systems?.size ?: 0,
+                    onClick = onSwitchWorkspace,
+                )
+                Spacer(Modifier.height(Dimens.CardGap))
+            }
 
             // 主题皮肤（方案A：4 套配色随便换，全 app 立即生效）
             SectionLabel("主题皮肤", icon = MeiliIcons.Palette)
@@ -292,6 +320,151 @@ private fun readInstalledVersion(context: android.content.Context): Pair<String,
         name to code
     } catch (e: Exception) {
         "—" to -1L
+    }
+}
+
+/* ───────────────────────── 修改密码 ───────────────────────── */
+
+/** 「修改密码」入口卡。 */
+@Composable
+private fun ChangePasswordEntry(onClick: () -> Unit) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    MeiliCard(
+        modifier = Modifier.clickable(interactionSource = interaction, indication = null, onClick = onClick),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Icon(MeiliIcons.Lock, contentDescription = null, tint = MeiliPalette.Ink2, modifier = Modifier.size(Dimens.Icon))
+            Spacer(Modifier.width(Dimens.S2))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "修改密码",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    color = MeiliPalette.Ink,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "改一次,全部工作台一起改",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MeiliPalette.Ink3,
+                )
+            }
+            Icon(MeiliIcons.ChevRight, contentDescription = null, tint = MeiliPalette.Ink4, modifier = Modifier.size(Dimens.IconSm))
+        }
+    }
+}
+
+/** 修改密码底部弹窗:旧密码 + 新密码 + 确认 → 全系统同步。 */
+@Composable
+private fun ChangePasswordSheet(onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var oldPwd by remember { mutableStateOf("") }
+    var newPwd by remember { mutableStateOf("") }
+    var confirmPwd by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    MeiliBottomSheet(
+        visible = true,
+        onDismiss = { if (!busy) onDismiss() },
+        title = "修改密码",
+        subtitle = "改的是登录密码,工牌 + 各工作台会一起同步",
+    ) {
+        PwdField("原密码", oldPwd) { oldPwd = it; error = null }
+        Spacer(Modifier.height(Dimens.S2))
+        PwdField("新密码(至少 6 位)", newPwd) { newPwd = it; error = null }
+        Spacer(Modifier.height(Dimens.S2))
+        PwdField("确认新密码", confirmPwd) { confirmPwd = it; error = null }
+        if (error != null) {
+            Spacer(Modifier.height(Dimens.S2))
+            Text(error!!, style = MaterialTheme.typography.bodySmall, color = MeiliPalette.RoseText)
+        }
+        Spacer(Modifier.height(Dimens.S4))
+        PrimaryButton(
+            text = if (busy) "提交中…" else "确认修改",
+            onClick = {
+                when {
+                    oldPwd.isBlank() || newPwd.isBlank() -> error = "请填写完整"
+                    newPwd.length < 6 -> error = "新密码至少 6 位"
+                    newPwd != confirmPwd -> error = "两次新密码不一致"
+                    newPwd == oldPwd -> error = "新密码不能与原密码相同"
+                    else -> {
+                        busy = true
+                        error = null
+                        scope.launch {
+                            val r = com.airec.bledemo.data.auth.UnifiedPasswordRepository().changeAll(oldPwd, newPwd)
+                            busy = false
+                            if (r.ok) {
+                                android.widget.Toast.makeText(context, r.message, android.widget.Toast.LENGTH_LONG).show()
+                                onDismiss()
+                            } else {
+                                error = r.message
+                            }
+                        }
+                    }
+                }
+            },
+            enabled = !busy,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(Dimens.S2))
+    }
+}
+
+@Composable
+private fun PwdField(label: String, value: String, onChange: (String) -> Unit) {
+    Column {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = MeiliPalette.Ink3)
+        Spacer(Modifier.height(4.dp))
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            shape = MeiliShapes.Sm,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MeiliPalette.Clay,
+                unfocusedBorderColor = MeiliPalette.Line,
+                focusedContainerColor = MeiliPalette.Surface,
+                unfocusedContainerColor = MeiliPalette.SurfaceSoft,
+            ),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/* ───────────────────────── 多系统工作台切换卡 ───────────────────────── */
+
+/** 「切换系统工作台」入口卡（仅多系统账号显示）：点击回工作台宫格。 */
+@Composable
+private fun WorkspaceSwitchCard(systemCount: Int, onClick: () -> Unit) {
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    MeiliCard(
+        modifier = Modifier.clickable(
+            interactionSource = interaction,
+            indication = null,
+            onClick = onClick,
+        ),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "切换系统工作台",
+                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                    color = MeiliPalette.Ink,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "本账号已开通 $systemCount 个系统，点击切换",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MeiliPalette.Ink3,
+                )
+            }
+            Icon(MeiliIcons.ChevRight, contentDescription = null, tint = MeiliPalette.Ink4, modifier = Modifier.size(Dimens.IconSm))
+        }
     }
 }
 

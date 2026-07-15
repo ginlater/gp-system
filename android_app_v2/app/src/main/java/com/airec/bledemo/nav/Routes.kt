@@ -49,6 +49,55 @@ object Routes {
     /** 管理台首页（admin/super）：分组模块卡 landing。 */
     const val AdminHome = "admin_home"
 
+    // ============ 多系统工作台 + teach 网课（P1 多系统整合） ============
+
+    /**
+     * 工作台（宫格）：多系统账号（/api/me systems ≥2）登录后的落点。
+     * 点「智能工牌」push [Main]，点「美业网课」push [TeachHome]。
+     * 单系统账号不经过这里（Gate 直接去 [Main]，保持原体验）。
+     */
+    const val Workspace = "workspace"
+
+    /** teach 网课壳首页：静默登录 + 课程列表（9 章锁/勾状态）+ 打卡。 */
+    const val TeachHome = "teach_home"
+
+    /**
+     * teach 课件正文：内置 WebView 加载 https://teach…/{chapterKey}.html（静态、免鉴权）。
+     * 停留期间向 /teach/heartbeat 发学习时长心跳。
+     */
+    object TeachReader {
+        const val ARG_CHAPTER_KEY = "chapterKey"
+        const val routePattern = "teachReader/{$ARG_CHAPTER_KEY}"
+        fun build(chapterKey: String): String = "teachReader/$chapterKey"
+    }
+
+    /** teach 章节测验：取题 /teach/quiz/{chapter}/{quizIndex} → 作答 → 提交。 */
+    object TeachQuiz {
+        const val ARG_CHAPTER_KEY = "chapterKey"
+        const val ARG_QUIZ_INDEX = "quizIndex"
+        const val routePattern = "teachQuiz/{$ARG_CHAPTER_KEY}/{$ARG_QUIZ_INDEX}"
+        fun build(chapterKey: String, quizIndex: Int): String = "teachQuiz/$chapterKey/$quizIndex"
+    }
+
+    /**
+     * 回访话术 / 高情商话术（followup-agent 同源两部署，同一屏按 sysKey 区分）。
+     * sysKey ∈ followup | higheq（对齐 /api/me systems 的 key）。
+     */
+    object ScriptAgent {
+        const val ARG_SYS_KEY = "sysKey"
+        const val routePattern = "scriptAgent/{$ARG_SYS_KEY}"
+        fun build(sysKey: String): String = "scriptAgent/$sysKey"
+    }
+
+    /** 扣子销售话术（sale-agent，自由描述 → 流式生成）。 */
+    const val ChatHome = "chat_home"
+
+    /** KPI 积分（kpi.beautyshining.com，独立账号体系,WebView + cookie 会话,首次手动登录）。 */
+    const val KpiHome = "kpi_home"
+
+    /** KPI 记分考核管理后台（老板用,固定管理员账号自动登录）。 */
+    const val KpiAdminHome = "kpi_admin_home"
+
     /** 管理台 · 运营看板（WAVE 1 唯一落地的真实管理模块）。 */
     const val AdminOps = "admin_ops"
 
