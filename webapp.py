@@ -7021,6 +7021,9 @@ SYSTEM_REGISTRY = {
     "higheq":  {"key": "higheq", "name": "高情商话术", "type": "native",
                 "desc": "情绪价值 · 沟通话术",
                 "url": "http://43.136.130.133"},
+    "kpi":     {"key": "kpi", "name": "KPI积分", "type": "web",
+                "desc": "晋升积分 · 业绩看板",
+                "url": "https://kpi.beautyshining.com"},
 }
 
 
