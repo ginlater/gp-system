@@ -14936,15 +14936,21 @@ def platform_users_create():
     allow_phone_rec = 0 if (("allow_phone_rec" in data) and not data.get("allow_phone_rec")) else 1
     allow_pen_rec = 0 if (("allow_pen_rec" in data) and not data.get("allow_pen_rec")) else 1
 
+    # ★2026-07-15 多系统整合：开号时勾选开通哪些系统(工牌恒开，不需存)
+    _syslist = data.get("enabled_systems") or []
+    enabled_systems = json.dumps(
+        [s for s in _syslist if s in SYSTEM_REGISTRY and s != "gongpai"],
+        ensure_ascii=False) if isinstance(_syslist, list) else None
+
     try:
         uid = db_write(
             """INSERT INTO users (username, password_hash, role, company_id,
                                   advisor_name, employee_id, phone, store_id,
-                                  allow_phone_rec, allow_pen_rec)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                  allow_phone_rec, allow_pen_rec, enabled_systems)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (username, _hash_pw(password), role, cid,
              advisor_name or None, employee_id or None, phone or None, store_id,
-             allow_phone_rec, allow_pen_rec),
+             allow_phone_rec, allow_pen_rec, enabled_systems),
         )
     except sqlite3.IntegrityError:
         return jsonify({"error": f"用户名 {username} 已存在"}), 409
