@@ -4893,7 +4893,7 @@ def current_user():
         return None
     return db_fetchone(
         "SELECT id, username, role, company_id, advisor_name, employee_id, phone, store_id, "
-        "allow_phone_rec, allow_pen_rec, enabled_systems FROM users WHERE id=?",
+        "allow_phone_rec, allow_pen_rec, enabled_systems, script_account, script_password FROM users WHERE id=?",
         (uid,),
     )
 
@@ -7000,6 +7000,10 @@ def api_me():
         "allow_pen_rec": (0 if u["allow_pen_rec"] == 0 else 1),
         # ★2026-07-15 多系统整合：这个账号能用哪些系统(App 据此显示工作台格子)
         "systems": _account_systems(u),
+        # ★2026-07-16 账号绑定：回访/高情商用独立 staff 账号(历史数据在它名下),
+        #   App 拿它静默登录,数据零迁移;没绑的账号返回 None,App 退回统一密码。
+        "script_account": (u["script_account"] if "script_account" in u.keys() else None),
+        "script_password": (u["script_password"] if "script_password" in u.keys() else None),
     })
 
 
