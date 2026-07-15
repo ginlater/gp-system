@@ -5070,7 +5070,7 @@ APP_V2_VERSION_NAME = "2.2.2"
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 76   # 2.2.2(76)：新客/老客客型标注(接诊包预览页可切换,评分维度按客型二选一)
+APP_V2_LATEST_VERSION_CODE = 77   # 2.3.0(77)：多系统整合(7系统工作台+切换+teach/回访/高情商原生+网页壳+账号绑定+统一改密)。旧标注 2.2.2(76)：新客/老客客型标注(接诊包预览页可切换,评分维度按客型二选一)
 APP_V2_MIN_VERSION_CODE = 64      # 2026-07-06 全量强更(含补门的64)
 APP_V2_UPDATE_NOTE = "本次更新：开始分析前可选「新客／老客」——老客按交付复盘维度评分（破冰对效、当天方案调整、方案重规划与返邀）。"
 
