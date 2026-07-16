@@ -38,6 +38,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.airec.bledemo.data.model.Reminder
 import com.airec.bledemo.designsystem.Dimens
+import com.airec.bledemo.permission.isGranted
 import com.airec.bledemo.designsystem.MeiliIcons
 import com.airec.bledemo.designsystem.MeiliShapes
 import com.airec.bledemo.designsystem.MeiliTheme
@@ -73,6 +74,19 @@ fun RemindersScreen(
     viewModel: RemindersViewModel = viewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+
+    // ★2026-07-16 隐私合规:通知权限在这里申请——用户主动进「提醒」页 = 明确表达了要看提醒，
+    //   此时申请才是「使用对应功能时才申请」(原来它跟着启动那波一起要，属提前申请)。
+    //   每次进页面只在【尚未授权】时弹一次说明框；拒绝就算了，不纠缠(监管整治「反复弹窗」)。
+    val notifyGate = com.airec.bledemo.permission.rememberPermissionGate()
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        // passive=true:这是页面自动弹的(非用户点按钮)。用户点过「暂不」后本进程内不再弹,
+        // 否则退出再进又弹 = 监管整治的「拒绝后反复申请」(真机实测踩到过)。
+        notifyGate.require(
+            com.airec.bledemo.permission.PermissionPurpose.Notify,
+            passive = true,
+        ) { /* 授权即可，无需额外动作 */ }
+    }
 
     // 打开 / 回前台即刷新（对齐 web toggleReminderPanel 展示即拉 + pageshow/visibilitychange）。
     // VM 在 init 已首拉一次；这里跳过首个 onResume 以免重复联网，之后每次回前台都重拉「即时-1」。

@@ -91,6 +91,25 @@ fun PermissionPurpose.isGranted(ctx: Context): Boolean =
     }
 
 /**
+ * ★2026-07-16 隐私合规 —— 「拒绝后不再纠缠」的记账本。
+ *
+ * 监管明令整治「用户明确拒绝权限申请后，频繁弹窗、反复申请」。
+ * 真机实测发现:通知权限的说明框挂在提醒页,用户点了「暂不」,**退出再进又弹**——
+ * 因为原来的「已问过」标记是 Compose 的 remember,页面一销毁就重置。
+ *
+ * 这里改为**进程级**记账:某个用途被用户拒绝过,本次进程内不再主动弹说明框。
+ * (进程重启后允许再问一次——这是行业惯例，也给用户回心转意的机会；
+ *  真要用该功能时用户会主动点按钮，那条路径仍会弹，不算「主动骚扰」。)
+ */
+object PermissionMemo {
+    private val declined = mutableSetOf<PermissionPurpose>()
+
+    fun markDeclined(p: PermissionPurpose) { declined.add(p) }
+    fun wasDeclined(p: PermissionPurpose): Boolean = p in declined
+    fun clear(p: PermissionPurpose) { declined.remove(p) }
+}
+
+/**
  * 权限申请器。用法：
  * ```
  * val gate = rememberPermissionGate()
@@ -103,8 +122,14 @@ class PermissionGate internal constructor(
     private val ctx: Context,
     private val showRationale: (PermissionPurpose, () -> Unit, () -> Unit) -> Unit,
 ) {
+    /**
+     * @param passive true=页面自动触发的(非用户点按钮)。这类申请**一旦被拒过，本进程内不再弹**，
+     *   避免「用户拒绝后反复弹窗」(监管整治项)。用户主动点功能按钮的申请传 false(默认)，
+     *   因为那是用户当下的明确意图，弹说明是应该的。
+     */
     fun require(
         purpose: PermissionPurpose,
+        passive: Boolean = false,
         onDenied: (() -> Unit)? = null,
         onGranted: () -> Unit,
     ) {
@@ -112,6 +137,8 @@ class PermissionGate internal constructor(
             onGranted()
             return
         }
+        // 被动申请 + 之前拒过 → 闭嘴，别再骚扰
+        if (passive && PermissionMemo.wasDeclined(purpose)) return
         showRationale(purpose, onGranted, onDenied ?: {})
     }
 }
@@ -130,7 +157,13 @@ fun rememberPermissionGate(): PermissionGate {
         pending = null
         if (p == null) return@rememberLauncherForActivityResult
         // 全给了才算成功；拒绝就走降级回调，不再二次弹（监管整治「反复申请」）
-        if (result.values.all { it }) p.second() else p.third()
+        if (result.values.all { it }) {
+            PermissionMemo.clear(p.first)   // 给了就清账
+            p.second()
+        } else {
+            PermissionMemo.markDeclined(p.first)   // 系统框里拒的,同样别再骚扰
+            p.third()
+        }
     }
 
     // 说明框：申请前同步告知目的与用途（监管硬性要求的「弹窗/蒙层」）
@@ -138,6 +171,7 @@ fun rememberPermissionGate(): PermissionGate {
         AlertDialog(
             onDismissRequest = {
                 pending = null
+                PermissionMemo.markDeclined(purpose)   // 记一笔:被拒过,被动申请别再弹
                 onDenied()
             },
             containerColor = MeiliPalette.Surface,
@@ -157,6 +191,7 @@ fun rememberPermissionGate(): PermissionGate {
             dismissButton = {
                 TextButton(onClick = {
                     pending = null
+                    PermissionMemo.markDeclined(purpose)   // 记一笔:被拒过,被动申请别再弹
                     onDenied()
                 }) {
                     Text("暂不", color = MeiliPalette.Ink2)
