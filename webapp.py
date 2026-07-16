@@ -5077,10 +5077,10 @@ APP_V2_UPDATE_NOTE = "本次更新：开始分析前可选「新客／老客」�
 # ============ iOS App 版本（Ad Hoc 分发无自动更新，App 启动/设置页查这个提示重装升级）============
 # 发 iOS 新版时：改 ios_app project.yml 的 CURRENT_PROJECT_VERSION → 归档导出 ad-hoc → 覆盖
 # /var/www/appdist/ios/ 的 ipa+manifest → 把下面 LATEST_BUILD 抬到新 build 号。
-APP_IOS_LATEST_BUILD = 7          # 1.0.0(7)：新客/老客客型标注+自动补传+清单缓存+蓝牙红条
+APP_IOS_LATEST_BUILD = 8          # 1.0.0(8)：多系统工作台(网课/回访/高情商/销售话术/KPI)+应用内切换+统一改密
 APP_IOS_VERSION_NAME = "1.0.0"
 APP_IOS_INSTALL_URL = "https://gp.aibeautyfulwomen.com/download/ios"
-APP_IOS_UPDATE_NOTE = "本次更新：开始分析前可选「新客／老客」——老客按交付复盘维度评分；笔里没传上来的录音会自动补传。"
+APP_IOS_UPDATE_NOTE = "本次更新：新增「工作台」——网课、回访话术、高情商话术、销售话术、KPI 都收进 App，一个账号随时切换；新增修改密码（全系统同步）。"
 
 
 @app.route("/api/app/ios/version")
