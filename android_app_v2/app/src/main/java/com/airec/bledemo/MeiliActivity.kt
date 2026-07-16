@@ -62,11 +62,6 @@ import com.airec.bledemo.recording.RecordingModule
  */
 class MeiliActivity : ComponentActivity() {
 
-    // 录音/蓝牙/通知运行时权限一次性申请；结果忽略——拒绝时引擎各自降级，用户真点「开启陪伴」时再据缺失提示。
-    // registerForActivityResult 必须在 onCreate 之前完成（字段初始化即注册，符合 ComponentActivity 约束）。
-    private val permissionLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { /* no-op */ }
-
     /** 电池优化白名单只问一次（每进程）。 */
     private var batteryAsked = false
 
@@ -100,7 +95,6 @@ class MeiliActivity : ComponentActivity() {
                 onDeepLinkConsumed = { deepLink.value = null },
             )
         }
-        requestRecordingPermissions()
         registerNetworkMonitor()
     }
 
@@ -173,25 +167,18 @@ class MeiliActivity : ComponentActivity() {
         } catch (_: Exception) {}
     }
 
-    /** 申请录音/蓝牙/通知运行时权限（只申请尚未授予的，按 SDK 版本裁剪）。 */
-    private fun requestRecordingPermissions() {
-        val wanted = buildList {
-            add(Manifest.permission.RECORD_AUDIO)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                add(Manifest.permission.BLUETOOTH_SCAN)
-                add(Manifest.permission.BLUETOOTH_CONNECT)
-            } else {
-                add(Manifest.permission.ACCESS_FINE_LOCATION)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.POST_NOTIFICATIONS)
-            }
-        }
-        val missing = wanted.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (missing.isNotEmpty()) permissionLauncher.launch(missing.toTypedArray())
-    }
+    // ★2026-07-16 隐私合规整改:原 requestRecordingPermissions() 已删除。
+    //
+    // 病根:它挂在 onCreate 末尾,App 一启动就一次性申请 麦克风+定位/蓝牙+通知,
+    //   而那时用户什么都还没点。应用商店隐私检测两条驳回全踩:
+    //   ①「过度申请权限」——未见使用权限对应的功能就提前申请(检测日志实锤:启动 5 秒后即申请位置权限组);
+    //   ②「未告知申请权限目的」——直接弹系统框,没有任何说明。
+    //
+    // 现在改为:谁用谁申请、申请前先弹说明框。见 permission/PermissionGate.kt。
+    //   · 麦克风 → 用户点「开启陪伴」时(HomeScreen)
+    //   · 蓝牙   → 用户点连接陪伴笔/扫描时(HomeScreen 扫描入口)
+    //   · 通知   → 提醒页首次进入时
+    // ⚠️ 不要再在这里(或任何启动路径上)加权限申请。
 }
 
 /** App 根 Composable：主题 + 系统栏避让 + 主壳。抽出来便于 @Preview / 测试。 */

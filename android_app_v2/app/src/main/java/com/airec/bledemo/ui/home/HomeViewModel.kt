@@ -365,6 +365,14 @@ class HomeViewModel(
      *  - Idle → startCompanion：按当前来源开启。
      * 实际是否进入进行中态由引擎回调驱动（笔需先确认真开录），UI 不自行假设。
      */
+    /**
+     * ★2026-07-16 隐私合规:用户拒绝权限后的降级提示。
+     * 只给一句人话说明影响 + 去哪开,**不再二次弹窗**(监管明令整治「用户拒绝后频繁弹窗、反复申请」)。
+     */
+    fun onPermissionDenied(what: String) {
+        _toast.value = "未获得${what}权限，该功能暂不可用。如需使用，可在系统设置 → 应用 → 美业私教 → 权限中开启"
+    }
+
     fun toggleCompanion() {
         val rc = controller
         if (rc == null) {

@@ -35,6 +35,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -469,6 +471,21 @@ private fun MainTabsScaffold(
     val recState by RecordingModule.controller.state.collectAsStateWithLifecycle()
     val fabRecording = recState is RecordingState.Recording || recState is RecordingState.Paused
 
+    // ★2026-07-16 隐私合规:底栏 FAB 也要走权限门(它和首页圆钮是两条路径,真机实测过这里会漏)。
+    val permGate = com.airec.bledemo.permission.rememberPermissionGate()
+    val fabDenied = remember { mutableStateOf(false) }
+    val fabCtx = androidx.compose.ui.platform.LocalContext.current
+    if (fabDenied.value) {
+        LaunchedEffect(Unit) {
+            android.widget.Toast.makeText(
+                fabCtx,
+                "未获得麦克风权限，无法开始陪伴。如需使用，可在系统设置 → 应用 → 美业私教 → 权限中开启",
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
+            fabDenied.value = false
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         // beyondViewportPageCount = TAB_COUNT-1：4 个 tab 页常驻已组合、不随滑动销毁/重建，左右滑 0 延迟。
         HorizontalPager(
@@ -509,11 +526,31 @@ private fun MainTabsScaffold(
                 // 中间键 = 直接开/停陪伴（录音），再滚到陪伴页看状态。源用上次选定的来源（持久化）。
                 val c = RecordingModule.controller
                 when (c.state.value) {
-                    is RecordingState.Recording, is RecordingState.Paused -> c.stopCompanion()
+                    is RecordingState.Recording, is RecordingState.Paused -> {
+                        c.stopCompanion()
+                        animateToPage(BottomTab.Home.ordinal)
+                    }
                     is RecordingState.Uploading -> Unit // 保存中：忽略
-                    else -> c.startCompanion(c.lastSource() ?: CompanionSource.Phone)
+                    else -> {
+                        // ★2026-07-16 隐私合规:这里原来直接 startCompanion(),绕过了权限检查——
+                        //   真机实测:无麦克风权限时录音服务硬起 → SecurityException(FGS type microphone)
+                        //   → 界面报「无法开始录音」。现在与首页圆钮走同一个权限门:
+                        //   手机麦录音先弹说明框拿麦克风权限;用陪伴笔则不需要手机麦克风。
+                        val src = c.lastSource() ?: CompanionSource.Phone
+                        if (src == CompanionSource.Phone) {
+                            permGate.require(
+                                com.airec.bledemo.permission.PermissionPurpose.Record,
+                                onDenied = { fabDenied.value = true },
+                            ) {
+                                c.startCompanion(src)
+                                animateToPage(BottomTab.Home.ordinal)
+                            }
+                        } else {
+                            c.startCompanion(src)
+                            animateToPage(BottomTab.Home.ordinal)
+                        }
+                    }
                 }
-                animateToPage(BottomTab.Home.ordinal)
             },
             modifier = Modifier.align(Alignment.BottomCenter),
         )

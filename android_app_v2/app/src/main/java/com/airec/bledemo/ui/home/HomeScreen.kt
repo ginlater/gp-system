@@ -151,6 +151,10 @@ fun HomeScreen(
         }
     }
 
+    // ★2026-07-16 隐私合规:权限改为「谁用谁申请、申请前先说明」(原来 App 一启动就一次性申请,
+    //   被应用商店隐私检测驳回:①过度申请 ②未告知目的)。这里在真正用到功能的那一刻才要权限。
+    val permGate = com.airec.bledemo.permission.rememberPermissionGate()
+
     HomeContent(
         header = header,
         companion = companion,
@@ -158,8 +162,31 @@ fun HomeScreen(
         recPerm = recPerm,
         reminderCount = reminderCount,
         receptionStats = receptionStats,
-        onToggleCompanion = viewModel::toggleCompanion,
-        onPickSource = viewModel::pickSource,
+        onToggleCompanion = {
+            // 手机麦录音才要麦克风权限;用陪伴笔录音由笔采集,不需要手机麦克风。
+            // 停止录音时也不该要权限(已在录=权限早就有了)。
+            val needMic = source == com.airec.bledemo.recording.CompanionSource.Phone &&
+                companion.state is com.airec.bledemo.recording.RecordingState.Idle
+            if (needMic) {
+                permGate.require(
+                    com.airec.bledemo.permission.PermissionPurpose.Record,
+                    onDenied = { viewModel.onPermissionDenied("麦克风") },
+                ) { viewModel.toggleCompanion() }
+            } else {
+                viewModel.toggleCompanion()
+            }
+        },
+        onPickSource = { src ->
+            // 选「陪伴笔」会立刻去连蓝牙 → 先要蓝牙权限(安卓11-附带定位,说明框里已写清用途)
+            if (src == com.airec.bledemo.recording.CompanionSource.Pen) {
+                permGate.require(
+                    com.airec.bledemo.permission.PermissionPurpose.Pen,
+                    onDenied = { viewModel.onPermissionDenied("蓝牙") },
+                ) { viewModel.pickSource(src) }
+            } else {
+                viewModel.pickSource(src)
+            }
+        },
         onRetryUploads = viewModel::retryUploads,
         onOpenReception = onOpenReception,
         onOpenReminders = onOpenReminders,

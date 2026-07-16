@@ -158,7 +158,11 @@ public class SoniScanActivity extends AppCompatActivity {
         binding.recyclerView.setAdapter(adapter);
         binding.btnScan.setOnClickListener(v -> requestPermissionsAndScan());
 
-        requestPermissionsAndScan();
+        // ★2026-07-16 隐私合规:进页面不再主动申请权限(原来这里直接 requestPermissionsAndScan(),
+        //   属于「未告知目的就弹系统框」)。正常路径下用户在首页选「陪伴笔」时,
+        //   PermissionGate 已先弹说明框拿到蓝牙权限 → 这里直接开扫,体验不变;
+        //   万一没权限(异常路径),只提示、不弹框,等用户主动点「扫描」按钮再走申请流程。
+        scanIfPermitted();
         fetchPenBindings();
     }
 
@@ -291,6 +295,24 @@ public class SoniScanActivity extends AppCompatActivity {
         pc.startSearch();
         scanUi.removeCallbacks(pruneTask);
         scanUi.postDelayed(pruneTask, 1500);
+    }
+
+    /** ★合规:只在【已授权】时开扫;未授权只提示,不弹系统框(等用户点扫描按钮)。 */
+    private void scanIfPermitted() {
+        boolean granted;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            granted = ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN)
+                    == PackageManager.PERMISSION_GRANTED;
+        } else {
+            granted = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                    == PackageManager.PERMISSION_GRANTED;
+        }
+        if (granted) {
+            if (ensureBluetoothOn()) startFreshScan();
+        } else {
+            binding.tvStatus.setText("需要蓝牙权限才能扫描，点「扫描」授权后继续");
+            binding.progressBar.setVisibility(View.GONE);
+        }
     }
 
     private void requestPermissionsAndScan() {
