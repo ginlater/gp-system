@@ -4,6 +4,9 @@ import SwiftUI
 /// 陪伴师信息 + 主题皮肤(6 套 + 自动日夜) + 关于/版本(检查更新) + 退出登录。
 /// 注:iOS 走 App Store,android 的 APK 强制升级不适用 → 检查更新只提示。
 struct SettingsView: View {
+    /// 多系统账号:「切换系统工作台」回调(pop 回工作台宫格;nil = 单系统/非工作台栈,不显示该卡)。
+    var onSwitchWorkspace: (() -> Void)? = nil
+
     @EnvironmentObject private var app: AppState
     @ObservedObject private var theme = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
@@ -13,6 +16,7 @@ struct SettingsView: View {
     @State private var updateUrl: String?   // ★有新版时=安装页地址,按钮变「去更新」
     @State private var diagMsg: String?
     @State private var diagBusy = false
+    @State private var showChangePwd = false
 
     private var me: Me? { app.me }
     private var displayName: String { me?.advisorName?.nilIfBlank ?? me?.username?.nilIfBlank ?? "陪伴师" }
@@ -36,6 +40,13 @@ struct SettingsView: View {
 
                 SectionLabel("陪伴师", icon: MeiliIcons.profile)
                 accountCard
+                changePasswordEntry
+
+                // 多系统工作台(仅 ≥2 系统的账号显示;点击回工作台宫格选系统,不用退出重登)
+                if me?.multiSystem == true, let onSwitchWorkspace {
+                    SectionLabel("工作台", icon: MeiliIcons.workspace)
+                    workspaceSwitchCard(onSwitchWorkspace)
+                }
 
                 SectionLabel("主题皮肤", icon: MeiliIcons.palette)
                 themeCard
@@ -60,6 +71,47 @@ struct SettingsView: View {
         }
         .background(MeiliColor.bg)
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showChangePwd) {
+            ChangePasswordSheet()
+        }
+    }
+
+    // MARK: 修改密码 / 工作台切换
+
+    /// 「修改密码」入口卡(改统一密码,全系统同步)。
+    private var changePasswordEntry: some View {
+        Button { showChangePwd = true } label: {
+            MeiliCard {
+                HStack(spacing: MeiliMetric.s2) {
+                    MeiliIcon(MeiliIcons.lock, size: MeiliMetric.icon).foregroundStyle(MeiliColor.ink2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("修改密码").font(.sz(13.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+                        Text("改一次,全部工作台一起改").font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
+                    }
+                    Spacer()
+                    MeiliIcon(MeiliIcons.chevRight, size: MeiliMetric.iconSm).foregroundStyle(MeiliColor.ink4)
+                }
+            }
+        }
+        .buttonStyle(PressScaleButtonStyle(scale: 0.98))
+    }
+
+    /// 「切换系统工作台」入口卡(仅多系统账号显示):点击回工作台宫格。
+    private func workspaceSwitchCard(_ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            MeiliCard {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("切换系统工作台").font(.sz(13.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+                        Text("本账号已开通 \(me?.systems?.count ?? 0) 个系统，点击切换")
+                            .font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
+                    }
+                    Spacer()
+                    MeiliIcon(MeiliIcons.chevRight, size: MeiliMetric.iconSm).foregroundStyle(MeiliColor.ink4)
+                }
+            }
+        }
+        .buttonStyle(PressScaleButtonStyle(scale: 0.98))
     }
 
     // MARK: 账号
@@ -215,6 +267,13 @@ struct SettingsView: View {
                 Text("当前版本").font(.sz(12.5)).foregroundStyle(MeiliColor.ink2)
                 Spacer()
                 Text(version).font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+            }
+            Rectangle().fill(MeiliColor.line).frame(height: 1).padding(.vertical, 11)
+            // ★2026-07-16 工信部《移动互联网应用程序备案》强制要求:备案号必须在 App 内展示。
+            HStack {
+                Text("ICP 备案号").font(.sz(12.5)).foregroundStyle(MeiliColor.ink2)
+                Spacer()
+                Text("蜀ICP备2024099992号-4A").font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
             }
             Rectangle().fill(MeiliColor.line).frame(height: 1).padding(.vertical, 11)
             HStack {

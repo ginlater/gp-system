@@ -785,6 +785,13 @@ private fun AboutCard(
             value = state.installedVersionName,
             divider = true,
         )
+        // ★2026-07-16 工信部《移动互联网应用程序备案》强制要求：备案号必须在 App 内展示。
+        //   应用商店上架审核会专门核查这一项。
+        KvRow(
+            key = "ICP 备案号",
+            value = "蜀ICP备2024099992号-4A",
+            divider = true,
+        )
         // 检查更新行：左侧标题 + 状态文案；右侧「检查 / 去更新」
         Row(
             modifier = Modifier
