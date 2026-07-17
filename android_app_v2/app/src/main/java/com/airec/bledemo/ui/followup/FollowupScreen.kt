@@ -287,10 +287,10 @@ private fun FormWithResult(state: FollowupUiState, vm: FollowupViewModel, contex
                     Spacer(Modifier.height(Dimens.S2))
                     when {
                         state.genError != null -> Text(state.genError, style = MaterialTheme.typography.bodyMedium, color = MeiliPalette.RoseText)
-                        state.output.isBlank() -> Text(
-                            "AI 正在思考,首段通常几秒内出现…",
-                            style = MaterialTheme.typography.bodySmall, color = MeiliPalette.Ink3,
-                        )
+                        // ★2026-07-17 去掉「AI 正在思考,首段通常几秒内出现…」占位文案。
+                        // 右上角本来就有转圈,已经表达了「在生成」;那句话既啰嗦又像在替慢找借口,
+                        // 而且话术一出来它就被顶掉,存在感只有几秒。留空即可。
+                        state.output.isBlank() -> Unit
                         else -> MarkdownText(state.output)
                     }
                     if (state.warnWords.isNotEmpty()) {
