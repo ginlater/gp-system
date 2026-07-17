@@ -51,7 +51,12 @@ struct RemindersView: View {
         .background(MeiliColor.bg)
         .toolbar(.hidden, for: .navigationBar)
         // 每次回到本页都重拉:看过报告/绑定后,后端已少一条,数目即时变少。
-        .onAppear { vm.load() }
+        .onAppear {
+            vm.load()
+            // 通知权限在此申请(而非 App 启动时):用户主动看提醒 = 需要通知的场景,合规且不突兀。
+            // 系统只会真正弹一次框,后续调用是无操作。
+            ReminderNotifier.requestAuthorization()
+        }
     }
 
     private func personalRow(_ r: Reminder) -> some View {

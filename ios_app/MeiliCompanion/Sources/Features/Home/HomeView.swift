@@ -8,6 +8,8 @@ struct HomeView: View {
     var onOpenReception: () -> Void = {}
     var onOpenReminders: () -> Void = {}
     var onOpenSettings: () -> Void = {}
+    /// 多系统账号:打开切换工作台弹窗(nil = 单系统,不显示宫格图标)。
+    var onOpenSwitcher: (() -> Void)? = nil
 
     @ObservedObject private var rec = RecordingManager.shared
     @ObservedObject private var queue = UploadQueue.shared
@@ -83,6 +85,11 @@ struct HomeView: View {
                 .padding(.top, 6)
             }
             Spacer()
+            // 多系统:顶栏宫格图标 → 切换工作台(仅多系统账号显示,对齐 android HomeScreen)
+            if let onOpenSwitcher {
+                IconSquareButton(icon: MeiliIcons.workspace) { onOpenSwitcher() }
+                    .padding(.trailing, 9)
+            }
             IconSquareButton(icon: MeiliIcons.settings) { onOpenSettings() }
         }
         .padding(.top, 10)

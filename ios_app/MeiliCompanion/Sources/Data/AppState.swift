@@ -8,8 +8,9 @@ final class AppState: ObservableObject {
     enum Phase {
         case loading
         case login
-        case main(Me)    // consultant / store_manager
-        case admin(Me)   // admin / super
+        case main(Me)      // consultant / store_manager(单系统:直进录音首页,不打扰)
+        case workspace(Me) // 多系统账号(/api/me systems ≥2):先落工作台宫格选系统
+        case admin(Me)     // admin / super
     }
 
     @Published var phase: Phase = .loading
@@ -19,7 +20,7 @@ final class AppState: ObservableObject {
     /// 当前登录用户(便于各处读 advisorName / role)。
     var me: Me? {
         switch phase {
-        case .main(let m), .admin(let m): return m
+        case .main(let m), .workspace(let m), .admin(let m): return m
         default: return nil
         }
     }
@@ -56,6 +57,10 @@ final class AppState: ObservableObject {
     }
 
     private func route(_ me: Me) {
-        phase = me.isAdminOrSuper ? .admin(me) : .main(me)
+        // 对齐 android GateScreen:admin→管理台 / ≥2系统→工作台 / 其余→录音主壳。
+        // 旧服务端无 systems 字段 → multiSystem=false,绝大多数顾问体验不变。
+        if me.isAdminOrSuper { phase = .admin(me) }
+        else if me.multiSystem { phase = .workspace(me) }
+        else { phase = .main(me) }
     }
 }

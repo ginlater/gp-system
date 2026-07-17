@@ -14,6 +14,10 @@ enum LoginResult {
 struct AuthManager {
     private let api = APIClient.shared
 
+    /// 最近一次 /api/me 成功结果的进程内缓存(对齐 android AuthManager.lastMe)。
+    /// 工作台/切换器/回访绑定登录都读它拿 systems / scriptAccount;为 nil 时调用方自行 currentUser() 兜底。
+    nonisolated(unsafe) static var lastMe: Me?
+
     func login(username: String, password: String) async -> LoginResult {
         let user = username.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
@@ -48,6 +52,18 @@ struct AuthManager {
         _ = try? await api.getStatus("logout")
         clearCookies()
         CredentialStore.clear()   // 清缓存凭据,防退出后被 401 自动重登回去
+        AuthManager.lastMe = nil
+        // 多系统整合:teach/回访/高情商/扣子/KPI 都用同一套凭证静默登录,换人/退出时会话与缓存必须跟着作废
+        await TeachAuth.shared.clear()
+        await ScriptAuth.of(.followup).clear()
+        await ScriptAuth.of(.higheq).clear()
+        await ChatAuth.shared.clear()
+        TeachRepository.lastStats = nil
+        KpiRepository.clearCache()
+        // KPI 是 cookie 会话(kpi_emp/kpi_admin),换账号必须清,否则串到上个人的积分页
+        let storage = HTTPCookieStorage.shared
+        storage.cookies?.filter { $0.domain.contains("beautyshining.com") }
+            .forEach { storage.deleteCookie($0) }
     }
 
     private enum MeResult { case ok(Me); case unauthorized; case failure(String) }
@@ -56,6 +72,7 @@ struct AuthManager {
         do {
             let me: Me = try await api.get("api/me")
             if me.error != nil || me.id == nil { return .unauthorized }
+            AuthManager.lastMe = me
             return .ok(me)
         } catch let e as APIError {
             return e.isUnauthorized ? .unauthorized : .failure(e.errorDescription ?? "网络异常")

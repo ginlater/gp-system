@@ -8,6 +8,11 @@ struct LoginView: View {
     var onLoggedIn: (Me) -> Void
     @StateObject private var vm = LoginViewModel()
 
+    // 隐私合规(对齐 android 2026-07-16 整改):默认【不勾选】同意,未勾选不可登录;政策链接可点开。
+    @State private var agreed = false
+    private static let privacyUrl = URL(string: "https://gp.aibeautyfulwomen.com/privacy-policy")!
+    private static let termsUrl = URL(string: "https://gp.aibeautyfulwomen.com/terms-of-service")!
+
     var body: some View {
         ZStack {
             MeiliColor.bg.ignoresSafeArea()
@@ -40,22 +45,19 @@ struct LoginView: View {
                             MeiliField(label: "密码", text: $vm.password,
                                        placeholder: "请输入密码", icon: MeiliIcons.lock,
                                        isSecure: true, enabled: !vm.loading,
-                                       submitLabel: .go, onSubmit: { Task { await vm.login() } })
+                                       submitLabel: .go, onSubmit: { submit() })
 
                             if let error = vm.error {
                                 MeiliBanner(message: error)
                             }
 
+                            // 未勾选「同意隐私政策」不可登录(合规要求:不默认同意、需用户主动勾选)
                             MeiliButton(vm.loading ? "登录中…" : "登 录",
-                                        block: true, enabled: vm.canSubmit) {
-                                Task { await vm.login() }
+                                        block: true, enabled: vm.canSubmit && agreed) {
+                                submit()
                             }
 
-                            Text("登录即代表同意《服务协议》与《隐私政策》")
-                                .font(.sz(10.5))
-                                .foregroundStyle(MeiliColor.ink3)
-                                .multilineTextAlignment(.center)
-                                .frame(maxWidth: .infinity)
+                            consentRow
                         }
                     }
                     .padding(.top, 30)
@@ -71,5 +73,61 @@ struct LoginView: View {
             .scrollDismissesKeyboard(.interactively)
         }
         .onAppear { vm.onSuccess = onLoggedIn }
+    }
+
+    /// 键盘「前往」与登录按钮共用:未勾选同意时不发起登录,给出明确提示。
+    private func submit() {
+        guard agreed else {
+            vm.error = "请先阅读并勾选同意《隐私政策》和《用户协议》"
+            return
+        }
+        Task { await vm.login() }
+    }
+
+    // ---- 隐私合规:默认不勾选的同意框 + 可点开的政策链接 ----
+    private var consentRow: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Button {
+                agreed.toggle()
+                if agreed { vm.error = nil }
+            } label: {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(agreed ? MeiliColor.clay : MeiliColor.surfaceSoft)
+                        .frame(width: 20, height: 20)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(agreed ? MeiliColor.clay : MeiliColor.ink3,
+                                              lineWidth: MeiliMetric.borderField)
+                        }
+                    if agreed {
+                        MeiliIcon(MeiliIcons.check, size: 13).foregroundStyle(.white)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            Text(consentText)
+                .font(.sz(11))
+                .tint(MeiliColor.clayDeep)   // 链接色
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// 「我已阅读并同意《隐私政策》和《用户协议》」——两个书名号是可点开的链接。
+    /// 计算属性而非缓存:换肤重建时文字色跟着当前皮肤走。
+    private var consentText: AttributedString {
+        var s = AttributedString("我已阅读并同意")
+        s.foregroundColor = MeiliColor.ink2
+        var p = AttributedString("《隐私政策》")
+        p.link = Self.privacyUrl
+        p.font = .system(size: 11, weight: .bold)
+        var mid = AttributedString("和")
+        mid.foregroundColor = MeiliColor.ink2
+        var t = AttributedString("《用户协议》")
+        t.link = Self.termsUrl
+        t.font = .system(size: 11, weight: .bold)
+        return s + p + mid + t
     }
 }

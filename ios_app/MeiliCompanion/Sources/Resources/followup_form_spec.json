@@ -1,0 +1,5081 @@
+{
+ "common": [
+  {
+   "kind": "select",
+   "id": "modelSelect",
+   "label": "AI 模型",
+   "required": false,
+   "multi": false,
+   "options": [
+    "至尊版",
+    "专家版",
+    "进阶版",
+    "标准版",
+    "极速版"
+   ],
+   "sublabelNote": "默认选中「至尊版」"
+  },
+  {
+   "kind": "text",
+   "id": "customerName",
+   "label": "顾客姓名 / 昵称",
+   "required": true,
+   "multi": false,
+   "placeholder": "顾客姓名 / 昵称（必填）"
+  },
+  {
+   "kind": "text",
+   "id": "customerPhoneSuffix",
+   "label": "顾客手机尾号后4位",
+   "required": false,
+   "multi": false,
+   "placeholder": "顾客手机尾号后4位（选填）"
+  },
+  {
+   "kind": "select",
+   "id": "consultantName",
+   "label": "顾问姓名",
+   "required": true,
+   "multi": false,
+   "options": []
+  },
+  {
+   "kind": "text",
+   "id": "companyName",
+   "label": "所属门店",
+   "required": false,
+   "multi": false,
+   "placeholder": "所属门店（自动填写）"
+  },
+  {
+   "kind": "options",
+   "id": "visitNature",
+   "label": "本次消息性质",
+   "required": true,
+   "multi": false,
+   "options": [
+    "售后回访",
+    "邀约到店",
+    "特殊客情沟通维系",
+    "新客未成交跟进"
+   ]
+  },
+  {
+   "kind": "textarea",
+   "id": "noteDetail",
+   "label": "独特细节备注",
+   "required": false,
+   "multi": false,
+   "placeholder": "关于这位顾客,您还记得什么独特的细节?",
+   "sublabelNote": "强烈建议填。会优先用这里的细节作为消息的\"钩子\"。比如:她上次提到女儿要高考、她喜欢喝普洱、她老公最近经常出差……",
+   "renderAfterBranches": true
+  }
+ ],
+ "branches": [
+  {
+   "nature": "售后回访",
+   "prefix": "pc",
+   "fields": [
+    {
+     "kind": "textarea",
+     "id": "pcAddressing",
+     "label": "如何称呼客人",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：王姐、小美、Jessica、晓云…"
+    },
+    {
+     "kind": "options",
+     "id": "postCareDay",
+     "label": "做完项目后的第几天",
+     "required": true,
+     "multi": true,
+     "options": [
+      "当天",
+      "第一天",
+      "第三天",
+      "第六天",
+      "2周到1个月"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "pcAgeGroup",
+     "label": "年龄分段",
+     "required": true,
+     "multi": false,
+     "options": [
+      "0-20",
+      "20-30",
+      "30-40",
+      "40-50",
+      "50-60",
+      "60+"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "todayProject",
+     "label": "所做的项目",
+     "required": true,
+     "multi": true,
+     "optionsSection": "身体项目",
+     "dynamicCat": "body_services",
+     "options": [
+      "身体SPA",
+      "瑶浴SPA",
+      "容大霜",
+      "艾灸",
+      "INDIBA细胞抗氧",
+      "热动力/费马",
+      "身体·自定义"
+     ],
+     "customInput": {
+      "id": "todayProjectBodyCustom",
+      "placeholder": "自定义身体项目说明",
+      "showWhen": [
+       "身体·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "todayProject",
+     "label": "所做的项目",
+     "required": true,
+     "multi": true,
+     "optionsSection": "面部项目",
+     "dynamicCat": "face_services",
+     "options": [
+      "基础养护",
+      "修养抗炎",
+      "高科仪器抗衰",
+      "产品抗衰系列",
+      "美白系列",
+      "面部·自定义"
+     ],
+     "customInput": {
+      "id": "todayProjectFaceCustom",
+      "placeholder": "自定义面部项目说明",
+      "showWhen": [
+       "面部·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "todayProject",
+     "label": "所做的项目",
+     "required": true,
+     "multi": true,
+     "optionsSection": "美学类",
+     "dynamicCat": "aesthetic_services",
+     "options": [
+      "纹绣",
+      "无伤害美学抗衰",
+      "毛发肌肤管理",
+      "美学·自定义"
+     ],
+     "customInput": {
+      "id": "todayProjectAestheticCustom",
+      "placeholder": "自定义美学类项目说明",
+      "showWhen": [
+       "美学·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "todayProject",
+     "label": "所做的项目",
+     "required": true,
+     "multi": true,
+     "optionsSection": "特殊项目",
+     "dynamicCat": "special_services",
+     "options": [
+      "女性私密护理",
+      "家居产品",
+      "菌群管理",
+      "特殊·自定义"
+     ],
+     "customInput": {
+      "id": "todayProjectSpecialCustom",
+      "placeholder": "自定义特殊项目说明",
+      "showWhen": [
+       "特殊·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcBodyProjectDetail",
+     "label": "具体的身体项目",
+     "required": true,
+     "multi": true,
+     "dynamicCat": "specific_body",
+     "options": [
+      "拒绝班味",
+      "疲惫的真相",
+      "乳房对话",
+      "湿气超怕它",
+      "初级除湿器",
+      "喉轮疗愈SPA",
+      "压力清扫SPA",
+      "净化排毒SPA",
+      "费玛",
+      "Indiba",
+      "费玛（肩颈）",
+      "衡养SPA（瑶浴）",
+      "全驱热动力",
+      "沉浸唤醒头部SPA",
+      "都不是",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "pcBodyProjectDetailCustom",
+      "placeholder": "自定义身体项目说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "todayProject",
+      "anyOf": [
+       "身体SPA",
+       "瑶浴SPA",
+       "容大霜",
+       "艾灸",
+       "INDIBA细胞抗氧",
+       "热动力/费马",
+       "身体·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcFaceProjectDetail",
+     "label": "具体的面部项目",
+     "required": true,
+     "multi": true,
+     "dynamicCat": "specific_face",
+     "options": [
+      "白瓷肌",
+      "Swissline三部曲",
+      "SwisslineQ弹肌",
+      "英诺色素管理",
+      "依奈姿愈颜常效/高能修复再生方案",
+      "依奈姿发光系列",
+      "依奈姿肌龄管理再生方案",
+      "干细胞（熟龄肌抗老）",
+      "EPS微水光胶原眼（大眼年轻态）",
+      "活细胞【告别月球肌】",
+      "都不是",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "pcFaceProjectDetailCustom",
+      "placeholder": "自定义面部项目说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "todayProject",
+      "anyOf": [
+       "基础养护",
+       "修养抗炎",
+       "高科仪器抗衰",
+       "产品抗衰系列",
+       "美白系列",
+       "面部·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcPainPoint",
+     "label": "解决的痛点",
+     "required": true,
+     "multi": true,
+     "optionsSection": "身体",
+     "dynamicCat": "pain_body",
+     "options": [
+      "便秘",
+      "睡眠",
+      "气虚易疲劳",
+      "肩颈酸痛",
+      "静脉曲张",
+      "偏头痛",
+      "胃寒",
+      "宫寒",
+      "痛经",
+      "气血",
+      "腺体结节（未达手术级别）",
+      "腹部胀气",
+      "身体·自定义"
+     ],
+     "customInput": {
+      "id": "pcPainPointBodyCustom",
+      "placeholder": "自定义身体痛点说明",
+      "showWhen": [
+       "身体·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcPainPoint",
+     "label": "解决的痛点",
+     "required": true,
+     "multi": true,
+     "optionsSection": "局部",
+     "dynamicCat": "pain_local",
+     "options": [
+      "关节",
+      "腿",
+      "腰",
+      "背",
+      "肩颈",
+      "头部",
+      "背部",
+      "耻骨",
+      "胸腔",
+      "淋巴循环",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "pcPainPointLocalCustom",
+      "placeholder": "自定义局部痛点说明",
+      "showWhen": [
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcPainPoint",
+     "label": "解决的痛点",
+     "required": true,
+     "multi": true,
+     "optionsSection": "面部",
+     "dynamicCat": "pain_face",
+     "options": [
+      "眼袋",
+      "皱纹",
+      "松弛",
+      "毛孔",
+      "红血丝",
+      "敏感皮肤",
+      "黑头",
+      "痘痘",
+      "美白/色斑",
+      "干燥缺水",
+      "痘坑",
+      "闭口",
+      "红敏/泛红",
+      "皮屑",
+      "皮纹粗糙",
+      "皮肤健康度低",
+      "轮廓下垂",
+      "面部馒化",
+      "轮廓不饱满/凹陷",
+      "疲态",
+      "面部·自定义"
+     ],
+     "customInput": {
+      "id": "pcPainPointFaceCustom",
+      "placeholder": "自定义面部痛点说明",
+      "showWhen": [
+       "面部·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcPainPoint",
+     "label": "解决的痛点",
+     "required": true,
+     "multi": true,
+     "optionsSection": "体态",
+     "dynamicCat": "pain_posture",
+     "options": [
+      "妈妈臀",
+      "大肚腩",
+      "下肢水肿",
+      "体态/塑性",
+      "胸部下垂",
+      "肩颈内扣",
+      "颈部短粗",
+      "手臂粗壮",
+      "体态·自定义"
+     ],
+     "customInput": {
+      "id": "pcPainPointPostureCustom",
+      "placeholder": "自定义体态痛点说明",
+      "showWhen": [
+       "体态·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcCareItems",
+     "label": "需要叮嘱的护理事项",
+     "required": true,
+     "multi": true,
+     "optionsSection": "问询类（是否询问顾客以下感受）",
+     "dynamicCat": "care_inquiry",
+     "options": [
+      "询问·关节",
+      "询问·腿",
+      "询问·腰",
+      "询问·腹部",
+      "询问·肩颈",
+      "询问·头部",
+      "询问·背部",
+      "询问·整体感受",
+      "询问·自定义"
+     ],
+     "customInput": {
+      "id": "pcCareItemsInquiryCustom",
+      "placeholder": "询问·自定义内容补充",
+      "showWhen": [
+       "询问·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcCareItems",
+     "label": "需要叮嘱的护理事项",
+     "required": true,
+     "multi": true,
+     "optionsSection": "产品使用",
+     "dynamicCat": "care_product",
+     "options": [
+      "面膜",
+      "精华和面霜",
+      "涂防晒霜",
+      "出门注意防晒",
+      "眼霜",
+      "洗面奶洁面",
+      "认真卸妆"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "pcCareItems",
+     "label": "需要叮嘱的护理事项",
+     "required": true,
+     "multi": true,
+     "optionsSection": "养身类",
+     "dynamicCat": "care_health",
+     "options": [
+      "饮食",
+      "泡脚",
+      "作息调整",
+      "多喝水",
+      "眼保健操",
+      "多喝蜂蜜水",
+      "少吃辛辣油炸食物",
+      "少吃生冷食物",
+      "少喝冷饮",
+      "保持好心情",
+      "养身·自定义"
+     ],
+     "customInput": {
+      "id": "pcCareItemsHealthCustom",
+      "placeholder": "自定义养身类护理说明",
+      "showWhen": [
+       "养身·自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcMaskFreq",
+     "label": "面膜·频率",
+     "required": true,
+     "multi": false,
+     "options": [
+      "早晚各1次",
+      "一天1次",
+      "隔天1次",
+      "自定义"
+     ],
+     "visibleWhen": {
+      "group": "pcCareItems",
+      "anyOf": [
+       "面膜"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcMaskDuration",
+     "label": "面膜·时长",
+     "required": true,
+     "multi": false,
+     "options": [
+      "≤10分钟",
+      "15分钟",
+      "自定义"
+     ],
+     "visibleWhen": {
+      "group": "pcCareItems",
+      "anyOf": [
+       "面膜"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "pcMaskNote",
+     "label": "面膜补充说明",
+     "required": false,
+     "multi": false,
+     "placeholder": "面膜补充说明",
+     "visibleWhen": {
+      "group": "pcCareItems",
+      "anyOf": [
+       "面膜"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcSerumAmount",
+     "label": "精华和面霜·用量",
+     "required": true,
+     "multi": false,
+     "options": [
+      "平常2倍",
+      "1.5倍",
+      "按压2-3下",
+      "正常量",
+      "自定义"
+     ],
+     "visibleWhen": {
+      "group": "pcCareItems",
+      "anyOf": [
+       "精华和面霜"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "pcSerumNote",
+     "label": "精华和面霜补充说明",
+     "required": false,
+     "multi": false,
+     "placeholder": "精华和面霜补充说明",
+     "visibleWhen": {
+      "group": "pcCareItems",
+      "anyOf": [
+       "精华和面霜"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcLeaveMood",
+     "label": "客人离开时的心情",
+     "required": true,
+     "multi": true,
+     "options": [
+      "满意舒服",
+      "有些疲惫",
+      "觉得效果明显",
+      "有点担心后续",
+      "紧张",
+      "看不出来",
+      "有点小不满",
+      "新客（觉得不错下次来感受其他项目）",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "pcLeaveMoodCustom",
+      "placeholder": "自定义心情补充",
+      "showWhen": [
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcDissatisfiedReason",
+     "label": "不满原因",
+     "required": true,
+     "multi": true,
+     "options": [
+      "皮肤状态（过敏/长痘）",
+      "技术问题（美容师手法）",
+      "等待太长时间",
+      "服务细节",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "pcDissatisfiedReasonCustom",
+      "placeholder": "自定义不满原因",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "pcLeaveMood",
+      "anyOf": [
+       "有点小不满"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcNeedAppeasement",
+     "label": "是否需要在话术里安抚客人",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "pcNeedAppeasementCustom",
+      "placeholder": "自定义安抚说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "pcLeaveMood",
+      "anyOf": [
+       "有点小不满"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcScriptLength",
+     "label": "话术长度",
+     "required": true,
+     "multi": false,
+     "options": [
+      "超短·3-4句",
+      "短·5-7句",
+      "中·100-200字",
+      "长·200字以上"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "pcMentionEffect",
+     "label": "是否在话术中提到项目效果",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "pcGreetingTime",
+     "label": "打招呼的时间段",
+     "required": true,
+     "multi": false,
+     "options": [
+      "早上",
+      "中午",
+      "下午",
+      "晚上",
+      "节日",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "pcGreetingTimeCustom",
+      "placeholder": "自定义时间段说明",
+      "showWhen": [
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "pcHolidayName",
+     "label": "具体节日",
+     "required": true,
+     "multi": false,
+     "placeholder": "请输入具体节日名称",
+     "visibleWhen": {
+      "group": "pcGreetingTime",
+      "anyOf": [
+       "节日"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcToneStyle",
+     "label": "语气温度",
+     "required": true,
+     "multi": true,
+     "options": [
+      "热情活泼",
+      "姐妹亲昵",
+      "尊敬稳重",
+      "专业顾问",
+      "朋友闲聊"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "pcEmojiFreq",
+     "label": "表情包使用频率",
+     "required": true,
+     "multi": false,
+     "options": [
+      "完全不用",
+      "偶尔（整段1-2个）",
+      "经常用",
+      "看顾客关系"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "pcEmojiPosition",
+     "label": "表情位置",
+     "required": true,
+     "multi": false,
+     "options": [
+      "每句后面都加",
+      "只在开头点一个",
+      "只在结尾点一个",
+      "关键情绪后面加",
+      "整段穿插1-2个",
+      "让AI自己判断"
+     ],
+     "visibleWhen": {
+      "group": "pcEmojiFreq",
+      "anyOf": [
+       "偶尔（整段1-2个）",
+       "经常用",
+       "看顾客关系"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcEmojiList",
+     "label": "常用表情",
+     "required": true,
+     "multi": true,
+     "options": [
+      "❤️爱心",
+      "🌹玫瑰",
+      "😊笑脸",
+      "🤗抱抱",
+      "☀️太阳",
+      "🌙月亮",
+      "☕咖啡",
+      "✨闪光",
+      "🌸樱花",
+      "💕双心",
+      "💐花束",
+      "👍大拇指",
+      "🍀四叶草",
+      "🎉庆祝",
+      "🥰爱脸",
+      "😘飞吻",
+      "[偷笑]",
+      "[呲牙]",
+      "[愉快]",
+      "[玫瑰]",
+      "[爱心]",
+      "[强]",
+      "[加油]",
+      "[抱抱]",
+      "[太阳]",
+      "[咖啡]",
+      "[鲜花]",
+      "[嘿哈]",
+      "[机智]",
+      "[笑脸]",
+      "[转圈]",
+      "[礼物]"
+     ],
+     "visibleWhen": {
+      "group": "pcEmojiFreq",
+      "anyOf": [
+       "偶尔（整段1-2个）",
+       "经常用",
+       "看顾客关系"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "pcChannel",
+     "label": "回访渠道",
+     "required": true,
+     "multi": false,
+     "options": [
+      "微信",
+      "电话",
+      "朋友圈互动",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "pcChannelCustom",
+      "placeholder": "自定义回访渠道说明",
+      "showWhen": [
+       "自定义"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "nature": "邀约到店",
+   "prefix": "inv",
+   "fields": [
+    {
+     "kind": "textarea",
+     "id": "invAddressing",
+     "label": "如何称呼客人",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：王姐、小美、Jessica…"
+    },
+    {
+     "kind": "options",
+     "id": "invTime",
+     "label": "距离上次到店的时间",
+     "required": true,
+     "multi": false,
+     "options": [
+      "2周内",
+      "1个月",
+      "3个月",
+      "6个月",
+      "1年",
+      "2年以上"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "invFrequency",
+     "label": "到店频率",
+     "required": true,
+     "multi": false,
+     "options": [
+      "高频(1个月3-4次)",
+      "月1次",
+      "2-3个月1次",
+      "半年1次",
+      "一年1次",
+      "2年以上未到",
+      "不确定",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invFrequencyCustom",
+      "placeholder": "自定义到店频率",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "dynamicCat": "inv_visit_frequency"
+    },
+    {
+     "kind": "options",
+     "id": "invType",
+     "label": "顾客类型",
+     "required": true,
+     "multi": false,
+     "options": [
+      "新客",
+      "体验客",
+      "常规会员",
+      "老会员 / VIP",
+      "转介绍客",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invTypeCustom",
+      "placeholder": "自定义顾客类型",
+      "showWhen": [
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invPriceSense",
+     "label": "价格敏感度",
+     "required": true,
+     "multi": false,
+     "options": [
+      "价格敏感 / 喜欢比三家",
+      "喜欢要赠送 / 占便宜",
+      "不敏感 / 消费耿直",
+      "不清楚",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invPriceSenseCustom",
+      "placeholder": "自定义价格敏感度说明",
+      "showWhen": [
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invLeaveStatusToggle",
+     "label": "上次离开时的状态",
+     "required": false,
+     "multi": false,
+     "options": [
+      "填写",
+      "不填写"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "invLeaveStatus",
+     "label": "上次离开时的状态",
+     "required": true,
+     "multi": true,
+     "options": [
+      "正常结束",
+      "做完很满意但没再来",
+      "有点小不满",
+      "说过\"最近忙，过段时间来\"",
+      "办了卡但没用完",
+      "卡已到期",
+      "因搬家 / 工作变动",
+      "不开心离店",
+      "有疑虑没说清楚",
+      "卡消费结束并且没有续费",
+      "记不清了",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invLeaveStatusCustom",
+      "placeholder": "自定义离开状态描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invLeaveStatusToggle",
+      "anyOf": [
+       "填写"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invPortraitToggle",
+     "label": "顾客画像",
+     "required": false,
+     "multi": false,
+     "options": [
+      "填写",
+      "不填写"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "invPersonality",
+     "label": "沟通风格",
+     "required": false,
+     "multi": true,
+     "options": [
+      "急性子 / 赶时间",
+      "温柔忧郁",
+      "慢热",
+      "平和好沟通",
+      "不爱说话",
+      "倾听型",
+      "表达型",
+      "自来熟",
+      "端庄稳重",
+      "话多分享欲高",
+      "抗拒怕被销售",
+      "不满意爱抱怨",
+      "质疑型",
+      "接纳度高",
+      "接纳度低",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invPersonalityCustom",
+      "placeholder": "自定义沟通风格",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invPortraitToggle",
+      "anyOf": [
+       "填写"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invIeType",
+     "label": "E / I 人",
+     "required": false,
+     "multi": false,
+     "options": [
+      "i人社恐",
+      "e人外向",
+      "中间看情况",
+      "不知道"
+     ],
+     "visibleWhen": {
+      "group": "invPortraitToggle",
+      "anyOf": [
+       "填写"
+      ]
+     }
+    },
+    {
+     "kind": "select",
+     "id": "invZodiac",
+     "label": "星座",
+     "required": false,
+     "multi": false,
+     "options": [
+      "白羊座",
+      "狮子座",
+      "射手座",
+      "金牛座",
+      "处女座",
+      "摩羯座",
+      "双子座",
+      "天秤座",
+      "水瓶座",
+      "巨蟹座",
+      "天蝎座",
+      "双鱼座"
+     ],
+     "visibleWhen": {
+      "group": "invPortraitToggle",
+      "anyOf": [
+       "填写"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invSocialPrefToggle",
+     "label": "社交偏好",
+     "required": false,
+     "multi": false,
+     "options": [
+      "填写",
+      "不填写"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "invSocialPref",
+     "label": "社交偏好",
+     "required": true,
+     "multi": true,
+     "options": [
+      "喜欢被赞美寒暄",
+      "喜欢专业高效精准",
+      "喜欢低调真诚",
+      "喜欢安静不说话",
+      "喜欢边做边聊",
+      "喜欢被看见 / 被记得",
+      "喜欢分享",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invSocialPrefCustom",
+      "placeholder": "自定义社交偏好",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invSocialPrefToggle",
+      "anyOf": [
+       "填写"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invServicePrefToggle",
+     "label": "服务触感偏好",
+     "required": false,
+     "multi": false,
+     "options": [
+      "填写",
+      "不填写"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "invTouchIntensity",
+     "label": "手法力度",
+     "required": false,
+     "multi": true,
+     "options": [
+      "手法偏重",
+      "手法偏轻柔",
+      "中等力度",
+      "对力度敏感 / 易疼"
+     ],
+     "visibleWhen": {
+      "group": "invServicePrefToggle",
+      "anyOf": [
+       "填写"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invSpaceTemp",
+     "label": "空间 / 温度",
+     "required": false,
+     "multi": true,
+     "options": [
+      "喜欢明亮空间",
+      "喜欢昏暗有氛围",
+      "喜欢独立房间",
+      "喜欢热敷",
+      "怕热 / 喜欢凉感"
+     ],
+     "visibleWhen": {
+      "group": "invServicePrefToggle",
+      "anyOf": [
+       "填写"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invRhythmRitual",
+     "label": "节奏 / 仪式",
+     "required": false,
+     "multi": true,
+     "options": [
+      "喜欢快节奏高效",
+      "喜欢慢节奏放松",
+      "喜欢仪式感 / 惊喜",
+      "固定美容师",
+      "排斥换新人"
+     ],
+     "visibleWhen": {
+      "group": "invServicePrefToggle",
+      "anyOf": [
+       "填写"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invVisitRhythm",
+     "label": "到店节奏",
+     "required": true,
+     "multi": true,
+     "options": [
+      "可规律来",
+      "不稳定",
+      "很忙 / 经常打断",
+      "间隔很久不规律",
+      "自己固定时间约",
+      "不习惯别人约她时间"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "invPreferTime",
+     "label": "偏好时段",
+     "required": true,
+     "multi": true,
+     "options": [
+      "工作日",
+      "周末",
+      "早上",
+      "中午",
+      "下午",
+      "晚上",
+      "喜欢临时约没有特别固定",
+      "不清楚",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invPreferTimeCustom",
+      "placeholder": "自定义偏好时段说明",
+      "showWhen": [
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invReason",
+     "label": "回访由头",
+     "required": true,
+     "multi": true,
+     "options": [
+      "纯关心 / 惦记",
+      "季节变更",
+      "节日临近",
+      "顾客生日月",
+      "门店新项目 / 新仪器",
+      "门店活动 / 周年庆",
+      "新解决方案",
+      "朋友圈互动延续",
+      "她人在外地 / 出差（按天气切入）",
+      "项目升级",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invReasonCustom",
+      "placeholder": "自定义回访由头",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "dynamicCat": "followup_reasons"
+    },
+    {
+     "kind": "text",
+     "id": "invReasonHolidayName",
+     "label": "具体节日",
+     "required": true,
+     "multi": false,
+     "placeholder": "请输入具体节日名称",
+     "visibleWhen": {
+      "group": "invReason",
+      "anyOf": [
+       "节日临近"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invReasonSeason",
+     "label": "天气变化方向",
+     "required": true,
+     "multi": true,
+     "options": [
+      "变冷",
+      "变干",
+      "变湿",
+      "变热",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invReasonSeasonCustom",
+      "placeholder": "自定义天气变化说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invReason",
+      "anyOf": [
+       "季节变更"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invEntryAngle",
+     "label": "本次回访的切入角度",
+     "required": true,
+     "multi": true,
+     "options": [
+      "项目升级",
+      "项目置换",
+      "季节变更",
+      "节日临近",
+      "客人生日月",
+      "门店有新仪器",
+      "门店活动",
+      "新解决方案",
+      "朋友圈互动延续",
+      "人在外地 / 出差",
+      "发生重大事件",
+      "提醒到店护理",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invAngleCustom",
+      "placeholder": "自定义切入角度",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "dynamicCat": "followup_angles"
+    },
+    {
+     "kind": "options",
+     "id": "invSeasonChange",
+     "label": "季节变更方向",
+     "required": true,
+     "multi": true,
+     "options": [
+      "变冷",
+      "变干",
+      "变湿",
+      "变热",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invSeasonCustom",
+      "placeholder": "自定义季节变化描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invEntryAngle",
+      "anyOf": [
+       "季节变更"
+      ]
+     }
+    },
+    {
+     "kind": "text",
+     "id": "invNewEquipName",
+     "label": "仪器名称",
+     "required": true,
+     "multi": false,
+     "placeholder": "请填写仪器名称",
+     "visibleWhen": {
+      "group": "invEntryAngle",
+      "anyOf": [
+       "门店有新仪器"
+      ]
+     }
+    },
+    {
+     "kind": "text",
+     "id": "invNewSolutionDetail",
+     "label": "新解决方案简述",
+     "required": true,
+     "multi": false,
+     "placeholder": "简述能解决什么痛点",
+     "visibleWhen": {
+      "group": "invEntryAngle",
+      "anyOf": [
+       "新解决方案"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "invBigEventDetail",
+     "label": "重大事件详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "请填写重大事件详情",
+     "visibleWhen": {
+      "group": "invEntryAngle",
+      "anyOf": [
+       "发生重大事件"
+      ]
+     }
+    },
+    {
+     "kind": "text",
+     "id": "invAngleHolidayName",
+     "label": "具体节日",
+     "required": true,
+     "multi": false,
+     "placeholder": "请输入具体节日名称",
+     "visibleWhen": {
+      "group": "invEntryAngle",
+      "anyOf": [
+       "节日临近"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invScriptLength",
+     "label": "话术长度",
+     "required": true,
+     "multi": false,
+     "options": [
+      "超短·3-4句",
+      "短·5-7句",
+      "中·100-200字",
+      "长·200字以上"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "invToneStyle",
+     "label": "语气温度",
+     "required": true,
+     "multi": true,
+     "options": [
+      "热情活泼",
+      "姐妹亲昵",
+      "尊敬稳重",
+      "专业顾问",
+      "朋友闲聊"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "invMentionStore",
+     "label": "上次去的门店",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "textarea",
+     "id": "invMentionStoreText",
+     "label": "上次去的门店·详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "上次去的门店是什么",
+     "visibleWhen": {
+      "group": "invMentionStore",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionLastProject",
+     "label": "上次做的项目",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "options",
+     "id": "invLastProjectType",
+     "label": "项目类型",
+     "required": true,
+     "multi": true,
+     "options": [
+      "身体项目",
+      "面部项目",
+      "美学类项目",
+      "特殊项目",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invLastProjectCustom",
+      "placeholder": "自定义项目描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invMentionLastProject",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invLastProjectAesthetic",
+     "label": "美学类项目",
+     "required": true,
+     "multi": true,
+     "options": [
+      "纹绣",
+      "无伤害美学抗衰",
+      "毛发肌肤管理"
+     ],
+     "visibleWhen": {
+      "group": "invLastProjectType",
+      "anyOf": [
+       "美学类项目"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invMentionLastProject",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invLastProjectSpecial",
+     "label": "特殊项目",
+     "required": true,
+     "multi": true,
+     "options": [
+      "女性私密护理",
+      "家居产品",
+      "菌群管理"
+     ],
+     "visibleWhen": {
+      "group": "invLastProjectType",
+      "anyOf": [
+       "特殊项目"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invMentionLastProject",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionLastEffect",
+     "label": "上次的效果",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "textarea",
+     "id": "invMentionLastEffectText",
+     "label": "上次的效果·详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "上次的效果是什么",
+     "visibleWhen": {
+      "group": "invMentionLastEffect",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionCardItems",
+     "label": "卡里有的项目",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "textarea",
+     "id": "invMentionCardItemsText",
+     "label": "卡里有的项目·详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "卡里的项目有什么",
+     "visibleWhen": {
+      "group": "invMentionCardItems",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionSkinType",
+     "label": "痛点",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "options",
+     "id": "invPainCategory",
+     "label": "痛点类别",
+     "required": true,
+     "multi": true,
+     "options": [
+      "皮肤",
+      "身体",
+      "自定义"
+     ],
+     "visibleWhen": {
+      "group": "invMentionSkinType",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invSkinType",
+     "label": "皮肤类型",
+     "required": true,
+     "multi": true,
+     "options": [
+      "干皮",
+      "油皮",
+      "敏感肌",
+      "衰老肌",
+      "混合型",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invSkinTypeCustom",
+      "placeholder": "自定义皮肤类型痛点说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invMentionSkinType",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invPainDry",
+     "label": "干皮常见痛点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "干痘",
+      "不水润",
+      "暗沉",
+      "色素 / 斑",
+      "干纹细纹",
+      "胶原少",
+      "红热刺",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invPainDryCustom",
+      "placeholder": "自定义干皮痛点说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invSkinType",
+      "anyOf": [
+       "干皮",
+       "混合型"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invPainOily",
+     "label": "油皮常见痛点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "毛孔粗糙",
+      "油光暗沉",
+      "反复长痘",
+      "闭口反复",
+      "炎症痘",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invPainOilyCustom",
+      "placeholder": "自定义油皮痛点说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invSkinType",
+      "anyOf": [
+       "油皮",
+       "混合型"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invPainSens",
+     "label": "敏感肌常见痛点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "易红",
+      "反反复复",
+      "冷热交替潮红",
+      "红血丝",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invPainSensCustom",
+      "placeholder": "自定义敏感肌痛点说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invSkinType",
+      "anyOf": [
+       "敏感肌"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invPainAging",
+     "label": "衰老肌常见痛点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "松弛",
+      "胶原少 / 弹性纤维断裂",
+      "代谢缓慢",
+      "面部脂肪薄",
+      "筋膜 / 结构支撑不足",
+      "眼纹",
+      "轮廓不清晰",
+      "苹果肌下垂",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invPainAgingCustom",
+      "placeholder": "自定义衰老肌痛点说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invSkinType",
+      "anyOf": [
+       "衰老肌"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "invPainBodyDetail",
+     "label": "身体痛点",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：腰肌劳损 / 肩颈僵硬 / 腹部赘肉 / 水肿 / 失眠 / 经期不适 等",
+     "visibleWhen": {
+      "group": "invPainCategory",
+      "anyOf": [
+       "身体"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invMentionSkinType",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "invPainCustomDetail",
+     "label": "自定义痛点",
+     "required": true,
+     "multi": false,
+     "placeholder": "其他类型的痛点详情",
+     "visibleWhen": {
+      "group": "invPainCategory",
+      "anyOf": [
+       "自定义"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invMentionSkinType",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionNewIssue",
+     "label": "当下可能的新问题",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "textarea",
+     "id": "invMentionNewIssueText",
+     "label": "当下可能的新问题·详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "当下可能的新问题是什么",
+     "visibleWhen": {
+      "group": "invMentionNewIssue",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionMoments",
+     "label": "最近发的朋友圈",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "textarea",
+     "id": "invMentionMomentsText",
+     "label": "最近发的朋友圈·详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "最近发了什么朋友圈",
+     "visibleWhen": {
+      "group": "invMentionMoments",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionInterest",
+     "label": "生活兴趣",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "textarea",
+     "id": "invMentionInterestText",
+     "label": "生活兴趣·详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "生活兴趣是什么",
+     "visibleWhen": {
+      "group": "invMentionInterest",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionFamily",
+     "label": "家人",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "textarea",
+     "id": "invMentionFamilyText",
+     "label": "家人·详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "家人怎么了 / 家人情况",
+     "visibleWhen": {
+      "group": "invMentionFamily",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionRecentEvent",
+     "label": "最近发生的事情关心",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "textarea",
+     "id": "invMentionRecentEventText",
+     "label": "最近发生的事情关心·详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "最近发生了什么事情需要关心（请详细写）",
+     "visibleWhen": {
+      "group": "invMentionRecentEvent",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionTimeGreet",
+     "label": "时间段打招呼",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "options",
+     "id": "invGreetingTime",
+     "label": "时间段打招呼·具体时间段",
+     "required": true,
+     "multi": false,
+     "options": [
+      "早上",
+      "中午",
+      "下午",
+      "晚上",
+      "节日",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invGreetingTimeCustom",
+      "placeholder": "自定义时间段说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invMentionTimeGreet",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "text",
+     "id": "invHolidayName",
+     "label": "具体节日",
+     "required": true,
+     "multi": false,
+     "placeholder": "请输入具体节日名称",
+     "visibleWhen": {
+      "group": "invGreetingTime",
+      "anyOf": [
+       "节日"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invMentionTimeGreet",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invMentionVipBenefit",
+     "label": "会员福利日/月",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "options",
+     "id": "invMentionCustomFlag",
+     "label": "自定义内容",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」,选「是」展开详情"
+    },
+    {
+     "kind": "textarea",
+     "id": "invMentionCustomText",
+     "label": "自定义内容·详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "自定义需要提及的内容",
+     "visibleWhen": {
+      "group": "invMentionCustomFlag",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invChannel",
+     "label": "回访渠道",
+     "required": true,
+     "multi": false,
+     "options": [
+      "微信",
+      "电话",
+      "朋友圈互动",
+      "其他",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invChannelCustom",
+      "placeholder": "自定义回访渠道说明",
+      "showWhen": [
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invEmojiFreq",
+     "label": "表情包使用频率",
+     "required": true,
+     "multi": false,
+     "options": [
+      "完全不用",
+      "偶尔（整段1-2个）",
+      "经常用",
+      "看顾客关系"
+     ],
+     "visibleWhen": {
+      "group": "invChannel",
+      "anyOf": [
+       "微信",
+       "朋友圈互动",
+       "其他",
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invEmojiPosition",
+     "label": "表情位置",
+     "required": true,
+     "multi": false,
+     "options": [
+      "每句后面都加",
+      "只在开头点一个",
+      "只在结尾点一个",
+      "关键情绪后面加",
+      "整段穿插1-2个",
+      "让AI自己判断"
+     ],
+     "visibleWhen": {
+      "group": "invEmojiFreq",
+      "anyOf": [
+       "偶尔（整段1-2个）",
+       "经常用",
+       "看顾客关系"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invChannel",
+      "anyOf": [
+       "微信",
+       "朋友圈互动",
+       "其他",
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invEmojiList",
+     "label": "常用表情",
+     "required": true,
+     "multi": true,
+     "options": [
+      "❤️爱心",
+      "🌹玫瑰",
+      "😊笑脸",
+      "🤗抱抱",
+      "☀️太阳",
+      "🌙月亮",
+      "☕咖啡",
+      "✨闪光",
+      "🌸樱花",
+      "💕双心",
+      "💐花束",
+      "👍大拇指",
+      "🍀四叶草",
+      "🎉庆祝",
+      "🥰爱脸",
+      "😘飞吻",
+      "[偷笑]",
+      "[呲牙]",
+      "[愉快]",
+      "[玫瑰]",
+      "[爱心]",
+      "[强]",
+      "[加油]",
+      "[抱抱]",
+      "[太阳]",
+      "[咖啡]",
+      "[鲜花]",
+      "[嘿哈]",
+      "[机智]",
+      "[笑脸]",
+      "[转圈]",
+      "[礼物]"
+     ],
+     "visibleWhen": {
+      "group": "invEmojiFreq",
+      "anyOf": [
+       "偶尔（整段1-2个）",
+       "经常用",
+       "看顾客关系"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invChannel",
+      "anyOf": [
+       "微信",
+       "朋友圈互动",
+       "其他",
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invTouchCount",
+     "label": "本次是该时间段第几次触达",
+     "required": true,
+     "multi": false,
+     "options": [
+      "第1次",
+      "第2次",
+      "第3次",
+      "第4次及以上"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "invLastTouchReplied",
+     "label": "上次是否回复了消息",
+     "required": true,
+     "multi": false,
+     "options": [
+      "回复了",
+      "没有回复"
+     ],
+     "visibleWhen": {
+      "group": "invTouchCount",
+      "anyOf": [
+       "第2次",
+       "第3次",
+       "第4次及以上"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invLastTouchReaction",
+     "label": "回复的反应如何",
+     "required": true,
+     "multi": false,
+     "options": [
+      "冷淡",
+      "还不错",
+      "给了承诺但没来",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "invLastTouchReactionCustom",
+      "placeholder": "自定义上次反应描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "invLastTouchReplied",
+      "anyOf": [
+       "回复了"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invTouchCount",
+      "anyOf": [
+       "第2次",
+       "第3次",
+       "第4次及以上"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "invTouchDetail",
+     "label": "触达情况补充",
+     "required": false,
+     "multi": false,
+     "placeholder": "触达情况补充（如：上次说这周忙，让我下周联系）",
+     "visibleWhen": {
+      "group": "invTouchCount",
+      "anyOf": [
+       "第2次",
+       "第3次",
+       "第4次及以上"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "invHangup",
+     "label": "客人是否在听到第一句自报家门后就挂断电话？",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "visibleWhen": {
+      "group": "invChannel",
+      "anyOf": [
+       "电话"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "invTouchCount",
+      "anyOf": [
+       "第2次",
+       "第3次",
+       "第4次及以上"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "nature": "特殊客情沟通维系",
+   "prefix": "sp",
+   "fields": [
+    {
+     "kind": "textarea",
+     "id": "spAddressing",
+     "label": "如何称呼客人",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：王姐、小美、Jessica…"
+    },
+    {
+     "kind": "options",
+     "id": "spTime",
+     "label": "距离上次到店的时间",
+     "required": true,
+     "multi": false,
+     "options": [
+      "2周内",
+      "1个月",
+      "3个月",
+      "6个月",
+      "1年",
+      "2年以上"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "spFrequency",
+     "label": "到店频率",
+     "required": true,
+     "multi": false,
+     "options": [
+      "高频(1个月3-4次)",
+      "月1次",
+      "2-3个月1次",
+      "半年1次",
+      "一年1次",
+      "2年以上未到",
+      "不确定",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spFrequencyCustom",
+      "placeholder": "自定义到店频率",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "dynamicCat": "sp_visit_frequency"
+    },
+    {
+     "kind": "options",
+     "id": "spCareCategory",
+     "label": "客情大类",
+     "required": true,
+     "multi": false,
+     "options": [
+      "A. 积极客情（高价值 / 强关系维系型）",
+      "B. 消极客情（问题处理 / 关系修复型）"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "spPositiveType",
+     "label": "积极客情类型",
+     "required": true,
+     "multi": false,
+     "options": [
+      "老 VIP 客户维系",
+      "高频维系客户",
+      "姐妹 / 闺蜜型客情",
+      "转介绍大户 / KOC 型客人",
+      "生日 / 纪念日 / 重要节点关怀",
+      "其他积极情况（自定义）"
+     ],
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosVipYears",
+     "label": "入会年限 / 成为 VIP 时长",
+     "required": true,
+     "multi": false,
+     "options": [
+      "1年以内",
+      "1年",
+      "2年",
+      "2-5年",
+      "5年-10年",
+      "10年以上"
+     ],
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "老 VIP 客户维系"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosVipLastDeep",
+     "label": "上次深度沟通距今多久",
+     "required": true,
+     "multi": false,
+     "options": [
+      "2周内",
+      "2周到1个月",
+      "1个月到3个月",
+      "3个月到6个月",
+      "6个月～1年",
+      "1年～2年",
+      "2年以上"
+     ],
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "老 VIP 客户维系"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosFreqFreq",
+     "label": "固定联系频率",
+     "required": true,
+     "multi": false,
+     "options": [
+      "每周",
+      "每两周",
+      "每月",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spPosFreqFreqCustom",
+      "placeholder": "自定义频率",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "高频维系客户"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosFreqLast",
+     "label": "上次联系日期",
+     "required": true,
+     "multi": false,
+     "options": [
+      "2周内",
+      "2周到1个月",
+      "1个月到3个月",
+      "3个月到6个月",
+      "6个月～1年",
+      "1年～2年",
+      "2年以上"
+     ],
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "高频维系客户"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spPosFreqTopic",
+     "label": "常聊话题 / 共同兴趣点",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：孩子教育、健身、旅游…",
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "高频维系客户"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosSisterDepth",
+     "label": "关系深度",
+     "required": true,
+     "multi": true,
+     "options": [
+      "经常互送小礼物",
+      "偶尔一起吃饭",
+      "家庭层面有往来",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spPosSisterDepthCustom",
+      "placeholder": "自定义关系深度描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "姐妹 / 闺蜜型客情"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosSisterLast",
+     "label": "最近一次私下互动（非服务场景）距今多久",
+     "required": true,
+     "multi": false,
+     "options": [
+      "2周内",
+      "2周到1个月",
+      "1个月到3个月",
+      "3个月到6个月",
+      "6个月～1年",
+      "1年～2年",
+      "2年以上"
+     ],
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "姐妹 / 闺蜜型客情"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosKocCount",
+     "label": "历史转介绍数量",
+     "required": true,
+     "multi": false,
+     "options": [
+      "1～2个",
+      "2～5个",
+      "5～10个",
+      "10～20个",
+      "20～50个",
+      "50+"
+     ],
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "转介绍大户 / KOC 型客人"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosKocInfluence",
+     "label": "客人社交影响力",
+     "required": true,
+     "multi": true,
+     "options": [
+      "小红书博主",
+      "朋友圈活跃",
+      "圈子核心",
+      "普通但人缘好",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spPosKocInfluenceCustom",
+      "placeholder": "自定义社交影响力描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "转介绍大户 / KOC 型客人"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosAnnivNode",
+     "label": "具体节点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "生日",
+      "结婚纪念日",
+      "事业重要节点",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spPosAnnivNodeCustom",
+      "placeholder": "自定义节点描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "生日 / 纪念日 / 重要节点关怀"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPosAnnivGift",
+     "label": "是否准备礼物 / 特殊惊喜",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spPosAnnivGiftDetail",
+      "placeholder": "请填写具体礼物 / 惊喜内容",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "生日 / 纪念日 / 重要节点关怀"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spPosOtherDetail",
+     "label": "其他积极情况描述",
+     "required": true,
+     "multi": false,
+     "placeholder": "请详细描述其他积极情况",
+     "visibleWhen": {
+      "group": "spPositiveType",
+      "anyOf": [
+       "其他积极情况（自定义）"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegativeType",
+     "label": "消极客情类型",
+     "required": true,
+     "multi": true,
+     "options": [
+      "医疗风险类",
+      "服务技术类",
+      "服务细节类",
+      "线上差评类",
+      "要求退卡类",
+      "客人转去别家店类",
+      "其他消极情况（自定义）"
+     ],
+     "sublabelNote": "多选：可同时展开多个消极子组",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegMedical",
+     "label": "医疗风险类",
+     "required": true,
+     "multi": true,
+     "options": [
+      "身体过敏",
+      "眼睛过敏",
+      "面部过敏",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegMedicalCustom",
+      "placeholder": "自定义医疗风险描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "医疗风险类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegTech",
+     "label": "服务技术类",
+     "required": true,
+     "multi": true,
+     "options": [
+      "美容师操作技术不佳",
+      "时间协调不当让客户久等",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegTechCustom",
+      "placeholder": "自定义服务技术问题描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "服务技术类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegDetail",
+     "label": "服务细节类",
+     "required": true,
+     "multi": true,
+     "options": [
+      "忘记送赠品",
+      "晚上没有餐食",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegDetailCustom",
+      "placeholder": "自定义服务细节问题描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "服务细节类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegReviewPlatform",
+     "label": "差评平台",
+     "required": true,
+     "multi": true,
+     "options": [
+      "大众点评",
+      "小红书",
+      "美团",
+      "抖音",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegReviewPlatformCustom",
+      "placeholder": "自定义差评平台",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "线上差评类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegReviewContent",
+     "label": "差评核心内容",
+     "required": true,
+     "multi": false,
+     "placeholder": "简述客人吐槽的重点",
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "线上差评类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegReviewPublicity",
+     "label": "差评公开程度",
+     "required": true,
+     "multi": false,
+     "options": [
+      "公开可见",
+      "私信投诉",
+      "已删除",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegReviewPublicityCustom",
+      "placeholder": "自定义公开程度描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "线上差评类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegReviewReplied",
+     "label": "是否已线上回复",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "线上差评类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegRefundReason",
+     "label": "退卡原因",
+     "required": true,
+     "multi": true,
+     "options": [
+      "效果不满意",
+      "服务体验差",
+      "经济原因",
+      "搬家异地",
+      "身体健康原因",
+      "家人反对",
+      "无明确原因",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegRefundReasonCustom",
+      "placeholder": "自定义退卡原因",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "要求退卡类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegRefundBalance",
+     "label": "卡内剩余金额 / 剩余次数",
+     "required": true,
+     "multi": false,
+     "options": [
+      "1k以内",
+      "1～2k",
+      "2～5k",
+      "5～1w",
+      "1w～2w",
+      "2w~5w",
+      "5w+"
+     ],
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "要求退卡类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegRefundAttitude",
+     "label": "客人态度",
+     "required": true,
+     "multi": true,
+     "options": [
+      "坚决强硬",
+      "犹豫可挽回",
+      "试探性询问",
+      "情绪激动",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegRefundAttitudeCustom",
+      "placeholder": "自定义客人态度描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "要求退卡类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegRefundSpread",
+     "label": "是否已有其他客人知情 / 传播风险",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "要求退卡类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegRefundDirection",
+     "label": "门店期望处理方向",
+     "required": true,
+     "multi": true,
+     "options": [
+      "全力挽留",
+      "部分挽留转项目",
+      "协商退卡",
+      "友好放行维持关系",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegRefundDirectionCustom",
+      "placeholder": "自定义处理方向",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "要求退卡类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegChurnTo",
+     "label": "流失去向",
+     "required": true,
+     "multi": true,
+     "options": [
+      "竞品门店",
+      "医美机构",
+      "居家护理",
+      "未知",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegChurnToCustom",
+      "placeholder": "自定义流失去向",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "客人转去别家店类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegChurnReason",
+     "label": "流失原因",
+     "required": true,
+     "multi": true,
+     "options": [
+      "距离更近",
+      "价格更优",
+      "朋友推荐",
+      "项目更新",
+      "顾问跳槽带走",
+      "对原门店不满",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegChurnReasonCustom",
+      "placeholder": "自定义流失原因",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "客人转去别家店类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegChurnComm",
+     "label": "是否还愿意沟通",
+     "required": true,
+     "multi": true,
+     "options": [
+      "积极回应",
+      "冷淡敷衍",
+      "已不回复",
+      "态度未知",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegChurnCommCustom",
+      "placeholder": "自定义沟通意愿描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "客人转去别家店类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegChurnBalance",
+     "label": "是否卡内还有余额",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spNegChurnBalanceDetail",
+      "placeholder": "请填写余额",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "客人转去别家店类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegChurnDirection",
+     "label": "门店期望处理方向",
+     "required": true,
+     "multi": false,
+     "options": [
+      "强力召回",
+      "温和维系保留感情",
+      "体面告别不打扰",
+      "转介绍型维系"
+     ],
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "客人转去别家店类"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegOtherDetail",
+     "label": "其他消极情况描述",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：门店搬家、客人搬家等",
+     "visibleWhen": {
+      "group": "spNegativeType",
+      "anyOf": [
+       "其他消极情况（自定义）"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegComplaintAge",
+     "label": "距离发生客诉多久了",
+     "required": true,
+     "multi": false,
+     "options": [
+      "1周内",
+      "1周到一个月",
+      "1-2个月",
+      "2个月以上"
+     ],
+     "sublabelNote": "提示文案：客诉越近越正面处理客诉本身，越远越淡化、聚焦关怀",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegHandledStatus",
+     "label": "当时如何处理的",
+     "required": true,
+     "multi": false,
+     "options": [
+      "已道歉未解决",
+      "承诺补救未跟进",
+      "未处理",
+      "已解决但客人仍有情绪",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegHandledCustom",
+      "placeholder": "自定义：当时如何处理的",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1周内"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegEmotionState",
+     "label": "客人当时的情绪状态",
+     "required": true,
+     "multi": false,
+     "options": [
+      "强烈不满",
+      "有情绪但尚可沟通",
+      "已平复但有疑虑",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegEmotionCustom",
+      "placeholder": "自定义：客人当时的情绪状态",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1周内"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegSolutionGiven",
+     "label": "上次客诉是否已给出解决方案",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1周到一个月"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegFollowReaction",
+     "label": "客人后续反应",
+     "required": true,
+     "multi": false,
+     "options": [
+      "未再联系",
+      "回复了但较冷淡",
+      "情绪已平复",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spNegFollowReactionCustom",
+      "placeholder": "自定义：客人后续反应",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1周到一个月"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegHasDetail",
+     "label": "有无可以关心的个人细节",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1周到一个月"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegDetailAspect",
+     "label": "关心方向",
+     "required": true,
+     "multi": true,
+     "options": [
+      "肤质",
+      "身体",
+      "生活"
+     ],
+     "visibleWhen": {
+      "group": "spNegHasDetail",
+      "anyOf": [
+       "是"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1周到一个月"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegDetailSkinText",
+     "label": "肤质相关细节",
+     "required": true,
+     "multi": false,
+     "placeholder": "肤质相关细节（如换季泛红、干燥敏感）",
+     "visibleWhen": {
+      "group": "spNegDetailAspect",
+      "anyOf": [
+       "肤质"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spNegHasDetail",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegDetailBodyText",
+     "label": "身体相关细节",
+     "required": true,
+     "multi": false,
+     "placeholder": "身体相关细节（如肩颈酸、睡眠差）",
+     "visibleWhen": {
+      "group": "spNegDetailAspect",
+      "anyOf": [
+       "身体"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spNegHasDetail",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegDetailLifeText",
+     "label": "生活相关细节",
+     "required": true,
+     "multi": false,
+     "placeholder": "生活相关细节（如最近忙、出差、带娃）",
+     "visibleWhen": {
+      "group": "spNegDetailAspect",
+      "anyOf": [
+       "生活"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spNegHasDetail",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegCareSkinKw",
+     "label": "客人肤质 / 皮肤状态关键词",
+     "required": false,
+     "multi": false,
+     "placeholder": "如：换季泛红、干燥敏感",
+     "sublabelNote": "档3面板提示：此阶段不主动提客诉，全程关怀；以下均为选填",
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1-2个月",
+       "2个月以上"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegUseSolarTerm",
+     "label": "近期节气 / 时间节点",
+     "required": false,
+     "multi": false,
+     "options": [
+      "带入当前节气",
+      "不带入"
+     ],
+     "sublabelNote": "系统按当前日期自动带入节气，确认即可；默认已选中「带入当前节气」",
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1-2个月",
+       "2个月以上"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegWeather",
+     "label": "近期天气",
+     "required": false,
+     "multi": false,
+     "placeholder": "如：连续降温、回南天潮湿、高温闷热（留空则不用天气切入）",
+     "sublabelNote": "选填 · 顾问手动填写（非节气日也可从天气切入）",
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1-2个月",
+       "2个月以上"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegBirthdayMonth",
+     "label": "客人是否有生日月",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spNegBirthdayDate",
+      "placeholder": "生日日期（如 6月15日 / 下个月）",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1-2个月",
+       "2个月以上"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegLifeTopic",
+     "label": "客人有无提到过的生活话题",
+     "required": false,
+     "multi": true,
+     "options": [
+      "孩子 / 家人",
+      "工作压力",
+      "旅行",
+      "运动健身",
+      "无"
+     ],
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1-2个月",
+       "2个月以上"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spNegSurprise",
+     "label": "是否需要提及小惊喜 / 礼物 / 福利",
+     "required": false,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spNegSurpriseDetail",
+      "placeholder": "本次想送的小惊喜 / 福利（如肩颈放松、护肤小样）",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spNegComplaintAge",
+      "anyOf": [
+       "1-2个月",
+       "2个月以上"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spEntryAnglePos",
+     "label": "本次回访的切入角度（积极客情）",
+     "required": true,
+     "multi": true,
+     "options": [
+      "自定义填写"
+     ],
+     "customInput": {
+      "id": "spPosAngleCustom",
+      "placeholder": "自定义切入角度",
+      "showWhen": [
+       "自定义填写"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     },
+     "dynamicCat": "positive_care_angles"
+    },
+    {
+     "kind": "options",
+     "id": "spPosSeasonChange",
+     "label": "季节变更方向",
+     "required": true,
+     "multi": true,
+     "options": [
+      "变冷",
+      "变干",
+      "变湿",
+      "变热",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spPosSeasonCustom",
+      "placeholder": "自定义季节变化描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spEntryAnglePos",
+      "anyOf": [
+       "季节变更"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spPosEquipName",
+     "label": "仪器名称",
+     "required": true,
+     "multi": false,
+     "placeholder": "请填写仪器名称",
+     "visibleWhen": {
+      "group": "spEntryAnglePos",
+      "anyOf": [
+       "门店有新仪器"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spPosSolutionDetail",
+     "label": "新解决方案简述",
+     "required": true,
+     "multi": false,
+     "placeholder": "简述能解决什么痛点",
+     "visibleWhen": {
+      "group": "spEntryAnglePos",
+      "anyOf": [
+       "新解决方案"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spPosBigEventDetail",
+     "label": "重大事件详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "请填写重大事件详情",
+     "visibleWhen": {
+      "group": "spEntryAnglePos",
+      "anyOf": [
+       "发生重大事件"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spPosHolidayName",
+     "label": "具体节日",
+     "required": true,
+     "multi": false,
+     "placeholder": "请输入具体节日名称",
+     "visibleWhen": {
+      "group": "spEntryAnglePos",
+      "anyOf": [
+       "节日临近"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spEntryAngleNeg",
+     "label": "本次回访的切入角度（消极客情）",
+     "required": true,
+     "multi": true,
+     "options": [
+      "自定义填写"
+     ],
+     "customInput": {
+      "id": "spNegAngleCustom",
+      "placeholder": "自定义切入角度",
+      "showWhen": [
+       "自定义填写"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     },
+     "dynamicCat": "negative_care_angles"
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegGiftName",
+     "label": "送什么礼物",
+     "required": true,
+     "multi": false,
+     "placeholder": "请填写礼物内容",
+     "visibleWhen": {
+      "group": "spEntryAngleNeg",
+      "anyOf": [
+       "客人生日月送小礼物"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegDiscountAmount",
+     "label": "打几折 / 优惠券详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "例如：8折、满1000减300…",
+     "visibleWhen": {
+      "group": "spEntryAngleNeg",
+      "anyOf": [
+       "打折、送优惠券"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegSwapProject",
+     "label": "具体换什么项目",
+     "required": true,
+     "multi": false,
+     "placeholder": "请填写换项目详情",
+     "visibleWhen": {
+      "group": "spEntryAngleNeg",
+      "anyOf": [
+       "换项目"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spNegSolutionDetail",
+     "label": "新解决方案简述",
+     "required": true,
+     "multi": false,
+     "placeholder": "简述能解决什么痛点",
+     "visibleWhen": {
+      "group": "spEntryAngleNeg",
+      "anyOf": [
+       "新解决方案"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "B. 消极客情（问题处理 / 关系修复型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spScriptLength",
+     "label": "话术长度",
+     "required": true,
+     "multi": false,
+     "options": [
+      "超短·3-4句",
+      "短·5-7句",
+      "中·100-200字",
+      "长·200字以上"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "spToneStyle",
+     "label": "语气温度",
+     "required": true,
+     "multi": true,
+     "options": [
+      "冷静专业",
+      "温和亲切",
+      "热情活泼",
+      "诚恳致歉",
+      "闺蜜式",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spToneStyleCustom",
+      "placeholder": "自定义语气温度",
+      "showWhen": [
+       "自定义"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionLastProject",
+     "label": "上次做的项目",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "「是否在话术里提及」清单仅积极客情（A）显示；消极客情改用「距离发生客诉多久了」分档字段。每项是/否，默认「否」已选中，点「是」展开详情",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spLastProjectType",
+     "label": "项目类型",
+     "required": true,
+     "multi": true,
+     "options": [
+      "身体项目",
+      "面部项目",
+      "美学类项目",
+      "特殊项目",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spLastProjectCustom",
+      "placeholder": "自定义项目描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spMentionLastProject",
+      "anyOf": [
+       "是"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spLastProjectAesthetic",
+     "label": "美学类项目",
+     "required": true,
+     "multi": true,
+     "options": [
+      "纹绣",
+      "无伤害美学抗衰",
+      "毛发肌肤管理"
+     ],
+     "visibleWhen": {
+      "group": "spLastProjectType",
+      "anyOf": [
+       "美学类项目"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spMentionLastProject",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spLastProjectSpecial",
+     "label": "特殊项目",
+     "required": true,
+     "multi": true,
+     "options": [
+      "女性私密护理",
+      "家居产品",
+      "菌群管理"
+     ],
+     "visibleWhen": {
+      "group": "spLastProjectType",
+      "anyOf": [
+       "特殊项目"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spMentionLastProject",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionLastEffect",
+     "label": "上次的效果",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spMentionLastEffectText",
+      "placeholder": "上次的效果是什么",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "sublabelNote": "默认「否」；选「是」时文本必填",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionCardItems",
+     "label": "卡里有的项目",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spMentionCardItemsText",
+      "placeholder": "卡里的项目有什么",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "sublabelNote": "默认「否」；选「是」时文本必填",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionPainPoint",
+     "label": "痛点",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」；选「是」展开痛点类别",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPainCategory",
+     "label": "痛点类别",
+     "required": true,
+     "multi": true,
+     "options": [
+      "皮肤",
+      "身体",
+      "自定义"
+     ],
+     "sublabelNote": "必选 · 多选：勾了痛点=是则至少选一项",
+     "visibleWhen": {
+      "group": "spMentionPainPoint",
+      "anyOf": [
+       "是"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPainSkinType",
+     "label": "皮肤类型",
+     "required": true,
+     "multi": true,
+     "options": [
+      "干皮",
+      "油皮",
+      "敏感肌",
+      "衰老肌",
+      "混合型",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spPainSkinTypeCustom",
+      "placeholder": "自定义皮肤类型说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spMentionPainPoint",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPainDry",
+     "label": "干皮常见痛点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "干痘",
+      "不水润",
+      "暗沉",
+      "色素 / 斑",
+      "干纹细纹",
+      "胶原少",
+      "红热刺"
+     ],
+     "visibleWhen": {
+      "group": "spPainSkinType",
+      "anyOf": [
+       "干皮"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPainOily",
+     "label": "油皮常见痛点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "毛孔粗糙",
+      "油光暗沉",
+      "反复长痘",
+      "闭口反复",
+      "炎症痘"
+     ],
+     "visibleWhen": {
+      "group": "spPainSkinType",
+      "anyOf": [
+       "油皮"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPainSens",
+     "label": "敏感肌常见痛点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "易红",
+      "反反复复",
+      "冷热交替潮红",
+      "红血丝"
+     ],
+     "visibleWhen": {
+      "group": "spPainSkinType",
+      "anyOf": [
+       "敏感肌"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPainAging",
+     "label": "衰老肌常见痛点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "松弛",
+      "胶原少 / 弹性纤维断裂",
+      "代谢缓慢",
+      "面部脂肪薄",
+      "筋膜 / 结构支撑不足",
+      "眼纹",
+      "轮廓不清晰",
+      "苹果肌下垂"
+     ],
+     "visibleWhen": {
+      "group": "spPainSkinType",
+      "anyOf": [
+       "衰老肌"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spPainMixed",
+     "label": "混合型常见痛点",
+     "required": true,
+     "multi": true,
+     "options": [
+      "T 区油两颊干",
+      "毛孔粗糙",
+      "两颊干纹",
+      "闭口反复",
+      "暗沉不均匀",
+      "易红易敏"
+     ],
+     "visibleWhen": {
+      "group": "spPainSkinType",
+      "anyOf": [
+       "混合型"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spPainCategory",
+      "anyOf": [
+       "皮肤"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spPainBodyDetail",
+     "label": "身体痛点",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：腰肌劳损 / 肩颈僵硬 / 腹部赘肉 / 水肿 / 失眠 / 经期不适 等",
+     "sublabelNote": "请具体填写",
+     "visibleWhen": {
+      "group": "spPainCategory",
+      "anyOf": [
+       "身体"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spMentionPainPoint",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spPainCustomDetail",
+     "label": "自定义痛点",
+     "required": true,
+     "multi": false,
+     "placeholder": "其他类型的痛点详情",
+     "sublabelNote": "请具体填写",
+     "visibleWhen": {
+      "group": "spPainCategory",
+      "anyOf": [
+       "自定义"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spMentionPainPoint",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionNewIssue",
+     "label": "当下可能的新问题",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spMentionNewIssueText",
+      "placeholder": "当下可能的新问题是什么",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "sublabelNote": "默认「否」；选「是」时文本必填",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionMoments",
+     "label": "最近发的朋友圈",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spMentionMomentsText",
+      "placeholder": "最近发了什么朋友圈",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "sublabelNote": "默认「否」；选「是」时文本必填",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionInterest",
+     "label": "生活兴趣",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spMentionInterestText",
+      "placeholder": "生活兴趣是什么",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "sublabelNote": "默认「否」；选「是」时文本必填",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionFamily",
+     "label": "家人",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spMentionFamilyText",
+      "placeholder": "家人怎么了 / 家人情况",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "sublabelNote": "默认「否」；选「是」时文本必填",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionRecentEvent",
+     "label": "最近发生的事情关心",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "customInput": {
+      "id": "spMentionRecentEventText",
+      "placeholder": "最近发生的事情需要关心什么（详细写）",
+      "showWhen": [
+       "是"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spMentionTimeGreet",
+     "label": "时间段打招呼",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "sublabelNote": "默认「否」；选「是」展开时段选择",
+     "visibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spGreetingTime",
+     "label": "时间段打招呼·具体时段",
+     "required": true,
+     "multi": false,
+     "options": [
+      "早上",
+      "中午",
+      "下午",
+      "晚上",
+      "节日打招呼",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spGreetingTimeCustom",
+      "placeholder": "自定义时间段说明",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spMentionTimeGreet",
+      "anyOf": [
+       "是"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spCareCategory",
+      "anyOf": [
+       "A. 积极客情（高价值 / 强关系维系型）"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spHolidayName",
+     "label": "具体节日",
+     "required": true,
+     "multi": false,
+     "placeholder": "请输入具体节日名称",
+     "visibleWhen": {
+      "group": "spGreetingTime",
+      "anyOf": [
+       "节日打招呼"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spMentionTimeGreet",
+      "anyOf": [
+       "是"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spChannel",
+     "label": "回访渠道",
+     "required": true,
+     "multi": false,
+     "options": [
+      "微信",
+      "短信",
+      "电话",
+      "朋友圈互动",
+      "其他"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "spEmojiFreq",
+     "label": "表情包使用频率",
+     "required": true,
+     "multi": false,
+     "options": [
+      "完全不用",
+      "偶尔（整段1-2个）",
+      "经常用",
+      "看顾客关系"
+     ],
+     "visibleWhen": {
+      "group": "spChannel",
+      "anyOf": [
+       "微信",
+       "短信",
+       "朋友圈互动",
+       "其他"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spEmojiPosition",
+     "label": "表情位置",
+     "required": true,
+     "multi": false,
+     "options": [
+      "每句后面都加",
+      "只在开头点一个",
+      "只在结尾点一个",
+      "关键情绪后面加",
+      "整段穿插1-2个",
+      "让AI自己判断"
+     ],
+     "visibleWhen": {
+      "group": "spEmojiFreq",
+      "anyOf": [
+       "偶尔（整段1-2个）",
+       "经常用",
+       "看顾客关系"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spChannel",
+      "anyOf": [
+       "微信",
+       "短信",
+       "朋友圈互动",
+       "其他"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spEmojiList",
+     "label": "常用表情",
+     "required": true,
+     "multi": true,
+     "options": [
+      "❤️爱心",
+      "🌹玫瑰",
+      "😊笑脸",
+      "🤗抱抱",
+      "☀️太阳",
+      "🌙月亮",
+      "☕咖啡",
+      "✨闪光",
+      "🌸樱花",
+      "💕双心",
+      "💐花束",
+      "👍大拇指",
+      "🍀四叶草",
+      "🎉庆祝",
+      "🥰爱脸",
+      "😘飞吻",
+      "[偷笑]",
+      "[呲牙]",
+      "[愉快]",
+      "[玫瑰]",
+      "[爱心]",
+      "[强]",
+      "[加油]",
+      "[抱抱]",
+      "[太阳]",
+      "[咖啡]",
+      "[鲜花]",
+      "[嘿哈]",
+      "[机智]",
+      "[笑脸]",
+      "[转圈]",
+      "[礼物]"
+     ],
+     "visibleWhen": {
+      "group": "spEmojiFreq",
+      "anyOf": [
+       "偶尔（整段1-2个）",
+       "经常用",
+       "看顾客关系"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spChannel",
+      "anyOf": [
+       "微信",
+       "短信",
+       "朋友圈互动",
+       "其他"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spTouchCount",
+     "label": "本次是该时间段第几次触达",
+     "required": true,
+     "multi": false,
+     "options": [
+      "第1次",
+      "第2次",
+      "第3次",
+      "第4次及以上"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "spLastTouchReplied",
+     "label": "上次是否回复了消息",
+     "required": true,
+     "multi": false,
+     "options": [
+      "回复了",
+      "没有回复"
+     ],
+     "visibleWhen": {
+      "group": "spTouchCount",
+      "anyOf": [
+       "第2次",
+       "第3次",
+       "第4次及以上"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "spLastTouchReaction",
+     "label": "回复的反应如何",
+     "required": true,
+     "multi": false,
+     "options": [
+      "冷淡",
+      "还不错",
+      "给了承诺但没来",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "spLastTouchReactionCustom",
+      "placeholder": "自定义上次反应描述",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "spLastTouchReplied",
+      "anyOf": [
+       "回复了"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spTouchCount",
+      "anyOf": [
+       "第2次",
+       "第3次",
+       "第4次及以上"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "spTouchCountNote",
+     "label": "自定义补充说明",
+     "required": false,
+     "multi": false,
+     "placeholder": "关于触达次数的额外说明（如：客人曾明确说这周别再发信息）",
+     "sublabelNote": "选填，常驻显示（不随触达次数联动）"
+    },
+    {
+     "kind": "options",
+     "id": "spHangup",
+     "label": "客人是否在听到第一句自报家门后就挂断电话？",
+     "required": true,
+     "multi": false,
+     "options": [
+      "是",
+      "否"
+     ],
+     "visibleWhen": {
+      "group": "spChannel",
+      "anyOf": [
+       "电话"
+      ]
+     },
+     "parentVisibleWhen": {
+      "group": "spTouchCount",
+      "anyOf": [
+       "第2次",
+       "第3次",
+       "第4次及以上"
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "nature": "新客未成交跟进",
+   "prefix": "nc",
+   "fields": [
+    {
+     "kind": "textarea",
+     "id": "ncAddressing",
+     "label": "如何称呼客人",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：王姐、小美、Jessica…"
+    },
+    {
+     "kind": "textarea",
+     "id": "ncTrialProject",
+     "label": "客人做的项目",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：费玛肩颈+瑶浴SPA / 白瓷肌+依奈姿发光系列"
+    },
+    {
+     "kind": "textarea",
+     "id": "ncTrialPain",
+     "label": "客人解决的痛点",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：肩颈僵硬+睡眠差 / 闭口反复+暗沉"
+    },
+    {
+     "kind": "options",
+     "id": "ncToneStyle",
+     "label": "语气温度",
+     "required": true,
+     "multi": true,
+     "options": [
+      "热情活泼",
+      "姐妹亲昵",
+      "尊敬稳重",
+      "专业顾问",
+      "朋友闲聊"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "ncChannel",
+     "label": "回访渠道",
+     "required": true,
+     "multi": false,
+     "options": [
+      "微信",
+      "短信",
+      "电话",
+      "其他"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "ncEmojiFreq",
+     "label": "表情包使用频率",
+     "required": true,
+     "multi": false,
+     "options": [
+      "完全不用",
+      "偶尔（整段1-2个）",
+      "经常用",
+      "看顾客关系"
+     ],
+     "visibleWhen": {
+      "group": "ncChannel",
+      "anyOf": [
+       "微信",
+       "短信",
+       "其他"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "ncEmojiPosition",
+     "label": "表情位置",
+     "required": true,
+     "multi": false,
+     "options": [
+      "每句后面都加",
+      "只在开头点一个",
+      "只在结尾点一个",
+      "关键情绪后面加",
+      "整段穿插1-2个",
+      "让AI自己判断"
+     ],
+     "visibleWhen": {
+      "group": "ncEmojiFreq",
+      "anyOf": [
+       "偶尔（整段1-2个）",
+       "经常用",
+       "看顾客关系"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "ncEmojiList",
+     "label": "常用表情",
+     "required": true,
+     "multi": true,
+     "options": [
+      "❤️爱心",
+      "🌹玫瑰",
+      "😊笑脸",
+      "🤗抱抱",
+      "☀️太阳",
+      "🌙月亮",
+      "☕咖啡",
+      "✨闪光",
+      "🌸樱花",
+      "💕双心",
+      "💐花束",
+      "👍大拇指",
+      "🍀四叶草",
+      "🎉庆祝",
+      "🥰爱脸",
+      "😘飞吻",
+      "[偷笑]",
+      "[呲牙]",
+      "[愉快]",
+      "[玫瑰]",
+      "[爱心]",
+      "[强]",
+      "[加油]",
+      "[抱抱]",
+      "[太阳]",
+      "[咖啡]",
+      "[鲜花]",
+      "[嘿哈]",
+      "[机智]",
+      "[笑脸]",
+      "[转圈]",
+      "[礼物]"
+     ],
+     "visibleWhen": {
+      "group": "ncEmojiFreq",
+      "anyOf": [
+       "偶尔（整段1-2个）",
+       "经常用",
+       "看顾客关系"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "ncTouchSeq",
+     "label": "当前是第几次触达",
+     "required": true,
+     "multi": false,
+     "options": [
+      "第1次 · 当次体验后(0-1天内)",
+      "第2次 · 价值分享/保养方案(约7天)",
+      "第3次 · 首次邀约(约15天)",
+      "第4次 · 临时秒杀触达(约1个月)",
+      "第5次 · 同类型顾客案例分享(约1.5个月)",
+      "第6次 · 沙龙/工艺活动邀请(约2个月)",
+      "第7次 · 大促节点(约3个月)",
+      "第8次 · 皮肤状态回顾(约4个月)"
+     ]
+    },
+    {
+     "kind": "options",
+     "id": "nc2ContentType",
+     "label": "价值分享类型",
+     "required": true,
+     "multi": false,
+     "options": [
+      "结合痛点的针对性分享",
+      "通用养护知识",
+      "自定义"
+     ],
+     "visibleWhen": {
+      "group": "ncTouchSeq",
+      "anyOf": [
+       "第2次 · 价值分享/保养方案(约7天)"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "nc2ContentDetail",
+     "label": "具体分享内容",
+     "required": true,
+     "multi": false,
+     "placeholder": "例如：针对她的肩颈僵硬，分享睡前5分钟拉伸方法",
+     "visibleWhen": {
+      "group": "ncTouchSeq",
+      "anyOf": [
+       "第2次 · 价值分享/保养方案(约7天)"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "nc6ActivityTime",
+     "label": "活动时间",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：本周六下午3点 / 11月15日晚上7点",
+     "visibleWhen": {
+      "group": "ncTouchSeq",
+      "anyOf": [
+       "第6次 · 沙龙/工艺活动邀请(约2个月)"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "nc6ActivityPlace",
+     "label": "活动地点",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：门店2楼VIP厅 / XX酒店3号会议室",
+     "visibleWhen": {
+      "group": "ncTouchSeq",
+      "anyOf": [
+       "第6次 · 沙龙/工艺活动邀请(约2个月)"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "nc6ActivityContent",
+     "label": "活动内容",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：院长亲自演示秋冬修护工艺，茶歇+小礼物，只邀请10位老朋友",
+     "visibleWhen": {
+      "group": "ncTouchSeq",
+      "anyOf": [
+       "第6次 · 沙龙/工艺活动邀请(约2个月)"
+      ]
+     }
+    },
+    {
+     "kind": "options",
+     "id": "nc7Festival",
+     "label": "大促节日",
+     "required": true,
+     "multi": false,
+     "options": [
+      "618",
+      "双11",
+      "双12",
+      "年货节",
+      "周年庆",
+      "直播间专场",
+      "自定义"
+     ],
+     "customInput": {
+      "id": "nc7FestivalCustom",
+      "placeholder": "请输入具体节日名称",
+      "showWhen": [
+       "自定义"
+      ]
+     },
+     "visibleWhen": {
+      "group": "ncTouchSeq",
+      "anyOf": [
+       "第7次 · 大促节点(约3个月)"
+      ]
+     }
+    },
+    {
+     "kind": "textarea",
+     "id": "nc7PromotionDetail",
+     "label": "优惠详情",
+     "required": true,
+     "multi": false,
+     "placeholder": "如：费玛10次卡 12800→6980，前30名加送一次SPA",
+     "visibleWhen": {
+      "group": "ncTouchSeq",
+      "anyOf": [
+       "第7次 · 大促节点(约3个月)"
+      ]
+     }
+    }
+   ]
+  }
+ ]
+}

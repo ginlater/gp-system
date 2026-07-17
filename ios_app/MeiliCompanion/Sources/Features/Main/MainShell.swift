@@ -1,19 +1,39 @@
 import SwiftUI
 
-/// 顾问端主壳:4 tab 横滑(陪伴/接诊/报告/客户)+ 中间陪伴 FAB + 底栏。
+/// 顾问端主壳(单系统账号的根):NavigationStack + 4 tab。
 /// android 端对应 `nav/AppScaffold.kt` 的 MainTabsScaffold。
-///
-/// 当前各 tab 为占位屏,逐屏移植(task 5)替换;FAB 录音引擎接入在 task 6。
+/// 多系统账号不用本壳 —— 根是 WorkspaceShell,工牌以 AppRoute.gongpaiMain 入栈(MainTabsView 复用)。
 struct MainShell: View {
     let me: Me
     @Binding var path: NavigationPath   // 提到 RootView,换肤重建本壳时导航不丢
+
+    var body: some View {
+        NavigationStack(path: $path) {
+            MainTabsView(me: me, path: $path, onSwitchSystem: nil)
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: AppRoute.self) { route in
+                    AppRouteDestinationView(route: route, path: $path, me: me, workspaceMode: false)
+                }
+        }
+    }
+}
+
+/// 4 tab 横滑(陪伴/接诊/报告/客户)+ 中间陪伴 FAB + 底栏(不含 NavigationStack,可被工作台 push)。
+struct MainTabsView: View {
+    let me: Me
+    @Binding var path: NavigationPath
+    /// 多系统账号的应用内切换(nil = 单系统,不显示切换入口)。
+    var onSwitchSystem: ((String) -> Void)?
+
     @EnvironmentObject private var app: AppState
     @StateObject private var rec = RecordingManager.shared
     @State private var tab = 0
+    @State private var switcherOpen = false
 
-    init(me: Me, path: Binding<NavigationPath>) {
+    init(me: Me, path: Binding<NavigationPath>, onSwitchSystem: ((String) -> Void)?) {
         self.me = me
         self._path = path
+        self.onSwitchSystem = onSwitchSystem
         #if DEBUG
         // 调试:`simctl launch ... -startTab 2` 直接打开某 tab(用于无人值守截图各 tab)。
         if UserDefaults.standard.object(forKey: "startTab") != nil {
@@ -23,115 +43,117 @@ struct MainShell: View {
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
-            ZStack(alignment: .bottom) {
-                MeiliColor.bg.ignoresSafeArea()
+        ZStack(alignment: .bottom) {
+            MeiliColor.bg.ignoresSafeArea()
 
-                TabView(selection: $tab) {
-                    HomeView(me: me,
-                             onOpenReception: { withAnimation { tab = 1 } },
-                             onOpenReminders: { path.append(AppRoute.reminders) },
-                             onOpenSettings: { path.append(AppRoute.settings) })
-                        .tag(0)
-                    ReceptionView(
-                        onOpenReport: { path.append(AppRoute.report($0)) },
-                        onOpenPreview: { cid, date in path.append(AppRoute.sessionPreviewByCustomer(cid, date)) },
-                        onBind: { path.append(AppRoute.bind($0)) },
-                        onOpenReminders: { path.append(AppRoute.reminders) }
-                    )
-                    .tag(1)
-                    ArchiveView(
-                        onOpenReport: { path.append(AppRoute.report($0)) },
-                        onOpenSettings: { path.append(AppRoute.settings) }
-                    )
-                    .tag(2)
-                    CustomerView(onOpenDetail: { path.append(AppRoute.customerDetail($0)) })
-                        .tag(3)
+            TabView(selection: $tab) {
+                HomeView(me: me,
+                         onOpenReception: { withAnimation { tab = 1 } },
+                         onOpenReminders: { path.append(AppRoute.reminders) },
+                         onOpenSettings: { path.append(AppRoute.settings) },
+                         onOpenSwitcher: onSwitchSystem != nil ? { switcherOpen = true } : nil)
+                    .tag(0)
+                ReceptionView(
+                    onOpenReport: { path.append(AppRoute.report($0)) },
+                    onOpenPreview: { cid, date in path.append(AppRoute.sessionPreviewByCustomer(cid, date)) },
+                    onBind: { path.append(AppRoute.bind($0)) },
+                    onOpenReminders: { path.append(AppRoute.reminders) }
+                )
+                .tag(1)
+                ArchiveView(
+                    onOpenReport: { path.append(AppRoute.report($0)) },
+                    onOpenSettings: { path.append(AppRoute.settings) }
+                )
+                .tag(2)
+                CustomerView(onOpenDetail: { path.append(AppRoute.customerDetail($0)) })
+                    .tag(3)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea(.keyboard)
+
+            MeiliBottomBar(selected: $tab, live: rec.isLive) {
+                rec.toggle()
+                // 跨页回首页也不路过中间页(同 tab 按钮的规则)
+                if abs(tab - 0) <= 1 {
+                    withAnimation { tab = 0 }
+                } else {
+                    var tx = Transaction()
+                    tx.disablesAnimations = true
+                    withTransaction(tx) { tab = 0 }
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .ignoresSafeArea(.keyboard)
+            }
 
-                MeiliBottomBar(selected: $tab, live: rec.isLive) {
-                    rec.toggle()
-                    // 跨页回首页也不路过中间页(同 tab 按钮的规则)
-                    if abs(tab - 0) <= 1 {
-                        withAnimation { tab = 0 }
-                    } else {
-                        var tx = Transaction()
-                        tx.disablesAnimations = true
-                        withTransaction(tx) { tab = 0 }
-                    }
-                }
-
-                // ★对齐安卓2.1.3:蓝牙未开/未授权全局红条(常驻任意 tab,toast 会闪没;
-                // 只在用过笔的手机上显示)。「去打开」弹系统开蓝牙对话框;权限被拒则跳设置。
-                if let issue = rec.btIssue {
-                    VStack {
-                        HStack(spacing: 10) {
-                            MeiliIcon(MeiliIcons.warn, size: 16).foregroundStyle(.white)
-                            Text(issue == .unauthorized ? "未允许蓝牙权限，陪伴笔无法连接"
-                                                        : "手机蓝牙未开启，陪伴笔无法连接")
-                                .font(.sz(12.5, weight: .semibold)).foregroundStyle(.white)
-                            Spacer(minLength: 6)
-                            Button(issue == .unauthorized ? "去设置" : "去打开") {
-                                if issue == .unauthorized {
-                                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                                        UIApplication.shared.open(url)
-                                    }
-                                } else {
-                                    PenBluetoothWatch.shared.promptEnableBluetooth()
+            // ★对齐安卓2.1.3:蓝牙未开/未授权全局红条(常驻任意 tab,toast 会闪没;
+            // 只在用过笔的手机上显示)。「去打开」弹系统开蓝牙对话框;权限被拒则跳设置。
+            if let issue = rec.btIssue {
+                VStack {
+                    HStack(spacing: 10) {
+                        MeiliIcon(MeiliIcons.warn, size: 16).foregroundStyle(.white)
+                        Text(issue == .unauthorized ? "未允许蓝牙权限，陪伴笔无法连接"
+                                                    : "手机蓝牙未开启，陪伴笔无法连接")
+                            .font(.sz(12.5, weight: .semibold)).foregroundStyle(.white)
+                        Spacer(minLength: 6)
+                        Button(issue == .unauthorized ? "去设置" : "去打开") {
+                            if issue == .unauthorized {
+                                if let url = URL(string: UIApplication.openSettingsURLString) {
+                                    UIApplication.shared.open(url)
                                 }
+                            } else {
+                                PenBluetoothWatch.shared.promptEnableBluetooth()
                             }
-                            .font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.roseDeep)
-                            .padding(.horizontal, 10).padding(.vertical, 5)
-                            .background(.white).clipShape(Capsule())
                         }
-                        .padding(.horizontal, 14).padding(.vertical, 10)
-                        .background(MeiliColor.roseDeep)
-                        .clipShape(RoundedRectangle(cornerRadius: MeiliRadius.md, style: .continuous))
-                        .padding(.horizontal, 12).padding(.top, 6)
-                        Spacer()
+                        .font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.roseDeep)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(.white).clipShape(Capsule())
                     }
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(MeiliColor.roseDeep)
+                    .clipShape(RoundedRectangle(cornerRadius: MeiliRadius.md, style: .continuous))
+                    .padding(.horizontal, 12).padding(.top, 6)
+                    Spacer()
                 }
+            }
 
-                // 录音引擎全局 toast(同步进度/断连补取/删除结果等,任何 tab 可见)
-                // .task(id:) + isCancelled 判断(复查 B9):内容变化重启计时,视图移除不误清
-                if let t = rec.toast {
-                    Text(t).font(MeiliFont.bodySm).foregroundStyle(.white)
-                        .padding(.horizontal, 16).padding(.vertical, 11)
-                        .background(MeiliColor.inkSurface).clipShape(Capsule())
-                        .padding(.bottom, MeiliMetric.bottomNavInset + 8)
-                        .task(id: t) {
-                            try? await Task.sleep(nanoseconds: 2_600_000_000)
-                            if !Task.isCancelled { rec.toast = nil }
-                        }
-                }
+            // 录音引擎全局 toast(同步进度/断连补取/删除结果等,任何 tab 可见)
+            // .task(id:) + isCancelled 判断(复查 B9):内容变化重启计时,视图移除不误清
+            if let t = rec.toast {
+                Text(t).font(MeiliFont.bodySm).foregroundStyle(.white)
+                    .padding(.horizontal, 16).padding(.vertical, 11)
+                    .background(MeiliColor.inkSurface).clipShape(Capsule())
+                    .padding(.bottom, MeiliMetric.bottomNavInset + 8)
+                    .task(id: t) {
+                        try? await Task.sleep(nanoseconds: 2_600_000_000)
+                        if !Task.isCancelled { rec.toast = nil }
+                    }
             }
-            .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: AppRoute.self) { route in
-                routeDestination(route)
-            }
-            // 对齐 android v2.0.60:录完上传成功 → 直接跳绑定页(强制绑定,去掉「稍后」对话框)。
-            // 录音 FAB 全局,任意 tab 录完都能跳;停录时 onFab 已切回 tab0,这里只负责入栈。
-            .onChange(of: rec.bindPrompt) { rid in
-                guard let rid, rid > 0 else { return }
-                rec.bindPrompt = nil
-                path.append(AppRoute.bind(rid))
-            }
-            // 点提醒通知直达对应页(F5):report→报告,recording→绑定,其余→提醒列表
-            .onReceive(NotificationCenter.default.publisher(for: .meiliOpenReminderRef)) { note in
-                NotificationPresenter.pendingRef = nil   // 已在线消费,清掉冷启动暂存
-                routeReminderRef(note.userInfo)
-            }
-            // 冷启动点通知拉起:didReceive 早于本视图订阅,事件存在 pendingRef 里(复查 B1)
-            .onAppear {
-                if let ref = NotificationPresenter.pendingRef {
-                    NotificationPresenter.pendingRef = nil
-                    routeReminderRef(ref)
-                }
-            }
-            .onAppear(perform: deepLinkIfNeeded)
         }
+        // 多系统:切换工作台底部弹窗(工牌首页顶栏宫格图标唤起)
+        .sheet(isPresented: $switcherOpen) {
+            SystemSwitcherSheet(currentKey: "gongpai") { key in
+                switcherOpen = false
+                onSwitchSystem?(key)
+            }
+        }
+        // 对齐 android v2.0.60:录完上传成功 → 直接跳绑定页(强制绑定,去掉「稍后」对话框)。
+        // 录音 FAB 全局,任意 tab 录完都能跳;停录时 onFab 已切回 tab0,这里只负责入栈。
+        .onChange(of: rec.bindPrompt) { rid in
+            guard let rid, rid > 0 else { return }
+            rec.bindPrompt = nil
+            path.append(AppRoute.bind(rid))
+        }
+        // 点提醒通知直达对应页(F5):report→报告,recording→绑定,其余→提醒列表
+        .onReceive(NotificationCenter.default.publisher(for: .meiliOpenReminderRef)) { note in
+            NotificationPresenter.pendingRef = nil   // 已在线消费,清掉冷启动暂存
+            routeReminderRef(note.userInfo)
+        }
+        // 冷启动点通知拉起:didReceive 早于本视图订阅,事件存在 pendingRef 里(复查 B1)
+        .onAppear {
+            if let ref = NotificationPresenter.pendingRef {
+                NotificationPresenter.pendingRef = nil
+                routeReminderRef(ref)
+            }
+        }
+        .onAppear(perform: deepLinkIfNeeded)
     }
 
     /// 按提醒的 ref_type/ref_id 路由(在线 onReceive 与冷启动 pendingRef 共用)。
@@ -183,52 +205,6 @@ struct MainShell: View {
             }
         }
         #endif
-    }
-
-    @ViewBuilder
-    private func routeDestination(_ route: AppRoute) -> some View {
-        switch route {
-        case .report(let sid):
-            ReportView(sessionId: sid)
-        case .settings:
-            SettingsView()
-        case .reminders:
-            RemindersView(onOpenReport: { path.append(AppRoute.report($0)) },
-                          onBind: { path.append(AppRoute.bind($0)) })
-        case .customerDetail(let cid):
-            CustomerDetailView(customerId: cid, onOpenReport: { path.append(AppRoute.report($0)) })
-        case .sessionPreviewByCustomer(let cid, let date):
-            SessionPreviewView(customerId: cid, date: date, onOpenReport: { path.append(AppRoute.report($0)) })
-        case .sessionPreview(let sid):
-            DetailPlaceholder(title: "会话预览", note: "session #\(sid) · 预览 移植中")
-        case .bind(let rid):
-            BindCustomerView(recordingId: rid, onBound: { cid, date in
-                if !path.isEmpty { path.removeLast() }   // 绑定页出栈,返回直达待整理
-                path.append(AppRoute.sessionPreviewByCustomer(cid, date))
-            })
-        default:
-            DetailPlaceholder(title: "建设中", note: String(describing: route))
-        }
-    }
-}
-
-/// 次级页占位(报告/设置/提醒等,逐步替换为真实页)。带系统返回。
-private struct DetailPlaceholder: View {
-    let title: String
-    let note: String
-    var body: some View {
-        ZStack {
-            MeiliColor.bg.ignoresSafeArea()
-            VStack(spacing: 12) {
-                MeiliIcon(MeiliIcons.doc, size: 40).foregroundStyle(MeiliColor.clay)
-                Text(title).font(MeiliFont.titleSm).foregroundStyle(MeiliColor.ink)
-                Text(note).font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(40)
-        }
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -330,74 +306,6 @@ struct CompanionFab: View {
             withAnimation(.easeInOut(duration: 1.3).repeatForever(autoreverses: true)) { pulse = true }
         } else {
             withAnimation(.easeOut(duration: 0.3)) { pulse = false }
-        }
-    }
-}
-
-// MARK: - 占位屏(task 5 替换)
-
-/// 陪伴首页占位:大圆钮 + 状态。点 FAB 或圆钮切换呼吸态演示。
-private struct CompanionPlaceholder: View {
-    let me: Me
-    @Binding var fabLive: Bool
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: MeiliMetric.cardGap) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("你好，\(me.advisorName ?? me.username ?? "陪伴师")")
-                            .font(.sz(16, weight: .heavy)).foregroundStyle(MeiliColor.ink)
-                        Text("今天也温柔地陪伴每一位顾客")
-                            .font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
-                    }
-                    Spacer()
-                }
-                .padding(.top, 8)
-
-                MeiliCard {
-                    CompanionStage(
-                        timerText: fabLive ? "00:12" : "00:00",
-                        statusText: fabLive ? "陪伴进行中" : "点击下方 · 开启今天的陪伴",
-                        hint: "陪伴结束后，请把这段陪伴绑定到今日接诊里的顾客。",
-                        live: fabLive,
-                        onToggle: { fabLive.toggle() }
-                    )
-                    .frame(maxWidth: .infinity)
-                }
-            }
-            .padding(.horizontal, MeiliMetric.screenH)
-            .padding(.bottom, MeiliMetric.bottomNavInset)
-        }
-    }
-}
-
-/// 通用占位屏(接诊/报告/客户)。
-private struct TabPlaceholder: View {
-    let title: String
-    let subtitle: String
-    let icon: MeiliGlyph
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 0) {
-                MeiliTopBar(title: title)
-                    .padding(.horizontal, MeiliMetric.screenH)
-                MeiliCard {
-                    VStack(spacing: 12) {
-                        MeiliIcon(icon, size: 40).foregroundStyle(MeiliColor.clay)
-                        Text(title).font(MeiliFont.cardTitle).foregroundStyle(MeiliColor.ink)
-                        Text("\(subtitle)\n· 即将上线 ·")
-                            .font(MeiliFont.bodySm).foregroundStyle(MeiliColor.ink3)
-                            .multilineTextAlignment(.center)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 20)
-                }
-                .padding(.horizontal, MeiliMetric.screenH)
-                .padding(.top, 60)
-            }
-            .padding(.bottom, MeiliMetric.bottomNavInset)
         }
     }
 }

@@ -24,8 +24,10 @@ struct MeiliCompanionApp: App {
         // devicectl --console 挂管道时 stdout 默认全缓冲,print 日志会积压不出;改行缓冲便于真机联调看日志
         setvbuf(stdout, nil, _IOLBF, 0)
         #endif
-        NotificationPresenter.shared.install()   // 前台也展示通知横幅
-        ReminderNotifier.requestAuthorization()
+        NotificationPresenter.shared.install()   // 前台也展示通知横幅(仅设 delegate,不弹权限框)
+        // ★隐私合规(对齐 android 2026-07-16 整改):不在启动路径申请任何权限——
+        //   「启动即弹框、未告知目的」是商店隐私检测的驳回点。通知权限改在首次进提醒页时申请
+        //   (RemindersView.onAppear),麦克风/蓝牙本就是用时才申请。⚠️ 别再往这里加权限申请。
         ReminderRefresh.register()               // 后台定时拉提醒(BGAppRefresh,系统按配额调度)
     }
 

@@ -21,9 +21,28 @@ struct Me: Decodable {
     var allowPhoneRec: Int?      // 录音来源权限门控(F8):0=未开通手机麦
     var allowPenRec: Int?        // 0=未开通陪伴笔
     var error: String?   // 未登录时 {"error":"未登录"} + 401
+    // 多系统整合:本账号开通的系统清单(P0a 起返回;旧服务端缺省 nil=只有工牌,行为不变)
+    var systems: [SystemEntry]?
+    // 账号绑定(2026-07-16):回访/高情商的历史数据在独立 staff 账号名下,
+    // 绑定后 App 用它静默登录(数据零迁移);nil/空 = 未绑定,退回统一密码。
+    var scriptAccount: String?
+    var scriptPassword: String?
 
     var isConsultantOrManager: Bool { role == "consultant" || role == "store_manager" }
     var isAdminOrSuper: Bool { role == "admin" || role == "super" }
+
+    /// 是否多系统账号(≥2 个系统 → 登录后先落「工作台」宫格;单系统直进录音首页不变)。
+    var multiSystem: Bool { (systems?.count ?? 0) >= 2 }
+}
+
+/// /api/me 的 systems 元素(SYSTEM_REGISTRY)。
+/// type: native(工牌)| hybrid(teach,原生壳+课件 WebView)| web(网页壳系统)。
+struct SystemEntry: Decodable, Hashable {
+    var key: String?
+    var name: String?
+    var type: String?
+    var desc: String?
+    var url: String?
 }
 
 // MARK: - 版本 / 强制更新

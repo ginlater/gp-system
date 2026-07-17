@@ -72,6 +72,13 @@ enum MeiliIcons {
         .d("M9 13.3c0 2.4 1.1 4.2 3 5.2 1.9-1 3-2.8 3-5.2"),
         .circle(12, 11, 1.05),
     ])
+    /// 工作台(2×2 宫格,多系统切换入口)。对齐 android MeiliIcons.Workspace。
+    static let workspace = MeiliGlyph(stroke: [
+        .rrect(4, 4, 7, 7, 2.2),
+        .rrect(13, 4, 7, 7, 2.2),
+        .rrect(4, 13, 7, 7, 2.2),
+        .rrect(13, 13, 7, 7, 2.2),
+    ])
     static let reception = MeiliGlyph(stroke: [
         .rrect(4, 5.5, 16, 14.5, 3.4),
         .d("M8 3.5v3.5M16 3.5v3.5M4 10h16"),

@@ -34,6 +34,8 @@ struct RootView: View {
             LoginView(onLoggedIn: { app.onLoggedIn($0) })
         case .main(let me):
             MainShell(me: me, path: $mainPath)
+        case .workspace(let me):
+            WorkspaceShell(me: me, path: $mainPath)
         case .admin(let me):
             AdminHomeView(me: me)
         }
