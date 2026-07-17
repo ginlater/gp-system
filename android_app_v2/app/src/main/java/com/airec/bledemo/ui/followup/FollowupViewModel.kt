@@ -394,6 +394,30 @@ data class FollowupUiState(
                 (f.parentVisibleWhen?.matches(selections) != false)
         }
 
+    /**
+     * ★2026-07-17 —— 这个字段是不是「同一个 id 被拆成多个分类区块」的其中一块?
+     *
+     * 【背景】网页上「所做的项目」是一个 data-group,底下并排 4 个分类(身体/面部/美学/特殊),
+     * 四类里任选一个就算填了。离线抽 followup_form_spec.json 时按 .options 逐个抽,
+     * 于是变成 4 条同 id、各自 required=true 的字段;渲染出来就是四个都挂「必填」,
+     * 顾问一看以为四类每类都得选。(校验其实是按 id 查 selections,选一个就全过,
+     * 所以只是显示误导,不会真拦人——但顾问不知道,照样一个个填。)
+     *
+     * 【用途】渲染时靠它把「必填」只标在第一块上,后面几块不标,见 FieldCard。
+     * 返回该 id 在本分支里出现的次数;>1 就是被拆过的。
+     */
+    fun sectionCountOf(id: String?): Int {
+        if (id == null) return 0
+        return branches.getOrNull(natureIndex)?.fields.orEmpty().count { it.id == id }
+    }
+
+    /** 该字段是不是同 id 多块里的第一块(第一块才标必填)。 */
+    fun isFirstSectionOf(f: FormField): Boolean {
+        val id = f.id ?: return true
+        val same = branches.getOrNull(natureIndex)?.fields.orEmpty().filter { it.id == id }
+        return same.firstOrNull() === f
+    }
+
     /** 字段实际选项:动态类目命中则用服务端下发 + 保留静态兜底项(自定义/都不是)。 */
     fun resolvedOptions(f: FormField): List<String> {
         val dyn = f.dynamicCat?.let { dynamicOptions[it] }

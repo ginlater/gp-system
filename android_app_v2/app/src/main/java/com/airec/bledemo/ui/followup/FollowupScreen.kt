@@ -645,7 +645,24 @@ private fun FieldCard(f: FormField, state: FollowupUiState, vm: FollowupViewMode
     val id = f.id ?: return
     MeiliCard(tight = true) {
         val title = listOfNotNull(f.optionsSection, f.label).joinToString(" · ").ifBlank { id }
-        FieldLabel(title, required = f.required == true, note = f.sublabelNote)
+        // ★2026-07-17 —— 同一个 id 被拆成多个分类区块时(如「所做的项目」拆成身体/面部/
+        // 美学/特殊四块),四类里任选一个就算填了(校验按 id 查 selections,选一个就全过)。
+        // 但原来四块各自渲染一个「必填」,顾问看着以为每类都得选,一个个硬填。
+        // 改成:只有第一块标「必填」并说清「N 类里挑一类就行」,后面几块不标必填也不标选填。
+        val sections = state.sectionCountOf(id)
+        val isFirst = state.isFirstSectionOf(f)
+        val note = if (sections > 1 && isFirst) {
+            "下面 $sections 类里挑一类选就行，可多选" + (f.sublabelNote?.let { "（$it）" } ?: "")
+        } else {
+            f.sublabelNote
+        }
+        FieldLabel(
+            title,
+            required = f.required == true && (sections <= 1 || isFirst),
+            note = note,
+            // 被拆开的后续区块:必填与否已由第一块表达,这里两个标都不显示,免得误导
+            showOptionalTag = sections <= 1 || isFirst,
+        )
         val opts = state.resolvedOptions(f)
         when {
             f.isOptions && opts.isEmpty() -> OutlinedTextField(
@@ -699,8 +716,14 @@ private fun FieldCard(f: FormField, state: FollowupUiState, vm: FollowupViewMode
     }
 }
 
+/**
+ * @param showOptionalTag 是否显示右侧的「必填 / 选填」角标。
+ *   ★2026-07-17 加的:同一个 id 被拆成多个分类区块时(见 FieldCard 注释),必填与否由
+ *   第一块统一表达,后面几块传 false —— 既不标「必填」(会让人以为每类都得填),
+ *   也不标「选填」(会让人以为这类可以不管,其实它和第一块是同一个字段)。
+ */
 @Composable
-private fun FieldLabel(text: String, required: Boolean, note: String?) {
+private fun FieldLabel(text: String, required: Boolean, note: String?, showOptionalTag: Boolean = true) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 6.dp)) {
         Text(
             text,
@@ -708,11 +731,13 @@ private fun FieldLabel(text: String, required: Boolean, note: String?) {
             color = MeiliPalette.Ink,
             modifier = Modifier.weight(1f, fill = false),
         )
-        Text(
-            if (required) " 必填" else " 选填",
-            style = MaterialTheme.typography.labelSmall,
-            color = if (required) MeiliPalette.RoseText else MeiliPalette.Ink4,
-        )
+        if (showOptionalTag) {
+            Text(
+                if (required) " 必填" else " 选填",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (required) MeiliPalette.RoseText else MeiliPalette.Ink4,
+            )
+        }
     }
     if (!note.isNullOrBlank()) {
         Text(
