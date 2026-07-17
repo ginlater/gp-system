@@ -17,6 +17,7 @@ struct SettingsView: View {
     @State private var diagMsg: String?
     @State private var diagBusy = false
     @State private var showChangePwd = false
+    @State private var showDeleteAccount = false   // ★2026-07-17 注销账号弹窗(苹果 5.1.1(v))
 
     private var me: Me? { app.me }
     private var displayName: String { me?.advisorName?.nilIfBlank ?? me?.username?.nilIfBlank ?? "陪伴师" }
@@ -62,6 +63,18 @@ struct SettingsView: View {
                 }
                 .padding(.top, 4)
 
+                // ★2026-07-17 合规 —— 账号注销入口。苹果 5.1.1(v) 硬性要求:支持登录的 App
+                // 必须能在 App 内自助删账号,「联系客服注销」不算。跟「退出登录」是两码事:
+                // 退出只清会话,注销是真删账号(个人信息删除,录音/报告归门店保留)。
+                Button {
+                    showDeleteAccount = true
+                } label: {
+                    Text("注销账号")
+                        .font(.sz(12.5)).foregroundStyle(MeiliColor.ink3)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                }
+
                 Text("美业私教 · 高端身体美容陪伴助手")
                     .font(.sz(11)).foregroundStyle(MeiliColor.ink3)
                     .frame(maxWidth: .infinity).padding(.top, 4)
@@ -73,6 +86,9 @@ struct SettingsView: View {
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showChangePwd) {
             ChangePasswordSheet()
+        }
+        .sheet(isPresented: $showDeleteAccount) {
+            DeleteAccountSheet()
         }
     }
 
@@ -274,6 +290,28 @@ struct SettingsView: View {
                 Text("ICP 备案号").font(.sz(12.5)).foregroundStyle(MeiliColor.ink2)
                 Spacer()
                 Text("蜀ICP备2024099992号-4A").font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.ink)
+            }
+            Rectangle().fill(MeiliColor.line).frame(height: 1).padding(.vertical, 11)
+            // ★2026-07-17 合规 —— App 内可随时查看的隐私政策/用户协议入口(安卓设置页同款)。
+            // ⚠️ 链接必须走 PrivacyConsent 的常量:商店元数据/首启弹窗/本入口三处要同一个地址。
+            Button {
+                UIApplication.shared.open(PrivacyConsent.privacyURL)
+            } label: {
+                HStack {
+                    Text("隐私政策").font(.sz(12.5)).foregroundStyle(MeiliColor.ink2)
+                    Spacer()
+                    Text("查看").font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.clay)
+                }
+            }
+            Rectangle().fill(MeiliColor.line).frame(height: 1).padding(.vertical, 11)
+            Button {
+                UIApplication.shared.open(PrivacyConsent.termsURL)
+            } label: {
+                HStack {
+                    Text("用户协议").font(.sz(12.5)).foregroundStyle(MeiliColor.ink2)
+                    Spacer()
+                    Text("查看").font(.sz(12.5, weight: .bold)).foregroundStyle(MeiliColor.clay)
+                }
             }
             Rectangle().fill(MeiliColor.line).frame(height: 1).padding(.vertical, 11)
             HStack {

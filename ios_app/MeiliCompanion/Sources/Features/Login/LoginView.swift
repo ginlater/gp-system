@@ -10,8 +10,10 @@ struct LoginView: View {
 
     // 隐私合规(对齐 android 2026-07-16 整改):默认【不勾选】同意,未勾选不可登录;政策链接可点开。
     @State private var agreed = false
-    private static let privacyUrl = URL(string: "https://gp.aibeautyfulwomen.com/privacy-policy")!
-    private static let termsUrl = URL(string: "https://gp.aibeautyfulwomen.com/terms-of-service")!
+    // ★2026-07-17 —— 链接收口到 PrivacyConsent 的常量。商店元数据/首启弹窗/设置页入口/
+    // 本勾选框必须是同一个地址,安卓侧曾被小米按「隐私政策链接不一致」驳回过。
+    private static let privacyUrl = PrivacyConsent.privacyURL
+    private static let termsUrl = PrivacyConsent.termsURL
 
     var body: some View {
         ZStack {
