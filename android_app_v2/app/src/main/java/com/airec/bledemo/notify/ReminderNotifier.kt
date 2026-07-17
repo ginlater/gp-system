@@ -72,7 +72,7 @@ object ReminderNotifier {
         } else { // 6..10
             if (notified == -1) {
                 save(10)
-                postBattery(c, "陪伴笔该充电啦", "陪伴笔电量已低于 10%，建议尽快充电，别耽误美丽陪伴的记录哦～")
+                postBattery(c, "陪伴笔该充电啦", "陪伴笔电量已低于 10%，建议尽快充电，别耽误美业私教的记录哦～")
             }
         }
     }

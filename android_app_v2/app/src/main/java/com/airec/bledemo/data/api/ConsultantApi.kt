@@ -41,6 +41,18 @@ interface ConsultantApi {
         @Body body: Map<String, @JvmSuppressWildcards Any?>,
     ): Response<ResponseBody>
 
+    /**
+     * ★2026-07-17 合规 —— 账号自助注销。体 {password}。
+     *
+     * 小米驳回要求「应用内的账号注销入口」,苹果 5.1.1(v) 同样强制。
+     * 服务端删 users 行(登录凭证+个人信息),业务数据(录音/报告)归门店保留、不级联删。
+     * 密码不对返回 403 code=bad_password;管理员账号返回 403 code=role_forbidden。
+     */
+    @HTTP(method = "DELETE", path = "api/me/account", hasBody = true)
+    suspend fun deleteMyAccount(
+        @Body body: Map<String, @JvmSuppressWildcards Any?>,
+    ): Response<ResponseBody>
+
     /** v2 原生包独立版本检查（启动提示更新）。无需登录。 */
     @GET("api/app/v2/version")
     suspend fun appVersionV2(): Response<AppVersion>

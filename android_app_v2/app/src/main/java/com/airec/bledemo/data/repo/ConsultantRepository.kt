@@ -9,6 +9,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
+import okhttp3.ResponseBody
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Response
@@ -30,6 +31,15 @@ class ConsultantRepository(
     suspend fun me(): ApiResult<Me> = call { api.me() }
 
     suspend fun appVersionV2(): ApiResult<AppVersion> = call { api.appVersionV2() }
+
+    /**
+     * ★2026-07-17 合规 —— 账号自助注销(小米驳回项 + 苹果 5.1.1(v) 强制)。
+     *
+     * 失败文案直接用后端返回的 {"error": ...}(call 里的 parseError 会抠出来):
+     * 密码错 → 「密码不正确」;管理员账号 → 「管理员账号请联系客服注销」。
+     */
+    suspend fun deleteMyAccount(password: String): ApiResult<ResponseBody> =
+        call { api.deleteMyAccount(mapOf("password" to password)) }
 
     // ───────────── 上传 / 占位 ─────────────
 

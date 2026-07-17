@@ -40,6 +40,8 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import com.airec.bledemo.privacy.PrivacyConsent
+import com.airec.bledemo.privacy.PrivacyConsentDialog
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.airec.bledemo.data.auth.AuthManager
@@ -89,11 +91,24 @@ class MeiliActivity : ComponentActivity() {
         // F1：冷启动就来自点通知（提醒通知塞了 open=reminders）→ 记下深链，壳就绪后跳提醒页
         deepLink.value = intent?.getStringExtra("open")
         setContent {
-            MeiliApp(
-                startDestination = startDestination,
-                deepLink = deepLink.value,
-                onDeepLinkConsumed = { deepLink.value = null },
-            )
+            // ★2026-07-17 隐私合规 —— 首次启动必须先弹隐私政策,同意前不进任何页面。
+            // OPPO 驳回原文:「首次运行时未通过弹窗等明显方式提醒用户阅读隐私政策」;
+            // 小米同样要求,还要把这个弹窗录进演示视频。登录页那个勾选框不够(vivo 过了,
+            // 但 OPPO/小米不认)——它们要的是「不同意就用不了」,而不是「不勾就登不上」。
+            var agreed by remember { mutableStateOf(PrivacyConsent.isAgreed(this)) }
+            if (!agreed) {
+                PrivacyConsentDialog(
+                    onAgree = { PrivacyConsent.setAgreed(this); agreed = true },
+                    // 「不同意」必须真的能走人,不能把用户困在这
+                    onDisagree = { finish() },
+                )
+            } else {
+                MeiliApp(
+                    startDestination = startDestination,
+                    deepLink = deepLink.value,
+                    onDeepLinkConsumed = { deepLink.value = null },
+                )
+            }
         }
         registerNetworkMonitor()
     }

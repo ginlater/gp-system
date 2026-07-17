@@ -288,7 +288,7 @@ private fun AppHeader(
                 color = MeiliPalette.Ink2,
             )
             Text(
-                text = "美丽陪伴",
+                text = "美业私教",
                 style = MaterialTheme.typography.displaySmall,
                 color = MeiliPalette.ClayDeep,
                 modifier = Modifier.padding(top = 3.dp),

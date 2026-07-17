@@ -140,7 +140,7 @@ private fun AdminHomeContent(
 
             Spacer(Modifier.height(16.dp))
             Text(
-                text = "美丽陪伴 · 管理台",
+                text = "美业私教 · 管理台",
                 style = MaterialTheme.typography.bodySmall,
                 color = MeiliTheme.colors.ink3,
                 modifier = Modifier.fillMaxWidth(),

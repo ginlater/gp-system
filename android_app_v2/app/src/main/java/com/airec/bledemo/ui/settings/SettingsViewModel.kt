@@ -116,6 +116,39 @@ class SettingsViewModel(
             onDone()
         }
     }
+
+    /**
+     * ★2026-07-17 合规 —— 注销账号。
+     *
+     * 小米驳回要求「应用内的账号注销入口」,苹果 5.1.1(v) 同样强制:凡支持登录的
+     * App 必须能在 App 内自助注销,不能只留「联系客服」。
+     *
+     * 服务端删的是 users 行(登录凭证 + 手机号/姓名/工号);录音与报告归门店所有、
+     * 不跟着删——这个边界写在后端 api_delete_my_account 的注释里,别改错。
+     *
+     * 成功后必须走一遍 auth.logout() 清本地会话与各系统缓存,否则 Cookie 还在、
+     * 下次冷启动会拿着一个已删账号的会话去打接口。
+     */
+    fun deleteAccount(password: String, onDone: () -> Unit) {
+        if (_state.value.deletingAccount) return
+        _state.update { it.copy(deletingAccount = true, deleteAccountError = null) }
+        viewModelScope.launch {
+            when (val r = repo.deleteMyAccount(password)) {
+                is ApiResult.Success -> {
+                    auth.logout()   // 清 Cookie/凭证/teach 等各系统缓存
+                    _state.update { it.copy(deletingAccount = false) }
+                    onDone()
+                }
+                is ApiResult.Failure -> {
+                    _state.update { it.copy(deletingAccount = false, deleteAccountError = r.message) }
+                }
+            }
+        }
+    }
+
+    fun clearDeleteAccountError() {
+        _state.update { it.copy(deleteAccountError = null) }
+    }
 }
 
 /**
@@ -143,6 +176,9 @@ data class SettingsUiState(
     val loggingOut: Boolean = false,
     val diagUploading: Boolean = false,
     val diagResult: String? = null,
+    // ★2026-07-17 合规 —— 账号自助注销(小米驳回项 + 苹果 5.1.1(v) 强制)
+    val deletingAccount: Boolean = false,
+    val deleteAccountError: String? = null,
 ) {
     /** 顶部展示用陪伴师名；缺省退回用户名。 */
     val displayName: String

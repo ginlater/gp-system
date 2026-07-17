@@ -26,6 +26,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.airec.bledemo.designsystem.components.MeiliBottomSheet
@@ -179,7 +184,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(Dimens.CardGap))
 
             // 关于美丽陪伴 / 版本
-            SectionLabel("关于美丽陪伴", icon = MeiliIcons.Info)
+            SectionLabel("关于美业私教", icon = MeiliIcons.Info)
             Spacer(Modifier.height(9.dp))
             AboutCard(
                 state = state,
@@ -198,9 +203,37 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
             )
 
+            Spacer(Modifier.height(Dimens.S3))
+
+            // ★2026-07-17 合规 —— 账号注销入口。
+            // 小米驳回明确要求「应用内的账号注销入口」,还要录进演示视频;苹果 5.1.1(v)
+            // 同样强制。注意跟「退出登录」是两码事:退出只是清会话,注销是真删账号。
+            var showDeleteAccount by remember { mutableStateOf(false) }
+            Text(
+                text = "注销账号",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MeiliPalette.Ink3,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showDeleteAccount = true }
+                    .padding(vertical = Dimens.S3),
+            )
+            if (showDeleteAccount) {
+                DeleteAccountDialog(
+                    deleting = state.deletingAccount,
+                    error = state.deleteAccountError,
+                    onDismiss = {
+                        showDeleteAccount = false
+                        viewModel.clearDeleteAccountError()
+                    },
+                    onConfirm = { pw -> viewModel.deleteAccount(pw) { onLoggedOut() } },
+                )
+            }
+
             Spacer(Modifier.height(14.dp))
             Text(
-                text = "美丽陪伴 · 高端身体美容陪伴助手",
+                text = "美业私教 · 高端身体美容陪伴助手",
                 style = MaterialTheme.typography.bodySmall,
                 color = MeiliPalette.Ink3,
                 modifier = Modifier
@@ -209,6 +242,77 @@ fun SettingsScreen(
             )
         }
     }
+}
+
+/**
+ * ★2026-07-17 合规 —— 注销账号的二次确认弹窗。
+ *
+ * 【为什么要输密码】注销不可逆。手机放桌上被人顺手点两下就把号注销了,这种事必须堵死。
+ * 密码由服务端校验(见后端 api_delete_my_account),前端不碰哈希。
+ *
+ * 【为什么要写清删什么留什么】注销 ≠ 数据全没。录音和报告是门店花钱买的经营资产,
+ * 归门店所有、不跟着删(隐私政策已载明)。不讲清楚,员工会以为点了这个老板的报告就没了,
+ * 或者反过来以为自己的记录能一键抹掉——两种误解都会出事。
+ */
+@Composable
+private fun DeleteAccountDialog(
+    deleting: Boolean,
+    error: String?,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var pw by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = { if (!deleting) onDismiss() },
+        containerColor = MeiliPalette.Surface,
+        titleContentColor = MeiliPalette.Ink,
+        textContentColor = MeiliPalette.Ink2,
+        title = { Text("注销账号", style = MaterialTheme.typography.titleLarge) },
+        text = {
+            Column {
+                Text(
+                    "注销后将删除您的登录账号与个人信息（手机号、姓名、工号），此操作不可恢复，" +
+                        "您将无法再用该账号登录。\n\n" +
+                        "您此前录制的接待记录与分析报告属于所属机构的经营数据，将按隐私政策由机构继续保留，" +
+                        "不会随注销一并删除。\n\n" +
+                        "请输入登录密码以确认。",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(Dimens.S3))
+                OutlinedTextField(
+                    value = pw,
+                    onValueChange = { pw = it },
+                    label = { Text("登录密码") },
+                    singleLine = true,
+                    enabled = !deleting,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (error != null) {
+                    Spacer(Modifier.height(Dimens.S2))
+                    Text(error, style = MaterialTheme.typography.bodySmall, color = MeiliPalette.RoseText)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (!deleting && pw.isNotBlank()) onConfirm(pw) },
+                enabled = !deleting && pw.isNotBlank(),
+            ) {
+                Text(
+                    if (deleting) "注销中…" else "确认注销",
+                    color = MeiliPalette.RoseText,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !deleting) {
+                Text("取消", color = MeiliPalette.Ink2)
+            }
+        },
+    )
 }
 
 /**
@@ -864,9 +968,16 @@ private fun AboutCard(
         }
         // 隐私政策 / 用户协议入口（合规：App 内须有可随时查看隐私政策的入口）
         val uriHandler = LocalUriHandler.current
-        val base = com.airec.bledemo.data.net.NetworkModule.BASE_URL.trimEnd('/')
-        PolicyRow("隐私政策", "了解我们如何收集与使用信息") { uriHandler.openUri("$base/privacy-policy") }
-        PolicyRow("用户协议", "使用美丽陪伴的服务条款") { uriHandler.openUri("$base/terms-of-service") }
+        // ★2026-07-17 隐私合规 —— 链接必须走 PrivacyConsent 里的常量,别再用 "$base/privacy-policy"。
+        // 小米驳回原文:「提交至小米开放平台的隐私政策链接,与隐私弹窗以及应用内独立的隐私政策
+        // 不一致」。三处(商店后台 / 首启弹窗 / 本入口)必须是同一个 URL,所以统一收口到
+        // PrivacyConsent.PRIVACY_URL 这个唯一真相。改它之前记得商店后台也要同步改。
+        PolicyRow("隐私政策", "了解我们如何收集与使用信息") {
+            uriHandler.openUri(com.airec.bledemo.privacy.PrivacyConsent.PRIVACY_URL)
+        }
+        PolicyRow("用户协议", "使用美业私教的服务条款") {
+            uriHandler.openUri(com.airec.bledemo.privacy.PrivacyConsent.TERMS_URL)
+        }
     }
 }
 
@@ -935,7 +1046,7 @@ private fun ForceUpgradeCard(
             Spacer(Modifier.height(8.dp))
             Text(
                 text = note?.takeIf { it.isNotBlank() }
-                    ?: "您当前的版本过旧，需更新到最新版后才能继续使用美丽陪伴。",
+                    ?: "您当前的版本过旧，需更新到最新版后才能继续使用美业私教。",
                 style = MaterialTheme.typography.bodySmall.copy(lineHeight = 19.sp),
                 color = MeiliPalette.RoseText,
             )
@@ -1120,7 +1231,7 @@ private fun SettingsPreviewBody(state: SettingsUiState) {
             Spacer(Modifier.height(9.dp))
             ConsultantCard(state = state)
             Spacer(Modifier.height(Dimens.CardGap))
-            SectionLabel("关于美丽陪伴", icon = MeiliIcons.Info)
+            SectionLabel("关于美业私教", icon = MeiliIcons.Info)
             Spacer(Modifier.height(9.dp))
             AboutCard(state = state, onUpdate = {}, onCheck = {}, onUploadDiag = {})
             Spacer(Modifier.height(Dimens.S6))

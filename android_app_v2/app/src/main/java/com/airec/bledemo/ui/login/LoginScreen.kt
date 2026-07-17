@@ -92,9 +92,10 @@ fun LoginScreen(
 
     // 隐私合规（vivo 等应用商店要求）：默认【不勾选】同意，未勾选不可登录；政策链接可点开。
     var agreed by rememberSaveable { mutableStateOf(false) }
-    val base = NetworkModule.BASE_URL.trimEnd('/')
-    val privacyUrl = "$base/privacy-policy"
-    val termsUrl = "$base/terms-of-service"
+    // ★2026-07-17 —— 链接收口到 PrivacyConsent 的常量。小米按「商店后台/首启弹窗/App 内
+    // 政策入口三者链接不一致」驳回过,这里再自己拼一份就又破功了。
+    val privacyUrl = com.airec.bledemo.privacy.PrivacyConsent.PRIVACY_URL
+    val termsUrl = com.airec.bledemo.privacy.PrivacyConsent.TERMS_URL
 
     // 登录成功一次性信号：消费后回调上层切导航。
     LaunchedEffect(state.loggedIn) {
@@ -141,7 +142,7 @@ fun LoginScreen(
 
             // ---- 衬线大标题 + 副标 ----
             Text(
-                text = "美丽陪伴",
+                text = "美业私教",
                 style = MeiliTheme.brandStyle,
                 color = MeiliPalette.ClayDeep,
                 textAlign = TextAlign.Center,

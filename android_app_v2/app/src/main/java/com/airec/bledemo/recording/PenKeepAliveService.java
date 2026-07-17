@@ -171,7 +171,7 @@ public class PenKeepAliveService extends Service {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null
                 && nm.getNotificationChannel(CHANNEL_ID) == null) {
             NotificationChannel ch = new NotificationChannel(
-                    CHANNEL_ID, "美丽陪伴 · 保持连接", NotificationManager.IMPORTANCE_LOW);
+                    CHANNEL_ID, "美业私教 · 保持连接", NotificationManager.IMPORTANCE_LOW);
             ch.setShowBadge(false);
             nm.createNotificationChannel(ch);
         }
@@ -189,7 +189,7 @@ public class PenKeepAliveService extends Service {
         // ★顾客可能瞄到手机：用"陪伴"系词汇，不出现"录音"二字(见产品红线)。
         String text = recHold ? "陪伴进行中，请勿划掉本应用" : "保持连接中，请勿划掉本应用";
         return b
-                .setContentTitle("美丽陪伴")
+                .setContentTitle("美业私教")
                 .setContentText(text)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentIntent(pi)

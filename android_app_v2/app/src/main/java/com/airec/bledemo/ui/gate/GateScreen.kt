@@ -122,7 +122,7 @@ private fun BrandSplash(modifier: Modifier = Modifier) {
             }
             Spacer(Modifier.height(22.dp))
             Text(
-                "美丽陪伴",
+                "美业私教",
                 style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
                 color = MeiliPalette.Ink,
             )

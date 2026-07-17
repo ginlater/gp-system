@@ -19,8 +19,8 @@ android {
         applicationId "com.aibeautyfulwomen.gongpai"
         minSdk 24
         targetSdk 34
-        versionCode 79
-        versionName "2.3.2"
+        versionCode 80
+        versionName "2.3.3"
 
         ndk {
             // 32/64 兼容包（vivo 等应用商店要求 64 位）：
