@@ -1,2 +1,0 @@
-Target dependency graph (1 target)
-Target 'MeiliCompanion' in project 'MeiliCompanion' (no dependencies)

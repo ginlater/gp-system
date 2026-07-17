@@ -61,3 +61,7 @@ app-v2-release.apk
 app_store_assets/
 *.zip
 iosapp图片/
+ios_app/MeiliCompanion/build_verify/
+ios_app/MeiliCompanion/build_adhoc_new/
+ios_app/MeiliCompanion/build_adhoc_v8/
+ios_app/MeiliCompanion/build_device/
