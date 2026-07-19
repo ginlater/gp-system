@@ -487,16 +487,14 @@ final class PenController: NSObject, WindBleDelegate {
         }
     }
 
-    /// 补取/同步/等重连期间持有保活(复查 B2/B5:这些工作可长达几分钟-10分钟,
-    /// 期间 App 必须活着才能自动重连+收数据;工作清空即释放,不再泄漏)。
+    /// ★2026-07-19 苹果 2.5.4 整改:原来这里在补取/同步期间用静音音频引擎(RecordKeepAlive)
+    /// 保活——苹果两拒 build 10,判词「uses background audio to keep the app alive」,
+    /// 静音保活是它明令禁止的滥用,已整个删除。
+    /// 后台补取/同步现在只靠 bluetooth-central 模式:BLE 数据回调本就能在后台唤醒 App,
+    /// 数据流动期间不会被挂起;代价是 BLE 空闲间隙(如等重连)可能被系统挂起,断点续传
+    /// 兜底(回前台 kickSync 续传)已有,先上线看真实用户的丢单率再决定要不要进一步方案。
     private func updatePenWorkKeepAlive() {
-        // B11:只为"干得动"的工作保活——只剩别的笔的任务(原笔不在线)时不值得后台常驻放静音耗电,
-        // 原笔回来由用户打开 App 触发 kickSync 续传
-        let executableSync = syncQueue.contains { $0.penMac == nil || $0.penMac == lastVerifiedMac }
-        let need = downloading || pendingRecovery != nil || executableSync
-        DispatchQueue.main.async {
-            need ? RecordKeepAlive.acquire("penwork") : RecordKeepAlive.release("penwork")
-        }
+        // 保留空壳:调用点分布多处,行为改为"什么都不做"。真实保活语义见上方注释。
     }
 
     /// 当前下载失败 → 按任务类型收尾。补取(复查 P#7):一次卡死/错误不永久弃,

@@ -36,10 +36,11 @@ final class RecordingManager: ObservableObject {
             let live = state == .recording || state == .paused
             // 录音中防自动锁屏(审计 B7:自动锁屏是后台风险最高频触发源)
             UIApplication.shared.isIdleTimerDisabled = live
-            // 笔录音期间持有保活(复查 B2/B4:持有者模型,不再跨队列查 isSyncBusy;
-            // 补取/同步的保活由 PenController 以 "penwork" 持有者自行管理)
-            if source == .pen && live { RecordKeepAlive.acquire("record") }
-            else { RecordKeepAlive.release("record") }
+            // ★2026-07-19 苹果 2.5.4 整改:删掉了静音音频保活(RecordKeepAlive)。
+            // 苹果两拒 build 10,判词「uses background audio to keep the app alive」——
+            // 静音 AVAudioEngine 假装播放来占后台,是它明令禁止且机器可检出的滥用。
+            // 笔录音的后台存活改依赖 bluetooth-central 模式(BLE 实时流回调本就能唤醒 App);
+            // audio 模式保留,但只给手机麦克风的真录音用(官方认可的后台录音用途)。
         }
     }
     // ★2.2.1 对齐(安卓478a331):默认值 .phone→.pen。手机麦与 App 同进程——进程死了手机录音必然
