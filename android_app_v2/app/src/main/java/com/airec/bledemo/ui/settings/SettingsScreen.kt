@@ -98,6 +98,17 @@ fun SettingsScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    // ★2026-07-19 应用内政策页(vivo 合规):非空时整屏显示政策全文,返回回到设置页。
+    var policyKind by remember { mutableStateOf<String?>(null) }
+    if (policyKind != null) {
+        com.airec.bledemo.privacy.PolicyScreen(
+            kind = com.airec.bledemo.privacy.PolicyKind.byKey(policyKind!!),
+            onBack = { policyKind = null },
+            modifier = modifier,
+        )
+        return
+    }
+
     // 本机已安装版本从 PackageManager 实读（AGP 未开 buildConfig，BuildConfig.VERSION_NAME 不可用），
     // 注入 ViewModel 后由其触发 me/version 加载（只触发一次）。
     LaunchedEffect(Unit) {
@@ -191,6 +202,7 @@ fun SettingsScreen(
                 onUpdate = openUpdate,
                 onCheck = { viewModel.checkVersion() },
                 onUploadDiag = { viewModel.uploadDiag() },
+                onOpenPolicy = { policyKind = it },
             )
             Spacer(Modifier.height(Dimens.S6))
 
@@ -881,6 +893,7 @@ private fun AboutCard(
     onUpdate: () -> Unit,
     onCheck: () -> Unit,
     onUploadDiag: () -> Unit,
+    onOpenPolicy: (String) -> Unit,
 ) {
     val hasUpdate = state.updateAvailable || state.mustUpgrade
     MeiliCard {
@@ -967,17 +980,11 @@ private fun AboutCard(
             )
         }
         // 隐私政策 / 用户协议入口（合规：App 内须有可随时查看隐私政策的入口）
-        val uriHandler = LocalUriHandler.current
-        // ★2026-07-17 隐私合规 —— 链接必须走 PrivacyConsent 里的常量,别再用 "$base/privacy-policy"。
-        // 小米驳回原文:「提交至小米开放平台的隐私政策链接,与隐私弹窗以及应用内独立的隐私政策
-        // 不一致」。三处(商店后台 / 首启弹窗 / 本入口)必须是同一个 URL,所以统一收口到
-        // PrivacyConsent.PRIVACY_URL 这个唯一真相。改它之前记得商店后台也要同步改。
-        PolicyRow("隐私政策", "了解我们如何收集与使用信息") {
-            uriHandler.openUri(com.airec.bledemo.privacy.PrivacyConsent.PRIVACY_URL)
-        }
-        PolicyRow("用户协议", "使用美业私教的服务条款") {
-            uriHandler.openUri(com.airec.bledemo.privacy.PrivacyConsent.TERMS_URL)
-        }
+        // ★2026-07-19 vivo 驳回「APP内部无隐私政策」——原来点这里跳外部浏览器,商店不认。
+        // 改为打开应用内政策页(PolicyScreen,内容打在包里,离线可读)。
+        // 商店后台提交的网址仍是 PrivacyConsent.PRIVACY_URL,与应用内内容同源同文。
+        PolicyRow("隐私政策", "了解我们如何收集与使用信息") { onOpenPolicy("privacy") }
+        PolicyRow("用户协议", "使用美业私教的服务条款") { onOpenPolicy("terms") }
     }
 }
 
@@ -1173,7 +1180,7 @@ private fun SettingsScreenPreview() {
                     latestVersionCode = 10,
                     latestVersionName = "2.0.9",
                     minVersionCode = 9,
-                    apkUrl = "https://gp.aibeautyfulwomen.com/download/app.apk",
+                    apkUrl = "https://gp.beautyshining.com/download/app.apk",
                     updateNote = "优化陪伴笔续传稳定性，修复若干问题。",
                 ),
                 updateAvailable = true,
@@ -1199,7 +1206,7 @@ private fun SettingsScreenForcePreview() {
                     latestVersionCode = 9,
                     latestVersionName = "2.0.8",
                     minVersionCode = 9,
-                    apkUrl = "https://gp.aibeautyfulwomen.com/download/app.apk",
+                    apkUrl = "https://gp.beautyshining.com/download/app.apk",
                     updateNote = "本次为强制升级，必须更新后才能继续使用。",
                 ),
                 mustUpgrade = true,
@@ -1233,7 +1240,7 @@ private fun SettingsPreviewBody(state: SettingsUiState) {
             Spacer(Modifier.height(Dimens.CardGap))
             SectionLabel("关于美业私教", icon = MeiliIcons.Info)
             Spacer(Modifier.height(9.dp))
-            AboutCard(state = state, onUpdate = {}, onCheck = {}, onUploadDiag = {})
+            AboutCard(state = state, onUpdate = {}, onCheck = {}, onUploadDiag = {}, onOpenPolicy = {})
             Spacer(Modifier.height(Dimens.S6))
             GhostButton("退出登录", {}, icon = MeiliIcons.Lock, modifier = Modifier.fillMaxWidth())
         }

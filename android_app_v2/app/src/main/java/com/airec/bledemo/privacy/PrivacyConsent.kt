@@ -18,9 +18,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -62,8 +65,8 @@ object PrivacyConsent {
      *      - 各商店后台填的链接 → 也必须填它
      *    三处对不上就会被打回。改这里之前先想清楚商店后台也要同步改。
      */
-    const val PRIVACY_URL = "https://company.aibeautyfulwomen.com/privacy.html"
-    const val TERMS_URL = "https://gp.aibeautyfulwomen.com/terms-of-service"
+    const val PRIVACY_URL = "https://company.beautyshining.com/privacy.html"
+    const val TERMS_URL = "https://gp.beautyshining.com/terms-of-service"
 
     private const val PREF = "privacy_consent"
     private const val KEY_AGREED = "agreed_v1"
@@ -93,7 +96,14 @@ fun PrivacyConsentDialog(
     onAgree: () -> Unit,
     onDisagree: () -> Unit,
 ) {
-    val uriHandler = LocalUriHandler.current
+    // ★2026-07-19 vivo 驳回:「应用内无隐私政策」——审核员看到弹窗了,但点《隐私政策》
+    // 跳的是外部浏览器,商店要求必须在**应用内**能看。这里改成打开应用内政策页
+    // (PolicyScreen,内容来自 assets,离线可读),不再 uriHandler.openUri。
+    var showPolicy by remember { mutableStateOf<PolicyKind?>(null) }
+    if (showPolicy != null) {
+        PolicyScreen(kind = showPolicy!!, onBack = { showPolicy = null })
+        return
+    }
     // 摘要正文里的《隐私政策》《用户协议》做成可点链接——监管要求「可查阅」,不能只是文字
     val body = buildAnnotatedString {
         append("欢迎使用「美业私教」。我们非常重视您的个人信息保护。在您使用前,请阅读并理解")
@@ -130,10 +140,22 @@ fun PrivacyConsentDialog(
                     style = MaterialTheme.typography.bodyMedium.copy(color = MeiliPalette.Ink2),
                     onClick = { offset ->
                         body.getStringAnnotations("url", offset, offset).firstOrNull()?.let {
-                            uriHandler.openUri(it.item)
+                            // 应用内打开(不跳浏览器)——vivo 合规要求
+                            showPolicy = if (it.item == PrivacyConsent.TERMS_URL) PolicyKind.Terms
+                            else PolicyKind.Privacy
                         }
                     },
                 )
+                Spacer(Modifier.height(12.dp))
+                // 除了正文里的链接,再给两个**明显的按钮**——审核员一眼能看见,不用去点小字
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { showPolicy = PolicyKind.Privacy }) {
+                        Text("查看《隐私政策》全文", color = MeiliPalette.ClayDeep, fontWeight = FontWeight.Bold)
+                    }
+                    TextButton(onClick = { showPolicy = PolicyKind.Terms }) {
+                        Text("《用户协议》", color = MeiliPalette.ClayDeep, fontWeight = FontWeight.Bold)
+                    }
+                }
             }
         },
         confirmButton = {

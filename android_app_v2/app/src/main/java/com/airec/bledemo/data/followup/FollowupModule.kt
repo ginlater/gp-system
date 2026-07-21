@@ -17,8 +17,8 @@ enum class ScriptSystem(
     val baseUrl: String,
     val displayName: String,
 ) {
-    Followup("followup", "https://www.aibeautyfulwomen.com/", "回访话术"),
-    HighEq("higheq", "http://43.136.130.133/", "高情商话术"),
+    Followup("followup", "https://huifang.beautyshining.com/", "回访话术"),
+    HighEq("higheq", "https://intelligent.beautyshining.com/", "高情商话术"),
     ;
 
     companion object {

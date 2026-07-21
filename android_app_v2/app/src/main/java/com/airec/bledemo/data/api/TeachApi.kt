@@ -17,7 +17,7 @@ import retrofit2.http.POST
 import retrofit2.http.Path
 
 /**
- * teach 网课服务端点（base = https://teach.aibeautyfulwomen.com/，见 TeachModule）。
+ * teach 网课服务端点（base = https://teach.beautyshining.com/，见 TeachModule）。
  *
  * 与工牌不同：鉴权不是 Cookie 而是 Bearer token（/teach/login 换取，Header 显式传）。
  * token 的获取/续期/401 重登统一收在 TeachRepository，Screen/VM 不直接碰本接口。

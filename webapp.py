@@ -5065,14 +5065,14 @@ def terms_of_service():
 APK_PATH = Path(__file__).parent / "app-release.apk"
 # v2 原生重写包（com.aibeautyfulwomen.gongpai.v2）独立下载链路，与 v1 同机并存、互不顶包。
 V2_APK_PATH = Path(__file__).parent / "app-v2-release.apk"
-APP_V2_VERSION_NAME = "2.3.0"
+APP_V2_VERSION_NAME = "2.3.6"
 # v2 原生包版本检查（独立于 v1）：App 启动查 /api/app/v2/version 比对。
 #   - 装的 versionCode < APP_V2_MIN_VERSION_CODE → 强制更新(不可关)；
 #   - < APP_V2_LATEST_VERSION_CODE 但 ≥ MIN → 可关的「有新版」提示。
 #   发新版时把 LATEST 抬到新 versionCode；要强更才动 MIN。
-APP_V2_LATEST_VERSION_CODE = 77   # 2.3.0(77)：多系统整合(7系统工作台+切换+teach/回访/高情商原生+网页壳+账号绑定+统一改密)。旧标注 2.2.2(76)：新客/老客客型标注(接诊包预览页可切换,评分维度按客型二选一)
+APP_V2_LATEST_VERSION_CODE = 83   # 2.3.6(83)：全站域名迁移 beautyshining.com(gp/huifang/teach/chat/intelligent/company)+应用内隐私政策页+禁明文http。81：隐私弹窗+账号注销
 APP_V2_MIN_VERSION_CODE = 64      # 2026-07-06 全量强更(含补门的64)
-APP_V2_UPDATE_NOTE = "本次更新：开始分析前可选「新客／老客」——老客按交付复盘维度评分（破冰对效、当天方案调整、方案重规划与返邀）。"
+APP_V2_UPDATE_NOTE = "本次更新：服务器域名全面升级（更稳定的新线路），隐私政策改为App内直接查看、断网也能看。请务必更新，旧版本在老线路停用后将无法登录。"
 
 # ============ iOS App 版本（Ad Hoc 分发无自动更新，App 启动/设置页查这个提示重装升级）============
 # 发 iOS 新版时：改 ios_app project.yml 的 CURRENT_PROJECT_VERSION → 归档导出 ad-hoc → 覆盖
@@ -7005,6 +7005,53 @@ def api_me():
         "script_account": (u["script_account"] if "script_account" in u.keys() else None),
         "script_password": (u["script_password"] if "script_password" in u.keys() else None),
     })
+
+
+# ★2026-07-17 合规 —— App 内账号自助注销。
+#
+# 【为什么有这个接口】小米/OPPO 驳回 + 苹果 5.1.1(v) 均强制:凡支持登录的 App，
+#   必须提供「App 内可自助完成」的账号注销入口。原来隐私政策里写的「联系管理员或
+#   发邮件，15 个工作日内注销」——商店一律不认，必须当场能点、当场生效。
+#
+# 【删什么 / 留什么】这是本接口最关键的设计，别改错:
+#   删:users 行——登录凭证(username/password_hash)与个人信息(phone/advisor_name/
+#      employee_id)。这些是「个人信息」，注销就得删。
+#   留:sessions / recordings / evaluations 等业务数据。它们靠 sessions.advisor
+#      「文本姓名」关联，不是外键，删 users 不会级联带走。这些是门店花钱买的经营
+#      资产，归门店所有——隐私政策已载明「业务数据在您所属机构的服务期内保留，
+#      供您与机构查阅」。员工注销 ≠ 老板的历史报告蒸发，这条边界不能越。
+#
+# 【安全】必须带对密码。否则手机被人顺走 = 账号被人点没。
+@app.route("/api/me/account", methods=["DELETE"])
+@login_required
+def api_delete_my_account():
+    u = current_user()
+    if not u:
+        return jsonify({"error": "未登录"}), 401
+    data = request.get_json(silent=True) or {}
+    row = db_fetchone(
+        "SELECT id, username, password_hash, role, company_id, advisor_name, store_id "
+        "FROM users WHERE id=?", (u["id"],)
+    )
+    if not row:
+        return jsonify({"error": "账号不存在"}), 404
+    if row["password_hash"] != _hash_pw(data.get("password") or ""):
+        return jsonify({"error": "密码不正确", "code": "bad_password"}), 403
+    # 管理员/超管不给自助注销:删了整个公司的数据没人管得了，必须走人工
+    if row["role"] in ("super", "admin"):
+        return jsonify({"error": "管理员账号请联系客服注销", "code": "role_forbidden"}), 403
+    # 先留痕再删——删完就查不到这个人了，审计只能靠这条
+    db_write(
+        "INSERT INTO login_log (user_id, username, advisor_name, role, company_id, "
+        "store_id, event_type, ip_address, user_agent) VALUES (?,?,?,?,?,?,?,?,?)",
+        (row["id"], row["username"], row["advisor_name"], row["role"], row["company_id"],
+         row["store_id"], "account_deleted",
+         (request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64],
+         (request.headers.get("User-Agent") or "")[:300]),
+    )
+    db_write("DELETE FROM users WHERE id=?", (row["id"],))
+    session.clear()
+    return jsonify({"ok": True})
 
 
 # ★2026-07-15 多系统整合 —— 系统注册表(服务端唯一真相，App 只认这里返回的)。

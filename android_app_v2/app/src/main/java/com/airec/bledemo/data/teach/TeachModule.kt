@@ -20,7 +20,7 @@ import retrofit2.converter.moshi.MoshiConverterFactory
  */
 object TeachModule {
 
-    const val BASE_URL = "https://teach.aibeautyfulwomen.com/"
+    const val BASE_URL = "https://teach.beautyshining.com/"
 
     /** 课件正文 URL（静态 html、免鉴权，WebView 直接加载）。 */
     fun coursewareUrl(chapterKey: String): String = "$BASE_URL$chapterKey.html"

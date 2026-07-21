@@ -29,10 +29,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -92,6 +94,15 @@ fun LoginScreen(
 
     // 隐私合规（vivo 等应用商店要求）：默认【不勾选】同意，未勾选不可登录；政策链接可点开。
     var agreed by rememberSaveable { mutableStateOf(false) }
+    // ★2026-07-19 vivo 驳回「APP内部无隐私政策」:政策要在应用内看,不能跳浏览器。
+    var policyKind by remember { mutableStateOf<String?>(null) }
+    if (policyKind != null) {
+        com.airec.bledemo.privacy.PolicyScreen(
+            kind = com.airec.bledemo.privacy.PolicyKind.byKey(policyKind!!),
+            onBack = { policyKind = null },
+        )
+        return
+    }
     // ★2026-07-17 —— 链接收口到 PrivacyConsent 的常量。小米按「商店后台/首启弹窗/App 内
     // 政策入口三者链接不一致」驳回过,这里再自己拼一份就又破功了。
     val privacyUrl = com.airec.bledemo.privacy.PrivacyConsent.PRIVACY_URL
@@ -258,7 +269,8 @@ fun LoginScreen(
                         style = MaterialTheme.typography.labelSmall.copy(color = MeiliPalette.Ink2, lineHeight = 18.sp),
                         onClick = { offset ->
                             consent.getStringAnnotations("url", offset, offset).firstOrNull()?.let {
-                                uriHandler.openUri(it.item)
+                                // 应用内打开(不跳浏览器)——vivo 合规要求
+                                policyKind = if (it.item == termsUrl) "terms" else "privacy"
                             }
                         },
                     )
@@ -266,6 +278,35 @@ fun LoginScreen(
             }
 
             Spacer(Modifier.height(12.dp))
+
+            // ★2026-07-19 vivo 合规 —— 登录页底部的独立政策入口。
+            // 商店审核员没有业务账号,进不到设置页;这两个按钮让「未登录也能随时查看政策」,
+            // 且是明显按钮而非小字链接(vivo 驳回理由是「未向用户提供易于访问的隐私政策」)。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                TextButton(onClick = { policyKind = "privacy" }) {
+                    Text(
+                        "隐私政策",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MeiliPalette.ClayDeep,
+                    )
+                }
+                Text(
+                    "·",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MeiliPalette.Ink4,
+                    modifier = Modifier.align(Alignment.CenterVertically),
+                )
+                TextButton(onClick = { policyKind = "terms" }) {
+                    Text(
+                        "用户协议",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MeiliPalette.ClayDeep,
+                    )
+                }
+            }
 
             Text(
                 text = "陪伴师端 · 高端身体美容陪伴",

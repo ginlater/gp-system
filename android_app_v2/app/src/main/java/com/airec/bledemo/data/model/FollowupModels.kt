@@ -5,8 +5,8 @@ import com.squareup.moshi.Json
 /* ===================================================================
  * 回访话术 / 高情商话术(followup-agent)领域模型。
  *
- * 服务端:huifang-prod /opt/followup-agent(www.aibeautyfulwomen.com)与
- * dev-machine /opt/followup-agent(43.136.130.133,高情商变体)。
+ * 服务端:huifang-prod /opt/followup-agent(huifang.beautyshining.com)与
+ * dev-machine /opt/followup-agent(intelligent.beautyshining.com,高情商变体)。
  * 字段名 1:1 对齐 server.py 真实契约(2026-07-15 上服务器核对):
  *  - 登录 POST /login/account,密码字段名是 **key** 不是 password;
  *  - JWT 7 天有效、无单设备互踢,401 仅有过期一种(静默重登即可);

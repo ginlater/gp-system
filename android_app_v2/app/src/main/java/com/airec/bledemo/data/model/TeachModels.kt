@@ -5,7 +5,7 @@ import com.squareup.moshi.Json
 /* ===================================================================
  * teach 网课（多系统整合 P1）领域模型。
  *
- * 服务端 = huifang-prod /opt/teach-server FastAPI（teach.aibeautyfulwomen.com），
+ * 服务端 = huifang-prod /opt/teach-server FastAPI（teach.beautyshining.com），
  * 字段名 1:1 对齐 app.py + teach_progress_store.py + quiz_helpers.py 真实返回
  * （2026-07-15 已上服务器核对，别凭感觉改 key）。
  *

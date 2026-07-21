@@ -1,10 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  允许明文(http)访问，方便用服务器 IP / 未上 https 的域名测试。
-  生产建议把 START_URL 指向 https 域名；如需收紧，可把 cleartextTrafficPermitted 改为 false 并只放行特定域名。
+  ★2026-07-20 域名全面迁移 beautyshining.com 后收紧：全部服务端已是 https，禁止明文 http。
+  (原来放开是因为高情商话术挂在裸 IP http://43.136.130.133，现已迁到
+   https://intelligent.beautyshining.com，不再需要明文。)
+  应用商店安全检测会把 cleartextTrafficPermitted=true 当风险项，收紧后一并规避。
+  如日后确需临时连未上 https 的测试服务器，请只加 domain-config 白名单，别整体放开。
 -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

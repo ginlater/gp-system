@@ -14,14 +14,14 @@ import java.util.concurrent.TimeUnit
 /**
  * 网络单例：OkHttpClient(含 PrefsCookieJar + logging-interceptor) + Moshi(反射) + Retrofit。
  *
- * - base = https://gp.aibeautyfulwomen.com（SPEC §7，不改后端）。
+ * - base = https://gp.beautyshining.com（SPEC §7，不改后端）。
  * - Moshi 用 KotlinJsonAdapterFactory 反射（不接 KSP/codegen）。
  * - Cookie 会话由 PrefsCookieJar 持久化；登录后自动带。
  * - 必须先 init(context) 一次（Application.onCreate 里调），再取 api / cookieJar。
  */
 object NetworkModule {
 
-    const val BASE_URL = "https://gp.aibeautyfulwomen.com/"
+    const val BASE_URL = "https://gp.beautyshining.com/"
 
     /** 接诊上传地址（手机麦 + 录音笔补传共用）的单一事实源：base + api/consultant/upload。 */
     val uploadUrl: String get() = BASE_URL.trimEnd('/') + "/api/consultant/upload"

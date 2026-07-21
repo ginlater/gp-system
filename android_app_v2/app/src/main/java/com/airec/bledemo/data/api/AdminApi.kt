@@ -8,7 +8,7 @@ import retrofit2.http.Query
 /* ===================================================================
  * Retrofit 接口：管理台（admin / super / store_manager 的管理类视图）端点。
  *
- * base = https://gp.aibeautyfulwomen.com（同 [ConsultantApi]，复用同一 NetworkModule
+ * base = https://gp.beautyshining.com（同 [ConsultantApi]，复用同一 NetworkModule
  * 的 OkHttp + PrefsCookieJar，会话 Cookie 自动带）。取实例：
  *   NetworkModule.adminApi  （= NetworkModule.retrofit.create(AdminApi::class.java)）
  *

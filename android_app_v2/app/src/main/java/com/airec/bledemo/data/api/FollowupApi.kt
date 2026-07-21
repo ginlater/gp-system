@@ -12,7 +12,7 @@ import retrofit2.http.Header
 import retrofit2.http.POST
 
 /**
- * followup-agent 端点(回访话术 www.aibeautyfulwomen.com / 高情商话术 43.136.130.133,
+ * followup-agent 端点(回访话术 huifang.beautyshining.com / 高情商话术 intelligent.beautyshining.com,
  * 同一套代码两处部署,base URL 由 FollowupModule 按系统实例化)。
  *
  * 生成接口 POST /generate 是 SSE 流式,不走 Retrofit,见 FollowupRepository.generateStream。

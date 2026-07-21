@@ -23,7 +23,7 @@ import retrofit2.http.Header
 import retrofit2.http.POST
 
 /* ===================================================================
- * 扣子销售话术(sale-agent,chat.aibeautyfulwomen.com)。
+ * 扣子销售话术(sale-agent,chat.beautyshining.com)。
  *
  * 契约(2026-07-15 上服务器核对):
  *  - POST /api/login {username,password} → {token,username},JWT 24h,无单设备互踢;
@@ -71,7 +71,7 @@ interface ChatApi {
 
 /** sale-agent 网络单例。 */
 object ChatModule {
-    const val BASE_URL = "https://chat.aibeautyfulwomen.com/"
+    const val BASE_URL = "https://chat.beautyshining.com/"
 
     val api: ChatApi by lazy {
         Retrofit.Builder()

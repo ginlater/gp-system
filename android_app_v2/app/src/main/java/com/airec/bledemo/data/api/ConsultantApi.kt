@@ -8,7 +8,7 @@ import retrofit2.http.*
 
 /* ===================================================================
  * Retrofit 接口：覆盖 SPEC §7 的顾问端端点。
- * base = https://gp.aibeautyfulwomen.com（见 NetworkModule）。
+ * base = https://gp.beautyshining.com（见 NetworkModule）。
  * Cookie 会话鉴权由 PrefsCookieJar 自动带上。
  *
  * 全部返回 Response<T>，便于 Repository 区分 HTTP 状态码 + 取后端 error 文案。
