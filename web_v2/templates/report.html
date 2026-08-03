@@ -1,0 +1,1801 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>{{ sess.customer or '未知顾客' }} × {{ sess.advisor or '未知顾问' }} · 接诊全维度分析报告</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}?v=20260524a">
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="nav" style="position:relative">
+  <div class="nav-inner">
+    <div class="nav-row nav-row-top">
+      <div class="nav-title">
+        <a href="{{ url_for('index') }}" class="nav-back">← 接诊列表</a>
+        <span class="nav-sep"></span>
+        <span class="dot"></span>
+        <span class="nav-headline">{{ sess.advisor or '未知顾问' }} × {{ sess.customer or '未知顾客' }} · 接诊全维度分析报告</span>
+      </div>
+      <div class="nav-meta">
+        <div class="nav-tag"><span class="circle"></span> {{ sess.service_date or '日期未知' }}</div>
+        <div class="nav-tag">销售复盘 · 内部机密</div>
+        <div class="nav-tag {% if sess.display_status == 'running' %}live{% endif %}" id="analysisStatusTag">
+          分析: {{ {'idle':'未分析','queued':'排队中','running':'分析中','done':'已完成','failed':'失败','stuck':'中断'}.get(sess.display_status, sess.display_status) }}
+          {% if sess.analysis_model %} · {{ sess.analysis_model }}{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="nav-row nav-row-actions">
+      <div class="nav-actions">
+        <button class="rec-btn" id="reanalyzeBtn" onclick="reanalyze()" title="强制重跑分析">⟳ 重跑</button>
+        {% if recordings %}
+        <button class="rec-btn rec-btn-sec" onclick="toggleRec()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polygon points="10,8 16,12 10,16"/></svg>
+          原始录音
+        </button>
+        {% endif %}
+        {# 换绑改为「按单条录音」，入口移到下方录音面板内（openRecRebind） #}
+      </div>
+      {% if role in ('admin','super') %}
+      <div class="nav-actions nav-actions-danger">
+        {% if recordings %}
+        <button class="rec-btn rec-btn-warn" id="delAllRecsBtn" onclick="deleteAllRecs()" title="删除该接诊所有录音文件">🗑 删录音</button>
+        {% endif %}
+        {% if sess.analysis_result %}
+        <button class="rec-btn rec-btn-warn" onclick="deleteReport()" title="清除分析报告，接诊记录保留">🗑 删报告</button>
+        {% endif %}
+        <button class="rec-btn rec-btn-danger" onclick="deleteSession()" title="完全删除此接诊（录音+报告+记录）">⚠ 完全删除</button>
+      </div>
+      {% elif role == 'consultant' and recordings %}
+      <div class="nav-actions">
+        <button class="rec-btn rec-btn-sec" id="reqDelAllBtn" onclick="requestDeleteAllRecs()" title="申请删除该接诊所有录音文件">申请删除录音</button>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if recordings %}
+  <div class="rec-panel" id="recPanel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <span style="font-size:12px;color:#8a95a3;font-weight:500">选择录音段落</span>
+      <button onclick="document.getElementById('recPanel').classList.remove('open')"
+              style="background:none;border:none;cursor:pointer;font-size:16px;color:#8a95a3;line-height:1">✕</button>
+    </div>
+
+    <select id="segSelect" class="rec-seg-select" onchange="switchSeg(this.value)">
+      {% for rec in recordings %}
+      <option value="{{ loop.index0 }}">第{{ loop.index }}段{% if rec.recorded_at %}（{{ rec.recorded_at }}{% if rec.duration_label %} · 约{{ rec.duration_label }}{% endif %}）{% elif rec.duration_label %}（约{{ rec.duration_label }}）{% endif %}</option>
+      {% endfor %}
+    </select>
+
+    <audio id="recAudio" controls class="rec-audio" preload="auto">
+      <source id="recAudioSrc" src="" type="audio/mpeg">
+    </audio>
+
+    <div id="speakerWarnBox" style="display:none;margin:10px 0;padding:10px 12px;border:1px solid #f1c40f;background:rgba(241,196,15,.10);border-radius:5px;font-size:12.5px;line-height:1.55">
+      <div style="font-weight:600;color:#b8860b;margin-bottom:4px">⚠ ASR 检测到 <span id="spkCount">?</span> 个说话人（&gt;2），分析已暂停</div>
+      <div style="color:#7a6a30">可能是录音里混入了第三人。请通过下方转录核对，然后选择：</div>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        {% if role in ('admin','super','consultant') %}
+        <button id="spkKeepBtn" onclick="confirmSpeakers('keep')"
+                style="background:#27ae60;color:#fff;border:none;border-radius:4px;padding:5px 12px;font-size:12px;cursor:pointer;font-weight:600">
+          ✓ 确认照常分析
+        </button>
+        <button id="spkUnbindBtn" onclick="confirmSpeakers('unbind')"
+                style="background:#fff;color:#e67e22;border:1px solid #e67e22;border-radius:4px;padding:5px 12px;font-size:12px;cursor:pointer">
+          解绑此录音
+        </button>
+        {% endif %}
+        <span id="spkMsg" style="font-size:12px;color:#888;align-self:center"></span>
+      </div>
+    </div>
+
+    <details class="rec-transcript" id="recTranscript" open>
+      <summary>▶ 查看文字转录（含说话人标记）</summary>
+      <div class="rec-transcript-body" id="recTranscriptBody">{{ (recordings[0].asr_transcript or '（暂无转录文本）')|replace('\n','<br>')|safe }}</div>
+    </details>
+
+    {% if role in ('admin','super','store_manager') %}
+    <div style="margin-top:10px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">
+      <button class="rec-btn rec-btn-sec" onclick="downloadCurrentRec()" title="下载当前这段录音文件">⬇ 下载</button>
+      <button class="rec-btn rec-btn-sec" onclick="splitCurrentRec()" title="在播放器当前位置把这段录音切成两段，各自重新转写后可分别换绑">✂ 分割</button>
+      <button class="rec-btn rec-btn-sec" onclick="openRecRebind()" title="把当前这段录音换绑到该顾问当日的另一个客人">⇄ 换绑当前录音段</button>
+    </div>
+    {% endif %}
+    {% if role in ('admin','super') %}
+    <div style="margin-top:10px;text-align:right">
+      <button id="delRecBtn" onclick="deleteCurrentRec()"
+              style="background:#e74c3c;color:#fff;border:none;border-radius:4px;padding:5px 12px;font-size:12px;cursor:pointer">
+        删除当前录音段
+      </button>
+      <span id="delRecMsg" style="font-size:12px;color:#e74c3c;margin-left:8px"></span>
+    </div>
+    {% elif role == 'consultant' %}
+    <div style="margin-top:10px;text-align:right">
+      <button id="reqDelRecBtn" onclick="requestDeleteCurrentRec()"
+              style="background:#fff;color:#e74c3c;border:1px solid #e74c3c;border-radius:4px;padding:5px 12px;font-size:12px;cursor:pointer">
+        申请删除当前录音段
+      </button>
+      <span id="delRecMsg" style="font-size:12px;color:#888;margin-left:8px"></span>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+</nav>
+
+<div class="wrap">
+
+
+{% if not report %}
+  <!-- 还没有结构化报告 -->
+  <div class="section" id="emptyState">
+    {% if sess.display_status == 'running' or sess.display_status == 'queued' %}
+      <div class="progress-card">
+        <div class="progress-spinner"></div>
+        <div class="progress-title" id="progressTitle">
+          {{ '排队中…' if sess.display_status == 'queued' else '分析正在进行中…' }}
+        </div>
+        <div class="progress-detail" id="progressDetail">{{ sess.analysis_progress or '正在初始化…' }}</div>
+        <div class="progress-hint">
+          DeepSeek V4-Pro 深度思考通常需要 2-6 分钟，本页面会自动刷新进度，不要关闭。
+        </div>
+        <div class="progress-steps">
+          <div class="pstep done">✓ 录音 ASR 完成</div>
+          <div class="pstep" id="pstep-prep">拼接转录 / 加载知识库</div>
+          <div class="pstep" id="pstep-llm">LLM 深度思考</div>
+          <div class="pstep" id="pstep-parse">解析结构化报告</div>
+        </div>
+      </div>
+    {% elif sess.display_status == 'failed' %}
+      <div class="box box-red" style="padding:30px;font-size:14px;line-height:1.9">
+        <div style="font-size:16px;font-weight:700;margin-bottom:8px">分析失败</div>
+        <div style="font-size:12.5px;color:var(--text-mute);white-space:pre-wrap;font-family:monospace">{{ sess.analysis_error or '' }}</div>
+        <button class="boss-submit" style="margin-top:16px" onclick="reanalyze()">重新分析</button>
+      </div>
+    {% else %}
+      <div class="box box-orange" style="padding:30px;text-align:center;font-size:15px;line-height:2">
+        本接诊还没有生成结构化报告。
+        <div><button class="boss-submit" style="margin-top:16px" onclick="reanalyze()">立即分析</button></div>
+      </div>
+    {% endif %}
+  </div>
+{% else %}
+
+{# 给所有数据起短别名 — 默认用主版本，JS 切换后会重新渲染 #}
+{% set ov = report.overview %}
+{% set persona = report.persona %}
+{% set root = report.root_cause %}
+{% set pains = report.pain_points or [] %}
+{% set harvest = report.harvest %}
+{% set scoring = report.scoring %}
+{# 评分重算：stage.score = 子项均值，overall = stage 均值（保留一位小数） #}
+{% if scoring and scoring.stages %}
+  {% set _stage_scores = [] %}
+  {% for stg in scoring.stages %}
+    {% set _subs = stg.sub or [] %}
+    {% set _sub_scores = _subs | map(attribute='score') | reject('none') | list %}
+    {% if _sub_scores %}
+      {% set _avg = ((_sub_scores | sum) / (_sub_scores | length)) | round(1) %}
+      {% if stg.update({'score': _avg}) %}{% endif %}
+      {% if _stage_scores.append(_avg) %}{% endif %}
+    {% endif %}
+  {% endfor %}
+  {% if _stage_scores %}
+    {% set _overall = ((_stage_scores | sum) / (_stage_scores | length)) | round(1) %}
+    {% if scoring.update({'overall': _overall}) %}{% endif %}
+    {% if report.overview and report.overview.quality_score %}
+      {% if report.overview.quality_score.update({'score': _overall}) %}{% endif %}
+    {% endif %}
+  {% endif %}
+{% endif %}
+{% set logic = report.logic_chain %}
+{% set cases = report.cases or [] %}
+{% set ns = report.next_steps %}
+
+<!-- 任务状态面板 -->
+<div class="task-panel" style="max-width:1100px;margin:0 auto;padding:12px 40px">
+  <details style="background:#f4f6f9;border:1px solid #d5dce8;border-radius:6px;padding:10px 14px">
+    <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#1c3461">
+      📋 任务执行状态 <span id="task-stat-summary" style="color:#8a95a3;font-weight:400">(加载中…)</span>
+    </summary>
+    <div id="task-stat-list" style="margin-top:12px;font-size:12.5px">
+      <!-- JS 渲染 -->
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="rec-btn" onclick="fillMissingTasks()" style="background:#27ae60">补齐所有缺失任务</button>
+    </div>
+  </details>
+</div>
+
+<!-- PART 01 -->
+{% if ov %}
+<div class="section">
+  <div class="part-label">PART 01</div>
+  <div class="section-title">全维度评估总览</div>
+  <table class="ov-tbl">
+    <thead class="ov-head"><tr><th style="width:110px">维度</th><th>我方分析判断</th></tr></thead>
+    <tbody>
+      {% if ov.customer_value %}
+      <tr>
+        <td class="ov-dim">顾客价值评级</td>
+        <td class="ov-content">
+          <span class="ov-tag {{ ov.customer_value.tag_kind or 'level' }}">{{ ov.customer_value.tag }}</span>
+          <div class="mt8" style="font-size:13px;color:var(--text-mid)">{{ ov.customer_value.note|md_inline|safe }}</div>
+        </td>
+      </tr>
+      {% endif %}
+      {% if ov.pain_summary %}
+      <tr>
+        <td class="ov-dim">痛点识别</td>
+        <td class="ov-content">
+          <span class="ov-tag {{ ov.pain_summary.tag_kind or 'warn' }}">{{ ov.pain_summary.tag }}</span>
+          <div class="mt8" style="font-size:13px;line-height:1.8">
+            {% for it in ov.pain_summary['items'] or [] %}
+              <span class="c-{{ it.color }}">● {{ it.text|md_inline|safe }}</span>{% if not loop.last %}<br>{% endif %}
+            {% endfor %}
+          </div>
+        </td>
+      </tr>
+      {% endif %}
+      {% if ov.sales_diagnosis %}
+      <tr>
+        <td class="ov-dim">销售问题诊断</td>
+        <td class="ov-content">
+          <span class="ov-tag {{ ov.sales_diagnosis.tag_kind or 'bad' }}">{{ ov.sales_diagnosis.tag }}</span>
+          <div class="mt8" style="font-size:13px;color:var(--text-mid)">{{ ov.sales_diagnosis.note|md_inline|safe }}</div>
+        </td>
+      </tr>
+      {% endif %}
+      {% if ov.quality_score %}
+      <tr>
+        <td class="ov-dim">质检评分</td>
+        <td class="ov-content">
+          <span class="ov-tag {% if ov.quality_score.score >= 8 %}good{% elif ov.quality_score.score >= 6 %}warn{% else %}bad{% endif %}" style="font-size:18px;padding:5px 14px">{{ '%.1f'|format(ov.quality_score.score) }} / 10</span>
+          <div class="mt8" style="font-size:13px;color:var(--text-mid)">{{ ov.quality_score.note|md_inline|safe }}</div>
+          {% if scoring and scoring.stages %}
+          <button onclick="toggleScoring()" id="scoring-toggle-btn"
+                  style="margin-top:12px;background:none;border:1px solid var(--border);
+                         border-radius:99px;padding:5px 14px;cursor:pointer;font-size:12px;
+                         color:var(--navy);font-family:inherit">
+            查看详细评分 ▾
+          </button>
+          <div id="scoring-detail" style="display:none;margin-top:14px">
+            <div class="stages-grid" style="grid-template-columns:repeat({{ scoring.stages|length or 3 }},1fr);border-top:1px solid var(--border)">
+              {% for stg in scoring.stages %}
+              {% set sclass = 'sc-ok' if stg.score >= 7 else ('sc-warn' if stg.score >= 5 else 'sc-bad') %}
+              <div class="stage-col">
+                <div class="stage-col-head">
+                  <div class="stage-col-name">{{ stg.name }}</div>
+                  <div class="stage-col-score {{ sclass }}">{{ '%.1f'|format(stg.score) }}</div>
+                </div>
+                {% for sub in stg.sub or [] %}
+                {% set bclass = 'bar-good' if sub.score >= 7 else ('bar-warn' if sub.score >= 5 else 'bar-bad') %}
+                {% set pclass = 'pt-good' if sub.score >= 7 else ('pt-warn' if sub.score >= 5 else 'pt-bad') %}
+                <div class="sub-item" onclick="toggleSub(this)">
+                  <div class="sub-item-row">
+                    <div class="sub-name"><span class="sub-arrow">▶</span>{{ sub.name }}</div>
+                    <div class="sub-bar-wrap"><div class="sub-bar {{ bclass }}" style="width:{{ (sub.score * 10)|round }}%"></div></div>
+                    <div class="sub-pts {{ pclass }}">{{ '%.1f'|format(sub.score) if sub.score % 1 else sub.score|int }}</div>
+                  </div>
+                  <div class="sub-detail">{{ sub.detail|md_inline|safe }}</div>
+                </div>
+                {% endfor %}
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% endif %}
+      {% if ov.suggestions %}
+      <tr>
+        <td class="ov-dim">可操作建议</td>
+        <td class="ov-content" style="padding:12px 18px">
+          {% for s in ov.suggestions %}
+          {% set colors = ['#1565C0','#E65100','#2E7D32','#6A1B9A'] %}
+          {% set bgs = ['rgba(21,101,192,0.07)','rgba(230,81,0,0.07)','rgba(46,125,50,0.07)','rgba(106,27,154,0.07)'] %}
+          {% set c = colors[loop.index0 % 4] %}
+          {% set bg = bgs[loop.index0 % 4] %}
+          <div style="display:flex;align-items:flex-start;gap:12px;
+                      background:{{ bg }};border-radius:8px;
+                      padding:12px 14px;margin-bottom:10px;">
+            <div style="flex-shrink:0;width:26px;height:26px;border-radius:50%;
+                        background:{{ c }};color:#fff;font-size:13px;font-weight:700;
+                        display:flex;align-items:center;justify-content:center;">
+              {{ loop.index }}
+            </div>
+            <div style="font-size:14px;line-height:1.7;color:#1a1a2e;">{{ s|md_inline|safe }}</div>
+          </div>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+<!-- PART 02 -->
+{% if persona %}
+<div class="section">
+  <div class="part-label">PART 02</div>
+  <div class="section-title">顾客真实画像重建</div>
+  {% if persona.lead %}<div class="section-lead">{{ persona.lead }}</div>{% endif %}
+
+  {% if persona.signals %}
+  <div style="font-size:15px;font-weight:700;color:var(--blue);margin-bottom:12px">关键信号提取</div>
+  <div class="signal-list mb16">
+    {% for sig in persona.signals %}
+    <div class="sig-card">
+      <div class="sig-block">
+        <span class="sig-tag sig-tag-quote">顾客原话</span>
+        <div class="sig-quote">{{ sig.signal }}</div>
+      </div>
+      <div class="sig-block sig-block-judge">
+        <span class="sig-tag sig-tag-judge">销售判断</span>
+        <div class="sig-judge">{{ sig.interpretation }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if persona.summary %}
+  <div style="background:rgba(21,101,192,0.06);border-left:4px solid #1565C0;border-radius:6px;padding:16px 20px;margin-bottom:16px">
+    <strong style="color:#1565C0">综合判断：</strong><span style="color:#1565C0;font-size:14px;line-height:1.85">{{ persona.summary|md_inline|safe }}</span>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- PART 03 -->
+{% if root %}
+<div class="section">
+  <div class="part-label">PART 03</div>
+  <div class="section-title">接诊失分根因定位</div>
+  {% if root.lead %}<div class="section-lead">{{ root.lead }}</div>{% endif %}
+
+  {% if root.headline %}
+  <div class="box box-red" style="font-size:15px;font-weight:700;margin-bottom:20px">
+    {{ root.headline|md_inline|safe }}
+  </div>
+  {% endif %}
+
+  {% if root.product_dimension or root.problem_dimension %}
+  <div class="compare-grid mb16">
+    <div class="compare-col">
+      <div class="compare-col-head bad">产品维度（顾问实际做的）</div>
+      {% for x in root.product_dimension or [] %}
+        <div class="compare-item bad">"{{ x }}"</div>
+      {% endfor %}
+    </div>
+    <div class="compare-col" style="border-left:1px solid var(--border)">
+      <div class="compare-col-head good">问题维度（顾客需要听到的）</div>
+      {% for x in root.problem_dimension or [] %}
+        <div class="compare-item good">"{{ x }}"</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if root.gap_note %}
+  <div class="box box-orange">
+    <strong>差距的本质：</strong>{{ root.gap_note|md_inline|safe }}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- PART 04 -->
+{% if pains %}
+<div class="section">
+  <div class="part-label">PART 04</div>
+  <div class="section-title">可攻破痛点 · 完整作战方案</div>
+  {% set badge_class = {'最强突破口': '', '最佳情感连接点': 'b2', '最高价值突破口': 'b3', '其它': 'b2'} %}
+  {% for p in pains %}
+  <div class="pp-section">
+    <div class="pp-title">
+      痛点{{ ['一','二','三','四','五'][loop.index0] }}：{{ p.title }}
+      <span class="pp-badge {{ badge_class.get(p.badge, '') }}">{{ p.badge }}</span>
+    </div>
+    {% if p.lead %}<div class="pp-lead">{{ p.lead|md_inline|safe }}</div>{% endif %}
+
+    {% if p.steps %}
+    <div class="step-rows">
+      {% for st in p.steps %}
+      <div class="step-row">
+        <div class="step-label s{{ loop.index if loop.index <= 5 else 5 }}">
+          第{{ ['一','二','三','四','五'][loop.index0] }}步<br>{{ st.label }}
+        </div>
+        <div class="step-body"><em>{{ st.body|md_inline|safe }}</em></div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if p.strategy_table %}
+    <table class="strategy-tbl">
+      <thead><tr><th style="width:120px">策略</th><th>核心话术逻辑</th></tr></thead>
+      <tbody>
+        {% for s in p.strategy_table %}
+        <tr>
+          <td class="strat-name">{{ s.strategy }}</td>
+          <td>{{ s.logic|md_inline|safe }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- PART 05 -->
+{% if harvest and harvest.steps %}
+<div class="section">
+  <div class="part-label">PART 05</div>
+  <div class="section-title">项目后价值收割 · 黄金窗口标准流程</div>
+  {% if harvest.intro %}
+  <div class="box box-blue mb16">{{ harvest.intro|md_inline|safe }}</div>
+  {% endif %}
+
+  <div class="harvest-steps" style="grid-template-columns:repeat({{ harvest.steps|length }},1fr)">
+    {% for st in harvest.steps %}
+    <div class="harvest-step"{% if loop.last %} style="border-right:none"{% endif %}>
+      <div class="hs-badge h{{ loop.index if loop.index <= 4 else 4 }}">STEP {{ loop.index }}</div>
+      <div class="hs-title">{{ st.title }}</div>
+      <div class="hs-body"><em>{{ st.body|md_inline|safe }}</em></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- PART 06 -->
+{% if cases %}
+<div class="section">
+  <div class="part-label">PART 06</div>
+  <div class="section-title">关键 Case 复盘 · 三层分析</div>
+  <div class="section-lead" style="margin-bottom:20px">
+    每个关键时刻都包含：<strong>时间戳 + 原话</strong> → 三层分析（表层做法 / 深层问题 / 正确做法）。点击 <span style="display:inline-flex;align-items:center;gap:4px;padding:1px 8px;background:rgba(39,174,96,.1);border-radius:3px;font-size:12px;color:var(--green)">▶ 0:01:34</span> 跳转录音；点击「查看详情」展开三层分析。
+  </div>
+
+  {% for c in cases %}
+  {% set kind = c.kind or 'miss' %}
+  {% set cc_class = 'cc-good' if kind == 'good' else 'cc-miss' %}
+  {% set badge_kind = 'good' if kind == 'good' else 'miss' %}
+  {% set badge_txt = '做到' if kind == 'good' else ('做错' if kind == 'bad' else '遗漏') %}
+  {% set ts_class = 'ts-bad' if kind == 'bad' else ('ts-miss' if kind == 'miss' else '') %}
+  <div class="case-card {{ cc_class }}">
+    <div class="case-head">
+      <div class="case-num {% if kind == 'good' %}cna{% else %}cn{{ ((loop.index - 1) % 5) + 1 }}{% endif %}" style="font-size:{{ 14 if kind=='good' else 18 }}px">{{ '✓' if kind == 'good' else loop.index }}</div>
+      <div style="flex:1;min-width:0">
+        <div class="case-head-title">{{ c.title }} <span class="case-badge {{ badge_kind }}">{{ badge_txt }}</span></div>
+        <div class="case-head-sub" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          {% if c.timestamp_seconds is not none %}
+          <button class="ts-btn {{ ts_class }}" onclick="seekAudio({{ c.timestamp_seconds or 0 }}, {{ (c.segment or 1) - 1 }})" title="跳转录音">▶ {{ c.timestamp_label or '' }}</button>
+          {% endif %}
+          {% if c.quote %}<span style="color:var({{ '--red' if kind=='bad' else ('--orange' if kind=='miss' else '--text-mute') }});font-style:italic">"{{ c.quote }}"</span>{% endif %}
+        </div>
+      </div>
+      <button type="button" class="case-toggle" onclick="toggleCase(this)">查看详情 ▾</button>
+    </div>
+    <div class="case-body-3" style="display:none">
+      <div class="case-col surface">
+        <div class="clbl">{{ '表层做法' if kind=='good' else '表层问题' }}</div>
+        <div class="ctxt">{{ c.surface|md_inline|safe }}</div>
+      </div>
+      <div class="case-col keep">
+        <div class="clbl">{{ '值得保留' if kind=='good' else '深层问题' }}</div>
+        <div class="ctxt">{{ c.deep|md_inline|safe }}</div>
+      </div>
+      <div class="case-col improve">
+        <div class="clbl">{{ '可优化方向' if kind=='good' else '正确做法' }}</div>
+        <div class="ctxt">{{ c.improve|md_inline|safe }}</div>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  {% if report.cases_summary %}
+  <div class="case-summary">
+    <div style="font-size:11px;letter-spacing:.12em;color:rgba(255,255,255,.5);margin-bottom:8px;text-transform:uppercase">一句话总结整个 Case</div>
+    {{ report.cases_summary|md_inline|safe }}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- PART 07 -->
+{% if logic %}
+<div class="section">
+  <div class="part-label">PART 07</div>
+  <div class="section-title">逻辑总结 · 顾问能力训练路径</div>
+
+  <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">接诊失败的底层逻辑链</div>
+
+  {% if logic.bad_chain %}
+  <div class="logic-chain bad" style="margin-bottom:8px">
+    <span class="logic-label bad">顾问的思维模式（实际）</span>
+    {{ logic.bad_chain|md_inline|safe }}
+    {% if logic.bad_chain_note %}<br><span style="font-size:12px;color:var(--red)">↳ {{ logic.bad_chain_note }}</span>{% endif %}
+  </div>
+  {% endif %}
+  {% if logic.good_chain %}
+  <div class="logic-chain good mb16">
+    <span class="logic-label good">正确的思维模式</span>
+    {{ logic.good_chain|md_inline|safe }}
+  </div>
+  {% endif %}
+
+  {% if logic.missing_step %}
+  <div class="box box-orange mb16">
+    <strong>缺失的那一步是：</strong>{{ logic.missing_step|md_inline|safe }}
+  </div>
+  {% endif %}
+
+  {% if logic.training %}
+  <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">顾问能力提升训练路径</div>
+  <!-- Desktop table -->
+  <table class="cap-tbl hide-on-mobile">
+    <thead><tr><th style="width:100px">接待阶段</th><th style="width:40%">当前问题</th><th>需要训练的能力</th></tr></thead>
+    <tbody>
+      {% for t in logic.training %}
+      <tr>
+        <td class="cap-stage">{{ t.stage }}</td>
+        <td class="cap-issue">{{ t.issue }}</td>
+        <td class="cap-train">{{ t.skill|md_inline|safe }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <!-- Mobile cards -->
+  <div class="show-on-mobile">
+    {% for t in logic.training %}
+    <div class="m-card">
+      <div class="m-card-head">{{ t.stage }}</div>
+      <div class="m-card-row"><span class="m-card-label">当前问题</span><span class="m-card-val m-val-red">{{ t.issue }}</span></div>
+      <div class="m-card-row"><span class="m-card-label">需要训练的能力</span><span class="m-card-val">{{ t.skill|md_inline|safe }}</span></div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- PART 08 -->
+{% if ns %}
+<div class="section">
+  <div class="part-label">PART 08</div>
+  <div class="section-title">下一步动作 · 回店规划</div>
+
+  <div class="next-grid">
+
+    {% if ns.return_scripts %}
+    <div class="next-card">
+      <div class="next-card-head nc1">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        回店切入话术
+      </div>
+      <div class="next-card-body">
+        {% for s in ns.return_scripts %}
+        <div style="margin-bottom:14px">
+          <div style="font-weight:700;color:var(--navy);margin-bottom:6px">{{ s.title }}</div>
+          <div style="font-style:italic;color:var(--text-mid);border-left:3px solid var(--border);padding-left:10px;line-height:1.9">
+            {{ s.body|md_inline|safe }}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if ns.priority_projects %}
+    <div class="next-card">
+      <div class="next-card-head nc2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        优先推荐项目
+      </div>
+      <div class="next-card-body">
+        {% for p in ns.priority_projects %}
+        <div class="next-priority">
+          <div class="np-num">{{ loop.index }}</div>
+          <div class="np-body">
+            <div class="np-name">{{ p.name }}</div>
+            <div class="np-desc">{{ p.desc }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% set objections = ns.medical_objections or ns.objection_qa %}
+    {% if objections %}
+    <div class="next-card">
+      <div class="next-card-head nc3">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        泛医疗异议应答库
+      </div>
+      <div class="next-card-body">
+        {% for qa in objections %}
+        <div class="next-qa">
+          <div class="next-q">Q: {{ qa.objection or qa.q }}</div>
+          <div class="next-a">{{ (qa.answer or qa.a)|md_inline|safe }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+
+  {% if ns.pain_entry_scripts %}
+  <div style="margin-top:20px">
+    <div style="font-size:15px;font-weight:700;color:var(--navy);margin-bottom:12px">痛点切入四步话术</div>
+    <!-- Desktop table -->
+    <table class="strategy-tbl hide-on-mobile">
+      <thead>
+        <tr>
+          <th style="width:120px">痛点</th>
+          <th style="width:30%">① 切入（含顾客名）</th>
+          <th>② 原理</th>
+          <th>③ 方向（医美 vs 我们）</th>
+          <th style="width:18%">④ 销售衔接</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in ns.pain_entry_scripts %}
+        <tr>
+          <td class="strat-name">{{ p.pain_name }}</td>
+          <td><em>{{ p.entry }}</em></td>
+          <td>{{ p.principle }}</td>
+          <td>{{ p.direction }}</td>
+          <td>{{ p.sales_link }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <!-- Mobile cards -->
+    <div class="show-on-mobile">
+      {% for p in ns.pain_entry_scripts %}
+      <div class="m-card">
+        <div class="m-card-head">{{ p.pain_name }}</div>
+        <div class="m-card-row"><span class="m-card-label">① 切入</span><span class="m-card-val"><em>{{ p.entry }}</em></span></div>
+        <div class="m-card-row"><span class="m-card-label">② 原理</span><span class="m-card-val">{{ p.principle }}</span></div>
+        <div class="m-card-row"><span class="m-card-label">③ 方向</span><span class="m-card-val">{{ p.direction }}</span></div>
+        <div class="m-card-row"><span class="m-card-label">④ 销售衔接</span><span class="m-card-val">{{ p.sales_link }}</span></div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ── PART 09 竞品分析 ── #}
+{% set ext = report.external_signals %}
+{% set competitors = [] %}
+{% if ext %}
+  {% for item in ext.medical_aesthetics or [] %}{% set _ = competitors.append(item) %}{% endfor %}
+  {% for item in ext.other_institutions or [] %}{% set _ = competitors.append(item) %}{% endfor %}
+  {% for item in ext.external_brands or [] %}{% set _ = competitors.append(item) %}{% endfor %}
+{% endif %}
+{% if competitors %}
+<div class="section">
+  <div class="part-label">PART 09</div>
+  <div class="section-title">竞品分析 · 顾问售后学习清单</div>
+  <div class="section-lead">顾客本次提到的外部品牌/项目/机构，顾问需要在售后了解清楚，下次顾客再提时能接得住。</div>
+
+  <!-- Desktop table -->
+  <table class="tbl hide-on-mobile">
+    <thead>
+      <tr>
+        <th style="width:120px">竞品名称</th>
+        <th style="width:100px">类型</th>
+        <th style="width:35%">顾客原话</th>
+        <th>顾问应了解</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in competitors %}
+      <tr>
+        <td style="font-weight:600;color:var(--navy)">{{ c.item }}</td>
+        <td><span class="ov-tag warn" style="font-size:11px;padding:2px 8px">{{ c.type or '竞品' }}</span></td>
+        <td style="font-style:italic;color:var(--text-mute)">{% if c.customer_quote %}「{{ c.customer_quote }}」{% endif %}</td>
+        <td style="color:var(--text-mid)">{{ c.competitor_learn }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- Mobile cards -->
+  <div class="show-on-mobile">
+    {% for c in competitors %}
+    <div class="m-card">
+      <div class="m-card-head">
+        {{ c.item }}
+        <span class="ov-tag warn" style="font-size:11px;padding:2px 8px;margin-left:8px">{{ c.type or '竞品' }}</span>
+      </div>
+      {% if c.customer_quote %}
+      <div class="m-card-row"><span class="m-card-label">顾客原话</span><span class="m-card-val" style="font-style:italic">「{{ c.customer_quote }}」</span></div>
+      {% endif %}
+      <div class="m-card-row"><span class="m-card-label">顾问应了解</span><span class="m-card-val">{{ c.competitor_learn }}</span></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{# ── PART 10 顾客标签（动态：按服务次数统计 + 本次新增/历史 + 时间区间）── #}
+<div class="section" id="tagSection" style="display:none">
+  <div class="part-label">PART 10</div>
+  <div class="section-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+    <span>顾客标签 · 画像积累</span>
+    <select id="tagRange" onchange="loadCustomerTags()" style="border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:12px;color:var(--text-mid);font-family:inherit">
+      <option value="all">历史区间：至今</option>
+      <option value="30">近 30 天</option>
+      <option value="90">近 90 天</option>
+      <option value="180">近 180 天</option>
+      <option value="365">近 1 年</option>
+    </select>
+  </div>
+
+  <div id="tagCurrentWrap" style="margin-bottom:20px;display:none">
+    <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:10px">本次标签</div>
+    <div id="tagCurrent" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+  </div>
+
+  <div id="tagHistoryWrap" style="display:none">
+    <div style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:10px">历次接诊累积标签 <span style="font-size:11px;color:var(--text-mute);font-weight:normal">（×n = 有 n 次服务提到）</span></div>
+    <div id="tagHistory" style="display:flex;flex-wrap:wrap;gap:8px"></div>
+  </div>
+
+  <div id="tagFirstVisit" style="display:none;font-size:13px;color:var(--text-mute)">首次到访，暂无历史标签。</div>
+</div>
+
+{# ── PART 11 成交诊断 ── #}
+{% set diag = report.deal_diagnosis %}
+{% if diag and diag.dimensions %}
+<div class="section">
+  <div class="part-label">PART 11</div>
+  <div class="section-title">成交诊断 · 5 维度判断</div>
+
+  {# 成交状态 + 金额 + 风险等级 三联条 #}
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:20px;padding:16px 20px;background:var(--bg-light);border-radius:6px;border:1px solid var(--border)">
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:13px;color:var(--text-mute)">成交状态</span>
+      {% if diag.deal_result %}
+        <span class="ov-tag good">✅ 已成交</span>
+      {% else %}
+        <span class="ov-tag bad">❌ 未成交</span>
+      {% endif %}
+    </div>
+    {% if diag.deal_result %}
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:13px;color:var(--text-mute)">成交金额</span>
+      <span style="font-size:15px;font-weight:700;color:var(--navy)">{{ diag.deal_amount or '未识别' }}</span>
+    </div>
+    {% endif %}
+    <div style="display:flex;align-items:center;gap:8px">
+      <span style="font-size:13px;color:var(--text-mute)">风险等级</span>
+      {% if diag.risk_level == 'high' %}
+        <span class="ov-tag bad">🔴 差评高风险</span>
+      {% elif diag.risk_level == 'medium' %}
+        <span class="ov-tag warn">🟡 留意</span>
+      {% else %}
+        <span class="ov-tag good">🟢 正常</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% set dim_labels = {
+    'customer_moved':    '顾客被打动',
+    'customer_agreed':   '顾客认可方案',
+    'effect_satisfied':  '效果感受到位',
+    'price_matched':     '价格被匹配',
+    'urgency_built':     '紧迫感建立'
+  } %}
+  {% set status_class = {'ok':'good','partial':'warn','missing':'bad'} %}
+  {% set status_label = {'ok':'到位','partial':'部分','missing':'缺失'} %}
+  <!-- Desktop table -->
+  <table class="ov-tbl hide-on-mobile">
+    <thead class="ov-head"><tr><th style="width:130px">维度</th><th style="width:80px">判断</th><th>依据</th></tr></thead>
+    <tbody>
+      {% for k, label in dim_labels.items() %}
+      {% set dv = diag.dimensions[k] %}
+      {% if dv %}
+      <tr>
+        <td class="ov-dim">{{ label }}</td>
+        <td><span class="ov-tag {{ status_class.get(dv.status, 'warn') }}">{{ status_label.get(dv.status, dv.status) }}</span></td>
+        <td>{{ dv.note }}</td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  <!-- Mobile cards -->
+  <div class="show-on-mobile">
+    {% for k, label in dim_labels.items() %}
+    {% set dv = diag.dimensions[k] %}
+    {% if dv %}
+    <div class="m-card">
+      <div class="m-card-head">{{ label }}</div>
+      <div class="m-card-row"><span class="m-card-label">判断</span><span class="m-card-val"><span class="ov-tag {{ status_class.get(dv.status, 'warn') }}">{{ status_label.get(dv.status, dv.status) }}</span></span></div>
+      <div class="m-card-row"><span class="m-card-label">依据</span><span class="m-card-val">{{ dv.note }}</span></div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% if diag.risk_alert %}
+  <div class="box box-red" style="margin-top:16px"><strong>⚠️ 差评/流失风险预警：</strong>{{ diag.risk_text|md_inline|safe }}</div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endif %}{# end if report #}
+
+<!-- 老板点评 -->
+<div class="section">
+  <div class="part-label">老板点评</div>
+  <div class="section-title">专家点评记录</div>
+
+  <div class="boss-section">
+    <div class="boss-header">
+      <div class="boss-avatar">老</div>
+      <div class="boss-name">老板点评</div>
+      <div class="boss-time" id="bossNow"></div>
+    </div>
+
+    <div class="boss-input-label">新增点评（提交后会追加到下方）</div>
+    <textarea class="boss-textarea" id="bossInput" placeholder="在这里输入新的点评……例如：刘佳佳这个顾客性格慢热，赞美式破冰其实不适合…"></textarea>
+    <div>
+      <button class="boss-submit" onclick="submitComment()">提交点评</button>
+      <span id="bossMsg" style="margin-left:12px;font-size:12px;color:var(--text-mute)"></span>
+    </div>
+
+    <div id="extraComments" style="margin-top:16px">
+      {% for e in evaluations %}
+      <div class="comment-item" data-id="{{ e.id }}">
+        <div class="comment-head">
+          <span class="comment-time">{{ e.created_at }}</span>
+          <button class="comment-del" onclick="deleteComment({{ e.id }})">删除</button>
+        </div>
+        <div class="comment-body">{{ (e.comment or e.wrong_points or e.improvement or e.correct_practice or '') }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+
+</div><!-- /wrap -->
+
+<script>
+const SESSION_ID = {{ sess.id }};
+const RECORDINGS = {{ recordings|tojson }};
+const BASE = {{ request.script_root|tojson }};
+const ROLE = {{ role|tojson }};
+async function loadTaskStatus() {
+  try {
+    const resp = await fetch(`${BASE}/api/session/${SESSION_ID}/tasks`);
+    const data = await resp.json();
+    const tasks = data.tasks || [];
+    const doneCount = tasks.filter(t => t.status === 'done').length;
+    document.getElementById('task-stat-summary').textContent =
+      `${doneCount}/${tasks.length} 完成`;
+    const statusEmoji = { done:'✅', running:'⏳', failed:'❌', missing:'⚪' };
+    const statusColor = { done:'#27ae60', running:'#3498db', failed:'#e74c3c', missing:'#95a5a6' };
+    document.getElementById('task-stat-list').innerHTML = tasks.map(t => `
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #e8ecf0">
+        <span style="width:24px">${statusEmoji[t.status] || '⚪'}</span>
+        <span style="width:32px;font-family:monospace;color:#8a95a3">${t.task_id}</span>
+        <span style="flex:1">${t.name}</span>
+        <span style="width:80px;color:${statusColor[t.status] || '#95a5a6'}">${t.status}</span>
+        <span style="width:110px;font-size:11px;color:#8a95a3">${t.updated_at || ''}</span>
+        <button class="rec-btn" style="font-size:11px;padding:3px 10px"
+                onclick="rerunTask('${t.task_id}')">重跑</button>
+      </div>
+      ${t.error ? `<div style="margin-left:34px;font-size:11px;color:#e74c3c;padding:2px 0">${t.error}</div>` : ''}
+    `).join('');
+  } catch(e) {
+    console.error('loadTaskStatus failed', e);
+  }
+}
+
+let _fastPollTimer = null;
+function startFastPoll() {
+  // 重跑后每 3 秒刷一次，共 2 分钟，之后回到常规 15s 轮询
+  let ticks = 0;
+  const MAX_TICKS = 40; // 40×3s = 120s
+  if (_fastPollTimer) clearInterval(_fastPollTimer);
+  _fastPollTimer = setInterval(async () => {
+    await loadTaskStatus();
+    ticks++;
+    if (ticks >= MAX_TICKS) {
+      clearInterval(_fastPollTimer);
+      _fastPollTimer = null;
+    }
+  }, 3000);
+}
+
+async function rerunTask(taskId) {
+  if (!confirm(`重跑任务 ${taskId}？`)) return;
+  const resp = await fetch(`${BASE}/api/session/${SESSION_ID}/task/${taskId}/rerun`,
+                           {method:'POST'});
+  const data = await resp.json();
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+  // 立刻刷一次，再高频轮询直到完成
+  await loadTaskStatus();
+  startFastPoll();
+}
+
+async function fillMissingTasks() {
+  if (!confirm('补跑所有缺失/失败的任务？')) return;
+  const resp = await fetch(`${BASE}/api/session/${SESSION_ID}/tasks/fill-missing`,
+                           {method:'POST'});
+  const data = await resp.json();
+  if (data.status === 'all_done') {
+    alert('所有任务都已完成，无需补跑');
+    return;
+  }
+  await loadTaskStatus();
+  startFastPoll();
+}
+
+loadTaskStatus();
+setInterval(loadTaskStatus, 15000);
+
+function toggleSub(el) {
+  el.classList.toggle('open');
+  const detail = el.querySelector('.sub-detail');
+  detail.classList.toggle('open');
+}
+
+// ── 录音面板：toggle / 切段（按需签名）/ 时间戳跳转 ──
+let _currentSegIdx = -1;
+
+function toggleRec() {
+  const panel = document.getElementById('recPanel');
+  if (!panel) return;
+  panel.classList.toggle('open');
+  // 首次打开：自动加载第一段（按需签名）
+  if (panel.classList.contains('open') && _currentSegIdx < 0 && RECORDINGS.length > 0) {
+    switchSeg(0);
+  }
+}
+
+// 防止 race condition：只让最后一次切段的结果生效
+let _segReqSeq = 0;
+
+// 按需向后端请求签名 URL（不再依赖页面加载时的预签名）
+async function switchSeg(idx) {
+  idx = parseInt(idx, 10);
+  const rec = RECORDINGS[idx];
+  if (!rec) return;
+  const myReq = ++_segReqSeq;
+  const audio = document.getElementById('recAudio');
+  const src = document.getElementById('recAudioSrc');
+  const tbody = document.getElementById('recTranscriptBody');
+  const sel = document.getElementById('segSelect');
+  if (sel && parseInt(sel.value, 10) !== idx) sel.value = String(idx);
+  if (tbody) tbody.innerHTML = (rec.asr_transcript || '（暂无转录文本）').replace(/\n/g, '<br>');
+  // 说话人警告条
+  const warnBox = document.getElementById('speakerWarnBox');
+  if (warnBox) {
+    const needConfirm = rec.asr_speaker_warning && !rec.speaker_confirmed;
+    warnBox.style.display = needConfirm ? 'block' : 'none';
+    const spk = document.getElementById('spkCount');
+    if (spk) spk.textContent = rec.asr_speaker_count || '?';
+    const msg = document.getElementById('spkMsg');
+    if (msg) msg.textContent = '';
+  }
+  // 立即停止当前播放并清空，避免上一段继续响
+  try { audio.pause(); } catch (_) {}
+  const wasPlaying = !audio.paused && _currentSegIdx >= 0 && _currentSegIdx !== idx;
+  const prevSeg = _currentSegIdx;
+  _currentSegIdx = idx;
+  try {
+    const resp = await fetch(`${BASE}/api/recording/${rec.id}/url`, { credentials: 'same-origin' });
+    const data = await resp.json();
+    if (myReq !== _segReqSeq) return;  // 已被更新的请求覆盖，丢弃
+    if (!data.url) throw new Error(data.error || '获取播放链接失败');
+    src.src = data.url;
+    audio.src = data.url;  // 双保险：部分浏览器 source.src 不触发 reload
+    audio.load();
+    // 用户主动切段（不是初次自动打开）则继续自动播放，避免还要再点一次
+    if (prevSeg >= 0 && prevSeg !== idx) {
+      audio.play().catch(function(){});
+    }
+  } catch (e) {
+    if (myReq !== _segReqSeq) return;
+    src.src = '';
+    audio.removeAttribute('src');
+    audio.load();
+    alert('加载录音失败：' + e.message);
+  }
+}
+
+// 说话人确认 / 解绑
+async function confirmSpeakers(action) {
+  const rec = RECORDINGS[_currentSegIdx];
+  if (!rec) return;
+  const keepBtn = document.getElementById('spkKeepBtn');
+  const unbindBtn = document.getElementById('spkUnbindBtn');
+  const msg = document.getElementById('spkMsg');
+  if (action === 'unbind' && !confirm('解绑后该录音将从本接诊移除，回到"未入库"列表。确认？')) return;
+  [keepBtn, unbindBtn].forEach(b => { if (b) b.disabled = true; });
+  if (msg) msg.textContent = '提交中…';
+  // admin/super 走 /api/recording/，consultant 走 /api/consultant/recordings/
+  const url = (ROLE === 'consultant')
+    ? `${BASE}/api/consultant/recordings/${rec.id}/confirm_speakers`
+    : `${BASE}/api/recording/${rec.id}/confirm_speakers`;
+  try {
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({action}),
+    });
+    const d = await resp.json();
+    if (d.error) {
+      if (msg) msg.textContent = '失败：' + d.error;
+      [keepBtn, unbindBtn].forEach(b => { if (b) b.disabled = false; });
+      return;
+    }
+    if (action === 'keep') {
+      RECORDINGS[_currentSegIdx].speaker_confirmed = 1;
+      const tip = d.analysis_triggered ? '已确认，分析已开始重跑…' : '已确认';
+      if (msg) msg.textContent = tip;
+      setTimeout(() => location.reload(), 800);
+    } else {
+      if (msg) msg.textContent = '已解绑';
+      setTimeout(() => location.href = BASE + '/', 600);
+    }
+  } catch (e) {
+    if (msg) msg.textContent = '失败：' + e;
+    [keepBtn, unbindBtn].forEach(b => { if (b) b.disabled = false; });
+  }
+}
+
+// 进入页面时若有待确认录音，自动打开面板定位到该录音
+(function autoOpenIfNeedsConfirm() {
+  if (!RECORDINGS || !RECORDINGS.length) return;
+  const idx = RECORDINGS.findIndex(r => r.asr_speaker_warning && !r.speaker_confirmed);
+  if (idx < 0) return;
+  const panel = document.getElementById('recPanel');
+  if (panel) panel.classList.add('open');
+  switchSeg(idx);
+})();
+
+// 点外部关闭面板
+document.addEventListener('click', function(e) {
+  const panel = document.getElementById('recPanel');
+  const btn = document.querySelector('.rec-btn[onclick*="toggleRec"]');
+  if (panel && panel.classList.contains('open') &&
+      !panel.contains(e.target) && (!btn || !btn.contains(e.target))) {
+    panel.classList.remove('open');
+  }
+});
+
+// Case 时间戳跳转：seekAudio(seconds, segIdx)
+async function seekAudio(seconds, segIdx) {
+  segIdx = segIdx || 0;
+  const panel = document.getElementById('recPanel');
+  if (panel) panel.classList.add('open');
+  await switchSeg(segIdx);
+  const audio = document.getElementById('recAudio');
+  if (!audio) return;
+  function doSeek() {
+    audio.currentTime = seconds;
+    audio.play().catch(function(){});
+  }
+  if (audio.readyState >= 1) doSeek();
+  else audio.addEventListener('loadedmetadata', doSeek, { once: true });
+}
+
+// ── Case 卡片：展开/收起三层分析 ──
+function toggleCase(btn) {
+  const card = btn.closest('.case-card');
+  const body = card.querySelector('.case-body-3');
+  if (!body) return;
+  const expanded = body.style.display !== 'none';
+  body.style.display = expanded ? 'none' : '';
+  btn.textContent = expanded ? '查看详情 ▾' : '收起 ▴';
+  btn.classList.toggle('open', !expanded);
+}
+
+// ── 质检评分展开/收起 ──
+function toggleScoring() {
+  const detail = document.getElementById('scoring-detail');
+  const btn = document.getElementById('scoring-toggle-btn');
+  if (detail.style.display === 'none') {
+    detail.style.display = '';
+    btn.textContent = '收起详细评分 ▴';
+  } else {
+    detail.style.display = 'none';
+    btn.textContent = '查看详细评分 ▾';
+  }
+}
+
+
+function submitComment() {
+  const input = document.getElementById('bossInput');
+  const text = input.value.trim();
+  const msg = document.getElementById('bossMsg');
+  if (!text) { msg.textContent = '请填写内容'; return; }
+  msg.textContent = '提交中…';
+  fetch(`${BASE}/api/session/${SESSION_ID}/evaluate`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({comment: text})
+  }).then(r => r.json()).then(data => {
+    if (data.ok && data.evaluation) {
+      const c = document.createElement('div');
+      c.className = 'comment-item';
+      c.dataset.id = data.evaluation.id;
+      c.innerHTML = `<div class="comment-head"><span class="comment-time">${data.evaluation.created_at}</span><button class="comment-del" onclick="deleteComment(${data.evaluation.id})">删除</button></div><div class="comment-body"></div>`;
+      c.querySelector('.comment-body').textContent = data.evaluation.comment;
+      document.getElementById('extraComments').insertBefore(c, document.getElementById('extraComments').firstChild);
+      input.value = '';
+      msg.textContent = '✓ 已保存';
+      setTimeout(() => msg.textContent = '', 2000);
+    } else {
+      msg.textContent = data.error || '提交失败';
+    }
+  }).catch(e => { msg.textContent = '网络错误：' + e; });
+}
+
+function deleteComment(eid) {
+  if (!confirm('删除这条点评？')) return;
+  fetch(`${BASE}/api/evaluation/${eid}`, {method: 'DELETE'})
+    .then(r => r.json()).then(data => {
+      if (data.ok) {
+        const el = document.querySelector(`.comment-item[data-id="${eid}"]`);
+        if (el) el.remove();
+      } else alert(data.error || '删除失败');
+    });
+}
+
+async function deleteReport() {
+  if (!confirm('确认清除分析报告？录音和接诊记录保留，可重新分析。')) return;
+  const r = await fetch(`${BASE}/api/session/${SESSION_ID}/report/delete`, {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) location.reload();
+  else alert(d.error || '失败');
+}
+
+async function deleteSession() {
+  if (!confirm('⚠ 完全删除此接诊？录音文件、分析报告、接诊记录将全部删除，不可恢复！')) return;
+  if (!confirm('再次确认：此操作无法撤销，是否继续？')) return;
+  const r = await fetch(`${BASE}/api/session/${SESSION_ID}/delete`, {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) location.href = BASE + '/';
+  else alert(d.error || '失败');
+}
+
+async function deleteAllRecs() {
+  const btn = document.getElementById('delAllRecsBtn');
+  if (!confirm('确认删除该接诊的全部录音文件？此操作不可恢复！')) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${BASE}/api/session/${SESSION_ID}/recordings/delete`, {method: 'DELETE'});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '删除失败');
+    location.reload();
+  } catch (e) {
+    alert(e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function requestDeleteAllRecs() {
+  const btn = document.getElementById('reqDelAllBtn');
+  const reason = prompt('申请删除原因（可选）：');
+  if (reason === null) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(`${BASE}/api/session/${SESSION_ID}/delete-request`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason}),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '申请失败');
+    if (btn) { btn.textContent = '已申请删除'; btn.style.opacity = '0.5'; }
+  } catch (e) {
+    alert(e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function deleteCurrentRec() {
+  const rec = RECORDINGS[_currentSegIdx >= 0 ? _currentSegIdx : 0];
+  if (!rec) return;
+  const msg = document.getElementById('delRecMsg');
+  if (!confirm(`确认删除第 ${(_currentSegIdx >= 0 ? _currentSegIdx : 0) + 1} 段录音？此操作不可恢复！`)) return;
+  try {
+    const r = await fetch(`${BASE}/api/recording/${rec.id}/delete`, {method: 'DELETE'});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '删除失败');
+    location.reload();
+  } catch (e) {
+    if (msg) { msg.textContent = e.message; }
+  }
+}
+
+async function requestDeleteCurrentRec() {
+  const rec = RECORDINGS[_currentSegIdx >= 0 ? _currentSegIdx : 0];
+  if (!rec) return;
+  const msg = document.getElementById('delRecMsg');
+  const reason = prompt('申请删除原因（可选）：');
+  if (reason === null) return; // 取消
+  try {
+    const r = await fetch(`${BASE}/api/recording/${rec.id}/delete-request`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason}),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '申请失败');
+    if (msg) { msg.textContent = '申请已提交，等待管理员审批。'; }
+    const btn = document.getElementById('reqDelRecBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '已申请'; }
+  } catch (e) {
+    if (msg) { msg.textContent = e.message; }
+  }
+}
+
+function reanalyze() {
+  if (!confirm('重新分析这次接诊？预计 2-6 分钟，页面会显示实时进度。')) return;
+  const btn = document.getElementById('reanalyzeBtn');
+  if (btn) { btn.disabled = true; btn.textContent = '触发中…'; }
+  fetch(`${BASE}/api/session/${SESSION_ID}/analyze`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({})
+  }).then(r => r.json()).then(data => {
+    if (data.status) {
+      // 直接刷新整页（会进入分析中视图）
+      location.reload();
+    } else {
+      alert(data.error || '触发失败');
+      if (btn) { btn.disabled = false; btn.textContent = '⟳ 重跑'; }
+    }
+  });
+}
+
+// ── Part 折叠/展开 ──
+(function initPartCollapse() {
+  const sections = document.querySelectorAll('.section');
+  sections.forEach(function(sec) {
+    const partLabel = sec.querySelector(':scope > .part-label');
+    if (!partLabel) return; // 老板点评 section 没有 part-label，跳过
+    const isFirst = partLabel.textContent.trim() === 'PART 01';
+
+    // 把 part-label 和 section-title 包成可点击的 header
+    const title = sec.querySelector(':scope > .section-title');
+    const header = document.createElement('div');
+    header.className = 'part-collapse-header';
+    header.style.cssText = 'display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none';
+
+    // 插入 header 到 section 最前面，把 partLabel 和 title 移进去
+    sec.insertBefore(header, partLabel);
+    header.appendChild(partLabel);
+    if (title) header.appendChild(title);
+
+    // 折叠箭头
+    const arrow = document.createElement('span');
+    arrow.className = 'part-arrow';
+    arrow.style.cssText = 'margin-left:auto;font-size:14px;color:var(--text-mute);transition:transform .2s';
+    arrow.textContent = '▾';
+    header.appendChild(arrow);
+
+    // body wrapper 包住剩余内容
+    const body = document.createElement('div');
+    body.className = 'part-collapse-body';
+    while (sec.children.length > 1) { // header 已是第一个子元素
+      body.appendChild(sec.children[1]);
+    }
+    sec.appendChild(body);
+
+    // 点击展开提示
+    const hint = document.createElement('span');
+    hint.className = 'part-expand-hint';
+    hint.textContent = '点击展开';
+    hint.style.cssText = 'font-size:12px;color:#bcc5d0;margin-left:8px;font-weight:400;letter-spacing:0';
+    header.insertBefore(hint, arrow);
+
+    // 初始状态
+    if (!isFirst) {
+      body.style.display = 'none';
+      arrow.style.transform = 'rotate(-90deg)';
+      hint.style.display = '';
+    } else {
+      hint.style.display = 'none';
+    }
+
+    header.addEventListener('click', function() {
+      const collapsed = body.style.display === 'none';
+      body.style.display = collapsed ? '' : 'none';
+      arrow.style.transform = collapsed ? '' : 'rotate(-90deg)';
+      hint.style.display = collapsed ? 'none' : '';
+    });
+  });
+})();
+
+// ── 顾问报告查看埋点 ──
+(function initViewTracking() {
+  // 入口来源：?from=list / ?from=recording，无则 direct
+  const params = new URLSearchParams(location.search);
+  const source = params.get('from') || 'direct';
+
+  // 进入页面 → 上报一次 enter(overall)
+  try {
+    fetch(`${BASE}/api/report_view/enter`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: SESSION_ID, source: source}),
+      keepalive: true,
+    }).catch(()=>{});
+  } catch (e) {}
+
+  // 为每个 section 解析 part_key
+  const sections = [];
+  document.querySelectorAll('.section').forEach(sec => {
+    const lbl = sec.querySelector('.part-label');
+    if (!lbl) return;
+    const txt = lbl.textContent.trim();
+    const m = txt.match(/PART\s*0?(\d+)/i);
+    const key = m ? `part${parseInt(m[1],10)}` : `extra_${txt}`;
+    sec.dataset.partKey = key;
+    sections.push(sec);
+  });
+
+  // 每个 section 维护：accumulated_ms, last_visible_at, expanded_logged
+  const stat = new Map(); // key -> {acc, t0, enteredLogged}
+  sections.forEach(s => stat.set(s.dataset.partKey, {acc: 0, t0: 0, enteredLogged: false}));
+
+  function isExpanded(sec) {
+    const body = sec.querySelector(':scope > .part-collapse-body');
+    if (!body) return true; // 没折叠机制的（老板点评）默认展开
+    return body.style.display !== 'none';
+  }
+
+  function startCount(key) {
+    const s = stat.get(key);
+    if (!s || s.t0) return;
+    s.t0 = Date.now();
+  }
+  function stopCount(key) {
+    const s = stat.get(key);
+    if (!s || !s.t0) return;
+    s.acc += Date.now() - s.t0;
+    s.t0 = 0;
+  }
+  function logEnter(key) {
+    const s = stat.get(key);
+    if (!s || s.enteredLogged) return;
+    s.enteredLogged = true;
+    fetch(`${BASE}/api/report_view/part`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: SESSION_ID, part_key: key, event: 'enter'}),
+      keepalive: true,
+    }).catch(()=>{});
+  }
+
+  // IntersectionObserver：可见 + 已展开 才计时
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => {
+      const sec = e.target;
+      const key = sec.dataset.partKey;
+      sec._visible = e.isIntersecting && e.intersectionRatio > 0.15;
+      if (sec._visible && isExpanded(sec)) {
+        logEnter(key);
+        if (document.visibilityState === 'visible') startCount(key);
+      } else {
+        stopCount(key);
+      }
+    });
+  }, {threshold: [0, 0.15, 0.5]});
+  sections.forEach(s => io.observe(s));
+
+  // 折叠/展开切换时，重算所有可见 section 的状态
+  document.querySelectorAll('.part-collapse-header').forEach(h => {
+    h.addEventListener('click', () => {
+      setTimeout(() => {
+        sections.forEach(sec => {
+          const key = sec.dataset.partKey;
+          if (sec._visible && isExpanded(sec)) {
+            logEnter(key);
+            if (document.visibilityState === 'visible') startCount(key);
+          } else {
+            stopCount(key);
+          }
+        });
+      }, 0);
+    });
+  });
+
+  // 切走标签页 → 暂停所有；切回 → 对可见且展开的恢复计时
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      sections.forEach(sec => stopCount(sec.dataset.partKey));
+      flush();
+    } else {
+      sections.forEach(sec => {
+        if (sec._visible && isExpanded(sec)) startCount(sec.dataset.partKey);
+      });
+    }
+  });
+
+  // 上报累积时长
+  function flush() {
+    const payload = [];
+    stat.forEach((s, key) => {
+      if (s.acc >= 1000) {  // 至少 1 秒才上报
+        payload.push({key, ms: s.acc});
+        s.acc = 0;
+      }
+    });
+    if (!payload.length) return;
+    payload.forEach(p => {
+      const body = JSON.stringify({
+        session_id: SESSION_ID, part_key: p.key,
+        event: 'duration', duration_ms: p.ms,
+      });
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(`${BASE}/api/report_view/part`,
+          new Blob([body], {type: 'application/json'}));
+      } else {
+        fetch(`${BASE}/api/report_view/part`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body, keepalive: true,
+        }).catch(()=>{});
+      }
+    });
+  }
+
+  // 定时 flush（每 30s）+ 离开页面 flush
+  setInterval(() => {
+    // 先把当前正在计时的也滚一遍
+    sections.forEach(sec => {
+      const key = sec.dataset.partKey;
+      const s = stat.get(key);
+      if (s && s.t0) { s.acc += Date.now() - s.t0; s.t0 = Date.now(); }
+    });
+    flush();
+  }, 30000);
+
+  window.addEventListener('pagehide', () => {
+    sections.forEach(sec => stopCount(sec.dataset.partKey));
+    flush();
+  });
+})();
+
+// 初始化：transcriptBody 已在 Jinja 里直接填入第一段内容，无需 JS 初始化
+
+// 分析进行中/排队时，每 3s 轮询并更新进度文本
+{% if sess.display_status in ('running', 'queued') %}
+function highlightStep(progress) {
+  const p = progress || '';
+  const set = (id, on) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.toggle('active', on);
+  };
+  set('pstep-prep', /拼接|加载知识库/.test(p));
+  set('pstep-llm',  /深度思考|LLM|调用/.test(p));
+  set('pstep-parse', /解析|完成/.test(p));
+}
+setInterval(() => {
+  fetch(`${BASE}/api/session/${SESSION_ID}`).then(r => r.json()).then(d => {
+    if (d.display_status === 'done' || d.display_status === 'failed') {
+      location.reload();
+      return;
+    }
+    const title = document.getElementById('progressTitle');
+    const detail = document.getElementById('progressDetail');
+    if (title) title.textContent = (d.display_status === 'queued') ? '排队中…' : '分析正在进行中…';
+    if (detail) detail.textContent = d.analysis_progress || '正在初始化…';
+    highlightStep(d.analysis_progress);
+  }).catch(()=>{});
+}, 3000);
+// 立即高亮初始步骤
+highlightStep({{ (sess.analysis_progress or '')|tojson }});
+{% endif %}
+
+// ── PART 10 顾客标签（动态：按服务次数 + 本次新增/历史 + 时间区间）──
+function _tagEsc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function loadCustomerTags() {
+  const rng = (document.getElementById('tagRange')||{}).value || 'all';
+  fetch(`${BASE}/api/session/${SESSION_ID}/customer_tags?range=${rng}`)
+    .then(r => r.json()).then(d => {
+      const sec = document.getElementById('tagSection');
+      if (!sec) return;
+      const cur = d.current_tags || [], hist = d.history || [];
+      if (!cur.length && !hist.length && !d.first_visit) { sec.style.display = 'none'; return; }
+      sec.style.display = '';
+      const cw = document.getElementById('tagCurrentWrap'), cc = document.getElementById('tagCurrent');
+      if (cur.length) {
+        cw.style.display = '';
+        cc.innerHTML = cur.map(t => t.is_new
+          ? `<span style="background:rgba(34,197,94,.14);color:#15803d;border:1px solid rgba(34,197,94,.45);border-radius:99px;padding:4px 12px;font-size:13px">${_tagEsc(t.tag)} <span style="font-size:11px;margin-left:2px">· 新增</span></span>`
+          : `<span style="background:rgba(74,144,217,.16);color:var(--blue);border:1px solid rgba(74,144,217,.4);border-radius:99px;padding:4px 12px;font-size:13px">${_tagEsc(t.tag)} <span style="font-size:11px;color:var(--text-mute);margin-left:2px">×1</span></span>`
+        ).join('');
+      } else { cw.style.display = 'none'; }
+      const hw = document.getElementById('tagHistoryWrap'), hb = document.getElementById('tagHistory'), fv = document.getElementById('tagFirstVisit');
+      if (hist.length) {
+        hw.style.display = ''; fv.style.display = 'none';
+        hb.innerHTML = hist.map(t => {
+          const idx = Math.min((t.count || 1) - 1, 3);
+          const op = [0.5, 0.65, 0.8, 1.0][idx];
+          const cntHtml = (t.count > 1) ? ` <span style="font-size:11px;color:var(--text-mute);margin-left:2px">×${t.count}</span>` : '';
+          return `<span style="background:rgba(28,52,97,${op*0.12});color:var(--navy);border:1px solid rgba(28,52,97,${op*0.25});border-radius:99px;padding:4px 12px;font-size:13px">${_tagEsc(t.tag)}${cntHtml}</span>`;
+        }).join('');
+      } else {
+        hw.style.display = 'none';
+        fv.textContent = d.first_visit ? '首次到访，暂无历史标签。' : '该时间区间内暂无历史标签。';
+        fv.style.display = '';
+      }
+    }).catch(() => {});
+}
+loadCustomerTags();
+
+// ============ 管理员/店长：详情页换绑 ============
+function _rbEsc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function _curRec() {
+  const idx = _currentSegIdx >= 0 ? _currentSegIdx : 0;
+  return RECORDINGS[idx] || null;
+}
+async function downloadCurrentRec() {
+  const rec = _curRec();
+  if (!rec) { alert('请先选择一段录音'); return; }
+  try {
+    const r = await fetch(`${BASE}/api/recording/${rec.id}/url?download=1`, { credentials: 'same-origin' });
+    const d = await r.json();
+    if (!d.url) throw new Error(d.error || '获取下载链接失败');
+    const a = document.createElement('a');
+    a.href = d.url; a.download = '';
+    document.body.appendChild(a); a.click(); a.remove();
+  } catch (e) { alert('下载失败：' + e.message); }
+}
+async function splitCurrentRec() {
+  const rec = _curRec();
+  if (!rec) { alert('请先选择一段录音'); return; }
+  const audio = document.getElementById('recAudio');
+  const t = audio ? (audio.currentTime || 0) : 0;
+  if (t < 0.5) { alert('请先在播放器里把进度条拖到要切分的位置（不要太靠近开头），再点分割'); return; }
+  const mm = Math.floor(t / 60), ss = Math.floor(t % 60);
+  const pos = `${mm}分${ss < 10 ? '0' : ''}${ss}秒`;
+  if (!confirm(`将在 ${pos} 处把这段录音切成两段。\n\n两段都留在当前接诊里，转录会按切点自动切开（不重新转写），可分别用「换绑当前录音段」绑到对应客人。\n原录音会被替换。确认分割？`)) return;
+  try {
+    const r = await fetch(`${BASE}/api/admin/recordings/${rec.id}/split`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ at_seconds: t }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '分割失败');
+    alert(d.reasr
+      ? '已切成两段。原录音尚未转写，两段将各自重新转写，刷新后可分别换绑。'
+      : '已切成两段，转录已按切点切开。刷新后可分别换绑。');
+    location.reload();
+  } catch (e) { alert('分割失败：' + e.message); }
+}
+let _arbAll = [];           // 当前列表里的客人（当日接诊 / 搜索结果）
+let _arbCurId = null;       // 当前客人 id（从列表排除）
+let _arbAdded = new Set();  // 本次弹窗里新建的客人 id（仅这些显示删除）
+let _arbSel = null;         // 已选中的客人对象
+let _arbSearchTimer = null;
+function _arbAvatarColor(s) {
+  let h = 0; for (let i = 0; i < (s||'').length; i++) h = (h*31 + s.charCodeAt(i)) % 360;
+  return `hsl(${h},52%,58%)`;
+}
+function openRecRebind() {
+  const rec = _curRec();
+  if (!rec) { alert('请先选择一段录音'); return; }
+  let mask = document.getElementById('arbMask');
+  if (!mask) {
+    mask = document.createElement('div');
+    mask.id = 'arbMask';
+    mask.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(20,28,46,.55);z-index:2000';
+    mask.innerHTML = `
+      <style>
+        #arbMask .arb-card{background:#fff;max-width:440px;margin:64px auto;border-radius:16px;padding:0;color:#1f2d3d;box-shadow:0 18px 50px rgba(20,28,46,.3);overflow:hidden}
+        #arbMask .arb-hd{display:flex;align-items:center;justify-content:space-between;padding:15px 20px;background:linear-gradient(135deg,#3f6fd6,#5b8def);color:#fff}
+        #arbMask .arb-hd h3{margin:0;font-size:16px;font-weight:700}
+        #arbMask .arb-x{cursor:pointer;font-size:18px;opacity:.9}
+        #arbMask .arb-bd{padding:16px 20px 18px}
+        #arbMask .arb-info{font-size:12.5px;color:#7a8699;margin-bottom:12px;line-height:1.5}
+        #arbMask .arb-lbl{display:block;font-size:12.5px;font-weight:600;color:#46536b;margin:0 0 6px}
+        #arbMask .arb-input,#arbMask .arb-ta{width:100%;border:1px solid #dce2ec;border-radius:9px;padding:9px 11px;font-size:13.5px;font-family:inherit;box-sizing:border-box;transition:border-color .15s}
+        #arbMask .arb-input:focus,#arbMask .arb-ta:focus{outline:none;border-color:#5b8def}
+        #arbMask .arb-list{max-height:226px;overflow-y:auto;border:1px solid #e6eaf1;border-radius:10px;margin-top:8px;background:#fafbfd}
+        #arbMask .arb-row{display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;border-bottom:1px solid #eef1f6}
+        #arbMask .arb-row:last-child{border-bottom:none}
+        #arbMask .arb-row:hover{background:#eef4ff}
+        #arbMask .arb-row.sel{background:#e4eeff;box-shadow:inset 3px 0 0 #3f6fd6}
+        #arbMask .arb-av{width:32px;height:32px;border-radius:50%;color:#fff;font-weight:700;font-size:14px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+        #arbMask .arb-main{flex:1;min-width:0}
+        #arbMask .arb-nm{font-weight:600;font-size:13.5px;color:#1f2d3d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        #arbMask .arb-mt{font-size:11px;color:#9aa3b2;margin-top:1px}
+        #arbMask .arb-chip{display:inline-block;font-size:10px;padding:1px 7px;border-radius:9px;margin-left:6px;vertical-align:middle;font-weight:600}
+        #arbMask .arb-chip-day{background:#e2f4ea;color:#27915f}
+        #arbMask .arb-chip-new{background:#fff1d6;color:#c4860f}
+        #arbMask .arb-ck{color:#3f6fd6;font-weight:700;font-size:15px;flex:0 0 auto}
+        #arbMask .arb-del{color:#d9534f;font-size:11.5px;cursor:pointer;flex:0 0 auto;padding:3px 7px;border:1px solid #f0c2c0;border-radius:7px}
+        #arbMask .arb-del:hover{background:#fdecec}
+        #arbMask .arb-empty{padding:20px 12px;text-align:center;color:#9aa3b2;font-size:12.5px;line-height:1.6}
+        #arbMask .arb-add-link{display:inline-block;margin-top:10px;font-size:12.5px;color:#3f6fd6;cursor:pointer}
+        #arbMask .arb-addbox{display:none;margin-top:8px;padding:11px;border:1px dashed #c8d2e0;border-radius:10px;background:#f7f9fc}
+        #arbMask .arb-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+        #arbMask .arb-btn{border:none;border-radius:9px;padding:9px 18px;font-size:13.5px;cursor:pointer;font-weight:600}
+        #arbMask .arb-btn-ghost{background:#eef1f6;color:#46536b}
+        #arbMask .arb-btn-go{background:linear-gradient(135deg,#3f6fd6,#5b8def);color:#fff}
+        #arbMask .arb-btn-sm{border:1px solid #cfd8e6;background:#fff;border-radius:8px;padding:7px 13px;font-size:12.5px;cursor:pointer;color:#46536b}
+      </style>
+      <div class="arb-card">
+        <div class="arb-hd"><h3>换绑当前录音段</h3><span class="arb-x" onclick="document.getElementById('arbMask').style.display='none'">✕</span></div>
+        <div class="arb-bd">
+          <div id="arbInfo" class="arb-info"></div>
+          <label class="arb-lbl">换绑到客人</label>
+          <input id="arbSearch" class="arb-input" placeholder="默认列该顾问当日接诊客人；搜姓名/会员号/尾号绑别人" oninput="onArbSearchInput()">
+          <div id="arbList" class="arb-list"></div>
+          <span class="arb-add-link" onclick="toggleAddCust()">＋ 新增客人（自动生成会员号）</span>
+          <div id="arbAddBox" class="arb-addbox">
+            <input id="arbNewName" class="arb-input" placeholder="客人姓名（必填）" style="margin-bottom:6px">
+            <input id="arbNewTail" class="arb-input" placeholder="手机尾号 4 位（选填）" maxlength="4" style="margin-bottom:6px">
+            <div style="text-align:right"><button class="arb-btn-sm" onclick="addDayCustomer()">新增并选中</button></div>
+          </div>
+          <label class="arb-lbl" style="margin-top:14px">换绑理由（必填）</label>
+          <textarea id="arbReason" class="arb-ta" rows="2"></textarea>
+          <div id="arbMsg" style="color:#d9534f;font-size:12.5px;min-height:18px;margin-top:6px"></div>
+          <div class="arb-foot">
+            <button class="arb-btn arb-btn-ghost" onclick="document.getElementById('arbMask').style.display='none'">取消</button>
+            <button class="arb-btn arb-btn-go" onclick="submitRecRebind()">确认换绑</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(mask);
+  }
+  document.getElementById('arbMsg').textContent = '';
+  document.getElementById('arbReason').value = '';
+  document.getElementById('arbSearch').value = '';
+  document.getElementById('arbAddBox').style.display = 'none';
+  _arbAll = []; _arbAdded = new Set(); _arbSel = null;
+  document.getElementById('arbList').innerHTML = '';
+  mask.style.display = 'block';
+  loadArbCustomers('');  // 默认：该顾问当日接诊客人
+}
+function onArbSearchInput() {
+  clearTimeout(_arbSearchTimer);
+  _arbSearchTimer = setTimeout(() =>
+    loadArbCustomers((document.getElementById('arbSearch').value || '').trim()), 250);
+}
+// 服务端搜索：默认只回当日接诊客人，有搜索词才 LIKE 命中（客人量上万，不做前端全量过滤）
+function loadArbCustomers(q) {
+  const rec = _curRec(); if (!rec) return;
+  const url = `${BASE}/api/admin/recordings/${rec.id}/customer_options` + (q ? ('?q=' + encodeURIComponent(q)) : '');
+  fetch(url).then(r => r.json()).then(d => {
+    if (d.error) { document.getElementById('arbMsg').textContent = d.error; return; }
+    _arbCurId = d.current_customer_id;
+    const segNo = (_currentSegIdx >= 0 ? _currentSegIdx : 0) + 1;
+    document.getElementById('arbInfo').textContent =
+      `顾问 ${d.advisor || ''} · ${d.service_date || ''} · 当前客人 ${rec.customer || d.current_customer || ''} · 第 ${segNo} 段录音`;
+    _arbAll = (d.items || []).filter(c => c.customer_id != _arbCurId);
+    renderArbList(!!q);
+  });
+}
+function renderArbList(isSearch) {
+  const box = document.getElementById('arbList');
+  if (!_arbAll.length) {
+    box.innerHTML = '<div class="arb-empty">' +
+      (isSearch ? '没找到匹配客人，可在下方「新增客人」' : '该顾问当日还没有其他接诊客人，<br>请搜索姓名/会员号绑别人，或「新增客人」') +
+      '</div>';
+    return;
+  }
+  box.innerHTML = _arbAll.map(c => {
+    const sel = _arbSel && _arbSel.customer_id == c.customer_id;
+    const isNew = _arbAdded.has(c.customer_id);
+    const meta = [c.member_card ? ('会员号 ' + _rbEsc(c.member_card)) : '',
+                  c.phone_tail ? ('尾号 ' + _rbEsc(c.phone_tail)) : ''].filter(Boolean).join(' · ');
+    const chips = (c.in_day ? '<span class="arb-chip arb-chip-day">当日接诊</span>' : '') +
+                  (isNew ? '<span class="arb-chip arb-chip-new">新增</span>' : '');
+    const right = isNew
+      ? `<span class="arb-del" onclick="event.stopPropagation();deleteNewCust(${c.customer_id})">✕ 删除</span>`
+      : (sel ? '<span class="arb-ck">✓</span>' : '');
+    const ini = _rbEsc((c.name || '?').slice(0, 1));
+    return `<div class="arb-row${sel ? ' sel' : ''}" onclick="arbPick(${c.customer_id})">
+        <div class="arb-av" style="background:${_arbAvatarColor(c.name)}">${ini}</div>
+        <div class="arb-main"><div class="arb-nm">${_rbEsc(c.name)}${chips}</div>${meta ? `<div class="arb-mt">${meta}</div>` : ''}</div>
+        ${right}</div>`;
+  }).join('');
+}
+function arbPick(id) {
+  _arbSel = _arbAll.find(c => c.customer_id == id) || _arbSel;
+  renderArbList(!!(document.getElementById('arbSearch').value || '').trim());
+}
+function toggleAddCust() {
+  const box = document.getElementById('arbAddBox');
+  if (box) box.style.display = box.style.display === 'none' ? 'block' : 'none';
+}
+async function addDayCustomer() {
+  const rec = _curRec(); if (!rec) return;
+  const name = document.getElementById('arbNewName').value.trim();
+  const tail = document.getElementById('arbNewTail').value.trim();
+  const msg = document.getElementById('arbMsg');
+  if (!name) { msg.textContent = '请填写新增客人姓名'; return; }
+  try {
+    const r = await fetch(`${BASE}/api/admin/recordings/${rec.id}/add_day_customer`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, phone_tail: tail }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '新增失败');
+    _arbAdded.add(d.customer_id);
+    const obj = { customer_id: d.customer_id, name: d.name, phone_tail: d.phone_tail,
+                  member_card: d.member_card, in_day: true };
+    _arbAll = _arbAll.filter(c => c.customer_id != d.customer_id);
+    _arbAll.unshift(obj);
+    _arbSel = obj;  // 新增即选中
+    document.getElementById('arbSearch').value = '';
+    renderArbList(false);
+    document.getElementById('arbAddBox').style.display = 'none';
+    document.getElementById('arbNewName').value = '';
+    document.getElementById('arbNewTail').value = '';
+    msg.style.color = '#27915f';
+    msg.textContent = d.member_card ? ('已新增并选中，会员号 ' + d.member_card) : '已新增并选中';
+    setTimeout(() => { const m = document.getElementById('arbMsg'); if (m) m.style.color = '#d9534f'; }, 2500);
+  } catch (e) { msg.style.color = '#d9534f'; msg.textContent = e.message; }
+}
+async function deleteNewCust(id) {
+  const rec = _curRec(); if (!rec) return;
+  const msg = document.getElementById('arbMsg');
+  if (!_arbAdded.has(id)) return;
+  if (!confirm('确认删除这个新增的客人？仅当它名下还没有任何录音时可删。')) return;
+  try {
+    const r = await fetch(`${BASE}/api/admin/recordings/${rec.id}/remove_day_customer`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customer_id: id }),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '删除失败');
+    _arbAdded.delete(id);
+    _arbAll = _arbAll.filter(c => c.customer_id != id);
+    if (_arbSel && _arbSel.customer_id == id) _arbSel = null;
+    renderArbList(!!(document.getElementById('arbSearch').value || '').trim());
+    msg.style.color = '#d9534f'; msg.textContent = '';
+  } catch (e) { msg.style.color = '#d9534f'; msg.textContent = e.message; }
+}
+function submitRecRebind() {
+  const rec = _curRec(); if (!rec) return;
+  const reason = document.getElementById('arbReason').value.trim();
+  const msg = document.getElementById('arbMsg');
+  msg.style.color = '#d9534f';
+  if (!_arbSel) { msg.textContent = '请先在上方选择或新增一个客人'; return; }
+  if (!reason) { msg.textContent = '请填写换绑理由'; return; }
+  fetch(`${BASE}/api/admin/recordings/${rec.id}/rebind`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to_customer_id: _arbSel.customer_id, reason }),
+  }).then(r => r.json()).then(d => {
+    if (d.error) { msg.textContent = d.error; return; }
+    document.getElementById('arbMask').style.display = 'none';
+    alert('换绑成功，正在跳转到新接诊报告');
+    location.href = `${BASE}/session/${d.new_session_id}`;
+  });
+}
+</script>
+</body>
+</html>

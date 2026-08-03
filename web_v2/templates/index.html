@@ -1,0 +1,993 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>接诊列表 · 工牌接诊分析系统</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}">
+<style>
+html,body{overflow-x:hidden;max-width:100%}
+.list-wrap{max-width:1280px;margin:0 auto;padding:30px 40px 80px}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:20px}
+.toolbar input{border:1px solid var(--border);border-radius:4px;padding:8px 12px;font-family:inherit;font-size:13px;outline:none}
+.toolbar input:focus{border-color:var(--blue)}
+.toolbar button{background:var(--navy);color:#fff;border:none;border-radius:4px;padding:8px 16px;font-size:13px;cursor:pointer;font-family:inherit}
+.toolbar button.sec{background:#fff;color:var(--navy);border:1px solid var(--border)}
+.toolbar button:hover{opacity:.9}
+.sess-tbl{width:100%;border-collapse:collapse;font-size:13.5px;background:#fff;border:1px solid var(--border)}
+.sess-tbl th{background:var(--navy);color:#fff;text-align:left;padding:11px 14px;font-size:12px;font-weight:600;letter-spacing:.05em}
+.sess-tbl td{padding:13px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+.sess-tbl tr:hover td{background:var(--bg-light)}
+.sess-tbl tr:last-child td{border-bottom:none}
+.status-tag{display:inline-block;padding:2px 10px;border-radius:99px;font-size:11px;font-weight:600}
+.s-done{background:rgba(39,174,96,.12);color:var(--green)}
+.s-running{background:rgba(74,144,217,.12);color:var(--blue)}
+.s-running::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--blue);margin-right:5px;vertical-align:middle;animation:blink 1.2s infinite}
+.s-pending{background:rgba(230,126,34,.12);color:var(--orange)}
+.s-idle{background:rgba(138,149,163,.12);color:var(--text-mute)}
+.s-failed{background:rgba(231,76,60,.12);color:var(--red)}
+.status-tag{cursor:pointer;user-select:none}
+.status-tag:hover{filter:brightness(.95)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+.filter-pills{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 14px}
+.filter-pills .pill{cursor:pointer;user-select:none;background:#fff;border:1px solid var(--border);color:var(--text-mid);border-radius:99px;padding:5px 13px;font-size:12.5px;line-height:1;display:inline-flex;align-items:center;gap:6px}
+.filter-pills .pill:hover{border-color:var(--blue);color:var(--blue)}
+.filter-pills .pill.active{background:var(--navy);color:#fff;border-color:var(--navy)}
+.filter-pills .pill .cnt{background:rgba(0,0,0,.08);border-radius:99px;padding:1px 7px;font-size:11px;font-weight:600}
+.filter-pills .pill.active .cnt{background:rgba(255,255,255,.22)}
+.task-prog{display:block;color:var(--text-mute);font-size:11px;margin-top:3px;line-height:1.4;word-break:break-all;white-space:normal}
+.task-prog .now{color:var(--blue);font-weight:600}
+.score-cell{font-size:18px;font-weight:700;color:var(--navy)}
+.score-cell.warn{color:var(--orange)}
+.score-cell.bad{color:var(--red)}
+.score-cell.good{color:var(--green)}
+.empty{text-align:center;padding:60px;color:var(--text-mute)}
+.pagi{margin-top:16px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-mid)}
+.pagi button{background:#fff;color:var(--navy);border:1px solid var(--border);border-radius:4px;padding:5px 12px;font-size:13px;cursor:pointer;font-family:inherit}
+.pagi button:disabled{opacity:.4;cursor:not-allowed}
+.header-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;gap:12px;flex-wrap:wrap}
+.header-title{font-size:20px;font-weight:700;color:var(--navy)}
+.header-user{font-size:13px;color:var(--text-mute)}
+
+/* ===== 皮肤切换按钮 & 双语 ===== */
+.skin-toggle{background:#fff;border:1px solid var(--border);border-radius:99px;padding:4px 12px;font-size:12px;cursor:pointer;color:var(--text-mid);font-family:inherit;margin-left:8px}
+.skin-toggle:hover{border-color:var(--blue);color:var(--blue)}
+.t-cute{display:none}
+body.skin-cute .t-pro{display:none}
+body.skin-cute .t-cute{display:inline}
+
+/* ===================== 🌸 萌系卡通皮肤 ===================== */
+body.skin-cute{
+  background:linear-gradient(135deg,#fff5fa 0%,#fef0f7 40%,#f5ecff 100%);
+  font-family:"PingFang SC","Hiragino Sans",-apple-system,"Microsoft YaHei",sans-serif;
+}
+body.skin-cute::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    radial-gradient(circle at 8% 12%,rgba(255,182,193,.3) 0,transparent 70px),
+    radial-gradient(circle at 88% 22%,rgba(221,160,221,.25) 0,transparent 80px),
+    radial-gradient(circle at 72% 78%,rgba(255,218,224,.3) 0,transparent 90px),
+    radial-gradient(circle at 18% 88%,rgba(230,200,255,.25) 0,transparent 80px);
+}
+body.skin-cute .list-wrap{position:relative;z-index:1}
+body.skin-cute .header-title{color:#d96ba8;letter-spacing:1px}
+body.skin-cute .header-title::before{content:"🌸 ";font-size:18px}
+body.skin-cute .header-user{color:#a07898}
+body.skin-cute .header-user a{color:#d96ba8 !important}
+body.skin-cute .skin-toggle{background:linear-gradient(135deg,#fff,#fef0f7);border:1px solid #f4c3da;color:#d96ba8}
+
+/* 工具栏 */
+body.skin-cute .toolbar input{
+  border:1px solid #f4c3da;border-radius:99px;padding:8px 14px;background:rgba(255,255,255,.85);
+}
+body.skin-cute .toolbar input:focus{border-color:#d96ba8}
+body.skin-cute .toolbar button{
+  background:linear-gradient(135deg,#ffb6c1,#e8a0c8);
+  border-radius:99px;box-shadow:0 2px 8px rgba(232,160,200,.35);
+}
+body.skin-cute .toolbar button.sec{background:#fff;color:#d96ba8;border:1px solid #f4c3da;box-shadow:none}
+
+/* 状态胶囊 */
+body.skin-cute .filter-pills .pill{
+  background:rgba(255,255,255,.85);border:1px solid #f4c3da;color:#b97ea8;border-radius:99px;
+}
+body.skin-cute .filter-pills .pill:hover{border-color:#d96ba8;color:#d96ba8}
+body.skin-cute .filter-pills .pill.active{
+  background:linear-gradient(135deg,#ffb6c1,#e8a0c8);border-color:transparent;color:#fff;
+  box-shadow:0 2px 8px rgba(232,160,200,.35);
+}
+body.skin-cute .filter-pills .pill .cnt{background:rgba(217,107,168,.15);color:#d96ba8}
+body.skin-cute .filter-pills .pill.active .cnt{background:rgba(255,255,255,.3);color:#fff}
+
+/* 表格 */
+body.skin-cute .sess-tbl{
+  background:rgba(255,255,255,.85);border:1px solid #f9d6e6;border-radius:18px;overflow:hidden;
+  box-shadow:0 4px 16px rgba(255,182,193,.15);
+}
+body.skin-cute .sess-tbl th{background:linear-gradient(90deg,#ffb6c1,#e8a0c8);color:#fff}
+body.skin-cute .sess-tbl td{border-bottom:1px dashed #f4d6e6}
+body.skin-cute .sess-tbl tr:hover td{background:rgba(255,235,245,.5)}
+body.skin-cute .status-tag{border-radius:99px}
+body.skin-cute .s-done{background:rgba(167,221,179,.3);color:#5ba978}
+body.skin-cute .s-running{background:rgba(255,182,193,.25);color:#d96ba8}
+body.skin-cute .s-running::before{background:#d96ba8}
+body.skin-cute .s-pending{background:rgba(255,200,150,.3);color:#d68b3e}
+body.skin-cute .s-idle{background:rgba(212,184,232,.25);color:#9572b8}
+body.skin-cute .s-failed{background:rgba(231,150,160,.25);color:#c25868}
+body.skin-cute .score-cell{color:#d96ba8}
+
+/* 分页与批量条 */
+body.skin-cute .pagi button{
+  background:#fff;color:#d96ba8;border:1px solid #f4c3da;border-radius:99px;
+}
+body.skin-cute #batchBar{
+  background:linear-gradient(90deg,rgba(255,209,220,.5),rgba(212,184,232,.4)) !important;
+  border:1px solid #f4c3da !important;border-radius:14px !important;
+}
+body.skin-cute #batchBar b{color:#d96ba8 !important}
+body.skin-cute #batchBar button{
+  background:linear-gradient(135deg,#ffb6c1,#e8a0c8) !important;border-radius:99px !important;
+}
+body.skin-cute #batchBar button.sec{background:#fff !important;color:#d96ba8 !important;border:1px solid #f4c3da !important}
+
+/* 漂浮装饰 */
+.float-decor{display:none}
+body.skin-cute .float-decor{
+  display:block;position:fixed;font-size:22px;opacity:.5;pointer-events:none;z-index:0;
+  animation:float 6s ease-in-out infinite;
+}
+@keyframes float{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-12px) rotate(8deg)}}
+
+/* 手机端卡片皮肤 */
+@media (max-width:768px){
+  body.skin-cute .sess-tbl tr{background:rgba(255,255,255,.9);border:1px solid #f9d6e6;border-radius:14px}
+  body.skin-cute .sess-tbl td:last-child a{background:linear-gradient(135deg,#ffb6c1,#e8a0c8) !important;border-radius:99px}
+}
+
+/* ─── 手机端 ─── */
+@media (max-width: 768px){
+  .list-wrap{padding:14px 12px 60px;max-width:100%;width:100%;overflow-x:hidden}
+  .header-bar,.toolbar,.sess-tbl,.pagi{max-width:100%}
+  *{min-width:0}
+  .header-title{font-size:17px}
+  .header-user{font-size:12px}
+  .toolbar{gap:8px}
+  .toolbar input{flex:1;min-width:0;width:100%;font-size:16px;padding:8px 10px}
+  .toolbar input[type=date]{flex:1 1 140px}
+  .toolbar #qAdvisor,.toolbar #qCustomer{flex:1 1 calc(50% - 4px)}
+  .toolbar button{padding:8px 12px;font-size:13px}
+  .toolbar > div[style*="flex:1"]{display:none}
+
+  /* 表格→卡片布局 */
+  .sess-tbl,.sess-tbl tbody,.sess-tbl tr,.sess-tbl td{display:block;width:100%}
+  .sess-tbl thead{display:none}
+  .sess-tbl{border:none;background:transparent}
+  .sess-tbl tr{background:#fff;border:1px solid var(--border);border-radius:6px;margin-bottom:10px;padding:12px 14px}
+  .sess-tbl tr:hover td{background:transparent}
+  .sess-tbl td{border:none;padding:4px 0;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .sess-tbl td::before{content:attr(data-label);color:var(--text-mute);font-size:12px;flex-shrink:0}
+  .sess-tbl td:last-child{margin-top:8px;padding-top:10px;border-top:1px dashed var(--border);justify-content:center}
+  .sess-tbl td:last-child::before{display:none}
+  .sess-tbl td:last-child a{display:block;width:100%;text-align:center;background:var(--navy);color:#fff !important;padding:10px;border-radius:4px;font-size:14px}
+  .pagi{flex-wrap:wrap;font-size:12px}
+  #uploadMsg{width:100%;margin-left:0 !important}
+}
+</style>
+</head>
+<body>
+<div class="list-wrap">
+  <div class="header-bar">
+    <div class="header-title"><span class="t-pro">工牌接诊分析系统</span><span class="t-cute">美丽陪伴档案</span></div>
+    <div class="header-user">
+      {% if role == 'consultant' %}{{ advisor_name or username or '' }}{% else %}{{ username or '' }}{% endif %}（<span class="t-pro">{{ role or '' }}</span><span class="t-cute">{% if role == 'consultant' %}陪伴师{% else %}{{ role or '' }}{% endif %}</span>）
+      {% if role in ('admin', 'super') %} · <a href="{{ url_for('admin_page') }}" style="color:var(--blue)">管理后台</a>{% endif %}
+      {% if role == 'consultant' %} · <a href="{{ url_for('consultant_page') }}" style="color:var(--blue)"><span class="t-pro">返回录音页</span><span class="t-cute">返回陪伴页</span></a>{% endif %}
+       · <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a>
+      <button class="skin-toggle" onclick="toggleSkin()" title="切换皮肤"><span id="skinLabel">🎀 切换皮肤</span></button>
+    </div>
+  </div>
+  <div class="float-decor" style="top:14%;left:4%">🌸</div>
+  <div class="float-decor" style="top:32%;right:5%;animation-delay:-2s">💕</div>
+  <div class="float-decor" style="bottom:24%;left:6%;animation-delay:-4s">🎀</div>
+  <div class="float-decor" style="bottom:8%;right:8%;animation-delay:-1s">✨</div>
+
+  <div class="toolbar">
+    {% if role != 'consultant' %}<input id="qAdvisor" placeholder="顾问" oninput="debouncedLoad()">{% else %}<input id="qAdvisor" type="hidden">{% endif %}
+    <input id="qCustomer" placeholder="顾客" oninput="debouncedLoad()">
+    <button class="sec" id="timeToggleBtn" onclick="toggleTimeFilter()" style="white-space:nowrap;font-size:12px">⏱ 时间</button>
+    <span id="timeFilterRow" style="display:none;align-items:center;gap:4px;white-space:nowrap">
+      <select id="qTimeType" onchange="loadList(1)" style="font-size:12px;padding:3px 4px;border:1px solid var(--border);border-radius:4px;color:var(--text-mid);background:#fff">
+        <option value="recording">录音时间</option>
+        <option value="analysis">分析时间</option>
+      </select>
+      <input id="qDate" type="date" onchange="loadList(1)" style="font-size:12px">
+      <input id="qTimeFrom" type="time" onchange="loadList(1)" style="width:100px;font-size:12px">
+      <span style="color:var(--text-mute);font-size:11px">—</span>
+      <input id="qTimeTo" type="time" onchange="loadList(1)" style="width:100px;font-size:12px">
+    </span>
+    <button onclick="loadList(1)">筛选</button>
+    <button class="sec" onclick="resetFilter()">重置</button>
+    <div style="flex:1"></div>
+    {% if role in ['admin','super'] %}
+    <button onclick="openUploadModal()">上传录音</button>
+    {% endif %}
+  </div>
+
+  {% if role in ['admin','super'] %}
+  <div id="uploadModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:200;align-items:center;justify-content:center">
+    <div style="background:#fff;border-radius:8px;padding:20px 24px;width:460px;max-width:92vw;box-shadow:0 8px 32px rgba(0,0,0,.18)">
+      <div style="font-size:16px;font-weight:600;margin-bottom:14px">上传录音</div>
+      <div style="display:grid;grid-template-columns:80px 1fr;gap:10px 12px;align-items:center;font-size:13px">
+        <label>顾问 <span style="color:#e74c3c">*</span></label>
+        <select id="upAdvisor" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px">
+          <option value="">（加载中…）</option>
+        </select>
+
+        <label>顾客 <span style="color:#e74c3c">*</span></label>
+        <div>
+          <div id="upCustSearchRow" style="position:relative;display:flex;gap:6px">
+            <input id="upCustomerSearch" placeholder="搜索姓名 / 会员号 / 尾号" autocomplete="off"
+                   oninput="searchUpCustomers()" onfocus="searchUpCustomers()"
+                   style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:4px">
+            <button class="sec" type="button" onclick="enterNewCustomerMode()" style="font-size:12px;padding:3px 10px;white-space:nowrap">新增</button>
+            <div id="upCustomerList" style="display:none;position:absolute;left:0;right:60px;top:100%;max-height:220px;overflow:auto;background:#fff;border:1px solid var(--border);border-top:none;z-index:30;font-size:12px"></div>
+          </div>
+          <div id="upCustNewRow" style="display:none;gap:6px;align-items:center;flex-wrap:wrap">
+            <input id="upNewName" placeholder="姓名" style="flex:1;min-width:80px;padding:6px 8px;border:1px solid var(--border);border-radius:4px">
+            <input id="upNewPhone" maxlength="4" placeholder="尾号4位" style="width:80px;padding:6px 8px;border:1px solid var(--border);border-radius:4px">
+            <input id="upNewCard" placeholder="会员号(选填)" style="flex:1;min-width:100px;padding:6px 8px;border:1px solid var(--border);border-radius:4px">
+            <button type="button" onclick="createNewCustomer()" id="upNewCustSubmit" style="font-size:12px;padding:4px 10px">保存</button>
+            <button class="sec" type="button" onclick="cancelNewCustomerMode()" style="font-size:12px;padding:4px 10px">取消</button>
+          </div>
+          <div id="upCustomerHit" style="margin-top:4px;font-size:12px;color:var(--blue);min-height:16px"></div>
+        </div>
+
+        <label>服务日期 <span style="color:#e74c3c">*</span></label>
+        <input id="upServiceDate" type="date" style="padding:6px 8px;border:1px solid var(--border);border-radius:4px">
+
+        <label>录音文件 <span style="color:#e74c3c">*</span></label>
+        <div>
+          <button type="button" onclick="document.getElementById('upFile').click()" style="font-size:12px;padding:4px 10px">＋ 添加文件</button>
+          <input id="upFile" type="file" accept="audio/*" multiple onchange="addUploadFiles()" style="display:none">
+          <span style="color:var(--text-mute);font-size:11px;margin-left:6px">可多次添加；同一顾客+顾问+日期会合并到同一接诊单</span>
+        </div>
+
+        <label>文件列表</label>
+        <div>
+          <div style="font-size:11px;color:var(--text-mute);margin-bottom:4px">系统会按下方 1 → N 的顺序合并分析，可用 ▲▼ 调整顺序</div>
+          <div id="upDurInfo" style="font-size:12px;max-height:160px;overflow:auto;color:var(--text-mute)">（尚未添加文件）</div>
+        </div>
+      </div>
+      <div id="upErr" style="color:#e74c3c;font-size:12px;margin-top:10px;min-height:16px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button class="sec" onclick="closeUploadModal()">取消</button>
+        <button id="upSubmitBtn" onclick="submitUploadForm()">上传并分析</button>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if role in ['admin','super'] %}
+  <div id="batchBar" style="display:none;margin:8px 0;padding:8px 12px;background:rgba(74,144,217,.08);border:1px solid rgba(74,144,217,.3);border-radius:5px;display:flex;align-items:center;gap:10px;font-size:13px">
+    <span>已选 <b id="batchCount" style="color:var(--blue)">0</b> 条</span>
+    <button onclick="batchAnalyze(false)" style="background:var(--blue);color:#fff;border:none;border-radius:4px;padding:5px 14px;font-size:13px;cursor:pointer;font-weight:600">一键分析</button>
+    <button onclick="batchAnalyze(true)" title="忽略 ASR 说话人警告（视为误判），强制分析所选接诊"
+            style="background:#e67e22;color:#fff;border:none;border-radius:4px;padding:5px 14px;font-size:13px;cursor:pointer;font-weight:600">强制分析</button>
+    <button class="sec" onclick="clearSelection()" style="font-size:12px">清空选择</button>
+    <span id="batchMsg" style="color:var(--text-mute);margin-left:auto"></span>
+  </div>
+  {% endif %}
+
+  <div class="filter-pills" id="filterPills">
+    <span class="pill active" data-st="">全部 <span class="cnt" id="cnt-all">·</span></span>
+    <span class="pill" data-st="running">分析中 <span class="cnt" id="cnt-running">·</span></span>
+    <span class="pill" data-st="queued">排队中 <span class="cnt" id="cnt-queued">·</span></span>
+    <span class="pill" data-st="done">已完成 <span class="cnt" id="cnt-done">·</span></span>
+    <span class="pill" data-st="failed">失败 <span class="cnt" id="cnt-failed">·</span></span>
+    <span class="pill" data-st="stuck">中断 <span class="cnt" id="cnt-stuck">·</span></span>
+    <span class="pill" data-st="idle">未分析 <span class="cnt" id="cnt-idle">·</span></span>
+  </div>
+
+  <table class="sess-tbl">
+    <thead>
+      <tr>
+        {% if role in ['admin','super'] %}<th style="width:34px;text-align:center"><input type="checkbox" id="selAll" onclick="toggleSelectAll(this)"></th>{% endif %}
+        {% if role != 'consultant' %}<th style="width:100px">顾问</th>{% endif %}
+        <th style="width:120px">顾客</th>
+        <th style="width:90px">录音/ASR</th>
+        <th style="width:120px">录音时间</th>
+        <th style="width:100px">综合分</th>
+        <th style="width:140px">分析状态</th>
+        <th style="width:130px">最后分析时间</th>
+        <th style="width:60px">点评</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody id="listBody">
+      <tr><td colspan="{% if role in ['admin','super'] %}10{% else %}9{% endif %}" class="empty">加载中…</td></tr>
+    </tbody>
+  </table>
+
+  <div class="pagi">
+    <button id="prevBtn" onclick="changePage(-1)">‹ 上一页</button>
+    <span id="pageInfo"></span>
+    <button id="nextBtn" onclick="changePage(1)">下一页 ›</button>
+    <span id="uploadMsg" style="margin-left:auto;color:var(--text-mute)"></span>
+  </div>
+</div>
+
+<script>
+const BASE = {{ request.script_root|tojson }};
+const ROLE = {{ role|tojson }};
+
+// ============ 皮肤切换（专业版 / 萌系卡通），与录音页共用 localStorage key ============
+function isCute(){ return document.body.classList.contains('skin-cute'); }
+function applySkin(skin){
+  const label = document.getElementById('skinLabel');
+  if (skin === 'cute') {
+    document.body.classList.add('skin-cute');
+    if (label) label.textContent = '💼 切回专业版';
+    document.title = '美丽陪伴档案 ✨';
+  } else {
+    document.body.classList.remove('skin-cute');
+    if (label) label.textContent = '🎀 切换可爱皮肤';
+    document.title = '接诊列表 · 工牌接诊分析系统';
+  }
+}
+function toggleSkin(){
+  const next = isCute() ? 'pro' : 'cute';
+  try { localStorage.setItem('skin_pref_v2', next); } catch(e){}
+  applySkin(next);
+}
+(function initSkin(){
+  let s = 'cute';
+  try { s = localStorage.getItem('skin_pref_v2') || 'cute'; } catch(e){}
+  applySkin(s);
+})();
+const IS_ADMIN = (ROLE === 'admin' || ROLE === 'super');
+const selectedIds = new Set();
+let curPage = 1;
+let totalPages = 1;
+let curStatus = '';   // '', 'running', 'queued', 'done', 'failed', 'idle'
+const PAGE_SIZE = 20;
+let _debounceTimer = null;
+function debouncedLoad() { clearTimeout(_debounceTimer); _debounceTimer = setTimeout(() => loadList(1), 350); }
+
+function fmtRecTime(t) {
+  if (!t) return null;
+  const s = String(t);
+  if (s.length === 14) return { date: s.slice(0,4)+'-'+s.slice(4,6)+'-'+s.slice(6,8), time: s.slice(8,10)+':'+s.slice(10,12) };
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? { date: `${m[1]}-${m[2]}-${m[3]}`, time: `${m[4]}:${m[5]}` } : { date: '', time: s };
+}
+function fmtTimeRange(first, last) {
+  const a = fmtRecTime(first);
+  const b = fmtRecTime(last);
+  if (!a && !b) return '<span style="color:var(--text-mute)">—</span>';
+  if (a && !b) return `<div>${a.date}</div><div>${a.time}</div>`;
+  if (!a && b) return `<div>${b.date}</div><div>${b.time}</div>`;
+  if (a.date === b.date && a.time === b.time) return `<div>${a.date}</div><div>${a.time}</div>`;
+  if (a.date === b.date) return `<div>${a.date}</div><div>${a.time}–${b.time}</div>`;
+  return `<div>${a.date} ${a.time}</div><div>${b.date} ${b.time}</div>`;
+}
+function fmtRecRange(first, last) { return fmtTimeRange(first, last); }
+
+function toggleTimeFilter() {
+  const row = document.getElementById('timeFilterRow');
+  const btn = document.getElementById('timeToggleBtn');
+  const open = row.style.display === 'none';
+  row.style.display = open ? 'flex' : 'none';
+  btn.style.background = open ? 'var(--navy)' : '';
+  btn.style.color = open ? '#fff' : '';
+  btn.style.borderColor = open ? 'var(--navy)' : '';
+  if (!open) {
+    document.getElementById('qDate').value = '';
+    document.getElementById('qTimeFrom').value = '';
+    document.getElementById('qTimeTo').value = '';
+    loadList(1);
+  }
+}
+
+function fmtScore(s) {
+  if (s == null) return '<span style="color:var(--text-mute)">—</span>';
+  const cls = s >= 7 ? 'good' : (s >= 5 ? 'warn' : 'bad');
+  return `<span class="score-cell ${cls}">${(+s).toFixed(1)}</span>`;
+}
+
+function fmtAnalysisTime(start, end) {
+  return fmtTimeRange(start, end);
+}
+
+function updateBatchBar() {
+  const bar = document.getElementById('batchBar');
+  if (!bar) return;
+  const n = selectedIds.size;
+  document.getElementById('batchCount').textContent = n;
+  bar.style.display = n > 0 ? 'flex' : 'none';
+  // 同步表头全选状态
+  const all = document.getElementById('selAll');
+  if (all) {
+    const rows = document.querySelectorAll('.row-chk');
+    const checked = document.querySelectorAll('.row-chk:checked').length;
+    all.checked = rows.length > 0 && checked === rows.length;
+    all.indeterminate = checked > 0 && checked < rows.length;
+  }
+}
+
+function onRowCheck() {
+  selectedIds.clear();
+  document.querySelectorAll('.row-chk:checked').forEach(el => selectedIds.add(parseInt(el.value, 10)));
+  updateBatchBar();
+}
+
+function toggleSelectAll(cb) {
+  document.querySelectorAll('.row-chk').forEach(el => {
+    el.checked = cb.checked;
+    const id = parseInt(el.value, 10);
+    if (cb.checked) selectedIds.add(id); else selectedIds.delete(id);
+  });
+  updateBatchBar();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  document.querySelectorAll('.row-chk').forEach(el => { el.checked = false; });
+  updateBatchBar();
+}
+
+function batchAnalyze(forceConfirm) {
+  const ids = Array.from(selectedIds);
+  if (!ids.length) return;
+  const tip = forceConfirm
+    ? `【强制分析】将把所选 ${ids.length} 条接诊里所有 ASR 说话人警告的录音视为误判强制确认，并触发分析。确认？`
+    : `确认对所选 ${ids.length} 条接诊一键重跑分析？`;
+  if (!confirm(tip)) return;
+  const msg = document.getElementById('batchMsg');
+  msg.textContent = '提交中…';
+  fetch(BASE + '/api/sessions/batch_analyze', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ids, force_confirm_speakers: !!forceConfirm})
+  }).then(r => r.json()).then(d => {
+    if (d.error) { msg.textContent = '失败：' + d.error; return; }
+    const reasonMap = {
+      speaker_unconfirmed: '说话人未确认',
+      asr_not_done: 'ASR未完成',
+      no_recording: '无录音',
+      not_found: '不存在',
+      unknown: '未知原因',
+    };
+    let txt = `已入队 ${d.queued}/${d.total}`;
+    if (d.forced_confirmed_recordings) txt += `（已强制确认 ${d.forced_confirmed_recordings} 段录音）`;
+    if (d.skipped && d.skipped.length) {
+      const cnt = {};
+      d.skipped.forEach(x => { const r = (x.reason||'unknown'); cnt[r] = (cnt[r]||0)+1; });
+      const parts = Object.entries(cnt).map(([k,v]) => `${reasonMap[k]||k} ${v}`);
+      txt += `，跳过 ${d.skipped.length}（${parts.join('、')}）`;
+    }
+    if (d.failed && d.failed.length) txt += `，失败 ${d.failed.length}`;
+    msg.textContent = txt;
+    // 有跳过/失败时弹窗，避免提示条随 clearSelection 立刻被隐藏看不到
+    if ((d.skipped && d.skipped.length) || (d.failed && d.failed.length)) {
+      alert(txt);
+    }
+    clearSelection();
+    loadList(curPage);
+    refreshCounts();
+  }).catch(e => { msg.textContent = '失败：' + e; });
+}
+
+function toggleDelMenu(btn) {
+  const menu = btn.parentElement.querySelector('.del-menu');
+  const opening = menu.style.display === 'none';
+  document.querySelectorAll('.del-menu').forEach(el => { el.style.display = 'none'; });
+  if (opening) menu.style.display = 'block';
+}
+document.addEventListener('click', (e) => {
+  if (!e.target.closest('.del-wrap')) {
+    document.querySelectorAll('.del-menu').forEach(el => { el.style.display = 'none'; });
+  }
+});
+
+function fmtStatus(s, progress, row) {
+  const map = {
+    idle:      ['未分析',  's-idle'],
+    queued:    ['排队中',  's-pending'],
+    running:   ['分析中',  's-running'],
+    done:      ['已完成',  's-done'],
+    failed:    ['失败',    's-failed'],
+    stuck:     ['中断',    's-failed'],
+    cancelled: ['已中断',  's-failed'],
+  };
+  const [t, c] = map[s] || [s || '—', 's-idle'];
+  const tip = progress ? ` title="${progress.replace(/"/g,'&quot;')}"` : '';
+  let extra = '';
+  if (row && (s === 'running' || s === 'queued') && row.task_total) {
+    const done = row.task_done || 0;
+    const tot = row.task_total;
+    const cur = (row.task_running || []).join(', ');
+    extra = `<span class="task-prog">完成 ${done}/${tot}` +
+            (cur ? ` · 正在 <span class="now">${cur}</span>` : '') +
+            `</span>`;
+  } else if (row && s === 'done' && row.task_total) {
+    extra = `<span class="task-prog">${row.task_done}/${row.task_total} part</span>`;
+  }
+  return `<span class="status-tag ${c}"${tip} onclick="setStatusFilter('${s}')">${t}</span>${extra}`;
+}
+
+function setStatusFilter(st) {
+  if (st === 'idle' || st === 'queued' || st === 'running' || st === 'done' || st === 'failed' || st === 'stuck') {
+    curStatus = st;
+  } else {
+    curStatus = '';
+  }
+  document.querySelectorAll('#filterPills .pill').forEach(el => {
+    el.classList.toggle('active', (el.dataset.st || '') === curStatus);
+  });
+  loadList(1);
+}
+
+function refreshCounts() {
+  const adv = document.getElementById('qAdvisor').value.trim();
+  const cus = document.getElementById('qCustomer').value.trim();
+  const date = document.getElementById('qDate').value;
+  const timeFrom = document.getElementById('qTimeFrom').value;
+  const timeTo = document.getElementById('qTimeTo').value;
+  const timeType = document.getElementById('qTimeType').value;
+  const params = new URLSearchParams();
+  if (adv) params.set('advisor', adv);
+  if (cus) params.set('customer', cus);
+  if (date) params.set('date', date);
+  if (timeFrom) params.set('time_from', timeFrom);
+  if (timeTo) params.set('time_to', timeTo);
+  if ((date || timeFrom || timeTo) && timeType) params.set('time_type', timeType);
+  const qs = params.toString() ? '?' + params.toString() : '';
+  fetch(BASE + '/api/sessions/status_counts' + qs).then(r => r.json()).then(d => {
+    if (!d || !d.counts) return;
+    const c = d.counts;
+    document.getElementById('cnt-all').textContent     = c.all     ?? 0;
+    document.getElementById('cnt-running').textContent = c.running ?? 0;
+    document.getElementById('cnt-queued').textContent  = c.queued  ?? 0;
+    document.getElementById('cnt-done').textContent    = c.done    ?? 0;
+    document.getElementById('cnt-failed').textContent  = c.failed  ?? 0;
+    document.getElementById('cnt-stuck').textContent   = c.stuck   ?? 0;
+    document.getElementById('cnt-idle').textContent    = c.idle    ?? 0;
+  });
+}
+
+function loadList(page) {
+  curPage = page;
+  const adv = document.getElementById('qAdvisor').value.trim();
+  const cus = document.getElementById('qCustomer').value.trim();
+  const date = document.getElementById('qDate').value;
+  const timeFrom = document.getElementById('qTimeFrom').value;
+  const timeTo = document.getElementById('qTimeTo').value;
+  const timeType = document.getElementById('qTimeType').value;
+  const params = new URLSearchParams({page: page, page_size: PAGE_SIZE});
+  if (adv) params.set('advisor', adv);
+  if (cus) params.set('customer', cus);
+  if (date) params.set('date', date);
+  if (timeFrom) params.set('time_from', timeFrom);
+  if (timeTo) params.set('time_to', timeTo);
+  if ((date || timeFrom || timeTo) && timeType) params.set('time_type', timeType);
+  if (curStatus) params.set('status', curStatus);
+  fetch(BASE + '/api/sessions?' + params).then(r => r.json()).then(data => {
+    const tbody = document.getElementById('listBody');
+    if (!data.sessions || !data.sessions.length) {
+      tbody.innerHTML = `<tr><td colspan="${IS_ADMIN ? 10 : 9}" class="empty">没有匹配的接诊</td></tr>`;
+    } else {
+      tbody.innerHTML = data.sessions.map(s => {
+        let overall = null;
+        try { overall = s.analysis_scores ? JSON.parse(s.analysis_scores).overall : null; } catch(e){}
+        return `<tr data-sid="${s.id}">
+          ${IS_ADMIN ? `<td style="text-align:center"><input type="checkbox" class="row-chk" value="${s.id}" onclick="onRowCheck()" ${selectedIds.has(s.id) ? 'checked' : ''}></td>` : ''}
+          ${ROLE !== 'consultant' ? `<td data-label="顾问">${s.advisor || '—'}</td>` : ''}
+          <td data-label="顾客">${s.customer || '—'}</td>
+          <td data-label="录音/ASR">${s.asr_done_count || 0}/${s.recording_count || 0}</td>
+          <td data-label="录音时间" style="color:var(--text-mute);font-size:12px;white-space:nowrap">${fmtRecRange(s.first_recorded_at, s.last_recorded_at)}</td>
+          <td data-label="综合分">${fmtScore(overall)}</td>
+          <td data-label="分析状态">${fmtStatus(s.display_status, s.analysis_progress, s)}</td>
+          <td data-label="最后分析时间" style="color:var(--text-mute);font-size:12px;white-space:nowrap">${fmtAnalysisTime(s.analysis_started_at, s.analysis_finished_at)}</td>
+          <td data-label="点评">${s.has_evaluation ? '✓' : '—'}</td>
+          <td style="white-space:nowrap">
+            <a href="${BASE}/session/${s.id}?from=list" style="color:var(--blue);font-weight:600">查看 →</a>
+            ${(s.display_status === 'running' || s.display_status === 'queued') ? `<button onclick="cancelAnalysis(${s.id}, this)" style="margin-left:6px;background:none;border:1px solid #e67e22;color:#e67e22;border-radius:3px;padding:2px 8px;font-size:12px;cursor:pointer">取消分析</button>` : ''}
+            ${ROLE === 'admin' || ROLE === 'super' ? `
+              <span class="del-wrap" style="position:relative;display:inline-block;margin-left:6px">
+                <button onclick="toggleDelMenu(this)" style="background:none;border:1px solid rgba(231,76,60,.5);color:#e74c3c;border-radius:3px;padding:2px 8px;font-size:12px;cursor:pointer" title="删除">🗑 删除 ▾</button>
+                <span class="del-menu" style="display:none;position:absolute;right:0;top:calc(100% + 4px);background:#fff;border:1px solid #e3e6ea;border-radius:5px;box-shadow:0 4px 14px rgba(0,0,0,.08);padding:4px;z-index:30;min-width:120px">
+                  ${s.recording_count > 0 ? `<button onclick="deleteSessionRecs(${s.id},this)" style="display:block;width:100%;text-align:left;background:none;border:none;color:#e74c3c;padding:6px 10px;font-size:12px;cursor:pointer;border-radius:3px">🗑 录音</button>` : ''}
+                  ${s.display_status === 'done' ? `<button onclick="deleteSessionReport(${s.id},this)" style="display:block;width:100%;text-align:left;background:none;border:none;color:#e67e22;padding:6px 10px;font-size:12px;cursor:pointer;border-radius:3px">🗑 报告</button>` : ''}
+                  <button onclick="deleteSessionFull(${s.id},this)" style="display:block;width:100%;text-align:left;background:none;border:none;color:#e74c3c;padding:6px 10px;font-size:12px;cursor:pointer;font-weight:600;border-radius:3px">⚠ 全删</button>
+                </span>
+              </span>
+            ` : ''}
+            ${s.recording_count > 0 && ROLE === 'consultant' ? `<button onclick="requestDelSessionRecs(${s.id},this)" style="margin-left:8px;background:none;border:1px solid #ccc;color:#555;border-radius:3px;padding:2px 8px;font-size:12px;cursor:pointer">申请删除</button>` : ''}
+          </td>
+        </tr>`;
+      }).join('');
+    }
+    updateBatchBar();
+    totalPages = Math.max(1, Math.ceil(data.total / data.page_size));
+    document.getElementById('pageInfo').textContent = `第 ${data.page} / ${totalPages} 页（共 ${data.total} 条）`;
+    document.getElementById('prevBtn').disabled = data.page <= 1;
+    document.getElementById('nextBtn').disabled = data.page >= totalPages;
+  });
+  refreshCounts();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('#filterPills .pill').forEach(el => {
+    el.addEventListener('click', () => setStatusFilter(el.dataset.st || ''));
+  });
+});
+
+async function cancelAnalysis(sid, btn) {
+  if (!confirm('确定取消分析？状态将变为"已中断"，之后可重新开始。')) return;
+  btn.disabled = true;
+  try {
+    const url = (ROLE === 'admin' || ROLE === 'super')
+      ? `${BASE}/api/admin/sessions/${sid}/cancel_analysis`
+      : `${BASE}/api/consultant/session/cancel_analysis`;
+    const body = (ROLE === 'admin' || ROLE === 'super') ? undefined : JSON.stringify({session_id: sid});
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: body,
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    loadList(curPage);
+  } catch(e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+
+function changePage(delta) {
+  const next = curPage + delta;
+  if (next < 1 || next > totalPages) return;
+  loadList(next);
+}
+
+function resetFilter() {
+  document.getElementById('qAdvisor').value = '';
+  document.getElementById('qCustomer').value = '';
+  document.getElementById('qDate').value = '';
+  document.getElementById('qTimeFrom').value = '';
+  document.getElementById('qTimeTo').value = '';
+  document.getElementById('qTimeType').value = 'recording';
+  document.getElementById('timeFilterRow').style.display = 'none';
+  const btn = document.getElementById('timeToggleBtn');
+  btn.style.background = ''; btn.style.color = ''; btn.style.borderColor = '';
+  curStatus = '';
+  document.querySelectorAll('#filterPills .pill').forEach(el => {
+    el.classList.toggle('active', (el.dataset.st || '') === '');
+  });
+  loadList(1);
+}
+
+function scanOss() {
+  const msg = document.getElementById('uploadMsg');
+  msg.textContent = '正在扫描 OSS…';
+  fetch(BASE + '/api/scan', {method: 'POST'}).then(r => r.json()).then(d => {
+    msg.textContent = `扫描完成，新增 ${d.added} 个录音。`;
+    loadList(curPage);
+    setTimeout(() => msg.textContent = '', 4000);
+  });
+}
+
+let _upDurationsSec = [];
+let _upFiles = [];
+let _upCustomerId = null;
+let _upSearchTimer = null;
+
+async function _loadUpAdvisors() {
+  const sel = document.getElementById('upAdvisor');
+  if (!sel) return;
+  try {
+    const r = await fetch(BASE + '/api/admin/consultants');
+    const d = await r.json();
+    const opts = ['<option value="">请选择顾问</option>'];
+    (d.consultants || []).forEach(c => {
+      const nm = c.advisor_name || c.username;
+      if (nm) opts.push(`<option value="${nm.replace(/"/g,'&quot;')}">${nm}</option>`);
+    });
+    sel.innerHTML = opts.join('');
+  } catch(e) {
+    sel.innerHTML = '<option value="">（加载失败）</option>';
+  }
+}
+
+function openUploadModal() {
+  const m = document.getElementById('uploadModal');
+  if (!m) return;
+  document.getElementById('upCustomerSearch').value = '';
+  document.getElementById('upCustomerHit').textContent = '';
+  document.getElementById('upCustomerList').style.display = 'none';
+  _upCustomerId = null;
+  cancelNewCustomerMode();
+  const today = new Date();
+  const yyyy = today.getFullYear(), mm = String(today.getMonth()+1).padStart(2,'0'), dd = String(today.getDate()).padStart(2,'0');
+  document.getElementById('upServiceDate').value = `${yyyy}-${mm}-${dd}`;
+  document.getElementById('upFile').value = '';
+  _upFiles = [];
+  _upDurationsSec = [];
+  renderUpFileList();
+  document.getElementById('upErr').textContent = '';
+  _loadUpAdvisors();
+  m.style.display = 'flex';
+}
+
+function closeUploadModal() {
+  const m = document.getElementById('uploadModal');
+  if (m) m.style.display = 'none';
+}
+
+function searchUpCustomers() {
+  const q = document.getElementById('upCustomerSearch').value.trim();
+  _upCustomerId = null;
+  document.getElementById('upCustomerHit').textContent = '';
+  clearTimeout(_upSearchTimer);
+  _upSearchTimer = setTimeout(async () => {
+    if (!q) { document.getElementById('upCustomerList').style.display = 'none'; return; }
+    try {
+      const r = await fetch(BASE + '/api/admin/customers?q=' + encodeURIComponent(q));
+      const d = await r.json();
+      const list = d.customers || [];
+      const box = document.getElementById('upCustomerList');
+      if (!list.length) {
+        box.innerHTML = '<div style="padding:8px;color:var(--text-mute)">无匹配，点上方 ➕ 新增顾客</div>';
+      } else {
+        box.innerHTML = list.map(c => {
+          const tail = c.phone_tail ? `尾号${c.phone_tail}` : '尾号未填';
+          const card = c.member_card || '无会员号';
+          const safeName = (c.name||'').replace(/</g,'&lt;');
+          return `<div onclick="pickUpCustomer(${c.id}, '${(c.name||'').replace(/'/g,"\\'")}', '${card.replace(/'/g,"\\'")}','${tail}')"
+                       style="padding:6px 10px;cursor:pointer;border-bottom:1px solid #f0f2f5"
+                       onmouseover="this.style.background='#f5f7fa'" onmouseout="this.style.background=''">
+                       <b>${safeName}</b> <span style="color:var(--text-mute);font-size:11px">${card} · ${tail}</span>
+                  </div>`;
+        }).join('');
+      }
+      box.style.display = 'block';
+    } catch(e) {}
+  }, 200);
+}
+
+function pickUpCustomer(id, name, card, tail) {
+  _upCustomerId = id;
+  document.getElementById('upCustomerSearch').value = name;
+  const hit = document.getElementById('upCustomerHit');
+  hit.style.color = 'var(--blue)';
+  hit.textContent = `已选：${name}（${card} · ${tail}）`;
+  document.getElementById('upCustomerList').style.display = 'none';
+}
+
+function enterNewCustomerMode() {
+  document.getElementById('upCustSearchRow').style.display = 'none';
+  document.getElementById('upCustomerList').style.display = 'none';
+  document.getElementById('upCustNewRow').style.display = 'flex';
+  document.getElementById('upCustomerHit').textContent = '';
+  document.getElementById('upNewName').value = '';
+  document.getElementById('upNewPhone').value = '';
+  document.getElementById('upNewCard').value = '';
+  document.getElementById('upNewName').focus();
+}
+
+function cancelNewCustomerMode() {
+  document.getElementById('upCustSearchRow').style.display = 'flex';
+  document.getElementById('upCustNewRow').style.display = 'none';
+}
+
+async function createNewCustomer() {
+  const name = document.getElementById('upNewName').value.trim();
+  const phone = document.getElementById('upNewPhone').value.trim();
+  const card = document.getElementById('upNewCard').value.trim();
+  const hit = document.getElementById('upCustomerHit');
+  hit.style.color = '#e74c3c';
+  if (!name) { hit.textContent = '请填写姓名'; return; }
+  if (!/^\d{4}$/.test(phone)) { hit.textContent = '手机尾号必须是 4 位数字'; return; }
+  const btn = document.getElementById('upNewCustSubmit');
+  btn.disabled = true; btn.textContent = '保存中…';
+  try {
+    const r = await fetch(BASE + '/api/admin/customers', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, phone_tail: phone, member_card: card})
+    });
+    const d = await r.json();
+    if (d.error) { hit.textContent = d.error; return; }
+    cancelNewCustomerMode();
+    hit.style.color = 'var(--blue)';
+    pickUpCustomer(d.id, d.name, d.member_card || '无会员号', `尾号${phone}`);
+  } catch(e) {
+    hit.textContent = '创建失败：' + e;
+  } finally {
+    btn.disabled = false; btn.textContent = '保存';
+  }
+}
+
+function _probeOne(file) {
+  return new Promise(resolve => {
+    const url = URL.createObjectURL(file);
+    const a = document.createElement('audio');
+    a.preload = 'metadata';
+    a.onloadedmetadata = () => {
+      const sec = a.duration;
+      URL.revokeObjectURL(url);
+      resolve(isFinite(sec) && sec > 0 ? Math.round(sec) : null);
+    };
+    a.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    a.src = url;
+  });
+}
+
+function _fmtDur(d) {
+  if (d == null) return '解析中…';
+  if (d < 0) return '解析失败';
+  const m = Math.floor(d/60), s = d%60;
+  return `${String(m).padStart(2,'0')}分${String(s).padStart(2,'0')}秒`;
+}
+
+function renderUpFileList() {
+  const info = document.getElementById('upDurInfo');
+  if (!_upFiles.length) {
+    info.style.color = 'var(--text-mute)';
+    info.textContent = '（尚未添加文件）';
+    return;
+  }
+  info.style.color = 'var(--text)';
+  const n = _upFiles.length;
+  info.innerHTML = _upFiles.map((f, i) => {
+    const safe = f.name.replace(/</g,'&lt;');
+    const upDis = i === 0 ? 'disabled' : '';
+    const dnDis = i === n - 1 ? 'disabled' : '';
+    return `<div style="display:flex;align-items:center;gap:4px;padding:3px 0;border-bottom:1px solid #f0f2f5">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${i+1}. ${safe}</span>
+      <span style="color:var(--text-mute);font-size:11px;white-space:nowrap">${_fmtDur(_upDurationsSec[i])}</span>
+      <button type="button" ${upDis} onclick="moveUpFile(${i},-1)" class="sec" title="上移" style="font-size:11px;padding:1px 5px">▲</button>
+      <button type="button" ${dnDis} onclick="moveUpFile(${i},1)" class="sec" title="下移" style="font-size:11px;padding:1px 5px">▼</button>
+      <button type="button" onclick="removeUpFile(${i})" class="sec" style="font-size:11px;padding:1px 6px">移除</button>
+    </div>`;
+  }).join('');
+}
+
+function removeUpFile(idx) {
+  _upFiles.splice(idx, 1);
+  _upDurationsSec.splice(idx, 1);
+  renderUpFileList();
+}
+
+function moveUpFile(idx, delta) {
+  const j = idx + delta;
+  if (j < 0 || j >= _upFiles.length) return;
+  [_upFiles[idx], _upFiles[j]] = [_upFiles[j], _upFiles[idx]];
+  [_upDurationsSec[idx], _upDurationsSec[j]] = [_upDurationsSec[j], _upDurationsSec[idx]];
+  renderUpFileList();
+}
+
+async function addUploadFiles() {
+  const inp = document.getElementById('upFile');
+  const incoming = Array.from(inp.files);
+  inp.value = '';  // 允许再次选同名文件
+  if (!incoming.length) return;
+  // 去重（按 name+size）
+  const sigSet = new Set(_upFiles.map(f => f.name + '|' + f.size));
+  const startIdx = _upFiles.length;
+  incoming.forEach(f => {
+    const sig = f.name + '|' + f.size;
+    if (!sigSet.has(sig)) { sigSet.add(sig); _upFiles.push(f); _upDurationsSec.push(null); }
+  });
+  renderUpFileList();
+  // 异步解析新加入的文件时长
+  for (let i = startIdx; i < _upFiles.length; i++) {
+    const sec = await _probeOne(_upFiles[i]);
+    _upDurationsSec[i] = (sec == null ? -1 : sec);
+    renderUpFileList();
+  }
+}
+
+function submitUploadForm() {
+  const advisor = document.getElementById('upAdvisor').value.trim();
+  const sdate = document.getElementById('upServiceDate').value;
+  const files = _upFiles.slice();
+  const err = document.getElementById('upErr');
+  err.textContent = '';
+  if (!advisor) { err.textContent = '请选择顾问'; return; }
+  if (!_upCustomerId) { err.textContent = '请选择或新增顾客'; return; }
+  if (!sdate) { err.textContent = '请选择服务日期'; return; }
+  if (!files.length) { err.textContent = '请添加录音文件'; return; }
+
+  const fd = new FormData();
+  files.forEach(f => fd.append('files', f));
+  fd.append('customer_id', String(_upCustomerId));
+  fd.append('advisor', advisor);
+  fd.append('service_date', sdate);
+  files.forEach((_, i) => {
+    const d = _upDurationsSec[i];
+    fd.append('duration_sec', (d != null && d >= 0) ? String(d) : '');
+  });
+
+  const btn = document.getElementById('upSubmitBtn');
+  const msg = document.getElementById('uploadMsg');
+  btn.disabled = true; btn.textContent = '上传中…';
+  msg.textContent = `上传中…(${files.length} 个文件)`;
+  fetch(BASE + '/api/upload', {method:'POST', body: fd}).then(parseJsonSafe).then(d => {
+    if (d.error) {
+      const detail = (d.failed && d.failed.length > 1) ? `（${d.failed.length} 个文件失败）` : '';
+      err.textContent = d.error + detail;
+      btn.disabled = false; btn.textContent = '上传并分析'; msg.textContent = '';
+      return;
+    }
+    const okN = (d.created||[]).length, badN = (d.failed||[]).length;
+    if (badN) err.textContent = `${badN} 个文件上传失败：${d.failed[0].error}`;
+    msg.textContent = `已上传 ${okN} 个文件，正在自动 ASR + 分析…`;
+    btn.disabled = false; btn.textContent = '上传并分析';
+    if (okN) { closeUploadModal(); loadList(1); }
+    setTimeout(() => msg.textContent = '', 6000);
+  }).catch(e => {
+    err.textContent = '上传失败：' + (e && e.message ? e.message : e);
+    btn.disabled = false; btn.textContent = '上传并分析';
+    msg.textContent = '';
+  });
+}
+
+// 安全解析响应：服务端返回非 JSON（如 nginx 502/500 HTML 错误页）时给出可读提示，
+// 而不是抛 "Unexpected token '<'"
+async function parseJsonSafe(r) {
+  const text = await r.text();
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    if (r.status === 413) throw new Error('文件过大，服务器拒绝接收');
+    if (r.status === 502 || r.status === 504) throw new Error(`网关错误(${r.status})，请稍后重试`);
+    throw new Error(`服务器返回异常(${r.status})，请稍后重试或联系管理员`);
+  }
+}
+
+async function deleteSessionRecs(sid, btn) {
+  if (!confirm('确认删除该接诊的全部录音文件？不可恢复！')) return;
+  btn.disabled = true;
+  const r = await fetch(BASE + '/api/session/' + sid + '/recordings/delete', {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) { btn.textContent = '已删除'; btn.style.opacity = '0.4'; loadList(curPage); }
+  else { alert(d.error || '删除失败'); btn.disabled = false; }
+}
+
+async function deleteSessionReport(sid, btn) {
+  if (!confirm('确认清除该接诊的分析报告？录音和接诊记录保留。')) return;
+  btn.disabled = true;
+  const r = await fetch(BASE + '/api/session/' + sid + '/report/delete', {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) { btn.textContent = '已清除'; btn.style.opacity = '0.4'; loadList(curPage); }
+  else { alert(d.error || '失败'); btn.disabled = false; }
+}
+
+async function deleteSessionFull(sid, btn) {
+  if (!confirm('⚠ 完全删除此接诊？录音文件、分析报告、接诊记录将全部删除，不可恢复！')) return;
+  btn.disabled = true;
+  const r = await fetch(BASE + '/api/session/' + sid + '/delete', {method: 'DELETE'});
+  const d = await r.json();
+  if (d.ok) { loadList(curPage); }
+  else { alert(d.error || '失败'); btn.disabled = false; }
+}
+
+async function requestDelSessionRecs(sid, btn) {
+  const reason = prompt('申请删除原因（可选）：');
+  if (reason === null) return;
+  btn.disabled = true;
+  const r = await fetch(BASE + '/api/session/' + sid + '/delete-request', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({reason}),
+  });
+  const d = await r.json();
+  if (d.ok) { btn.textContent = '已申请'; btn.style.opacity = '0.5'; }
+  else { alert(d.error || '申请失败'); btn.disabled = false; }
+}
+
+loadList(1);
+setInterval(() => loadList(curPage), 30000);  // 30s 自动刷新
+</script>
+</body>
+</html>
