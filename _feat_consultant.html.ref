@@ -1,0 +1,2452 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>顾问端 · 工牌接诊分析系统</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='report.css') }}">
+<style>
+html,body{overflow-x:hidden;max-width:100%}
+.wrap{max-width:760px;margin:0 auto;padding:20px 16px 80px}
+.header-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px}
+.header-title{font-size:18px;font-weight:700;color:var(--navy)}
+.header-user{font-size:12px;color:var(--text-mute)}
+.card{background:#fff;border:1px solid var(--border);border-radius:6px;padding:16px 18px;margin-bottom:16px}
+.card h3{font-size:14px;color:var(--navy);margin-bottom:10px}
+.btn{background:var(--navy);color:#fff;border:none;border-radius:4px;padding:9px 18px;font-size:14px;cursor:pointer;font-family:inherit}
+.btn.sec{background:#fff;color:var(--navy);border:1px solid var(--border)}
+.btn.danger{background:#e74c3c}
+.btn.big{padding:14px 28px;font-size:16px;border-radius:50px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row input,.row select{border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px;font-family:inherit;outline:none;flex:1;min-width:120px}
+.row input:focus,.row select:focus{border-color:var(--blue)}
+.msg{font-size:12px;color:var(--text-mute);margin-top:6px;min-height:16px}
+.msg.err{color:#e74c3c}
+.muted{color:var(--text-mute);font-size:12px}
+.rec-area{display:flex;flex-direction:column;align-items:center;padding:16px;gap:14px}
+.rec-timer{font-size:28px;font-weight:700;color:var(--navy);font-variant-numeric:tabular-nums}
+.rec-status{font-size:12px;color:var(--text-mute)}
+.rec-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#e74c3c;margin-right:6px;vertical-align:middle;animation:blink 1.2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+.tbl{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border:1px solid var(--border)}
+.tbl th{background:var(--navy);color:#fff;text-align:left;padding:8px 10px;font-size:12px}
+.tbl td{padding:8px 10px;border-bottom:1px solid var(--border)}
+.tbl tr:last-child td{border-bottom:none}
+.suggest-box{position:relative}
+.suggest{position:absolute;left:0;right:0;top:100%;background:#fff;border:1px solid var(--border);border-top:none;max-height:200px;overflow:auto;z-index:30;display:none}
+.suggest.show{display:block}
+.suggest-item{padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--bg-light)}
+.suggest-item:hover{background:var(--bg-light)}
+.suggest-item.add{color:var(--blue);font-weight:600}
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;background:rgba(74,144,217,.12);color:var(--blue)}
+.tag.done{background:rgba(39,174,96,.12);color:var(--green)}
+.tag.failed{background:rgba(231,76,60,.12);color:var(--red)}
+.tag.running{background:rgba(74,144,217,.12);color:var(--blue)}
+@media (max-width:480px){
+  .wrap{padding:12px 10px 60px}
+  .row input,.row select,.row button{font-size:16px}
+  .btn.big{width:100%}
+}
+
+/* ====== 醒目的接诊列表入口 ====== */
+.list-entry{display:flex;gap:10px;align-items:center;justify-content:space-between;background:linear-gradient(90deg,#4a90d9,#3a78c0);color:#fff;border-radius:8px;padding:14px 18px;margin:0 0 16px;box-shadow:0 2px 8px rgba(74,144,217,.25);text-decoration:none;font-weight:600;font-size:15px}
+.list-entry:hover{filter:brightness(1.05);transform:translateY(-1px);transition:.15s}
+.list-entry .arrow{font-size:18px}
+.list-entry .sub{font-size:12px;font-weight:400;opacity:.85;margin-top:2px}
+.list-entry.bottom{background:linear-gradient(90deg,#27ae60,#1f9a55);box-shadow:0 2px 8px rgba(39,174,96,.25)}
+
+/* 切肤按钮 */
+.skin-toggle{background:#fff;border:1px solid var(--border);border-radius:99px;padding:4px 12px;font-size:12px;cursor:pointer;color:var(--text-mid);font-family:inherit;margin-left:8px}
+.skin-toggle:hover{border-color:var(--blue);color:var(--blue)}
+
+/* 双语切换：默认显示 .t-pro，卡通模式显示 .t-cute */
+.t-cute{display:none}
+body.skin-cute .t-pro{display:none}
+body.skin-cute .t-cute{display:inline}
+
+/* ===================== 🌸 萌系卡通皮肤 ===================== */
+body.skin-cute{
+  background:linear-gradient(135deg,#fff5fa 0%,#fef0f7 40%,#f5ecff 100%);
+  font-family:"PingFang SC","Hiragino Sans",-apple-system,"Microsoft YaHei",sans-serif;
+}
+body.skin-cute::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:
+    radial-gradient(circle at 10% 15%,rgba(255,182,193,.3) 0,transparent 60px),
+    radial-gradient(circle at 85% 25%,rgba(221,160,221,.25) 0,transparent 70px),
+    radial-gradient(circle at 70% 80%,rgba(255,218,224,.3) 0,transparent 80px),
+    radial-gradient(circle at 20% 90%,rgba(230,200,255,.25) 0,transparent 70px);
+}
+body.skin-cute .wrap{position:relative;z-index:1}
+body.skin-cute .header-title{color:#d96ba8;font-size:20px;letter-spacing:1px}
+body.skin-cute .header-title::before{content:"🌸 ";font-size:18px}
+body.skin-cute .header-user{color:#a07898}
+body.skin-cute .header-user a{color:#d96ba8 !important}
+body.skin-cute .card{
+  background:rgba(255,255,255,.85);
+  border:1px solid #f9d6e6;
+  border-radius:18px;
+  box-shadow:0 4px 16px rgba(255,182,193,.15);
+  backdrop-filter:blur(6px);
+}
+body.skin-cute .card h3{color:#d96ba8;font-size:15px;display:flex;align-items:center;gap:4px}
+body.skin-cute .btn{
+  background:linear-gradient(135deg,#ffb6c1,#e8a0c8);
+  border-radius:99px;box-shadow:0 2px 8px rgba(232,160,200,.35);
+}
+body.skin-cute .btn.sec{background:#fff;color:#d96ba8;border:1px solid #f4c3da;box-shadow:none}
+body.skin-cute .btn.big{
+  background:linear-gradient(135deg,#ffb6c1 0%,#ffc8dd 50%,#e8a0c8 100%);
+  font-size:17px;padding:18px 36px;border-radius:99px;
+  box-shadow:0 6px 20px rgba(232,160,200,.45);
+  position:relative;overflow:hidden;
+}
+body.skin-cute .btn.big::before{
+  content:"";position:absolute;inset:0;background:linear-gradient(135deg,transparent,rgba(255,255,255,.4),transparent);
+  animation:shine 3s ease-in-out infinite;
+}
+@keyframes shine{0%{transform:translateX(-100%)}50%{transform:translateX(100%)}100%{transform:translateX(100%)}}
+body.skin-cute .rec-area{padding:24px 16px;gap:18px}
+body.skin-cute .rec-timer{
+  color:#d96ba8;font-size:32px;
+  text-shadow:0 2px 6px rgba(232,160,200,.3);
+}
+body.skin-cute .rec-timer::before{content:"💖 ";font-size:24px}
+body.skin-cute .rec-status{color:#b97ea8;font-size:13px}
+body.skin-cute .rec-dot{
+  background:#ffb6c1;width:12px;height:12px;
+  box-shadow:0 0 8px rgba(255,182,193,.8);
+  animation:heart-pulse 1.4s ease-in-out infinite;
+}
+@keyframes heart-pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.3);opacity:.6}}
+body.skin-cute .tbl{border:1px solid #f9d6e6;border-radius:12px;overflow:hidden}
+body.skin-cute .tbl th{background:linear-gradient(90deg,#ffb6c1,#e8a0c8);color:#fff}
+body.skin-cute .tbl td{border-bottom:1px dashed #f4d6e6}
+body.skin-cute .tag{background:rgba(255,182,193,.2);color:#d96ba8}
+body.skin-cute .tag.done{background:rgba(167,221,179,.3);color:#5ba978}
+body.skin-cute .tag.running{background:rgba(255,200,150,.3);color:#d68b3e}
+body.skin-cute .row input,body.skin-cute .row select{
+  border:1px solid #f4c3da;border-radius:12px;
+}
+body.skin-cute .row input:focus,body.skin-cute .row select:focus{border-color:#d96ba8}
+body.skin-cute .list-entry{
+  background:linear-gradient(135deg,#ffd1dc,#d4b8e8);
+  box-shadow:0 4px 16px rgba(212,184,232,.4);
+  border-radius:18px;
+}
+body.skin-cute .list-entry.bottom{
+  background:linear-gradient(135deg,#c8e6c9,#a8d8f0);
+  box-shadow:0 4px 16px rgba(168,216,240,.4);
+}
+body.skin-cute .skin-toggle{
+  background:linear-gradient(135deg,#fff,#fef0f7);
+  border:1px solid #f4c3da;color:#d96ba8;
+}
+/* 卡通模式下漂浮的小装饰 */
+body.skin-cute .float-decor{
+  position:fixed;font-size:20px;opacity:.5;pointer-events:none;z-index:0;
+  animation:float 6s ease-in-out infinite;
+}
+@keyframes float{0%,100%{transform:translateY(0) rotate(0)}50%{transform:translateY(-12px) rotate(8deg)}}
+.float-decor{display:none}
+body.skin-cute .float-decor{display:block}
+
+/* 今日接诊列表卡片 */
+.reception-list{display:flex;flex-direction:column;gap:10px}
+.reception-card{border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:#fff;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.reception-card .info{flex:1;min-width:0}
+.reception-card .name{font-size:15px;font-weight:600;color:var(--navy)}
+.reception-card .meta{font-size:12px;color:var(--text-mute);margin-top:2px}
+.reception-card .acts{display:flex;gap:6px;flex-wrap:wrap}
+.empty-tip{color:var(--text-mute);font-size:13px;text-align:center;padding:18px 0}
+.mask{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50;align-items:center;justify-content:center;padding:16px}
+.mask.show{display:flex}
+.dlg{background:#fff;border-radius:8px;padding:18px;max-width:560px;width:100%;max-height:90vh;overflow:auto}
+.dlg h3{font-size:15px;color:var(--navy);margin-bottom:10px}
+.seg{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;margin-bottom:12px}
+.seg button{flex:1;border:none;background:#fff;padding:8px;font-size:13px;cursor:pointer;color:var(--text-mid);font-family:inherit}
+.seg button.active{background:var(--navy);color:#fff}
+.pkg-rec{border:1px solid #eee;border-radius:6px;padding:8px 10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
+.pkg-rec.unbound{background:#fffbe6;border-color:#ffe082}
+body.skin-cute .reception-card{background:rgba(255,255,255,.85);border-color:#f9d6e6;border-radius:14px}
+body.skin-cute .reception-card .name{color:#d96ba8}
+body.skin-cute .dlg{border-radius:18px}
+</style>
+<style>
+/* ===== 统一暖玉柔光：保留「陪伴」皮肤(给陪伴文案/无录音字)，但把它从粉色重新上成暖玉色；
+   去掉皮肤切换钮 + 飘浮 emoji，做成高级简洁大方的单一风格 ===== */
+.skin-toggle{display:none!important}
+body.skin-cute .float-decor{display:none!important}
+body.skin-cute{
+  background:#F4EEE6!important; color:#2E2A26;
+  --navy:#3F7D62; --blue:#5E9B7E; --border:#EBE2D6; --bg-light:#F3ECE3; --text-mid:#5b534a; --text-mute:#9A9087;
+  font-family:"PingFang SC","Noto Sans SC",system-ui,-apple-system,sans-serif;
+}
+body.skin-cute::before{content:none!important;display:none!important}
+body.skin-cute .header-title{color:#2E2A26;font-family:"Songti SC","STSong","Noto Serif SC",serif;letter-spacing:2px;font-size:22px}
+body.skin-cute .header-title::before{content:none!important}
+body.skin-cute .header-user{color:#9A9087}
+body.skin-cute .header-user a{color:#3F7D62!important}
+body.skin-cute .card{background:#FFFDFA;border:1px solid #EBE2D6;border-radius:16px;box-shadow:0 8px 28px rgba(74,55,32,.07),0 2px 6px rgba(74,55,32,.04)}
+body.skin-cute .card h3{color:#2E2A26;font-family:"Songti SC","STSong",serif;font-weight:500}
+body.skin-cute .btn{background:#3F7D62;border-radius:10px;box-shadow:none}
+body.skin-cute .btn.sec{background:#FFFDFA;color:#3F7D62;border:1px solid #EBE2D6}
+body.skin-cute .btn.big{background:linear-gradient(135deg,#5E9B7E,#3F7D62);border-radius:999px;box-shadow:0 8px 22px rgba(63,125,98,.30)}
+body.skin-cute .btn.big::before{content:none!important;display:none!important;animation:none!important}
+body.skin-cute .rec-timer{color:#3F7D62;font-family:"Songti SC","STSong",serif;text-shadow:none}
+body.skin-cute .rec-timer::before{content:none!important}
+body.skin-cute .rec-status{color:#9A9087}
+body.skin-cute .rec-dot{background:#C97B6E;box-shadow:none}
+body.skin-cute .tbl{border:1px solid #EBE2D6;border-radius:12px}
+body.skin-cute .tbl th{background:#3F7D62;color:#fff}
+body.skin-cute .tbl td{border-bottom:1px solid #EBE2D6}
+body.skin-cute .tag{background:#EAF2EC;color:#3F7D62}
+body.skin-cute .tag.done{background:#E7F0EA;color:#3F7D62}
+body.skin-cute .tag.running{background:#F6ECDD;color:#B0792F}
+body.skin-cute .row input,body.skin-cute .row select{border:1px solid #EBE2D6;border-radius:10px}
+body.skin-cute .row input:focus,body.skin-cute .row select:focus{border-color:#5E9B7E}
+body.skin-cute .list-entry{background:linear-gradient(135deg,#5E9B7E,#3F7D62);box-shadow:0 6px 18px rgba(63,125,98,.25);border-radius:14px}
+body.skin-cute .list-entry.bottom{background:linear-gradient(135deg,#C6A56B,#B0894D);box-shadow:0 6px 18px rgba(176,137,77,.25)}
+body.skin-cute .reception-card{background:#FFFDFA;border-color:#EBE2D6;border-radius:14px}
+body.skin-cute .reception-card .name{color:#2E2A26}
+body.skin-cute .seg button.active{background:#3F7D62;color:#fff}
+body.skin-cute .dlg{border-radius:16px}
+</style>
+</head>
+<body class="skin-cute">
+<div class="wrap">
+  <div class="header-bar">
+    <div class="header-title"><span class="t-pro">接诊录音</span><span class="t-cute">美丽陪伴</span><span id="appVerTag" style="display:none;font-size:11px;font-weight:400;margin-left:8px;vertical-align:middle"></span></div>
+    <div class="header-user">
+      <button id="reminderBell" onclick="toggleReminderPanel()" title="提醒" style="position:relative;background:none;border:none;cursor:pointer;font-size:18px;vertical-align:middle;margin-right:6px">🔔<span id="reminderDot" style="display:none;position:absolute;top:-2px;right:-4px;background:#e74c3c;color:#fff;border-radius:99px;font-size:10px;padding:0 4px;line-height:14px"></span></button>
+      {{ advisor_name or username }}（{% if role == 'store_manager' %}店长{% else %}<span class="t-pro">顾问</span><span class="t-cute">陪伴师</span>{% endif %}） ·
+      {% if role == 'store_manager' %}<a href="{{ url_for('admin_page') }}" style="color:var(--blue)">本店看板</a> · {% endif %}
+      <a href="{{ url_for('logout') }}" style="color:var(--blue)">退出</a>
+      <button class="skin-toggle" onclick="toggleSkin()" title="切换皮肤"><span id="skinLabel">🎀 切换皮肤</span></button>
+    </div>
+  </div>
+
+  <!-- 提醒下拉面板 -->
+  <div id="reminderPanel" style="display:none;position:fixed;top:54px;right:16px;width:320px;max-height:60vh;overflow:auto;background:#fff;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);z-index:2000;padding:10px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <b>提醒</b><span style="cursor:pointer;color:#999" onclick="toggleReminderPanel()">✕</span>
+    </div>
+    <div id="reminderList"><div class="muted" style="font-size:13px;padding:8px 0">加载中…</div></div>
+  </div>
+
+  <!-- 接诊列表入口（顶部）-->
+  <a class="list-entry" href="{{ url_for('index') }}">
+    <div>
+      <div>📋 <span class="t-pro">查看接诊列表</span><span class="t-cute">查看美丽档案</span></div>
+      <div class="sub"><span class="t-pro">所有接诊记录、分析报告、点评</span><span class="t-cute">回顾每一次陪伴与成长</span></div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+
+  <!-- 录音 -->
+  <div class="card" id="recCard">
+    <h3><span class="t-pro">录音</span><span class="t-cute">✨ 开启美丽时光</span></h3>
+    <div class="rec-area">
+      <div class="rec-timer" id="timer">00:00</div>
+      <div class="rec-status" id="recStatus"><span class="t-pro">点击开始录音</span><span class="t-cute">点击开始陪伴 💕</span></div>
+      <button class="btn big" id="recBtn"><span class="t-pro">● 开始录音</span><span class="t-cute">💕 开启陪伴</span></button>
+      <div class="msg" id="recMsg"></div>
+    </div>
+  </div>
+
+  <!-- App 内提示：录音由底部原生录音条负责（仅 App 内显示，浏览器永不显示） -->
+  <div id="appRecHint" class="muted" style="display:none;font-size:12px;margin:-6px 0 16px;padding:8px 10px;background:#f7f9fc;border-radius:6px">请使用 App 底部的录音按钮进行录音。</div>
+
+  <!-- 接诊列表入口（底部 / 录音卡片下方）-->
+  <a class="list-entry bottom" href="{{ url_for('index') }}">
+    <div>
+      <div>📊 <span class="t-pro">前往接诊列表</span><span class="t-cute">前往美丽档案</span></div>
+      <div class="sub"><span class="t-pro">查看本次接诊的 ASR 与分析进度</span><span class="t-cute">看看今天的陪伴整理得怎么样啦</span></div>
+    </div>
+    <span class="arrow">→</span>
+  </a>
+
+  <!-- 客户档案（搜索→打开档案，复用 /customer/<id>） -->
+  <div class="card" id="profileCard">
+    <h3><span class="t-pro">客户档案</span><span class="t-cute">📖 美丽档案</span></h3>
+    <div class="muted" style="margin-bottom:8px;font-size:12px">
+      <span class="t-pro">搜索任意顾客，点开查看其档案与价值预测。（录音只能听本人接待的）</span>
+      <span class="t-cute">搜搜任意姐妹，点开看看她的成长档案 💝</span>
+    </div>
+    <div class="row">
+      <input id="profileSearchQ" placeholder="输入姓名 / 会员卡号" autocomplete="off">
+    </div>
+    <div id="profileSearchList" style="max-height:300px;overflow:auto;margin-top:8px"></div>
+  </div>
+
+  <!-- 接诊列表（可切日期） -->
+  <div class="card">
+    <h3 style="display:flex;align-items:center;justify-content:space-between">
+      <span><span class="t-pro">接诊列表</span><span class="t-cute">🌷 姐妹们的接诊</span></span>
+      <span>
+        <button class="btn sec" style="padding:4px 10px;font-size:12px" onclick="loadReception()">刷新</button>
+        <button class="btn" id="addReceptionBtn" style="padding:6px 14px;font-size:13px" onclick="openAddReception()">+ 加入</button>
+      </span>
+    </h3>
+    <div id="dateSwitchRow" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:8px;padding:6px 8px;border-radius:6px;background:#f7f9fc">
+      <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="shiftReceptionDate(-1)">◀ 前一天</button>
+      <input id="receptionDateInput" type="date" onchange="onReceptionDateChange(this.value)" style="border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:13px">
+      <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="shiftReceptionDate(1)">后一天 ▶</button>
+      <button class="btn sec" id="todayBtn" style="padding:3px 8px;font-size:12px;display:none" onclick="setReceptionDate(_todayStr())">回到今天</button>
+      <span id="dateTodayTag" class="muted" style="font-size:12px">今天</span>
+    </div>
+    <div id="dateBanner" class="muted" style="margin-bottom:8px;font-size:12px"></div>
+    <div id="receptionList" class="reception-list"><div class="empty-tip">加载中…</div></div>
+  </div>
+
+  <!-- 未选择顾客的录音 -->
+  <div class="card">
+    <h3><span class="t-pro">未选择顾客的录音</span><span class="t-cute">💭 还没归档的片段</span> <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadPending()">刷新</button><button id="penSyncBtn" class="btn sec" style="display:none;float:right;padding:3px 10px;font-size:12px;margin-right:6px" onclick="penSyncOpen()"><span class="t-pro">📥 从录音笔同步</span><span class="t-cute">📥 取回小伙伴</span></button></h3>
+    <div class="muted" style="margin-bottom:6px;font-size:12px">未绑定顾客的录音不会进入分析。请试听后绑定到对应日期接诊列表里的顾客。</div>
+    <div id="pendingCrossWarn" style="display:none;background:#fdecea;color:#c0392b;padding:6px 8px;border-radius:4px;margin-bottom:6px;font-size:12px;font-weight:600"></div>
+    <table class="tbl pending-tbl">
+      <thead><tr><th>服务日期</th><th>时间段</th><th>时长</th><th>试听</th><th>操作</th></tr></thead>
+      <tbody id="pendingBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+    </table>
+    <div id="pendingPager" style="display:none;align-items:center;justify-content:center;gap:12px;margin-top:8px"></div>
+    <div id="diagRow" style="display:none;text-align:center;margin-top:10px;border-top:1px dashed var(--border);padding-top:8px">
+      <button class="btn sec" style="padding:4px 14px;font-size:12px;opacity:0.8" onclick="uploadDiag()">🩺 上传运行诊断</button>
+      <span id="diagMsg" style="font-size:12px;color:#888;margin-left:6px"></span>
+    </div>
+  </div>
+
+  <!-- 底部大播放器：点未归档「🎧 试听」时弹出，大进度条好拖 -->
+  <div id="miniPlayer" style="display:none;position:fixed;left:0;right:0;bottom:0;background:#fff;border-top:1px solid #eee;box-shadow:0 -3px 16px rgba(0,0,0,.14);padding:12px 16px;z-index:1000">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span id="mpTitle" style="font-size:13px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
+      <button onclick="mpClose()" style="border:none;background:none;font-size:20px;color:#999;padding:0 4px;line-height:1">✕</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <button id="mpPlayBtn" onclick="mpToggle()" style="border:none;background:#e75480;color:#fff;width:46px;height:46px;border-radius:50%;font-size:18px;flex:none">▶</button>
+      <span id="mpCur" style="font-size:13px;color:#666;min-width:44px;text-align:right">0:00</span>
+      <input id="mpSeek" type="range" min="0" max="1000" value="0" step="1" style="flex:1;height:8px" oninput="mpOnSeekInput()" onchange="mpOnSeekChange()">
+      <span id="mpDur" style="font-size:13px;color:#666;min-width:44px">0:00</span>
+    </div>
+    <audio id="mpAudio" preload="metadata"></audio>
+  </div>
+
+  <style>
+    /* 未归档列表：手机端转卡片布局 */
+    @media (max-width: 640px) {
+      .pending-tbl thead { display:none; }
+      .pending-tbl, .pending-tbl tbody, .pending-tbl tr, .pending-tbl td { display:block; width:100%; }
+      .pending-tbl tr { border:1px solid var(--border); border-radius:6px; padding:8px; margin-bottom:8px; box-sizing:border-box; }
+      .pending-tbl td { border:none; padding:3px 0; }
+      .pending-tbl td[data-lbl]::before { content: attr(data-lbl) "："; color:#666; font-size:12px; margin-right:4px; }
+      .pending-tbl td.pending-acts { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+      .pending-tbl audio { width:100% !important; }
+    }
+  </style>
+
+  <!-- 多说话人警告 -->
+  <div class="card" id="needsConfirmCard" style="display:none">
+    <h3 style="color:#e67e22">⚠ 检测到可能误录（说话人 &gt; 2）</h3>
+    <div class="muted" style="margin-bottom:6px;font-size:12px">以下录音 ASR 后检测到超过 2 个说话人，可能是一段录音里混了多位顾客（忘关录音）。可解绑后拆分重传，或确认本次按当前归属分析。</div>
+    <table class="tbl">
+      <thead><tr><th>时间</th><th>顾客</th><th>说话人数</th><th>试听</th><th>操作</th></tr></thead>
+      <tbody id="needsConfirmBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- 加入今日接诊弹窗 -->
+<div class="mask" id="addMask">
+  <div class="dlg">
+    <h3 id="addTitle">加入今日接诊</h3>
+    <div id="addDateRow" style="display:none;margin-bottom:10px">
+      <div style="font-size:12px;color:#666;margin-bottom:4px">接诊日期 *（仅限最近 7 天内）</div>
+      <input id="addDateInput" type="date" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px">
+    </div>
+    <div class="seg">
+      <button id="segSearch" class="active" onclick="switchAddMode('search')">搜索已有顾客</button>
+      <button id="segNew" onclick="switchAddMode('new')">新增顾客</button>
+    </div>
+    <div id="addSearch">
+      <input id="addSearchQ" placeholder="输入姓名 / 手机尾号 / 卡号" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px" autocomplete="off">
+      <div id="addSearchList" style="max-height:260px;overflow:auto;margin-top:8px"></div>
+    </div>
+    <div id="addNew" style="display:none">
+      <div class="row"><input id="addNewName" placeholder="顾客姓名 *"></div>
+      <div class="row" style="margin-top:8px"><input id="addNewTail" placeholder="手机尾号（4位）*" maxlength="4" inputmode="numeric"></div>
+      <div class="row" style="margin-top:8px"><input id="addNewCard" placeholder="会员/卡号（可选）"></div>
+    </div>
+    <div class="msg" id="addMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn sec" onclick="closeAdd()">取消</button>
+      <button class="btn" id="addConfirmBtn" onclick="confirmAdd()" style="display:none">确认新增并加入</button>
+    </div>
+  </div>
+</div>
+
+<!-- 绑定录音弹窗（从今日接诊列表选） -->
+<div class="mask" id="bindMask">
+  <div class="dlg" style="max-width:420px">
+    <h3>绑定到今日接诊的顾客</h3>
+    <div class="muted" style="margin-bottom:8px;font-size:12px">只能从下面列表里选；若没有要找的顾客，请先点"加入今日接诊"。</div>
+    <div id="bindCustomerList" style="max-height:300px;overflow:auto"></div>
+    <div class="msg" id="bindMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:10px">
+      <button class="btn sec" onclick="closeBind()">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 改接诊日期弹窗 -->
+<div class="mask" id="editDateMask">
+  <div class="dlg" style="max-width:380px">
+    <h3>修改接诊日期</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">只能在原日期前后 7 天内修改，且不超过今天。<b style="color:#e74c3c">挂在该接诊下的录音会自动解绑</b>（录音真实日期不动）。</div>
+    <div id="editDateInfo" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+    <input id="editDateInput" type="date" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px">
+    <div class="msg" id="editDateMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn sec" onclick="closeEditDate()">取消</button>
+      <button class="btn" id="editDateConfirm" onclick="confirmEditDate()">确认修改</button>
+    </div>
+  </div>
+</div>
+
+<!-- 换绑弹窗（直接执行，无审批） -->
+<div class="mask" id="rebindMask">
+  <div class="dlg">
+    <h3 class="t-pro">换绑这段录音到别的顾客</h3>
+    <h3 class="t-cute">把这段记录归到别的姐妹 💝</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:8px;background:#fff8e6;border:1px solid #ffe3a3;border-radius:6px;padding:8px 10px;line-height:1.6">
+      <b>只移动这一段录音</b>，该顾客其他录音不受影响（不是"换整个顾客"）。换绑后新旧两份报告都会<b>重新生成</b>。直接生效、无需审批，所有操作管理员可见。
+    </div>
+    <div id="rebindRecInfo" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+
+    <div class="seg">
+      <button id="rbSegPick" class="active" onclick="rbSwitchMode('pick')">选已有顾客</button>
+      <button id="rbSegNew" onclick="rbSwitchMode('new')">＋ 新增当日顾客</button>
+    </div>
+
+    <!-- 模式：选已有顾客（搜索本人接待过的） -->
+    <div id="rbPick">
+      <input id="rbSearchQ" placeholder="搜索本人接待过的顾客：姓名 / 卡号 / 手机尾号" autocomplete="off"
+             style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px">
+      <div class="muted" style="font-size:11px;margin:4px 0 2px">仅能换绑到<b>您本人接待过的顾客</b>。标"当日"的已在该录音当天接诊；其余选中后会自动补登当天接诊。</div>
+      <div id="rebindCustList" style="max-height:220px;overflow:auto;margin-bottom:8px"></div>
+    </div>
+
+    <!-- 模式：新增当日顾客 -->
+    <div id="rbNew" style="display:none">
+      <div class="muted" style="font-size:11px;margin-bottom:6px">新增的顾客会自动发会员号，并补登进该录音当天的接诊（算一次接诊）。</div>
+      <div class="row"><input id="rbNewName" placeholder="顾客姓名 *"></div>
+      <div class="row" style="margin-top:8px"><input id="rbNewTail" placeholder="手机尾号（4位，可选）" maxlength="4" inputmode="numeric"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:8px">
+        <button class="btn" id="rbNewBtn" onclick="rbAddNewCustomer()">新增并选中</button>
+      </div>
+      <div class="muted" style="font-size:11px;margin-top:4px">新增后会自动切回"选已有顾客"并替您勾上。写错了可在列表里点"删除"撤回（名下已有录音则无法删除）。</div>
+    </div>
+
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">换绑理由（可选）</div>
+    <textarea id="rebindReason" rows="2" placeholder="可选：说明换绑原因，便于管理员复盘" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px;resize:vertical"></textarea>
+    <div class="msg" id="rebindMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn sec" onclick="closeRebind()">取消</button>
+      <button class="btn" id="rebindSubmitBtn" onclick="submitRebind()">确认换绑（仅这段）</button>
+    </div>
+  </div>
+</div>
+
+<!-- 退回未归档弹窗 -->
+<div class="mask" id="unbindMask">
+  <div class="dlg" style="max-width:420px">
+    <h3>退回未归档片段</h3>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">录音将从当前顾客解绑，回到"未归档片段"里，可以在那里申请删除。<b>若已分析将作废</b>。所有操作会被管理员留痕。</div>
+    <div id="unbindRecInfo" class="muted" style="font-size:12px;margin-bottom:8px"></div>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">退回理由 *</div>
+    <textarea id="unbindReason" rows="3" placeholder="请简要说明（如：录错顾客、想删除等）" style="width:100%;border:1px solid var(--border);border-radius:4px;padding:8px 10px;font-size:14px;resize:vertical"></textarea>
+    <div class="msg" id="unbindMsg"></div>
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn sec" onclick="closeUnbind()">取消</button>
+      <button class="btn" id="unbindSubmitBtn" style="background:#e74c3c;border-color:#e74c3c" onclick="submitUnbind()">确认退回未归档</button>
+    </div>
+  </div>
+</div>
+
+<!-- 接诊包确认弹窗 -->
+<div class="mask" id="pkgMask">
+  <div class="dlg">
+    <h3 id="pkgTitle">接诊包</h3>
+    <div class="muted" id="pkgSubtitle" style="font-size:12px;margin-bottom:8px"></div>
+    <div id="pkgProgress" style="display:none;background:#f5f7fa;border:1px solid #e3e8ee;border-radius:6px;padding:10px 12px;margin-bottom:10px"></div>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:6px 0 4px">本次将分析的录音</div>
+    <div id="pkgBound"></div>
+    <div style="font-weight:600;font-size:13px;color:var(--navy);margin:12px 0 4px" id="pkgUnboundTitle">本人当日未绑定录音（可加入本接诊包）</div>
+    <div id="pkgUnbound"></div>
+    <div class="msg" id="pkgMsg"></div>
+    <div class="row" style="justify-content:space-between;margin-top:12px">
+      <button class="btn sec" onclick="closePkg()">关闭</button>
+      <button class="btn" id="pkgStartBtn" onclick="startAnalysisPkg()">确认并开始分析</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = {{ request.script_root|tojson }};
+const ADVISOR = {{ advisor_name|tojson }};
+const ROLE = {{ role|tojson }};
+
+// ===== 网络断开统一提示（toast）=====
+// 联网请求(fetch)在断网/连接失败时会 reject(通常 TypeError)；HTTP 4xx/5xx 不会 reject，仍由各自逻辑处理。
+// 这里包一层 fetch：网络层失败时弹"网络断开"提示，再原样把错误抛出，不影响任何既有 try/catch/await 逻辑。
+// 覆盖全部联网操作：刷新未归档、绑定/换绑/退回、触发与重跑分析、确认说话人、查询/搜索、提醒处理、网页端上传等。
+(function(){
+  let _toastEl = null, _toastTimer = null;
+  function _ensureToastEl(){
+    if (_toastEl) return _toastEl;
+    const el = document.createElement('div');
+    el.id = 'netToast';
+    el.setAttribute('role', 'alert');
+    el.style.cssText = 'position:fixed;left:50%;bottom:24px;transform:translateX(-50%);'
+      + 'background:#c0392b;color:#fff;padding:10px 16px;border-radius:6px;font-size:14px;'
+      + 'font-weight:600;box-shadow:0 2px 10px rgba(0,0,0,.25);z-index:99999;max-width:90vw;'
+      + 'text-align:center;display:none;';
+    (document.body || document.documentElement).appendChild(el);
+    _toastEl = el;
+    return el;
+  }
+  // 单一 toast 元素 + 重置计时：断网期间多次失败只会让同一条提示常驻，不堆叠、不刷屏；
+  // 恢复联网后最后一次失败 3.5s 后自动消失。
+  window.showNetToast = function(msg){
+    const el = _ensureToastEl();
+    el.textContent = msg || '⚠ 网络断开，请检查网络后重试';
+    el.style.display = 'block';
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(function(){ el.style.display = 'none'; }, 3500);
+  };
+  if (window.fetch && !window.__netFetchWrapped){
+    const _origFetch = window.fetch.bind(window);
+    window.fetch = function(){
+      return _origFetch.apply(this, arguments).catch(function(err){
+        // fetch 仅在网络层失败(断网/DNS/连接被拒)时 reject —— 这正是要提示的场景。
+        window.showNetToast('⚠ 网络断开，请检查网络后重试');
+        throw err;  // 原样抛出，既有 catch/await 逻辑完全不变
+      });
+    };
+    window.__netFetchWrapped = true;
+  }
+  // 试听：<audio> 直接加载 OSS 签名URL(非 fetch)，断网播放会触发 error 事件(不冒泡，用捕获阶段委托)。
+  // 仅在确实离线时提示，避免签名URL过期(403)等被误判成"网络断开"。
+  document.addEventListener('error', function(e){
+    const t = e.target;
+    if (t && t.tagName === 'AUDIO' && navigator.onLine === false){
+      window.showNetToast('⚠ 网络断开，无法试听，请检查网络后重试');
+    }
+  }, true);
+})();
+
+// ============ App（WebView）环境检测 ============
+// 仅当被 Android App 的 WebView 加载、且 AndroidBridge.isApp() 为 true 时为 true。
+// 普通浏览器里恒为 false，下面所有 IN_APP 分支都不会执行，行为 100% 不变。
+var IN_APP = !!(window.AndroidBridge && window.AndroidBridge.isApp && window.AndroidBridge.isApp());
+// 顾问级录音权限（服务端下发，0/1）。默认 1=开通，向后兼容。控制录音来源药丸是否出现。
+var ALLOW_PHONE_REC = {{ allow_phone_rec|default(1) }};
+var ALLOW_PEN_REC = {{ allow_pen_rec|default(1) }};
+
+// ============ 陪伴页顶部显示 App 版本号 + 是否最新（只在 App 内显示，浏览器不显示）============
+// 让陪伴师一眼知道自己装的是不是最新版。当前版本来自原生桥 appVersion()；最新版来自后端 /api/app/version。
+// 注意：旧桥(≤v23)的 appVersion() 写死返回 "2.0.0"——遇到这个值就提示"请更新"，不显示错的号。
+function showAppVersion(){
+  var el = document.getElementById('appVerTag');
+  if (!el) return;
+  if (!IN_APP || !(window.AndroidBridge && window.AndroidBridge.appVersion)) { el.style.display='none'; return; }
+  var cur = '';
+  try { cur = (window.AndroidBridge.appVersion() || '').trim(); } catch(e){}
+  el.style.display = 'inline';
+  if (!cur || cur === '2.0.0') { el.textContent = '请更新到最新版'; el.style.color = '#e67e22'; return; }
+  el.textContent = 'v' + cur;
+  el.style.color = '#b3a0ad';
+  fetch(BASE + '/api/app/version').then(function(r){ return r.json(); }).then(function(d){
+    var latest = ((d && d.latestVersionName) || '').trim();
+    if (latest && cur !== latest) { el.textContent = 'v' + cur + ' · 有新版本'; el.style.color = '#e67e22'; }
+    else { el.textContent = 'v' + cur + ' · 已是最新'; el.style.color = '#9bbf9b'; }
+  }).catch(function(){});
+}
+try { showAppVersion(); } catch(e){}
+
+// ============ App 内：录音走原生桥（录音笔 / 手机麦克风，可切换），UI 仍是本页这个录音按钮 ============
+// 录音卡片在 App 内照常显示；「开始/停止」驱动原生录音引擎。
+// 来源可切：录音笔(走完整系统的蓝牙实时流) 或 手机麦克风(PhoneMicService)。默认录音笔，选择记 localStorage。
+window.__appRecording = false;
+var appRecSource = (function(){ try { return localStorage.getItem('appRecSource')==='phone' ? 'phone' : 'pen'; } catch(e){ return 'pen'; } })();
+// 按权限钳制录音来源：未开通手机麦→强制笔；未开通笔→强制手机麦（若都没开通则保持原值，录音按钮实际不可用）。
+if (!ALLOW_PHONE_REC && ALLOW_PEN_REC) appRecSource = 'pen';
+else if (!ALLOW_PEN_REC && ALLOW_PHONE_REC) appRecSource = 'phone';
+var appTimerInt = null, appStartTs = 0;
+
+function appPenConnected(){
+  try { return !!(window.AndroidBridge && window.AndroidBridge.isPenConnected && window.AndroidBridge.isPenConnected()); }
+  catch(e){ return false; }
+}
+function appStartTimer(offsetSec){
+  // offsetSec：原生已录秒数（重连到仍在录的笔时用于同步进度），无则从 0 起。
+  appStartTs = Date.now() - (offsetSec > 0 ? offsetSec * 1000 : 0);
+  if (appTimerInt) clearInterval(appTimerInt);
+  appTimerInt = setInterval(function(){
+    var s = Math.floor((Date.now()-appStartTs)/1000), m = Math.floor(s/60), r = s%60;
+    var t = document.getElementById('timer');
+    if (t) t.textContent = String(m).padStart(2,'0')+':'+String(r).padStart(2,'0');
+  }, 250);
+}
+function appStopTimer(){ if (appTimerInt){ clearInterval(appTimerInt); appTimerInt = null; } }
+
+// 录音按钮在 App 内的行为：开始/停止 → 调原生桥
+function appToggleRecord(){
+  // 启动中(正在唤醒/连接)：点一下=取消，调原生 stop 撤销，不死等 5 秒超时。
+  if (window.__nativeState === 'starting') { try { window.AndroidBridge.stopRecording(); } catch(e){} return; }
+  if (window.uploading) return;
+  if (window.__appRecording) { try { window.AndroidBridge.stopRecording(); } catch(e){} return; }
+  // 录音笔未连接也直接调原生：原生会自动连接上次那支笔，连上后自动开始录音（无需手动去扫描页）。
+  try { window.AndroidBridge.startRecording(appRecSource); } catch(e){}
+}
+
+// 录音笔连接指示：录音卡片里、按钮上方一行。点一下触发连接。
+// 两套皮肤分开渲染：
+//   - pro（专业版）：明确文案「🖊 录音笔 已连接 / 未连接」，专业版不忌讳「录音」字。
+//   - cute（可爱版）：纯图标/含蓄文案，绝不出现「录音」二字（顾客就在旁边看着）。
+//     已连：🖊✨ 已就绪（彩色 + 绿点）；未连：🖊 点我连接小伙伴（灰色 + 灰点）。
+var APP_PEN_BTN_BASE = 'border-radius:99px;padding:5px 14px;font-size:13px;cursor:pointer;font-family:inherit;border:1px solid var(--border,#d9d9e3);transition:all .15s;display:inline-flex;align-items:center;gap:6px';
+function appPenBtnStyle(connected){
+  return APP_PEN_BTN_BASE + (connected
+    ? ';background:#fff;color:var(--text-mid,#555);border-color:var(--blue,#3b6ef6)'
+    : ';background:#fff;color:#aaa;border-color:var(--border,#d9d9e3)');
+}
+// 来源药丸样式：选中=蓝底蓝边加粗，未选=白底灰字
+function appSrcPillStyle(selected){
+  return APP_PEN_BTN_BASE + (selected
+    ? ';background:#eef3ff;color:var(--blue,#3b6ef6);border-color:var(--blue,#3b6ef6);font-weight:600'
+    : ';background:#fff;color:#aaa;border-color:var(--border,#d9d9e3)');
+}
+// 选择录音来源（pen 录音笔 / phone 手机麦）。录音/上传/启动中不让切。
+function appSetSource(src){
+  if (window.__appRecording || window.uploading || window.__nativeState==='starting') return;
+  // 权限钳制：未开通的来源不允许选中
+  if (src==='phone' && !ALLOW_PHONE_REC) return;
+  if (src!=='phone' && !ALLOW_PEN_REC) return;
+  appRecSource = (src==='phone') ? 'phone' : 'pen';
+  try { localStorage.setItem('appRecSource', appRecSource); } catch(e){}
+  appUpdateSourceRow();
+  var st = document.getElementById('recStatus');
+  if (st && appRecSource==='phone' && !window.__appRecording && !window.uploading) st.textContent = '';
+}
+// 点录音笔药丸：选笔模式；未连则顺手触发连接（连上次那支笔）
+function appSelectPen(){
+  appSetSource('pen');
+  if (!appPenConnected() && !window.__appRecording && !window.uploading) { try { window.AndroidBridge.connectPen(); } catch(e){} }
+}
+// 连接状态小圆点：已连=绿，未连=灰
+function appPenDotHtml(connected){
+  var c = connected ? '#27ae60' : '#bbb';
+  return '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+c+'"></span>';
+}
+function appUpdateSourceRow(){
+  var pen = document.getElementById('appSrcPen');
+  var phone = document.getElementById('appSrcPhone');
+  if (!pen && !phone) return;   // 两个药丸都没渲染(权限全关)→无可更新
+  var connected = appPenConnected();
+  var penSel = (appRecSource === 'pen');
+  // 录音笔药丸：左侧连接小圆点 + 文案；选中态由 appSrcPillStyle 高亮
+  if (pen) {
+    if (isCute()) {
+      pen.innerHTML = appPenDotHtml(connected) +
+        '<span>' + (connected ? '🖊✨ 已就绪' : '🖊 小伙伴') + '</span>';
+      pen.title = connected ? '小伙伴已就绪 ✨' : '点我用小伙伴（会自动连接）💫';
+    } else {
+      pen.innerHTML = appPenDotHtml(connected) +
+        '<span>🖊 录音笔' + (penSel ? '（' + (connected ? '已连接' : '未连接') + '）' : '') + '</span>';
+      pen.title = connected ? '录音笔已连接' : '录音笔未连接，点击连接';
+    }
+    pen.style.cssText = appSrcPillStyle(penSel);
+  }
+  // 手机麦药丸
+  if (phone) {
+    phone.innerHTML = '<span>📱 手机</span>';
+    phone.title = isCute() ? '用手机录' : '用手机麦克风录音（不走录音笔）';
+    phone.style.cssText = appSrcPillStyle(appRecSource === 'phone');
+  }
+  if (connected) appClearConnectHint();   // 笔已连 → 顺手清掉残留的"请先连接"提示
+}
+// 点击连接指示：未连则触发原生连接（连上次那支笔）
+function appConnectPen(){
+  if (window.__appRecording || window.uploading) return;
+  if (!appPenConnected()) { try { window.AndroidBridge.connectPen(); } catch(e){} }
+  appUpdateSourceRow();
+}
+
+// 原生录音引擎状态回推 → 更新本页录音按钮/状态/计时
+window.__onNativeRecState = function(state, msg, durSec){
+  var btn = document.getElementById('recBtn');
+  var st  = document.getElementById('recStatus');
+  var t   = document.getElementById('timer');
+  window.__nativeState = state;   // 记录原生态，供 appToggleRecord 判断"启动中可取消"
+  if (state === 'starting') {
+    // 已发开始命令、等录音笔确认真的开录。不起计时；按钮改"取消"可撤销，别死锁 5 秒。
+    window.__appRecording = false; window.__appPaused = false; window.uploading = false;
+    appStopTimer();
+    if (t) t.textContent = '00:00';
+    if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'取消唤醒':'取消'; btn.style.background = ''; }
+    if (st){ st.innerHTML = isCute() ? '正在唤醒小伙伴… ⏳' : '正在连接录音笔…'; }
+  } else if (state === 'recording') {
+    window.__appRecording = true; window.__appPaused = false; window.uploading = false;
+    if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'🌸 结束陪伴':'■ 结束录音'; btn.style.background = isCute()?'':'#e74c3c'; }
+    if (st){ st.innerHTML = '<span class="rec-dot"></span>' + (isCute()?'陪伴进行中… 💕':'录音中…'); }
+    appStartTimer(durSec);  // 用原生已录秒数同步计时（重连到仍在录的笔也能显示正确进度）
+  } else if (state === 'uploading') {
+    window.__appRecording = false; window.uploading = true;
+    appStopTimer();
+    if (btn){ btn.disabled = true; }
+    // 可爱皮肤绝不显示原生消息（可能含「录音」字），固定含蓄文案
+    if (st){ st.textContent = isCute() ? '保存中… ✨' : (msg || '上传中…'); }
+  } else if (state === 'error') {
+    // 出错（如录音笔休眠没响应）：复位到可重新开始，并明确提示——绝不显示成"已保存"。
+    window.__appRecording = false; window.__appPaused = false; window.uploading = false;
+    appStopTimer();
+    if (t) t.textContent = '00:00';
+    if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'💕 开启陪伴':'● 开始录音'; btn.style.background = ''; }
+    if (st){ st.textContent = isCute() ? '出了点小问题，请确认小伙伴已开机后再试 😢' : (msg || '出错了，请重试'); }
+  } else if (state === 'idle') { // idle（成功保存或正常复位）；未知态(如笔自发paused)不在此误当idle
+    window.__appRecording = false; window.__appPaused = false; window.uploading = false;
+    appStopTimer();
+    if (btn){ btn.disabled = false; btn.innerHTML = isCute()?'💕 开启陪伴':'● 开始录音'; btn.style.background = ''; }
+    // 可爱皮肤不显示原生消息（防「录音」字泄漏）：按是否含「失败」给含蓄文案
+    if (st && msg) {
+      if (isCute()) st.textContent = (msg.indexOf('失败') >= 0 || msg.indexOf('错误') >= 0)
+              ? '出了点小问题，再试一次 😢' : '请选择姐妹 💫';
+      else st.textContent = msg;
+    }
+    if (t) t.textContent = '00:00';
+  }
+};
+// 录音笔连接状态变化 → 刷新连接指示行（已连/未连）
+// 笔已连上 → 清掉残留的"请先连接/已断开"提示，避免和"已就绪"并存。录音/上传/启动中不动。
+function appClearConnectHint(){
+  if (window.__appRecording || window.uploading || window.__nativeState==='starting') return;
+  var st = document.getElementById('recStatus');
+  if (!st) return;
+  var t = st.textContent || '';
+  if (t.indexOf('请先连接') >= 0 || t.indexOf('断开') >= 0) {
+    st.innerHTML = '<span class="t-pro">点击开始录音</span><span class="t-cute">点击开始陪伴 💕</span>';
+  }
+}
+window.__onPenConnChanged = function(connected){ appUpdateSourceRow(); if (connected) appClearConnectHint(); };
+
+// 原生上传完一段录音后：刷新未归档列表并自动打开绑定弹窗（复用本页既有流程）
+window.__onNativeUploaded = function(id){
+  try {
+    if (typeof loadPending === 'function') loadPending();
+    if (id && id > 0 && typeof openBind === 'function') openBind(id);
+  } catch(e) { console.warn(e); }
+};
+
+// 后台异步上传完成一段：刷新未归档列表；若此刻没在录下一段、绑定弹窗也没开着，
+// 自动弹绑定弹窗（和手机录音一致，不然顾问永远不知道要去「待整理」绑顾客）。
+// 正在录/正在传/正在绑则不打断——稍后从列表里绑。
+window.__onPenUploaded = function(id){
+  try {
+    if (typeof loadPending === 'function') loadPending();
+    var mask = document.getElementById('bindMask');
+    if (id && id > 0 && !window.__appRecording && !window.uploading
+        && !(mask && mask.classList.contains('show'))
+        && typeof openBind === 'function') openBind(id);
+  } catch(e) { console.warn(e); }
+};
+
+// #4 连上空闲检测到小伙伴里有"未导入"的录音(已传/已删不算) → 醒目提示去取回(点击打开取回小伙伴)。
+// 堵"录音中被杀的段/补传放弃的段 没人捞"的静默黑洞:不自动传(避免复活已删/时长bug),引导顾问手动确认取回。
+window.__onPenUnsynced = function(count){
+  try {
+    var el = document.getElementById('penUnsyncedTip');
+    if (!count || count <= 0) { if (el) el.style.display = 'none'; return; }
+    if (!el) {
+      var anchor = document.getElementById('recCard') || document.body;
+      el = document.createElement('div');
+      el.id = 'penUnsyncedTip';
+      el.style.cssText = 'margin:10px 0;padding:10px 14px;border-radius:10px;background:#fff3e0;'
+        + 'color:#7a4f00;font-size:13px;cursor:pointer;border:1px solid #ffe0b2';
+      el.onclick = function(){ if (typeof penSyncOpen === 'function') penSyncOpen(); };
+      if (anchor.parentNode) anchor.parentNode.insertBefore(el, anchor.nextSibling);
+      else anchor.appendChild(el);
+    }
+    el.style.display = 'block';
+    el.innerHTML = '💡 小伙伴里还有 <b>' + count + '</b> 段没导入(可能上次没传上来),点这里取回 →';
+  } catch(e) { console.warn(e); }
+};
+
+// 后台异步上传指示：显示"💾 N 段保存中…"+"⚠️ M 段没保存成功"，不阻塞当前录音。都为 0 时隐藏。
+window.__penPendCount = 0; window.__penFailed = 0; window.__penDlPct = -1;
+function __renderPendBadge(){
+  try {
+    var badge = document.getElementById('appPendingBadge');
+    if (!badge) {
+      var area = document.querySelector('#recCard .rec-area') || document.body;
+      badge = document.createElement('div');
+      badge.id = 'appPendingBadge';
+      badge.style.cssText = 'margin:8px 0 0;font-size:12px;text-align:center';
+      area.appendChild(badge);
+    }
+    var lines = [];
+    if (window.__penPendCount > 0) {
+      var t = isCute() ? ('💾 '+window.__penPendCount+' 段保存中…') : ('💾 '+window.__penPendCount+' 段后台上传中…');
+      if (window.__penDlPct >= 0 && window.__penDlPct < 100) t += '（下载 '+window.__penDlPct+'%）';
+      lines.push(t);
+    }
+    if (window.__penFailed > 0) {
+      // ★绝不提示"重录"：录音在录音笔机身里没丢，只是「笔→手机」蓝牙没传上来，可重试 / 用「从录音笔同步」重新导入。
+      var _ft = isCute()
+        ? ('⚠️ '+window.__penFailed+' 段还没从小伙伴传上来（录音在小伙伴里没丢，可重试或用上方「从录音笔同步」重新导入）')
+        : ('⚠️ '+window.__penFailed+' 段还没从录音笔传上来（录音在录音笔里没丢，可重试或用上方「从录音笔同步」重新导入）');
+      _ft += ' <a href="javascript:void(0)" onclick="appRetryPenUploads(event)" style="color:#c0392b;text-decoration:underline;font-weight:700">重试</a>';
+      lines.push(_ft);
+    }
+    if (lines.length) {
+      badge.innerHTML = lines.join('<br>');
+      badge.style.color = window.__penFailed > 0 ? '#e74c3c' : 'var(--text-mute,#888)';
+      badge.style.display = '';
+    } else { badge.style.display = 'none'; }
+  } catch(e){ console.warn(e); }
+}
+window.__onPenPending = function(count, failed){
+  window.__penPendCount = count || 0;
+  window.__penFailed = failed || 0;
+  if (window.__penPendCount === 0) window.__penDlPct = -1;
+  __renderPendBadge();
+};
+// 后台下载进度(0-100)：更新"保存中（下载 N%）"
+window.__onPenProgress = function(pct){
+  window.__penDlPct = (typeof pct === 'number') ? pct : -1;
+  __renderPendBadge();
+};
+// ★「重试」：立刻重推待补传队列(从录音笔重新下载)。给不出队的已放弃段→提示走「从录音笔同步」。
+window.appRetryPenUploads = function(ev){
+  try { if (ev && ev.preventDefault) ev.preventDefault(); } catch(e){}
+  try { if (window.AndroidBridge && window.AndroidBridge.retryPenUploads) window.AndroidBridge.retryPenUploads(); } catch(e){}
+  try { var b = document.getElementById('appPendingBadge'); if (b) b.insertAdjacentHTML('beforeend','<br><span style="color:#888">正在重试，从录音笔重新传…</span>'); } catch(e){}
+};
+
+if (IN_APP) {
+  // 隐藏之前那条"用底部录音条"的提示（已不需要）
+  var _h = document.getElementById('appRecHint'); if (_h) _h.style.display = 'none';
+  // App 内才有"从录音笔同步"(需原生桥)
+  if (window.AndroidBridge && window.AndroidBridge.syncPenFiles) { var _ps = document.getElementById('penSyncBtn'); if (_ps) _ps.style.display = ''; }
+  // 录音卡片里、按钮上方注入录音笔连接指示行（点一下连接）。
+  // 标签 #appSrcLbl 走双 span 双语：cute 下不出现「录音」字；按钮 #appSrcPen 由 appUpdateSourceRow 按皮肤渲染。
+  var _area = document.querySelector('#recCard .rec-area');
+  var _recBtn = document.getElementById('recBtn');
+  if (_area && _recBtn && !document.getElementById('appSrcRow')) {
+    var _row = document.createElement('div');
+    _row.id = 'appSrcRow';
+    _row.style.cssText = 'display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin:6px 0 14px';
+    var _lbl = document.createElement('span');
+    _lbl.id = 'appSrcLbl';
+    // pro 下显示「录音方式：」，cute 下显示无「录音」字的含蓄文案（CSS t-pro/t-cute 控制）
+    _lbl.innerHTML = '<span class="t-pro">录音方式：</span><span class="t-cute">方式 </span>';
+    _lbl.style.cssText = 'font-size:13px;color:var(--text-mute,#888)';
+    _row.appendChild(_lbl);
+    // 仅渲染已开通的来源药丸：未开通手机麦不出现「📱手机」，未开通录音笔不出现「🖊录音笔」。
+    if (ALLOW_PEN_REC) {
+      var _pen = document.createElement('button');
+      _pen.id = 'appSrcPen'; _pen.type = 'button';
+      _pen.onclick = function(){ appSelectPen(); };
+      _row.appendChild(_pen);
+    }
+    if (ALLOW_PHONE_REC) {
+      var _phone = document.createElement('button');
+      _phone.id = 'appSrcPhone'; _phone.type = 'button';
+      _phone.onclick = function(){ appSetSource('phone'); };
+      _row.appendChild(_phone);
+    }
+    _area.insertBefore(_row, _recBtn);
+    // 只开通一种(或都没开通)→无需切换，隐藏整行；来源已由 appRecSource 钳定。
+    if (!(ALLOW_PEN_REC && ALLOW_PHONE_REC)) _row.style.display = 'none';
+    appUpdateSourceRow();
+  }
+  // 把"按原生【真实】态同步本页录音 UI"封装，供首次进入 + 从「美丽档案」返回(pageshow/页面可见)复用。
+  // ★必须含 idle：切到档案页又切回时，本页(WebView bfcache)残留的"录音中"计时会空走、还露出"结束录音"按钮，
+  //   但录音笔其实早停了(原生 idle)。只有严格按 getState 同步(含把 UI 拉回 idle)才能避免这种"瞎录制"假象。
+  window.__syncRecState = function(){
+    try { applySkin('cute'); } catch(e){}  // 统一暖玉：只用「陪伴」皮肤(无「录音」字)，不再随 localStorage 切到专业版
+    try {
+      var _gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
+      var _realActive = (_gs === 'recording' || _gs === 'uploading' || _gs === 'starting');
+      var _uiActive = !!(window.__appRecording || window.uploading);
+      if (_realActive && _uiActive) {
+        // 两边都在录/传 → 不动！保持计时器时间戳起点，切出陪伴页又回来时计时不归零(接着笔的进度走)
+      } else if (_realActive) {
+        // 笔在录但本页没显示(冷启动/刚恢复) → 用录音笔【真实已录秒数】恢复，绝不从 0 重数
+        var _sec = 0;
+        try { _sec = (window.AndroidBridge.getRecElapsedSec && window.AndroidBridge.getRecElapsedSec()) || 0; } catch(e){}
+        window.__onNativeRecState(_gs, '', _sec);
+      } else {
+        window.__onNativeRecState('idle', '', 0);  // 笔没在录 → 把残留的"录音中"拉回 idle
+      }
+      // 从原生恢复"💾保存中"badge(后台上传队列在原生里没丢，跳转回来也能看到)
+      var _pi = (window.AndroidBridge.pendingInfo && window.AndroidBridge.pendingInfo()) || '0,0';
+      var _p = ('' + _pi).split(',');
+      window.__onPenPending(parseInt(_p[0], 10) || 0, parseInt(_p[1], 10) || 0);
+    } catch(e){}
+  };
+  window.__syncRecState();
+  // ★最终一致性兜底：每 3s 核对原生真实录音态——只要原生不在录(idle)，UI 绝不允许停留在"录音中"。
+  //   不管什么路径(自动开录后笔停/状态回调时序/页面缓存残留)导致的"假录音中"，最多 3s 自动消失。
+  //   这是兜底硬保证：录音笔没在录，陪伴页就一定不会显示录音中。
+  if (!window.__recSyncTimer) {
+    window.__recSyncTimer = setInterval(function(){
+      if (document.hidden) return;
+      try {
+        var gs = (window.AndroidBridge.getState && window.AndroidBridge.getState()) || 'idle';
+        var realActive = (gs === 'recording' || gs === 'uploading' || gs === 'starting');
+        var uiActive = !!(window.__appRecording || window.uploading);
+        if (!realActive && uiActive) window.__onNativeRecState('idle', '', 0);  // 原生没在录→把 UI 拉回 idle
+      } catch(e){}
+    }, 3000);
+  }
+  // 录音笔没连：给个非弹窗提示（真正强制连接发生在点开始时）。cute 下不出现「录音」字。
+  setTimeout(function(){
+    if (appRecSource==='pen' && !appPenConnected()) {
+      var st = document.getElementById('recStatus');
+      if (st) st.textContent = isCute()?'请先连接小伙伴 🖊':'请先连接录音笔';
+    }
+  }, 600);
+  // 连接指示实时化：定时轮询真实 BLE 连接状态刷新指示，兜底"断开了还显示已就绪"（事件漏报时也能纠正）。
+  window.__appPenLastConn = appPenConnected();
+  setInterval(function(){
+    var now = appPenConnected();
+    if (now !== window.__appPenLastConn) {
+      window.__appPenLastConn = now;
+      appUpdateSourceRow();
+      if (now) {
+        appClearConnectHint();   // 刚连上：清掉残留的"请先连接"提示
+      } else {
+        // 刚断开：仅录音笔模式、且没在录音/上传时，给个未连提示（手机模式不提示连笔）
+        if (appRecSource==='pen' && !window.__appRecording && !window.uploading) {
+          var st = document.getElementById('recStatus');
+          if (st) st.textContent = isCute()?'小伙伴断开了，请重新连接 🖊':'录音笔已断开，请重新连接';
+        }
+      }
+    }
+  }, 2500);
+}
+
+// ============ 从录音笔同步（手动 + 预览勾选）============
+function _psEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+// ★损坏段一键「重新上传」：直接从小伙伴机身重下这段的完整版（笔上原件一直在），
+//   后端会用完整版替换掉这条损坏记录、清除损坏标记。免去"申请删除→审批→再同步"三步。
+function reuploadDamaged(penFile, btn){
+  if (!penFile) { alert('缺少文件信息，请用上方「取回小伙伴」手动选这段重传'); return; }
+  if (!(window.AndroidBridge && window.AndroidBridge.uploadPenFiles)) { alert('请在 App 内操作'); return; }
+  if (typeof appPenConnected === 'function' && !appPenConnected()) { alert('请先连接小伙伴再重新上传'); return; }
+  if (btn){ btn.disabled = true; btn.textContent = '重新上传中…'; }
+  try {
+    window.AndroidBridge.uploadPenFiles(JSON.stringify([penFile]));
+    // 入队后台下载补传；完成时 __onPenUploaded 会刷新本列表，损坏标记随之消失。
+  } catch(e){
+    if (btn){ btn.disabled = false; btn.textContent = '重新上传'; }
+    alert('重新上传失败：' + e);
+  }
+}
+
+// ★「上传中」的占位段取消：删占位记录（录音仍在小伙伴里，可稍后取回），修「上传中不能取消」。
+async function cancelUploading(rid, btn){
+  if (!confirm('取消这段的上传？\n（录音仍在小伙伴机身里没丢，稍后可用「取回小伙伴」重新导入）')) return;
+  if (btn){ btn.disabled = true; btn.textContent = '取消中…'; }
+  try {
+    // 先让 App 停止该段的后台补传任务（有此桥才调；没有也不影响——占位删了 App 重试找不到会自然放弃）
+    try { if (window.AndroidBridge && window.AndroidBridge.cancelPenUpload) window.AndroidBridge.cancelPenUpload(''+rid); } catch(e){}
+    const r = await fetch(BASE + '/api/consultant/placeholder/cancel', {
+      method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+      body: 'placeholder_id=' + encodeURIComponent(rid)
+    });
+    const d = await r.json().catch(()=>({}));
+    if (!r.ok || d.error) { alert(d.error || '取消失败'); if(btn){btn.disabled=false;btn.textContent='取消';} return; }
+    if (typeof loadPending === 'function') loadPending();
+  } catch(e){ alert('取消失败：'+e); if(btn){btn.disabled=false;btn.textContent='取消';} }
+}
+function _penSyncShow(innerHtml){
+  var m = document.getElementById('penSyncMask');
+  if (!m){
+    m = document.createElement('div'); m.id = 'penSyncMask';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+    m.innerHTML = '<div id="penSyncBox" style="background:#fff;border-radius:10px;max-width:520px;width:100%;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,.25)"></div>';
+    document.body.appendChild(m);
+  }
+  document.getElementById('penSyncBox').innerHTML = innerHtml;
+  m.style.display = 'flex';
+}
+function _penSyncClose(){ var m = document.getElementById('penSyncMask'); if (m) m.style.display = 'none'; }
+function penSyncOpen(){
+  if (!(window.AndroidBridge && window.AndroidBridge.syncPenFiles)) { alert('请在 App 内使用'); return; }
+  if (typeof appPenConnected === 'function' && !appPenConnected()) { alert('请先连接录音笔'); return; }
+  _penSyncShow('<div style="padding:30px;text-align:center;color:#666">正在读取小伙伴里的录音…<br><span style="font-size:12px;color:#999">小伙伴里文件多时要十几秒，请稍候</span></div>');
+  try { window.AndroidBridge.syncPenFiles(); } catch(e){ _penSyncShow('<div style="padding:24px;text-align:center;color:#c0392b">读取失败：'+_psEsc(''+e)+'</div>'); }
+}
+window.__onPenFiles = function(files){
+  files = files || [];
+  if (!files.length){ _penSyncShow('<div style="padding:24px;text-align:center;color:#666">录音笔里没有文件</div><div style="text-align:right;margin-top:10px"><button class="btn sec" onclick="_penSyncClose()">关闭</button></div>'); return; }
+  var items = files.map(function(f){ return {name:f.name, ra:f.ra}; });
+  fetch(BASE + '/api/consultant/pen/sync-preview', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({items:items})
+  }).then(function(r){ return r.json(); }).then(function(d){
+    var stat = {}; (d.items||[]).forEach(function(x){ stat[x.name] = x.status; });
+    _penSyncRender(files, stat);
+  }).catch(function(){ _penSyncRender(files, {}); });
+};
+// ★只显示"未传"的(已传/已删-含删除申请已通过的 一律不显示) + 分页，避免笔里几十条文件一次性渲染卡爆
+var _penSyncNew = [];      // 过滤后只剩"未传"，按时间倒序
+var _penSyncSel = {};      // 跨页保持的勾选集合 name->true（翻页不丢选）
+var _penSyncPage = 0;
+var _penSyncDateFilter = '';   // 日期筛选 YYYY-MM-DD，空=全部
+var _penSyncFiltered = null;   // 当前日期筛选后的列表（供"本页全选"）
+var PEN_SYNC_PAGE_SIZE = 20;
+function _penSyncRender(files, stat){
+  var all = files.slice().sort(function(a,b){ return (''+(b.ra||'')).localeCompare(''+(a.ra||'')); });
+  _penSyncNew = all.filter(function(f){ return (stat[f.name]||'new') === 'new'; });  // 已传uploaded / 已删deleted 都不要
+  _penSyncSel = {};
+  _penSyncPage = 0;
+  // 默认聚焦"未传里最近的那天"——多数补传都是当天没传上来的那几段，省得在一长串里翻
+  _penSyncDateFilter = _penSyncNew.length ? (''+(_penSyncNew[0].ra||'')).slice(0,10) : '';
+  _penSyncDrawPage();
+}
+// 蓝牙读取无法按日期加速（笔只能整包吐全部列表）；这里是读完后在网页侧筛，纯为好找。
+function _penSyncDates(){
+  var seen = {}, out = [];
+  _penSyncNew.forEach(function(f){ var d = (''+(f.ra||'')).slice(0,10); if (d && !seen[d]){ seen[d]=1; out.push(d); } });
+  return out;  // 已按时间倒序（_penSyncNew 本身倒序）
+}
+function _penSyncSetDate(d){ _penSyncDateFilter = d; _penSyncPage = 0; _penSyncDrawPage(); }
+function _penSyncDrawPage(){
+  if (_penSyncNew.length === 0){
+    _penSyncShow('<div style="font-weight:600;margin-bottom:6px">从录音笔同步</div>'
+      + '<div style="padding:18px;text-align:center;color:#666">没有需要同步的录音 ✅<br><span style="font-size:12px;color:#999">（已上传、已删除的不显示）</span></div>'
+      + '<div style="text-align:right;margin-top:8px"><button class="btn sec" onclick="_penSyncClose()">关闭</button></div>');
+    return;
+  }
+  // 日期筛选条（全部 + 各天）；筛后为空则回退到全部
+  var dates = _penSyncDates();
+  if (_penSyncDateFilter && dates.indexOf(_penSyncDateFilter) < 0) _penSyncDateFilter = '';
+  var filtered = _penSyncDateFilter
+    ? _penSyncNew.filter(function(f){ return (''+(f.ra||'')).slice(0,10) === _penSyncDateFilter; })
+    : _penSyncNew;
+  var chip = function(label, val){
+    var on = (_penSyncDateFilter === val);
+    return '<a href="javascript:void(0)" onclick="_penSyncSetDate(\''+val+'\')" '
+      + 'style="display:inline-block;font-size:12px;padding:3px 10px;margin:0 6px 6px 0;border-radius:14px;'
+      + (on?'background:var(--blue,#3a7afe);color:#fff':'background:#eef;color:#446')+'">'+label+'</a>';
+  };
+  var dateBar = '<div style="margin-bottom:6px">' + chip('全部('+_penSyncNew.length+')','')
+    + dates.map(function(d){ var n=_penSyncNew.filter(function(f){return (''+(f.ra||'')).slice(0,10)===d;}).length;
+        return chip(d.slice(5)+'('+n+')', d); }).join('') + '</div>';
+  var total = filtered.length;
+  var pages = Math.ceil(total / PEN_SYNC_PAGE_SIZE);
+  if (_penSyncPage >= pages) _penSyncPage = pages - 1;
+  if (_penSyncPage < 0) _penSyncPage = 0;
+  _penSyncFiltered = filtered;   // 供"本页全选"按当前筛选结果选
+  var start = _penSyncPage * PEN_SYNC_PAGE_SIZE;
+  var pageFiles = filtered.slice(start, start + PEN_SYNC_PAGE_SIZE);
+  var rows = pageFiles.map(function(f){
+    var sizeKb = Math.round((f.size||0)/1024);
+    var ck = _penSyncSel[f.name] ? ' checked' : '';
+    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid #eee;font-size:13px">'
+      + '<input type="checkbox" class="psf-chk" value="'+_psEsc(f.name)+'" onchange="_penSyncToggle(this)"'+ck+'>'
+      + '<span style="flex:1">'+_psEsc(f.ra||f.name)+'</span>'
+      + '<span style="color:#999;min-width:54px;text-align:right">'+sizeKb+'KB</span></label>';
+  }).join('');
+  var pager = '<div style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:8px;font-size:13px">'
+    + '<button class="btn sec" style="padding:3px 10px" '+(_penSyncPage<=0?'disabled':'')+' onclick="_penSyncGo(-1)">‹ 上一页</button>'
+    + '<span style="color:#666">第 '+(_penSyncPage+1)+'/'+pages+' 页 · 共 '+total+' 条未传</span>'
+    + '<button class="btn sec" style="padding:3px 10px" '+(_penSyncPage>=pages-1?'disabled':'')+' onclick="_penSyncGo(1)">下一页 ›</button></div>';
+  var selN = Object.keys(_penSyncSel).length;
+  var html = '<div style="font-weight:600;margin-bottom:6px">从录音笔同步</div>'
+    + '<div style="font-size:12px;color:#888;margin-bottom:8px">只显示<b>未传</b>的（已传/已删不显示）。按日期挑会更好找；补传后时长自动校正。</div>'
+    + dateBar
+    + '<div style="margin-bottom:6px">'
+    +   '<a href="javascript:void(0)" onclick="_penSyncSelPage(true)" style="font-size:12px;color:var(--blue)">本页全选</a>'
+    +   '<a href="javascript:void(0)" onclick="_penSyncSelPage(false)" style="font-size:12px;color:#888;margin-left:14px">本页全不选</a>'
+    +   '<a href="javascript:void(0)" onclick="_penSyncClearAll()" style="font-size:12px;color:#888;margin-left:14px">清空选择</a>'
+    + '</div>'
+    + '<div style="max-height:42vh;overflow:auto;border:1px solid var(--border);border-radius:6px;padding:0 8px">'+rows+'</div>'
+    + pager
+    + '<div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end">'
+    + '<button class="btn sec" onclick="_penSyncClose()">取消</button>'
+    + '<button class="btn" id="penSyncUpBtn" onclick="penSyncUpload()">上传所选 ('+selN+')</button></div>';
+  _penSyncShow(html);
+}
+function _penSyncGo(d){ _penSyncPage += d; _penSyncDrawPage(); }
+function _penSyncToggle(cb){ if (cb.checked) _penSyncSel[cb.value]=true; else delete _penSyncSel[cb.value]; _penSyncCount(); }
+function _penSyncSelPage(on){
+  var src = _penSyncFiltered || _penSyncNew;
+  var start = _penSyncPage * PEN_SYNC_PAGE_SIZE;
+  src.slice(start, start + PEN_SYNC_PAGE_SIZE).forEach(function(f){ if(on) _penSyncSel[f.name]=true; else delete _penSyncSel[f.name]; });
+  _penSyncDrawPage();
+}
+function _penSyncClearAll(){ _penSyncSel = {}; _penSyncDrawPage(); }
+function _penSyncCount(){
+  var b = document.getElementById('penSyncUpBtn');
+  if (b) b.textContent = '上传所选 ('+Object.keys(_penSyncSel).length+')';
+}
+// ★A1:未归档里"上传中"的录音，App(v9+)上给个「重试」——立刻重推后台补传队列
+function penRetryBtn(){
+  try { if (window.AndroidBridge && window.AndroidBridge.retryPenUploads)
+    return ' <a href="javascript:void(0)" onclick="penRetryUploads()" style="font-size:12px;color:var(--blue)">重试</a>'; } catch(e){}
+  return '';
+}
+function penRetryUploads(){
+  try { window.AndroidBridge.retryPenUploads(); } catch(e){ return; }
+  alert('已重新开始补传——请保持录音笔连着、贴近手机，稍候在列表里看结果');
+  setTimeout(loadPending, 4000); setTimeout(loadPending, 12000); setTimeout(loadPending, 30000);
+}
+function penSyncUpload(){
+  var names = Object.keys(_penSyncSel);   // ★跨页保持的选择，不只当前页
+  if (!names.length){ alert('请勾选要上传的录音'); return; }
+  if (!confirm('确定上传选中的 '+names.length+' 条录音？')) return;
+  try { window.AndroidBridge.uploadPenFiles(JSON.stringify(names)); }
+  catch(e){ alert('上传失败：'+e); return; }
+  _penSyncClose();
+  alert('已开始同步 '+names.length+' 条，稍候在未归档列表里查看（时长会自动校正）');
+  setTimeout(loadPending, 3000); setTimeout(loadPending, 10000);
+}
+
+// ============ 皮肤切换（专业版 / 萌系卡通） ============
+function isCute(){ return document.body.classList.contains('skin-cute'); }
+function tx(pro, cute){ return isCute() ? cute : pro; }
+function applySkin(skin){
+  if (skin === 'cute') {
+    document.body.classList.add('skin-cute');
+    document.getElementById('skinLabel').textContent = '💼 切回专业版';
+    document.title = '美丽陪伴 ✨';
+  } else {
+    document.body.classList.remove('skin-cute');
+    document.getElementById('skinLabel').textContent = '🎀 切换可爱皮肤';
+    document.title = '顾问端 · 工牌接诊分析系统';
+  }
+  // 重置当前录音按钮文案（如未在录音中）
+  if (!(window.mediaRecorder && window.mediaRecorder.state === 'recording') && !window.uploading && !window.__appRecording) {
+    const btn = document.getElementById('recBtn');
+    if (btn) btn.innerHTML = isCute() ? '💕 开启陪伴' : '● 开始录音';
+    const st = document.getElementById('recStatus');
+    if (st && (st.textContent.indexOf('点击') === 0)) st.textContent = isCute() ? '点击开始陪伴 💕' : '点击开始录音';
+  }
+  // App 内：连接指示按钮是 JS 渲染的，皮肤切换时重渲染（cute=纯图标无「录音」字 / pro=明确文案）
+  if (document.getElementById('appSrcPen')) appUpdateSourceRow();
+}
+function toggleSkin(){
+  const next = isCute() ? 'pro' : 'cute';
+  try { localStorage.setItem('skin_pref_v2', next); } catch(e){}
+  applySkin(next);
+  // 重新渲染未入库列表的状态标签
+  if (typeof loadPending === 'function') loadPending();
+}
+(function initSkin(){ applySkin('cute'); })();  // 统一暖玉:固定「陪伴」皮肤,不再读取/切换
+
+// ============ 一键诊断上传（仅 App 内；老版本 App 无此桥方法则隐藏入口） ============
+window.__onDiagUploaded = function(ok, msg){
+  const m = document.getElementById('diagMsg');
+  if (m) m.textContent = ok ? '✅ 已上传，谢谢！' : ('❌ ' + (msg || '上传失败'));
+};
+function uploadDiag(){
+  const m = document.getElementById('diagMsg');
+  try {
+    if (window.AndroidBridge && typeof window.AndroidBridge.uploadDiag === 'function') {
+      if (m) m.textContent = '上传中…';
+      window.AndroidBridge.uploadDiag();
+    } else if (m) {
+      m.textContent = '请在 App 内使用';
+    }
+  } catch(e){ if (m) m.textContent = '出错：' + e; }
+}
+(function initDiag(){
+  try {
+    if (window.AndroidBridge && typeof window.AndroidBridge.uploadDiag === 'function') {
+      const r = document.getElementById('diagRow'); if (r) r.style.display = '';
+    }
+  } catch(e){}
+})();
+
+// ============ 录音 ============
+let mediaRecorder = null, chunks = [], startTs = 0, timerInt = null, stream = null;
+const recBtn = document.getElementById('recBtn');
+const recStatus = document.getElementById('recStatus');
+const recMsg = document.getElementById('recMsg');
+const timerEl = document.getElementById('timer');
+
+let uploading = false;
+recBtn.onclick = async () => {
+  if (IN_APP) { appToggleRecord(); return; }   // App 内：录音走原生引擎（手机麦/录音笔）
+  if (uploading) return;  // 上传期间禁止再次操作
+  if (mediaRecorder && mediaRecorder.state === 'recording') {
+    recBtn.disabled = true;  // 防双击：停止瞬间立刻锁住
+    mediaRecorder.stop();
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: true});
+  } catch (e) {
+    recMsg.textContent = '无法访问麦克风：' + e.message; recMsg.className = 'msg err';
+    return;
+  }
+  const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' :
+               (MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '');
+  mediaRecorder = mime ? new MediaRecorder(stream, {mimeType: mime}) : new MediaRecorder(stream);
+  chunks = [];
+  mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  mediaRecorder.onstop = onStop;
+  mediaRecorder.start();
+  window.mediaRecorder = mediaRecorder;
+  startTs = Date.now();
+  recBtn.innerHTML = tx('■ 结束录音', '🌸 结束陪伴');
+  recBtn.style.background = isCute() ? '' : '#e74c3c';
+  recStatus.innerHTML = '<span class="rec-dot"></span>' + tx('录音中…', '陪伴进行中… 💕');
+  recMsg.textContent = '';
+  timerInt = setInterval(updateTimer, 250);
+};
+
+function updateTimer() {
+  const s = Math.floor((Date.now() - startTs) / 1000);
+  const m = Math.floor(s / 60), r = s % 60;
+  timerEl.textContent = String(m).padStart(2,'0') + ':' + String(r).padStart(2,'0');
+}
+
+async function onStop() {
+  clearInterval(timerInt);
+  recBtn.innerHTML = tx('● 开始录音', '💕 开启陪伴');
+  recBtn.style.background = '';
+  recStatus.textContent = tx('上传中…', '保存中… ✨');
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  const ext = (mediaRecorder && mediaRecorder.mimeType || 'audio/webm').includes('mp4') ? 'mp4' : 'webm';
+  const blob = new Blob(chunks, {type: 'audio/' + ext});
+  const durSec = Math.max(0, Math.round((Date.now() - startTs) / 1000));
+  const fd = new FormData();
+  fd.append('file', blob, 'rec-' + Date.now() + '.' + ext);
+  fd.append('duration_sec', String(durSec));
+  uploading = true; window.uploading = true;
+  recBtn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/upload', {method: 'POST', body: fd});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    recStatus.textContent = tx('已上传，请选择顾客', '已保存 ✨ 请选择姐妹');
+    recMsg.textContent = tx('请把这段录音绑定到今日接诊里的顾客。', '请把这段记录归到对应的姐妹 💝');
+    recMsg.className = 'msg';
+    timerEl.textContent = '00:00';
+    loadPending();
+    if (d && d.id) openBind(d.id);
+  } catch (e) {
+    recStatus.textContent = tx('上传失败', '保存失败 😢');
+    recMsg.textContent = e.message; recMsg.className = 'msg err';
+  } finally {
+    uploading = false; window.uploading = false;
+    recBtn.disabled = false;
+  }
+}
+
+// ============ 未入库 ============
+// 试听限制：最多播放 60 秒
+function attachAudioCap(audioEl, maxSec) {
+  audioEl.addEventListener('timeupdate', () => {
+    if (audioEl.currentTime >= maxSec) { audioEl.pause(); audioEl.currentTime = maxSec; }
+  });
+}
+
+let pendingPage = 1;
+const PENDING_PAGE_SIZE = 5;       // 未归档片段：默认每页 5 个
+let pendingListCache = [];
+
+async function loadPending() {
+  const tb = document.getElementById('pendingBody');
+  if (!tb.dataset.loaded) tb.innerHTML = '<tr><td colspan="5" class="muted">加载中…</td></tr>';
+  const r = await fetch(BASE + '/api/consultant/recordings/pending');
+  const d = await r.json();
+  pendingListCache = d.recordings || [];
+  // 按录制时间从近到远排序（最新的录音排最上面）
+  pendingListCache.sort(function(a, b){
+    var ka = a.recorded_at || (a.service_date ? a.service_date + ' ' + (a.start_hm || '') : (a.created_at || ''));
+    var kb = b.recorded_at || (b.service_date ? b.service_date + ' ' + (b.start_hm || '') : (b.created_at || ''));
+    return ('' + kb).localeCompare('' + ka);
+  });
+  tb.dataset.loaded = '1';
+  // 跨日提醒按【全部】未归档算（不只当前页）
+  const activeDate0 = currentReceptionDate || _todayStr();
+  const crossList = pendingListCache.filter(x => x.service_date && x.service_date !== activeDate0);
+  const warn = document.getElementById('pendingCrossWarn');
+  if (warn) {
+    if (crossList.length > 0) {
+      const dates = [...new Set(crossList.map(x => x.service_date))].sort().reverse();
+      warn.style.display = '';
+      warn.innerHTML = `⚠ 有 ${crossList.length} 段录音的日期与当前接诊（${activeDate0}）不一致：` +
+        dates.map(d => `<a href="javascript:void(0)" onclick='setReceptionDate(${JSON.stringify(d)})' style="color:#c0392b;text-decoration:underline;margin:0 4px;white-space:nowrap;display:inline-block">切到 ${d}</a>`).join('');
+    } else warn.style.display = 'none';
+  }
+  renderPending();
+}
+
+function pendingGoPage(delta) { pendingPage += delta; renderPending(); }
+
+function renderPending() {
+  const tb = document.getElementById('pendingBody');
+  const pager = document.getElementById('pendingPager');
+  const list = pendingListCache || [];
+  const activeDate0 = currentReceptionDate || _todayStr();
+  if (!list.length) {
+    tb.innerHTML = '<tr><td colspan="5" class="muted">没有未绑定的录音</td></tr>';
+    if (pager) pager.style.display = 'none';
+    return;
+  }
+  const totalPages = Math.max(1, Math.ceil(list.length / PENDING_PAGE_SIZE));
+  if (pendingPage > totalPages) pendingPage = totalPages;
+  if (pendingPage < 1) pendingPage = 1;
+  const start = (pendingPage - 1) * PENDING_PAGE_SIZE;
+  tb.innerHTML = list.slice(start, start + PENDING_PAGE_SIZE).map(x => {
+    // ★占位片段(处理中)：录音已结束、正在后台下载+上传。只显示服务日期，时段/时长/试听传完OSS再补。
+    if (x.upload_status === 'processing') {
+      const isCrossP = x.service_date && x.service_date !== activeDate0;
+      const dStyleP = isCrossP ? 'color:#c0392b;font-weight:600' : 'font-weight:600';
+      return `<tr style="opacity:0.85;background:#f7fbff">
+        <td data-lbl="服务日期" style="white-space:nowrap;${dStyleP}">${x.service_date || '—'}</td>
+        <td data-lbl="时间段" style="white-space:nowrap;color:#999">${x.start_hm || '—'}</td>
+        <td data-lbl="时长" style="white-space:nowrap;color:#f39c12;font-weight:600">⏳ 上传中…</td>
+        <td data-lbl="试听"><span class="muted">传完可试听</span></td>
+        <td class="pending-acts">
+          <div style="display:flex;flex-direction:column;gap:4px;align-items:stretch">
+            <span class="muted" style="font-size:12px">处理中，请稍候</span>${penRetryBtn()}
+            <a href="javascript:void(0)" onclick="cancelUploading(${x.id}, this)" style="font-size:12px;color:#e74c3c">取消上传</a>
+          </div>
+        </td>
+      </tr>`;
+    }
+    const audio = x.audio_url
+      ? `<button class="btn sec" style="padding:5px 16px;font-size:13px;white-space:nowrap" onclick="openMiniPlayer(${x.id})">🎧 试听</button>`
+      : '<span class="muted">无音频</span>';
+    const isCross = x.service_date && x.service_date !== activeDate0;
+    const drStatus = x.delete_request_status; // null | 'pending' | 'rejected'
+    const isDelPending = drStatus === 'pending';
+    const isDelRejected = drStatus === 'rejected';
+    let rowBg = '';
+    if (isDelPending) rowBg = 'background:#f0f0f0;opacity:0.85';
+    else if (isCross) rowBg = 'background:#fdecea';
+    const rowStyle = rowBg ? ` style="${rowBg}"` : '';
+    const dateStyle = isCross ? 'color:#c0392b;font-weight:600' : 'font-weight:600';
+    // 时长用 duration_label(xx分xx秒，=录音本身时长)；缺失才回退到分钟粒度
+    const durTxt = x.duration_label ? x.duration_label : (x.duration_min != null ? `${x.duration_min} 分钟` : '—');
+    const span = (x.start_hm && x.end_hm) ? `${x.start_hm} – ${x.end_hm}` : (x.start_hm || '—');
+    // 状态横幅（删除审批中 / 删除被拒绝）
+    let banner = '';
+    if (isDelPending) {
+      banner = `<div style="grid-column:1/-1;background:#fff3cd;color:#856404;padding:4px 8px;border-radius:4px;font-size:12px;margin-bottom:4px">
+        ⏳ 删除审批中（需先"撤回申请"才能进行其他操作）
+      </div>`;
+    } else if (isDelRejected) {
+      const reason = x.delete_reject_reason ? '：' + x.delete_reject_reason.replace(/"/g,'&quot;') : '';
+      banner = `<div style="grid-column:1/-1;background:#fdecea;color:#c0392b;padding:4px 8px;border-radius:4px;font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+        <span>✗ 删除申请被拒${reason}</span>
+        <button class="btn sec" style="padding:2px 8px;font-size:11px" onclick="dismissDelReject(${x.id})">知道了</button>
+      </div>`;
+    }
+    // 「内容损坏」(后段乱码噪声)：蓝牙补下载/实时流丢字节→块错位→后段乱码。原始完整音频还在小伙伴机身里。
+    // ★从用户视角：不甩"USB导出"那种吓人长文案，给一句话 + 一键「重新上传」(App 内、笔已连时直接从笔重下完整版)。
+    if (x.truncate_note) {
+      const canReup = x.pen_file && window.AndroidBridge && window.AndroidBridge.uploadPenFiles;
+      banner += `<div style="grid-column:1/-1;background:#fdecea;color:#c0392b;padding:6px 8px;border-radius:4px;font-size:12px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span>⚠️ 这段上传时出了点问题，需要重新上传一次</span>
+        ${canReup ? `<button class="btn" style="padding:3px 12px;font-size:12px;white-space:nowrap;background:#c0392b;border-color:#c0392b" onclick="reuploadDamaged('${_psEsc(x.pen_file)}', this)">重新上传</button>` : ''}
+      </div>`;
+    }
+    // 操作按钮
+    let actsHtml;
+    if (isDelPending) {
+      actsHtml = `
+        <button class="btn sec" style="padding:4px 8px;font-size:12px;white-space:nowrap;opacity:0.5;cursor:not-allowed" onclick="alert('该录音正在申请删除，请先撤回申请再操作')" disabled>绑定顾客</button>
+        <button class="btn" style="padding:4px 8px;font-size:12px;white-space:nowrap;background:#e67e22;border-color:#e67e22" onclick="withdrawDelRec(${x.id}, this)">撤回删除申请</button>
+      `;
+    } else {
+      actsHtml = `
+        <button class="btn sec" style="padding:4px 8px;font-size:12px;white-space:nowrap" onclick='openBind(${x.id}, ${JSON.stringify(x.service_date||"")})'>绑定顾客</button>
+        <button class="btn sec" style="padding:4px 8px;font-size:12px;white-space:nowrap;color:#e74c3c;border-color:#e74c3c" onclick="requestDelRec(${x.id}, this)">申请删除</button>
+      `;
+    }
+    return `<tr${rowStyle}>
+      ${banner ? `<td colspan="5" style="padding:0 6px">${banner}</td></tr><tr${rowStyle}>` : ''}
+      <td data-lbl="服务日期" style="white-space:nowrap;${dateStyle}">${x.service_date || '—'}</td>
+      <td data-lbl="时间段" style="white-space:nowrap">${span}</td>
+      <td data-lbl="时长" style="white-space:nowrap;color:#2e7d32;font-weight:600">${durTxt}</td>
+      <td data-lbl="试听">${audio}</td>
+      <td class="pending-acts" style="vertical-align:middle">
+        <div style="display:flex;flex-direction:column;gap:4px;align-items:stretch">${actsHtml}</div>
+      </td>
+    </tr>`;
+  }).join('');
+  tb.querySelectorAll('audio[data-cap]').forEach(a => attachAudioCap(a, parseFloat(a.dataset.cap)));
+  // 分页控件：只 1 页时隐藏
+  if (pager) {
+    if (totalPages <= 1) {
+      pager.style.display = 'none';
+    } else {
+      pager.style.display = 'flex';
+      pager.innerHTML =
+        `<button class="btn sec" style="padding:3px 12px;font-size:13px" ${pendingPage<=1?'disabled':''} onclick="pendingGoPage(-1)">‹ 上一页</button>` +
+        `<span style="font-size:13px;color:#666">第 ${pendingPage}/${totalPages} 页 · 共 ${list.length} 段</span>` +
+        `<button class="btn sec" style="padding:3px 12px;font-size:13px" ${pendingPage>=totalPages?'disabled':''} onclick="pendingGoPage(1)">下一页 ›</button>`;
+    }
+  }
+}
+
+// 自动刷新未归档列表：5s 一次。页面隐藏 / 有音频正在试听时跳过，避免打断。
+if (!window._pendingAutoTimer) {
+  window._pendingAutoTimer = setInterval(() => {
+    if (document.hidden) return;
+    const _mp = document.getElementById('mpAudio');   // 底部大播放器在试听 → 别刷新打断
+    if (_mp && !_mp.paused) return;
+    loadPending();
+  }, 5000);
+}
+
+// ============ 底部大播放器（未归档试听，大进度条好拖） ============
+function _mpFmt(s){ s = Math.max(0, Math.floor(s || 0)); var m = Math.floor(s/60), x = s%60; return m + ':' + (x<10?'0':'') + x; }
+function openMiniPlayer(rid){
+  var x = (pendingListCache || []).find(function(r){ return r.id === rid; });
+  if (!x || !x.audio_url) return;
+  var a = document.getElementById('mpAudio');
+  document.getElementById('mpTitle').textContent =
+    ((x.service_date||'') + ' ' + (x.start_hm||'')).trim() + (x.duration_label ? ' · ' + x.duration_label : '');
+  document.getElementById('mpSeek').value = 0;
+  document.getElementById('mpCur').textContent = '0:00';
+  document.getElementById('mpDur').textContent = x.duration_label || '0:00';
+  a.src = x.audio_url;
+  document.getElementById('miniPlayer').style.display = '';
+  a.play().catch(function(){});
+}
+function mpToggle(){ var a = document.getElementById('mpAudio'); if (a.paused) a.play().catch(function(){}); else a.pause(); }
+var _mpSeeking = false;
+function mpOnSeekInput(){
+  _mpSeeking = true;
+  var a = document.getElementById('mpAudio'), v = +document.getElementById('mpSeek').value;
+  if (a.duration && isFinite(a.duration)) document.getElementById('mpCur').textContent = _mpFmt(v/1000 * a.duration);
+}
+function mpOnSeekChange(){
+  var a = document.getElementById('mpAudio'), v = +document.getElementById('mpSeek').value;
+  if (a.duration && isFinite(a.duration)) a.currentTime = v/1000 * a.duration;
+  _mpSeeking = false;
+}
+function mpClose(){ var a = document.getElementById('mpAudio'); try { a.pause(); } catch(e){} document.getElementById('miniPlayer').style.display = 'none'; }
+(function mpInit(){
+  var a = document.getElementById('mpAudio'); if (!a) return;
+  a.addEventListener('timeupdate', function(){
+    if (_mpSeeking) return;
+    document.getElementById('mpCur').textContent = _mpFmt(a.currentTime);
+    if (a.duration && isFinite(a.duration)) {
+      document.getElementById('mpSeek').value = Math.round(a.currentTime / a.duration * 1000);
+      document.getElementById('mpDur').textContent = _mpFmt(a.duration);
+    }
+  });
+  a.addEventListener('loadedmetadata', function(){ if (a.duration && isFinite(a.duration)) document.getElementById('mpDur').textContent = _mpFmt(a.duration); });
+  a.addEventListener('play',  function(){ document.getElementById('mpPlayBtn').textContent = '⏸'; });
+  a.addEventListener('pause', function(){ document.getElementById('mpPlayBtn').textContent = '▶'; });
+  a.addEventListener('ended', function(){ document.getElementById('mpPlayBtn').textContent = '▶'; a.currentTime = 0; });
+})();
+
+async function loadNeedsConfirm() {
+  const r = await fetch(BASE + '/api/consultant/recordings/needs_confirm');
+  const d = await r.json();
+  const list = d.recordings || [];
+  const card = document.getElementById('needsConfirmCard');
+  const tb = document.getElementById('needsConfirmBody');
+  if (!list.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  tb.innerHTML = list.map(x => {
+    const audio = x.audio_url
+      ? `<audio controls preload="metadata" src="${x.audio_url}" style="max-width:200px;height:32px"></audio>`
+      : '—';
+    return `<tr>
+      <td>${x.created_at || x.recorded_at || '—'}</td>
+      <td>${x.customer || '—'}</td>
+      <td><b style="color:#e67e22">${x.asr_speaker_count || '?'} 人</b></td>
+      <td>${audio}</td>
+      <td style="white-space:nowrap">
+        <button class="btn sec" onclick="confirmSpeakers(${x.id}, 'keep', this)">仍然分析</button>
+        <button class="btn sec" style="color:#e74c3c;border-color:#e74c3c;margin-left:4px" onclick="confirmSpeakers(${x.id}, 'unbind', this)">解绑（拆分重传）</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function confirmSpeakers(rid, action, btn) {
+  if (action === 'unbind' && !confirm('解绑后录音会回到未入库列表，便于你拆分重新上传，确认？')) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rid + '/confirm_speakers', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    loadNeedsConfirm();
+    loadPending();
+  } catch (e) {
+    alert(e.message);
+  } finally { btn.disabled = false; }
+}
+
+// ============ 接诊列表（按日期）============
+let RECEPTION = []; // {id, customer_id, name, phone_tail, locked, recording_count, ...}
+let currentReceptionDate = null;  // YYYY-MM-DD；null = 今天
+
+function _diffDaysFromToday(dateStr) {
+  // dateStr - today（负数=过去，正数=未来）
+  const t = new Date(_todayStr()).getTime();
+  const d = new Date(dateStr).getTime();
+  return Math.round((d - t) / 86400000);
+}
+function _canEditOnDate(dateStr) {
+  const diff = _diffDaysFromToday(dateStr);
+  return diff <= 0 && diff >= -7;  // 最近 7 天内（含今天）
+}
+
+function setReceptionDate(d) {
+  currentReceptionDate = (d === _todayStr()) ? null : d;
+  document.getElementById('receptionDateInput').value = d;
+  loadReception();
+}
+function shiftReceptionDate(delta) {
+  const cur = currentReceptionDate || _todayStr();
+  const nd = new Date(cur); nd.setDate(nd.getDate() + delta);
+  const today = new Date(_todayStr());
+  if (nd.getTime() > today.getTime()) return;  // 不允许未来
+  setReceptionDate(_fmtYMD(nd));
+}
+function onReceptionDateChange(v) {
+  if (!v) return;
+  if (new Date(v).getTime() > new Date(_todayStr()).getTime()) {
+    alert('不能选未来日期'); document.getElementById('receptionDateInput').value = currentReceptionDate || _todayStr(); return;
+  }
+  setReceptionDate(v);
+}
+
+async function loadReception() {
+  const box = document.getElementById('receptionList');
+  const activeDate = currentReceptionDate || _todayStr();
+  // 同步顶部 UI
+  const inp = document.getElementById('receptionDateInput');
+  if (inp) {
+    inp.max = _todayStr();
+    if (!inp.value) inp.value = activeDate;
+  }
+  const isToday = activeDate === _todayStr();
+  document.getElementById('todayBtn').style.display = isToday ? 'none' : '';
+  document.getElementById('dateTodayTag').style.display = isToday ? '' : 'none';
+  const banner = document.getElementById('dateBanner');
+  if (isToday) {
+    banner.textContent = '录音前/后请把今天要接诊的顾客加进来。录音结束后只能绑定到这个列表里的人。';
+    banner.style.background = ''; banner.style.padding = ''; banner.style.color='';
+  } else {
+    banner.innerHTML = `正在查看 <b>${activeDate}</b> 的接诊列表（${_canEditOnDate(activeDate) ? '可补登/改日期' : '只读'}）`;
+    banner.style.background = '#fff8e1'; banner.style.padding = '6px 8px'; banner.style.borderRadius='4px'; banner.style.color = '#7a4f00';
+  }
+  // 加入按钮文案 & 启用状态
+  const addBtn = document.getElementById('addReceptionBtn');
+  if (addBtn) {
+    if (isToday) { addBtn.textContent = '+ 加入'; addBtn.disabled = false; addBtn.style.opacity=''; }
+    else if (_canEditOnDate(activeDate)) { addBtn.textContent = '+ 加入 ' + activeDate.slice(5) + ' 的客人'; addBtn.disabled = false; addBtn.style.opacity=''; }
+    else { addBtn.textContent = '只读（超过 7 天）'; addBtn.disabled = true; addBtn.style.opacity = '0.5'; }
+  }
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception?date=' + encodeURIComponent(activeDate));
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    RECEPTION = d.items || [];
+    if (!RECEPTION.length) {
+      box.innerHTML = '<div class="empty-tip">今日还没有接诊顾客，点右上角"+ 加入"开始</div>';
+      return;
+    }
+    box.innerHTML = RECEPTION.map(x => {
+      let badge;
+      // 状态以 analysis_status 为准，locked 仅在后端用于禁止改动
+      const hasRec = x.recording_count > 0;
+      const st = x.analysis_status;
+      const isDone = st === 'done' && hasRec;
+      const isRunning = (st === 'running' || st === 'queued') && hasRec;
+      const isFailed = st === 'failed' && hasRec;
+      const isCancelled = st === 'cancelled' && hasRec;
+      if (x.pending_rebind_count > 0) badge = `<span class="tag" style="background:#fef3e0;color:#e67e22">⏳ 换绑审批中 (${x.pending_rebind_count})</span>`;
+      else if (!hasRec) badge = `<span class="tag">尚未绑定录音</span>`;
+      else if (isDone) badge = `<span class="tag done">✓ 已分析</span>`;
+      else if (isRunning) badge = `<span class="tag running" style="background:#fff4e5;color:#e67e22">分析中…</span>`;
+      else if (isFailed) badge = `<span class="tag" style="background:#fdecea;color:#c0392b">✗ 分析失败，点击重试</span>`;
+      else if (isCancelled) badge = `<span class="tag" style="background:#f3f3f3;color:#888">⊘ 已中断</span>`;
+      else badge = `<span class="tag running">${x.recording_count} 段录音待分析</span>`;
+      const tail = x.phone_tail ? `尾号${x.phone_tail}` : '';
+      const card = x.member_card ? ` · ${x.member_card}` : '';
+      // 主按钮：根据状态显示明确的下一步动作
+      const pkgArgs = `${x.customer_id}, ${JSON.stringify(x.service_date)}`;
+      let mainBtn;
+      if (!hasRec) {
+        mainBtn = `<button class="btn sec" onclick='openPkg(${pkgArgs})' title="从未归档的录音中选一段加入本接诊包">等待绑定录音</button>`;
+      } else if (isDone) {
+        mainBtn = `<button class="btn" onclick="viewAnalysis(${x.session_id})">查看分析报告</button>
+                   <button class="btn sec" style="margin-left:4px;padding:4px 10px;font-size:12px" onclick='openPkg(${pkgArgs})'>查看录音</button>`;
+      } else if (isRunning) {
+        mainBtn = `<button class="btn sec" onclick='openPkg(${pkgArgs})'>查看进度</button>
+                   <button class="btn sec" style="margin-left:4px;padding:4px 10px;font-size:12px;color:#e67e22;border-color:#e67e22" onclick='cancelAnalysis(${x.session_id}, this)'>取消分析</button>`;
+      } else if (isCancelled) {
+        mainBtn = `<button class="btn" onclick='openPkg(${pkgArgs})'>重新分析</button>`;
+      } else if (isFailed) {
+        mainBtn = `<button class="btn" onclick='openPkg(${pkgArgs})'>重新分析</button>`;
+      } else {
+        mainBtn = `<button class="btn" onclick='openPkg(${pkgArgs})'>开始分析</button>`;
+      }
+      // 改日期/移除 仅在最近 7 天 + 未开始/未完成分析 时允许
+      const editable = !isDone && !isRunning && _canEditOnDate(x.service_date);
+      const editDateBtn = editable
+        ? `<button class="btn sec" title="改接诊日期" style="padding:4px 8px;font-size:12px" onclick='openEditDate(${JSON.stringify({id:x.id, name:x.name, service_date:x.service_date, recording_count:x.recording_count})})'>📅</button>`
+        : '';
+      const removeBtn = (editable && x.recording_count===0)
+        ? `<button class="btn sec" style="color:#e74c3c;border-color:#e74c3c" onclick="removeReception(${x.id}, this)">移除</button>`
+        : '';
+      return `<div class="reception-card">
+        <div class="info">
+          <div class="name">${x.name} <span class="muted" style="font-weight:400">${tail}${card}</span></div>
+          <div class="meta">${badge}</div>
+        </div>
+        <div class="acts">${editDateBtn}${mainBtn}${removeBtn}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = '<div class="msg err">' + e.message + '</div>';
+  }
+}
+
+async function cancelAnalysis(sessionId, btn) {
+  if (!confirm('确定取消分析？状态将变为"已中断"，之后可重新开始。')) return;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/session/cancel_analysis', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({session_id: sessionId}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    // 刷新列表和弹窗（如果弹窗打开着）
+    loadReception();
+    if (pkgCustomerId != null) refreshPkg();
+  } catch (e) {
+    alert(e.message);
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function removeReception(drId, btn) {
+  if (!confirm('确定从今日接诊移除？')) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception/' + drId, {method: 'DELETE'});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    loadReception();
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+
+// ============ "加入今日接诊" / "补登历史客人" 弹窗 ============
+let addMode = 'search';
+let addBackfill = false;       // 是否补登模式
+function _fmtYMD(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const dd = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dd}`;
+}
+function _todayStr() { return _fmtYMD(new Date()); }
+function _daysAgoStr(n) { const d = new Date(); d.setDate(d.getDate()-n); return _fmtYMD(d); }
+function openAddReception() {
+  const activeDate = currentReceptionDate || _todayStr();
+  if (activeDate === _todayStr()) {
+    addBackfill = false;
+    document.getElementById('addTitle').textContent = '加入今日接诊';
+    document.getElementById('addDateRow').style.display = 'none';
+  } else {
+    // 当前在历史日期，等同于补登该日期
+    addBackfill = true;
+    document.getElementById('addTitle').textContent = '加入 ' + activeDate + ' 的接诊';
+    const row = document.getElementById('addDateRow'); row.style.display = '';
+    const inp = document.getElementById('addDateInput');
+    inp.min = _daysAgoStr(7); inp.max = _todayStr(); inp.value = activeDate;
+  }
+  _resetAdd();
+  document.getElementById('addMask').classList.add('show');
+  doSearch('');
+}
+function openBackfill(presetDate, fromBind) {
+  addBackfill = true;
+  document.getElementById('addTitle').textContent = '补登历史客人';
+  const row = document.getElementById('addDateRow'); row.style.display = '';
+  const inp = document.getElementById('addDateInput');
+  inp.min = _daysAgoStr(7);
+  inp.max = _todayStr();
+  inp.value = presetDate || _daysAgoStr(1);
+  _resetAdd();
+  document.getElementById('addMask').classList.add('show');
+  doSearch('');
+}
+function _resetAdd() {
+  switchAddMode('search');
+  document.getElementById('addSearchQ').value = '';
+  document.getElementById('addSearchList').innerHTML = '';
+  document.getElementById('addNewName').value = '';
+  document.getElementById('addNewTail').value = '';
+  document.getElementById('addNewCard').value = '';
+  document.getElementById('addMsg').textContent = '';
+}
+function _addDate() {
+  if (!addBackfill) return null;
+  const v = document.getElementById('addDateInput').value;
+  return v || null;
+}
+function closeAdd() { document.getElementById('addMask').classList.remove('show'); }
+function switchAddMode(m) {
+  addMode = m;
+  document.getElementById('segSearch').classList.toggle('active', m === 'search');
+  document.getElementById('segNew').classList.toggle('active', m === 'new');
+  document.getElementById('addSearch').style.display = m === 'search' ? '' : 'none';
+  document.getElementById('addNew').style.display = m === 'new' ? '' : 'none';
+  document.getElementById('addConfirmBtn').style.display = m === 'new' ? '' : 'none';
+}
+let searchTimer = null;
+document.getElementById('addSearchQ').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => doSearch(e.target.value), 200);
+});
+async function doSearch(q) {
+  const list = document.getElementById('addSearchList');
+  const r = await fetch(BASE + '/api/consultant/customer_lookup?q=' + encodeURIComponent(q||''));
+  const d = await r.json();
+  const items = d.customers || [];
+  if (!items.length) {
+    list.innerHTML = '<div class="muted" style="padding:10px;font-size:12px">无匹配。如新顾客请切到"新增顾客"。</div>';
+    return;
+  }
+  list.innerHTML = items.map(c => `
+    <div class="suggest-item" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid #f0f0f0">
+      <div><b>${c.name}</b> <span class="muted" style="font-size:12px">${c.phone_tail?'尾号'+c.phone_tail:''}${c.member_card?(' · '+c.member_card):''}</span></div>
+      <button class="btn" style="padding:4px 10px;font-size:12px" onclick="addExisting(${c.id}, this)">加入</button>
+    </div>`).join('');
+}
+async function addExisting(customer_id, btn) {
+  if (addBackfill && !_addDate()) { document.getElementById('addMsg').textContent='请选择接诊日期'; document.getElementById('addMsg').className='msg err'; return; }
+  btn.disabled = true;
+  try {
+    const body = {customer_id};
+    const d0 = _addDate(); if (d0) body.date = d0;
+    const r = await fetch(BASE + '/api/consultant/today_reception/add', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeAdd();
+    loadReception();
+    // 若绑定弹窗正打开，且当前补登日期与之相同，刷新其列表
+    if (addBackfill && bindingDate && _addDate() === bindingDate) {
+      openBind(bindingRid, bindingDate);
+    }
+  } catch (e) {
+    document.getElementById('addMsg').textContent = e.message;
+    document.getElementById('addMsg').className = 'msg err';
+    btn.disabled = false;
+  }
+}
+async function confirmAdd() {
+  const name = document.getElementById('addNewName').value.trim();
+  const tail = document.getElementById('addNewTail').value.trim();
+  const card = document.getElementById('addNewCard').value.trim();
+  const msg = document.getElementById('addMsg');
+  if (!name) { msg.textContent='请填写顾客姓名'; msg.className='msg err'; return; }
+  if (!/^\d{4}$/.test(tail)) { msg.textContent='手机尾号必须是 4 位数字'; msg.className='msg err'; return; }
+  if (addBackfill && !_addDate()) { msg.textContent='请选择接诊日期'; msg.className='msg err'; return; }
+  const btn = document.getElementById('addConfirmBtn'); btn.disabled = true;
+  try {
+    const body = {name, phone_tail: tail, member_card: card};
+    const d0 = _addDate(); if (d0) body.date = d0;
+    const r = await fetch(BASE + '/api/consultant/today_reception/add', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeAdd();
+    loadReception();
+    // 若绑定弹窗正打开，且当前补登日期与之相同，刷新其列表
+    if (addBackfill && bindingDate && _addDate() === bindingDate) {
+      openBind(bindingRid, bindingDate);
+    }
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  } finally { btn.disabled = false; }
+}
+
+// ============ 绑定录音弹窗（按录音日期载入）============
+let bindingRid = null;
+let bindingDate = null;
+async function openBind(rid, recDate) {
+  bindingRid = rid;
+  bindingDate = recDate || null;
+  document.getElementById('bindMsg').textContent = '';
+  const lst = document.getElementById('bindCustomerList');
+  lst.innerHTML = '<div class="empty-tip">加载中…</div>';
+  document.getElementById('bindMask').classList.add('show');
+  // 拉对应日期的接诊列表
+  const qs = bindingDate ? ('?date=' + encodeURIComponent(bindingDate)) : '';
+  let items = [];
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception' + qs);
+    const d = await r.json();
+    items = d.items || [];
+  } catch (e) {}
+  const todayStr = _todayStr();
+  const isCrossDay = bindingDate && bindingDate !== todayStr;
+  const dateBanner = isCrossDay
+    ? `<div class="msg" style="background:#fef3e0;color:#7a4f00;padding:6px 8px;margin-bottom:8px;font-size:12px">这段录音是 <b>${bindingDate}</b> 的，只能绑定到当天的接诊客人。<br>没有的话先点下方"补登 ${bindingDate} 的客人"。</div>`
+    : '';
+  let body;
+  if (!items.length) {
+    body = `<div class="empty-tip">${bindingDate||'今天'} 没有接诊客人，请下方"补登"或"+ 加入"</div>`;
+  } else {
+    body = items.filter(x => !x.locked).map(x => `
+      <div class="reception-card" style="margin-bottom:6px">
+        <div class="info">
+          <div class="name">${x.name} <span class="muted" style="font-weight:400;font-size:12px">${x.phone_tail?'尾号'+x.phone_tail:''}</span></div>
+          <div class="meta">${x.recording_count} 段录音</div>
+        </div>
+        <button class="btn" onclick="doBind(${x.customer_id}, this)">绑定到这里</button>
+      </div>`).join('') || '<div class="empty-tip">没有可绑定的顾客（其余已锁定）</div>';
+  }
+  const backfillRow = isCrossDay
+    ? `<div style="margin-top:10px;text-align:right"><button class="btn sec" onclick="closeBind(); setReceptionDate('${bindingDate}');">切到 ${bindingDate} 接诊列表去 + 加入</button></div>`
+    : '';
+  lst.innerHTML = dateBanner + body + backfillRow;
+}
+function closeBind() {
+  document.getElementById('bindMask').classList.remove('show');
+  bindingRid = null;
+}
+async function doBind(customer_id, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + bindingRid + '/bind', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({customer_id}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeBind();
+    loadPending();
+    loadReception();
+    setTimeout(loadNeedsConfirm, 8000);
+  } catch (e) {
+    document.getElementById('bindMsg').textContent = e.message;
+    document.getElementById('bindMsg').className = 'msg err';
+    btn.disabled = false;
+  }
+}
+
+// ============ 接诊包弹窗 ============
+let pkgCustomerId = null, pkgLocked = false, pkgDate = null, pkgSessionId = null;
+async function openPkg(customer_id, service_date) {
+  pkgCustomerId = customer_id;
+  pkgDate = service_date || null;
+  document.getElementById('pkgMsg').textContent = '';
+  document.getElementById('pkgMask').classList.add('show');
+  document.getElementById('pkgBound').innerHTML = '加载中…';
+  document.getElementById('pkgUnbound').innerHTML = '';
+  await refreshPkg();
+}
+function closePkg(){
+  document.getElementById('pkgMask').classList.remove('show');
+  pkgCustomerId=null; pkgDate=null; pkgSessionId=null;
+  if (window._pkgPollTimer) { clearTimeout(window._pkgPollTimer); window._pkgPollTimer = null; }
+}
+
+function _fmtElapsed(sec) {
+  if (sec == null || sec < 0) return '';
+  const m = Math.floor(sec / 60), s = sec % 60;
+  return m > 0 ? `${m} 分 ${s} 秒` : `${s} 秒`;
+}
+
+function renderPkgProgress(tp, ast, sessionId) {
+  const box = document.getElementById('pkgProgress');
+  if (!tp || !ast || ast === 'pending' || ast === '') { box.style.display = 'none'; return; }
+  const total = tp.total || 11;
+  const done = tp.done || 0;
+  const running = tp.running || 0;
+  const failed = tp.failed || 0;
+  const pct = total ? Math.round(done * 100 / total) : 0;
+  let stateLabel, stateColor;
+  if (ast === 'done') { stateLabel = '✓ 已完成'; stateColor = '#2e7d32'; }
+  else if (ast === 'failed') { stateLabel = '✗ 分析失败'; stateColor = '#c0392b'; }
+  else if (ast === 'cancelled') { stateLabel = '⊘ 已中断'; stateColor = '#888'; }
+  else if (ast === 'outdated') { stateLabel = '⟳ 录音有变更，需重新分析'; stateColor = '#e67e22'; }
+  else if (ast === 'queued') { stateLabel = '⏳ 排队中'; stateColor = '#e67e22'; }
+  else if (ast === 'running') { stateLabel = '🔄 分析中'; stateColor = '#1976d2'; }
+  else { stateLabel = ''; stateColor = '#666'; }
+  const wait = tp.wait_sec != null ? `已等待 ${_fmtElapsed(tp.wait_sec)}` : '';
+  const runningLine = (running > 0 && (tp.running_names || []).length)
+    ? `<div style="font-size:12px;color:#1976d2;margin-top:4px">正在分析：${tp.running_names.join('、')}</div>`
+    : '';
+  // 仅当整体状态停留在 failed/outdated 时才提示"任务失败"；分析中/排队中说明已经在重试，不再显示
+  const failedLine = (failed > 0 && (tp.failed_names || []).length && (ast === 'failed' || ast === 'outdated'))
+    ? `<div style="font-size:12px;color:#c0392b;margin-top:4px;font-weight:600">✗ 失败：${tp.failed_names.join('、')}（重新分析可重试）</div>`
+    : '';
+  const isRunningNow = (ast === 'running' || ast === 'queued');
+  const cancelBtn = (isRunningNow && sessionId)
+    ? `<button onclick="cancelAnalysis(${sessionId}, this)" style="font-size:12px;padding:2px 10px;border:1px solid #e67e22;color:#e67e22;background:none;border-radius:4px;cursor:pointer;margin-left:8px">取消分析</button>`
+    : '';
+  box.style.display = '';
+  box.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;font-size:13px">
+      <span style="font-weight:600;color:${stateColor}">${stateLabel}${cancelBtn}</span>
+      <span style="color:#666;font-size:12px">${wait}</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <div style="flex:1;height:8px;background:#e3e8ee;border-radius:99px;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${stateColor};transition:width .4s"></div>
+      </div>
+      <span style="font-size:12px;color:#444;font-weight:600;white-space:nowrap">${done} / ${total}</span>
+    </div>
+    ${runningLine}${failedLine}
+  `;
+}
+
+function schedulePkgPoll(ast) {
+  if (window._pkgPollTimer) { clearTimeout(window._pkgPollTimer); window._pkgPollTimer = null; }
+  if (ast === 'running' || ast === 'queued') {
+    window._pkgPollTimer = setTimeout(() => {
+      if (pkgCustomerId != null) refreshPkg();
+    }, 5000);
+  }
+}
+
+async function refreshPkg() {
+  const qs = pkgDate ? ('&date=' + encodeURIComponent(pkgDate)) : '';
+  const r = await fetch(BASE + '/api/consultant/session/preview?customer_id=' + pkgCustomerId + qs);
+  const d = await r.json();
+  if (d.error) { document.getElementById('pkgBound').innerHTML = '<div class="msg err">'+d.error+'</div>'; return; }
+  pkgLocked = !!d.locked;
+  pkgSessionId = d.session_id || null;
+  document.getElementById('pkgTitle').textContent = '接诊包 · ' + d.customer.name;
+  const ubt = document.getElementById('pkgUnboundTitle');
+  if (ubt) ubt.textContent = `本人 ${d.service_date} 未绑定录音（可加入本接诊包）`;
+  const ast = d.analysis_status || '';
+  const isAnalyzing = (ast === 'running' || ast === 'queued');
+  const isDone = (ast === 'done');
+  const canRetry = (ast === 'failed' || ast === 'outdated' || ast === 'cancelled');
+  renderPkgProgress(d.task_progress, ast, pkgSessionId);
+  schedulePkgPoll(ast);
+  document.getElementById('pkgSubtitle').innerHTML =
+    `${d.service_date} · 核对顾客信息后开始分析，如绑错可以"换绑"或"退回未归档"`;
+  d._subtitleSet = true;
+  // 若上方已设置则跳过；否则保留向后兼容
+  if (!d._subtitleSet) {
+    document.getElementById('pkgSubtitle').textContent =
+      d.service_date + ' · 核对顾客信息后开始分析，如绑错可以"换绑"或"退回未归档"';
+  }
+  const startBtn = document.getElementById('pkgStartBtn');
+  if (isAnalyzing || isDone) {
+    // 分析中：不让重复触发；已完成：避免无意义重跑
+    startBtn.style.display = 'none';
+  } else {
+    startBtn.style.display = '';
+    startBtn.textContent = canRetry ? '重新分析' : '确认并开始分析';
+  }
+  const bound = d.bound || [];
+  const unbound = d.unbound || [];
+  document.getElementById('pkgBound').innerHTML = bound.length ? bound.map(x => {
+    const audio = x.audio_url ? `<audio controls preload="metadata" src="${x.audio_url}" style="max-width:180px;height:28px"></audio>` : '';
+    const info = JSON.stringify({rid:x.id, recorded_at:x.recorded_at, duration_label:x.duration_label});
+    const rebindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick='openRebind(${info})'>换绑</button>`;
+    const unbindBtn = `<button class="btn sec" style="padding:3px 8px;font-size:12px;color:#e74c3c;border-color:#e74c3c" onclick='openUnbind(${info})'>退回未归档</button>`;
+    return `<div class="pkg-rec">
+      <span style="min-width:130px">${x.recorded_at||'—'}</span>
+      <span>${x.duration_label||''}</span>
+      <span class="tag">${x.asr_status||'pending'}</span>
+      ${audio}${rebindBtn}${unbindBtn}
+    </div>`;
+  }).join('') : '<div class="empty-tip">接诊包内还没有录音</div>';
+
+  document.getElementById('pkgUnbound').innerHTML = unbound.length ? unbound.map(x => {
+    const audio = x.audio_url ? `<audio controls preload="metadata" src="${x.audio_url}" data-cap="60" style="max-width:180px;height:28px"></audio>` : '';
+    const bindBtn = pkgLocked ? '' :
+      `<button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="pkgBind(${x.id}, this)">加入本接诊包</button>`;
+    return `<div class="pkg-rec unbound">
+      <span style="min-width:130px">${x.created_at||x.recorded_at||'—'}</span>
+      ${audio}${bindBtn}
+    </div>`;
+  }).join('') : '<div class="muted" style="font-size:12px">没有未绑定录音</div>';
+  document.querySelectorAll('#pkgUnbound audio[data-cap]').forEach(a => attachAudioCap(a, 60));
+}
+
+async function pkgRemove(rid, btn) {
+  if (!confirm('从接诊包移除这段录音？（录音回到未绑定列表，不删除）')) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/session/preview/remove', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({recording_id: rid}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    refreshPkg(); loadReception(); loadPending();
+  } catch (e) { alert(e.message); btn.disabled = false; }
+}
+
+async function pkgBind(rid, btn) {
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rid + '/bind', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({customer_id: pkgCustomerId}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    refreshPkg(); loadReception(); loadPending();
+  } catch (e) { alert(e.message); btn.disabled = false; }
+}
+
+async function startAnalysisPkg() {
+  if (!confirm('确认开始分析？接诊包将被锁定，普通顾问无法再修改。')) return;
+  const btn = document.getElementById('pkgStartBtn'); btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/session/start_analysis', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({customer_id: pkgCustomerId, date: pkgDate || undefined}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    // ★转写未完成：不是失败，给"转写中"的温和提示(非红)，让顾问稍候再点，别误以为坏了反复点
+    if (d.asr_pending) {
+      // 已记下分析意图(session 标 queued),转写完会自动跑。刷新列表→显示"分析中…"而不是"待分析"。
+      document.getElementById('pkgMsg').textContent = d.msg || '已开始 ✅ 转写完成后会自动开始分析，无需再点 🕐';
+      document.getElementById('pkgMsg').className = 'msg';
+      refreshPkg(); loadReception();
+      return;
+    }
+    document.getElementById('pkgMsg').textContent = '已开始分析（session #' + d.session_id + '），可去接诊列表查看进度。';
+    document.getElementById('pkgMsg').className = 'msg';
+    refreshPkg(); loadReception();
+  } catch (e) {
+    document.getElementById('pkgMsg').textContent = e.message;
+    document.getElementById('pkgMsg').className = 'msg err';
+  } finally { btn.disabled = false; }
+}
+
+// ============ 申请删除未入库录音 ============
+async function requestDelRec(rid, btn) {
+  const reason = prompt('申请删除原因（可选）：');
+  if (reason === null) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/recording/' + rid + '/delete-request', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reason}),
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '申请失败');
+    loadPending();
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+
+async function withdrawDelRec(rid, btn) {
+  if (!confirm('撤回这段录音的删除申请？撤回后可继续绑定/换绑等操作。')) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/recording/' + rid + '/delete-request/withdraw', {method:'POST'});
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    loadPending();
+  } catch (e) {
+    alert(e.message);
+    btn.disabled = false;
+  }
+}
+
+async function dismissDelReject(rid) {
+  try {
+    await fetch(BASE + '/api/recording/' + rid + '/delete-request/dismiss', {method:'POST'});
+    loadPending();
+  } catch (e) { /* 忽略 */ }
+}
+
+// ============ 改接诊日期 ============
+let editDateDr = null;
+function openEditDate(x) {
+  editDateDr = x;
+  document.getElementById('editDateInfo').innerHTML =
+    `顾客：<b>${x.name}</b><br>原日期：${x.service_date}` +
+    (x.recording_count ? `<br><span style="color:#e74c3c">⚠ 已绑定 ${x.recording_count} 段录音，确认后会自动解绑</span>` : '');
+  const inp = document.getElementById('editDateInput');
+  const cur = new Date(x.service_date);
+  const min = new Date(cur); min.setDate(cur.getDate()-7);
+  const max = new Date(); // 今天
+  inp.min = _fmtYMD(min);
+  inp.max = _fmtYMD(max);
+  inp.value = x.service_date;
+  document.getElementById('editDateMsg').textContent = '';
+  document.getElementById('editDateMask').classList.add('show');
+}
+function closeEditDate(){ document.getElementById('editDateMask').classList.remove('show'); editDateDr = null; }
+async function confirmEditDate() {
+  if (!editDateDr) return;
+  const newDate = document.getElementById('editDateInput').value;
+  if (!newDate) { document.getElementById('editDateMsg').textContent='请选日期'; return; }
+  if (newDate === editDateDr.service_date) { closeEditDate(); return; }
+  if (editDateDr.recording_count && !confirm(`将解绑 ${editDateDr.recording_count} 段录音并改日期到 ${newDate}，确认？`)) return;
+  const btn = document.getElementById('editDateConfirm'); btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/today_reception/' + editDateDr.id + '/date', {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({date: newDate}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeEditDate();
+    loadReception();
+    loadPending();
+  } catch (e) {
+    document.getElementById('editDateMsg').textContent = e.message;
+    document.getElementById('editDateMsg').className = 'msg err';
+  } finally { btn.disabled = false; }
+}
+
+// ============ 换绑 / 退回未归档 ============
+function _rbEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+let rebindRid = null;
+let rbSearchTimer = null;
+function openRebind(info) {
+  rebindRid = info.rid;
+  document.getElementById('rebindRecInfo').innerHTML =
+    `录音：${_rbEsc(info.recorded_at || '—')} · ${_rbEsc(info.duration_label || '')}`;
+  document.getElementById('rebindReason').value = '';
+  document.getElementById('rebindMsg').textContent = '';
+  document.getElementById('rbSearchQ').value = '';
+  document.getElementById('rbNewName').value = '';
+  document.getElementById('rbNewTail').value = '';
+  rbSwitchMode('pick');
+  const rm = document.getElementById('rebindMask');
+  rm.style.zIndex = '60';
+  rm.classList.add('show');
+  rbLoadCandidates('');
+}
+function closeRebind(){ document.getElementById('rebindMask').classList.remove('show'); rebindRid = null; }
+function rbSwitchMode(m){
+  document.getElementById('rbSegPick').classList.toggle('active', m === 'pick');
+  document.getElementById('rbSegNew').classList.toggle('active', m === 'new');
+  document.getElementById('rbPick').style.display = m === 'pick' ? '' : 'none';
+  document.getElementById('rbNew').style.display = m === 'new' ? '' : 'none';
+}
+document.getElementById('rbSearchQ').addEventListener('input', e => {
+  clearTimeout(rbSearchTimer);
+  rbSearchTimer = setTimeout(() => rbLoadCandidates(e.target.value), 220);
+});
+// 渲染候选列表（仅本人接待过的客人）。selectId：渲染后自动勾选该 id。
+async function rbLoadCandidates(q, selectId) {
+  const cl = document.getElementById('rebindCustList');
+  cl.innerHTML = '<div class="empty-tip">加载中…</div>';
+  if (!rebindRid) { cl.innerHTML = ''; return; }
+  try {
+    const r = await fetch(BASE + '/api/consultant/rebind_candidates?rid=' + encodeURIComponent(rebindRid)
+                          + '&q=' + encodeURIComponent(q || ''));
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    // 不显示该录音当前所属顾客本人
+    const items = (d.items || []).filter(x => x.customer_id !== pkgCustomerId);
+    if (!items.length) {
+      cl.innerHTML = `<div class="empty-tip">没有匹配的客人。${(q||'').trim()?'换个词试试，或':''}点上方"＋ 新增当日顾客"。</div>`;
+      return;
+    }
+    cl.innerHTML = items.map(x => `
+      <label style="display:flex;align-items:center;padding:6px 8px;border-bottom:1px solid #f0f0f0;cursor:pointer">
+        <input type="radio" name="rebindCust" value="${x.customer_id}" style="margin-right:8px">
+        <span style="flex:1">
+          <b>${_rbEsc(x.name)}</b>
+          <span class="muted" style="font-size:12px;margin-left:6px">${x.phone_tail?'尾号'+_rbEsc(x.phone_tail):''}${x.member_card?(' · '+_rbEsc(x.member_card)):''}</span>
+          ${x.in_day?'<span class="tag done" style="margin-left:6px">当日</span>':'<span class="muted" style="font-size:11px;margin-left:6px">选中后将补登当天接诊</span>'}
+        </span>
+        <button class="btn sec" style="padding:2px 8px;font-size:11px" data-cid="${x.customer_id}" data-name="${_rbEsc(x.name)}" onclick="event.preventDefault();rbRemoveCustomer(this)">删除</button>
+      </label>`).join('');
+    if (selectId != null) {
+      const inp = cl.querySelector('input[name="rebindCust"][value="' + selectId + '"]');
+      if (inp) { inp.checked = true; inp.closest('label').scrollIntoView({block:'nearest'}); }
+    }
+  } catch (e) {
+    cl.innerHTML = '<div class="msg err">加载失败：' + _rbEsc(e.message) + '</div>';
+  }
+}
+// 新增当日客人 → 自动会员号 + 补登当天接诊，新增后切回列表并勾选
+async function rbAddNewCustomer() {
+  const name = document.getElementById('rbNewName').value.trim();
+  const tail = document.getElementById('rbNewTail').value.trim();
+  const msg = document.getElementById('rebindMsg');
+  msg.textContent = '';
+  if (!name) { msg.textContent='请填写顾客姓名'; msg.className='msg err'; return; }
+  if (tail && !/^\d{4}$/.test(tail)) { msg.textContent='手机尾号必须是 4 位数字'; msg.className='msg err'; return; }
+  const btn = document.getElementById('rbNewBtn'); btn.disabled = true;
+  try {
+    const body = {name}; if (tail) body.phone_tail = tail;
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/add_day_customer', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    document.getElementById('rbNewName').value = '';
+    document.getElementById('rbNewTail').value = '';
+    document.getElementById('rbSearchQ').value = '';
+    rbSwitchMode('pick');
+    msg.textContent = `已新增「${d.name}」并补登当天接诊，已替您勾选。`; msg.className='msg';
+    await rbLoadCandidates('', d.customer_id);
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  } finally { btn.disabled = false; }
+}
+// 删除误建客人（名下有录音则后端拒绝）
+async function rbRemoveCustomer(btn) {
+  const customer_id = parseInt(btn.dataset.cid, 10);
+  const name = btn.dataset.name || '该顾客';
+  const msg = document.getElementById('rebindMsg');
+  msg.textContent = '';
+  if (!confirm(`确定删除「${name}」？仅当其名下没有任何录音时可删。`)) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/remove_day_customer', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({customer_id}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    msg.textContent = `已删除「${name}」。`; msg.className='msg';
+    rbLoadCandidates(document.getElementById('rbSearchQ').value);
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err'; btn.disabled = false;
+  }
+}
+async function submitRebind() {
+  const sel = document.querySelector('input[name="rebindCust"]:checked');
+  const msg = document.getElementById('rebindMsg');
+  if (!sel) { msg.textContent='请先在"选已有顾客"里选中目标，或新增一位'; msg.className='msg err'; return; }
+  const tcid = parseInt(sel.value, 10);
+  const reason = document.getElementById('rebindReason').value.trim();
+  if (!confirm('只移动这一段录音到该顾客（该顾客其他录音不受影响），新旧报告将重新生成。确定吗？')) return;
+  const btn = document.getElementById('rebindSubmitBtn'); btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + rebindRid + '/direct_rebind', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({to_customer_id: tcid, reason}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeRebind();
+    if (d.new_session_id) pkgCustomerId = tcid;
+    refreshPkg(); loadReception(); loadPending();
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  } finally { btn.disabled = false; }
+}
+
+let unbindRid = null;
+function openUnbind(info) {
+  unbindRid = info.rid;
+  document.getElementById('unbindRecInfo').innerHTML =
+    `录音：${info.recorded_at || '—'} · ${info.duration_label || ''}`;
+  document.getElementById('unbindReason').value = '';
+  document.getElementById('unbindMsg').textContent = '';
+  const um = document.getElementById('unbindMask');
+  um.style.zIndex = '60';
+  um.classList.add('show');
+}
+function closeUnbind(){ document.getElementById('unbindMask').classList.remove('show'); unbindRid = null; }
+async function submitUnbind() {
+  const msg = document.getElementById('unbindMsg');
+  const reason = document.getElementById('unbindReason').value.trim();
+  if (!reason) { msg.textContent='请填写退回理由'; msg.className='msg err'; return; }
+  if (!confirm('确定将这段录音退回未归档片段？若已分析将作废。')) return;
+  const btn = document.getElementById('unbindSubmitBtn'); btn.disabled = true;
+  try {
+    const r = await fetch(BASE + '/api/consultant/recordings/' + unbindRid + '/unbind', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({reason}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    closeUnbind();
+    refreshPkg(); loadReception(); loadPending();
+  } catch (e) {
+    msg.textContent = e.message; msg.className='msg err';
+  } finally { btn.disabled = false; }
+}
+
+// ============ 查看分析结果 ============
+function viewAnalysis(sessionId) {
+  if (!sessionId) { alert('尚无 session'); return; }
+  location.href = BASE + '/session/' + sessionId + '?from=recording';
+}
+
+// ============ 模块4：站内提醒 ============
+function _remEsc(s){ return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+const IS_MANAGER = (ROLE === 'store_manager');
+
+// 渲染一条「个人提醒」（顾问/店长都有）
+function _renderPersonal(it) {
+  const tag = it.kind === 'unbound' ? '未绑定' : '未查看';
+  const color = it.level >= 2 ? '#e74c3c' : '#e67e22';
+  const link = it.ref_type === 'session'
+    ? `<a href="${BASE}/session/${it.ref_id}?from=reminder" style="color:var(--blue);font-size:12px">查看报告 →</a>` : '';
+  return `<div style="border-bottom:1px solid #f0f0f0;padding:8px 2px">
+    <span style="display:inline-block;font-size:11px;color:#fff;background:${color};border-radius:4px;padding:0 6px;margin-right:4px">${tag} L${it.level}</span>
+    <span style="font-size:13px">${_remEsc(it.message)}</span>
+    <div style="margin-top:3px">${link} <span class="muted" style="font-size:11px">${_remEsc(it.created_at||'')}</span></div>
+  </div>`;
+}
+
+// 渲染一条「本店待跟进升级项」（仅店长）
+function _renderEscalation(it) {
+  const sid = it.session_id != null ? it.session_id : it.ref_id;
+  const done = !!it.is_handled;
+  const advisor = it.advisor_name || ('顾问#' + (it.advisor_user_id || '?'));
+  const btn = done
+    ? `<span class="muted" style="font-size:11px">已跟进 ✓</span>`
+    : `<button class="btn" style="font-size:12px;padding:2px 10px" onclick="handleEscalation(${it.id}, this)">已跟进</button>`;
+  const link = sid != null
+    ? `<a href="${BASE}/session/${sid}?from=reminder" style="color:var(--blue);font-size:12px">查看报告 →</a>` : '';
+  return `<div data-esc-id="${it.id}" style="border-bottom:1px solid #f0f0f0;padding:8px 2px">
+    <span style="display:inline-block;font-size:11px;color:#fff;background:#e74c3c;border-radius:4px;padding:0 6px;margin-right:4px">升级 L${it.level}</span>
+    <span style="font-size:13px;font-weight:600">${_remEsc(advisor)}</span>
+    <div style="font-size:12px;margin-top:2px">${_remEsc(it.message)}</div>
+    <div style="margin-top:5px;display:flex;justify-content:space-between;align-items:center">
+      <span>${link} <span class="muted" style="font-size:11px">${_remEsc(it.created_at||'')}</span></span>
+      ${btn}
+    </div>
+  </div>`;
+}
+
+function loadReminders() {
+  fetch(BASE + '/api/consultant/reminders').then(r => r.json()).then(d => {
+    if (d.error) return;
+    const dot = document.getElementById('reminderDot');
+    // 店长 badge = 升级项数 + 个人提醒数；顾问 = 个人提醒数（count 即个人数）
+    const escN = d.escalation_count || 0;
+    const persN = (d.personal_count != null) ? d.personal_count : (d.count || 0);
+    const n = IS_MANAGER ? (escN + persN) : persN;
+    if (n > 0) { dot.style.display = ''; dot.textContent = n > 99 ? '99+' : n; }
+    else { dot.style.display = 'none'; }
+
+    const list = document.getElementById('reminderList');
+    const items = d.items || [];
+    const escItems = items.filter(it => it.scope === 'escalation');
+    const persItems = items.filter(it => it.scope !== 'escalation');
+
+    let html = '';
+    if (IS_MANAGER && escItems.length) {
+      html += `<div class="muted" style="font-size:11px;margin:2px 0 4px">本店待跟进升级项（${escItems.length}）</div>`;
+      html += escItems.map(_renderEscalation).join('');
+    }
+    if (persItems.length) {
+      if (html) html += `<div class="muted" style="font-size:11px;margin:8px 0 4px">个人提醒（${persItems.length}）</div>`;
+      html += persItems.map(_renderPersonal).join('');
+    }
+    if (!html) html = '<div class="muted" style="font-size:13px;padding:8px 0">暂无未处理提醒 🎉</div>';
+    list.innerHTML = html;
+  });
+}
+
+// 店长「已跟进」→ 调后端 handle 接口
+function handleEscalation(rid, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+  fetch(BASE + '/api/manager/reminder/' + rid + '/handle', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.error) {
+        alert(d.error);
+        if (btn) { btn.disabled = false; btn.textContent = '已跟进'; }
+        return;
+      }
+      loadReminders();
+    })
+    .catch(() => {
+      if (btn) { btn.disabled = false; btn.textContent = '已跟进'; }
+    });
+}
+
+function toggleReminderPanel() {
+  const p = document.getElementById('reminderPanel');
+  const show = p.style.display === 'none';
+  p.style.display = show ? 'block' : 'none';
+  if (show) loadReminders();  // 展示即拉取；后端在拉取时把升级项置已读
+}
+
+// ============ 客户档案：搜索 → 打开档案（复用 /customer/<id>）============
+// 录音收听权限由后端 /api/recording/<rid>/url 硬闸保证（非本人接待返回 403）；
+// 本页只做「搜到 → 打开档案」，不在此重做档案详情。
+let profileSearchTimer = null;
+function openCustomerProfile(cid) {
+  if (!cid) return;
+  location.href = BASE + '/customer/' + cid;
+}
+async function doProfileSearch(q) {
+  const list = document.getElementById('profileSearchList');
+  let items = [];
+  try {
+    const r = await fetch(BASE + '/api/customers/search?q=' + encodeURIComponent(q || ''));
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    items = d.customers || [];
+  } catch (e) {
+    list.innerHTML = '<div class="msg err" style="padding:8px">' + _remEsc(e.message) + '</div>';
+    return;
+  }
+  if (!items.length) {
+    list.innerHTML = '<div class="muted" style="padding:10px;font-size:12px">' +
+      tx('无匹配顾客', '没有找到这位姐妹 🤔') + '</div>';
+    return;
+  }
+  list.innerHTML = items.map(c => {
+    const cardNo = c.member_card ? ' · ' + _remEsc(c.member_card) : '';
+    return `
+    <div class="suggest-item" style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-bottom:1px solid #f0f0f0">
+      <div><b>${_remEsc(c.name)}</b> <span class="muted" style="font-size:12px">${cardNo}</span></div>
+      <button class="btn sec" style="padding:4px 10px;font-size:12px" onclick="openCustomerProfile(${c.id})">${tx('查看档案', '看档案 →')}</button>
+    </div>`;
+  }).join('');
+}
+(function initProfileSearch(){
+  const inp = document.getElementById('profileSearchQ');
+  if (!inp) return;
+  inp.addEventListener('input', e => {
+    clearTimeout(profileSearchTimer);
+    profileSearchTimer = setTimeout(() => doProfileSearch(e.target.value), 200);
+  });
+})();
+
+loadReception();
+setInterval(() => { if (!currentReceptionDate) loadReception(); }, 20000);
+loadReminders();
+setInterval(loadReminders, 120000);
+// 查看报告等返回本页/重新可见时，主动重拉一次以体现「即时-1」；
+// 并按原生真实录音态重新同步本页 UI（防 bfcache 残留的"录音中"计时空走、漏出"结束录音"按钮）。
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { loadReminders(); if (window.__syncRecState) window.__syncRecState(); }
+});
+window.addEventListener('pageshow', () => { loadReminders(); if (window.__syncRecState) window.__syncRecState(); });
+</script>
+</body>
+</html>

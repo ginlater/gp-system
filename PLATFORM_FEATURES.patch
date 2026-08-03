@@ -1,0 +1,422 @@
+--- webapp.py.bak-predeploy-1782709772	2026-06-29 10:10:14.034210612 +0800
++++ webapp.py	2026-06-29 13:10:27.055615348 +0800
+@@ -494,6 +494,11 @@
+     user_cols = {r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()}
+     if "pen_sn" not in user_cols:
+         conn.execute("ALTER TABLE users ADD COLUMN pen_sn TEXT")
++    # 2026-06-28 顾问级录音权限：手机麦/蓝牙录音笔。DEFAULT 1 → 存量账号默认两种都开通(向后兼容)。
++    if "allow_phone_rec" not in user_cols:
++        conn.execute("ALTER TABLE users ADD COLUMN allow_phone_rec INTEGER DEFAULT 1")
++    if "allow_pen_rec" not in user_cols:
++        conn.execute("ALTER TABLE users ADD COLUMN allow_pen_rec INTEGER DEFAULT 1")
+     conn.execute("""
+         CREATE TABLE IF NOT EXISTS pen_sn_sightings (
+             user_id INTEGER NOT NULL,
+@@ -4677,7 +4682,8 @@
+     if not uid:
+         return None
+     return db_fetchone(
+-        "SELECT id, username, role, company_id, advisor_name, employee_id, phone, store_id FROM users WHERE id=?",
++        "SELECT id, username, role, company_id, advisor_name, employee_id, phone, store_id, "
++        "allow_phone_rec, allow_pen_rec FROM users WHERE id=?",
+         (uid,),
+     )
+ 
+@@ -5097,6 +5103,8 @@
+         username=u["username"],
+         advisor_name=u["advisor_name"] or "",
+         role=u["role"],
++        allow_phone_rec=(0 if u["allow_phone_rec"] == 0 else 1),
++        allow_pen_rec=(0 if u["allow_pen_rec"] == 0 else 1),
+     ))
+     # ★在线打开必取最新网页：否则改了 consultant.html，App 的 WebView(LOAD_DEFAULT)还显示缓存的旧版
+     #   (本次"已传/已删还在显示"就是缓存旧页)。no-cache=每次在线先回源校验；仍允许离线冷启用缓存(LOAD_CACHE_ELSE_NETWORK)。
+@@ -6584,6 +6592,8 @@
+         "company_id": u["company_id"], "advisor_name": u["advisor_name"],
+         "employee_id": u["employee_id"], "phone": u["phone"],
+         "store_id": u["store_id"],
++        "allow_phone_rec": (0 if u["allow_phone_rec"] == 0 else 1),
++        "allow_pen_rec": (0 if u["allow_pen_rec"] == 0 else 1),
+     })
+ 
+ 
+@@ -7316,7 +7326,8 @@
+         params = base_params
+     rows = db_fetchall(
+         f"SELECT u.id, u.username, u.role, u.company_id, u.advisor_name, u.employee_id, "
+-        f"u.phone, u.created_at, u.store_id, u.pen_sn, st.name AS store_name "
++        f"u.phone, u.created_at, u.store_id, u.pen_sn, "
++        f"u.allow_phone_rec, u.allow_pen_rec, st.name AS store_name "
+         f"FROM users u LEFT JOIN stores st ON st.id=u.store_id "
+         f"WHERE {where} ORDER BY u.id DESC LIMIT 100",
+         tuple(params),
+@@ -7369,13 +7380,18 @@
+     store_id = _validate_store(data.get("store_id"), cid)
+     if store_id is False:
+         return jsonify({"error": "所选门店不属于本公司"}), 400
++    # 录音权限：默认两种都开通(1)；显式传 0/false 才关闭
++    allow_phone_rec = 0 if (("allow_phone_rec" in data) and not data.get("allow_phone_rec")) else 1
++    allow_pen_rec = 0 if (("allow_pen_rec" in data) and not data.get("allow_pen_rec")) else 1
+     try:
+         uid = db_write(
+             """INSERT INTO users (username, password_hash, role, company_id,
+-                                  advisor_name, employee_id, phone, store_id)
+-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
++                                  advisor_name, employee_id, phone, store_id,
++                                  allow_phone_rec, allow_pen_rec)
++               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             (username, _hash_pw(password), role, cid, advisor_name,
+-             employee_id or None, phone or None, store_id),
++             employee_id or None, phone or None, store_id,
++             allow_phone_rec, allow_pen_rec),
+         )
+     except sqlite3.IntegrityError:
+         return jsonify({"error": f"账号 {username} 已存在"}), 409
+@@ -7399,6 +7415,10 @@
+         if f in data:
+             sets.append(f"{f}=?")
+             params.append((data[f] or "").strip() or None)
++    for f in ("allow_phone_rec", "allow_pen_rec"):
++        if f in data:
++            sets.append(f"{f}=?")
++            params.append(1 if data[f] else 0)
+     if "role" in data:
+         nr = (data["role"] or "").strip()
+         if nr not in ("consultant", "store_manager"):
+@@ -9680,6 +9700,14 @@
+     if err:
+         return err
+     u = current_user()
++    # 顾问级录音权限：客户端被篡改也在后端兜底拦截。mode 由 source 表单字段判定(phone=手机麦，否则=笔)。
++    _src_kind = (request.form.get("source") or "").strip()
++    if _src_kind == "phone":
++        if u["allow_phone_rec"] == 0:
++            return jsonify({"error": "未开通手机录音权限"}), 403
++    else:
++        if u["allow_pen_rec"] == 0:
++            return jsonify({"error": "未开通录音笔权限"}), 403
+     f = request.files.get("file") or request.files.get("audio")
+     if not f:
+         return jsonify({"error": "未上传音频"}), 400
+@@ -9976,6 +10004,13 @@
+     # 来源标记：手机麦传 source=phone → 占位记 consultant-mic-placeholder（回填时也归手机麦）；默认笔。
+     src_kind = (request.form.get("source") or "").strip()
+     ph_source = "consultant-mic-placeholder" if src_kind == "phone" else "consultant-pen-placeholder"
++    # 顾问级录音权限：客户端被篡改也在后端兜底拦截
++    if src_kind == "phone":
++        if u["allow_phone_rec"] == 0:
++            return jsonify({"error": "未开通手机录音权限"}), 403
++    else:
++        if u["allow_pen_rec"] == 0:
++            return jsonify({"error": "未开通录音笔权限"}), 403
+     # 直接底层 INSERT，不走 ingest_recording（避免建 session / 起分析流水线）
+     rid = db_write(
+         """INSERT INTO recordings
+@@ -13727,5 +13762,307 @@
+ reap_running_on_boot()
+ 
+ 
++# ============ 中央平台账号管理适配器（X-Platform-Token 鉴权，非 session） ============
++# 复用与本地后台完全相同的 users 表 / _hash_pw / _validate_store / db_* 写读队列，
++# 保证平台创建的账号与本地创建的账号字节级一致。
++import hmac as _platform_hmac  # 顶层未导入 hmac，这里函数库级补上（与本仓库局部 import 风格一致）
++
++# .env 已在文件顶部 _load_env() 阶段加载完毕，此处直接读取
++PLATFORM_SVC_TOKEN = os.environ.get("PLATFORM_SVC_TOKEN", "")
++
++_PLATFORM_ROLES = ("super", "admin", "store_manager", "consultant")
++
++
++def _require_platform_token():
++    """校验 X-Platform-Token 与 env PLATFORM_SVC_TOKEN 是否一致（hmac 恒定时比较）。
++    成功返回 None；失败返回可直接 return 的 (response, status) 元组。
++    未配置 PLATFORM_SVC_TOKEN 时一律拒绝（防止空令牌被空头匹配）。"""
++    supplied = request.headers.get("X-Platform-Token", "") or ""
++    if not PLATFORM_SVC_TOKEN or not _platform_hmac.compare_digest(supplied, PLATFORM_SVC_TOKEN):
++        return jsonify({"error": "平台令牌无效", "code": "platform_auth"}), 401
++    return None
++
++
++def _platform_company_exists(cid):
++    return bool(db_fetchone("SELECT id FROM companies WHERE id=?", (cid,)))
++
++
++def _platform_get_or_create_company(name):
++    """按公司名取 id，不存在则新建（沿用本地 INSERT 列）。返回 company_id。"""
++    name = (name or "").strip()
++    if not name:
++        return None
++    row = db_fetchone("SELECT id FROM companies WHERE name=?", (name,))
++    if row:
++        return row["id"]
++    return db_write("INSERT INTO companies (name) VALUES (?)", (name,))
++
++
++def _platform_get_or_create_store(cid, name, region=None):
++    """在指定公司下按门店名取 id，不存在则新建。返回 store_id。"""
++    name = (name or "").strip()
++    if not name or cid is None:
++        return None
++    row = db_fetchone("SELECT id FROM stores WHERE company_id=? AND name=?", (cid, name))
++    if row:
++        return row["id"]
++    return db_write(
++        "INSERT INTO stores (company_id, name, region) VALUES (?, ?, ?)",
++        (cid, name, (region or "").strip() or None),
++    )
++
++
++def _platform_resolve_company(data):
++    """从请求体解析 company：优先 company_id（须存在），否则 company_name（取或建）。
++    返回 (cid, err)；cid 为 None 表示未指定。"""
++    raw_cid = data.get("company_id")
++    if raw_cid not in (None, "", 0, "0"):
++        cid = int(raw_cid)
++        if not _platform_company_exists(cid):
++            return None, (jsonify({"error": "company_id 不存在"}), 400)
++        return cid, None
++    name = (data.get("company_name") or "").strip()
++    if name:
++        return _platform_get_or_create_company(name), None
++    return None, None
++
++
++def _platform_resolve_store(data, cid):
++    """解析 store：优先 store_id（须属于该公司），否则 store_name（取或建）。
++    返回 (store_id, err)；store_id 为 None 表示未指定。"""
++    raw_sid = data.get("store_id")
++    if raw_sid not in (None, "", 0, "0"):
++        sv = _validate_store(raw_sid, cid)
++        if sv is False:
++            return None, (jsonify({"error": "所选门店不属于该公司"}), 400)
++        return sv, None
++    name = (data.get("store_name") or "").strip()
++    if name:
++        if cid is None:
++            return None, (jsonify({"error": "指定门店需先指定公司"}), 400)
++        return _platform_get_or_create_store(cid, name), None
++    return None, None
++
++
++@app.route("/platform/users", methods=["GET"])
++def platform_users_list():
++    auth = _require_platform_token()
++    if auth:
++        return auth
++    # 可选过滤：?company_id= &role= &q=（不传则返回全部账号）
++    where, params = ["1=1"], []
++    cid = (request.args.get("company_id") or "").strip()
++    if cid:
++        where.append("u.company_id=?"); params.append(int(cid))
++    role = (request.args.get("role") or "").strip()
++    if role:
++        where.append("u.role=?"); params.append(role)
++    q = (request.args.get("q") or "").strip()
++    if q:
++        where.append("(u.username LIKE ? OR u.advisor_name LIKE ? OR u.employee_id LIKE ? OR u.phone LIKE ?)")
++        params += [f"%{q}%"] * 4
++    rows = db_fetchall(
++        f"""SELECT u.id, u.username, u.role, u.company_id, u.store_id,
++                   u.advisor_name, u.employee_id, u.phone, u.pen_sn, u.created_at,
++                   u.allow_phone_rec, u.allow_pen_rec,
++                   co.name AS company_name, st.name AS store_name
++            FROM users u
++            LEFT JOIN companies co ON co.id=u.company_id
++            LEFT JOIN stores    st ON st.id=u.store_id
++            WHERE {' AND '.join(where)}
++            ORDER BY u.company_id, u.id DESC""",
++        tuple(params),
++    )
++    return jsonify({"users": [dict(r) for r in rows]})  # 不含 password_hash
++
++
++@app.route("/platform/companies", methods=["GET"])
++def platform_companies_list():
++    auth = _require_platform_token()
++    if auth:
++        return auth
++    cos = db_fetchall("SELECT id, name FROM companies ORDER BY id")
++    sts = db_fetchall("SELECT id, company_id, name FROM stores ORDER BY company_id, id")
++    return jsonify({
++        "companies": [dict(r) for r in cos],
++        "stores": [dict(r) for r in sts],
++    })
++
++
++@app.route("/platform/companies", methods=["POST"])
++def platform_companies_create():
++    auth = _require_platform_token()
++    if auth:
++        return auth
++    data = request.get_json(silent=True) or {}
++    name = (data.get("name") or data.get("company_name") or "").strip()
++    if not name:
++        return jsonify({"error": "公司名必填"}), 400
++    try:
++        cid = _platform_get_or_create_company(name)
++    except sqlite3.IntegrityError:
++        return jsonify({"error": "公司已存在"}), 409
++    return jsonify({"id": cid, "name": name})
++
++
++@app.route("/platform/stores", methods=["POST"])
++def platform_stores_create():
++    auth = _require_platform_token()
++    if auth:
++        return auth
++    data = request.get_json(silent=True) or {}
++    name = (data.get("name") or data.get("store_name") or "").strip()
++    cid, err = _platform_resolve_company(data)
++    if err:
++        return err
++    if cid is None:
++        return jsonify({"error": "须指定 company_id 或 company_name"}), 400
++    if not name:
++        return jsonify({"error": "门店名必填"}), 400
++    try:
++        sid = _platform_get_or_create_store(cid, name, data.get("region"))
++    except sqlite3.IntegrityError:
++        return jsonify({"error": "门店已存在"}), 409
++    return jsonify({"id": sid, "company_id": cid, "name": name})
++
++
++@app.route("/platform/users", methods=["POST"])
++def platform_users_create():
++    auth = _require_platform_token()
++    if auth:
++        return auth
++    data = request.get_json(silent=True) or {}
++    username = (data.get("username") or "").strip()
++    password = (data.get("password") or "").strip()
++    role = (data.get("role") or "").strip()
++    advisor_name = (data.get("advisor_name") or "").strip()
++    employee_id = (data.get("employee_id") or "").strip()
++    phone = (data.get("phone") or "").strip()
++
++    if not username or not password:
++        return jsonify({"error": "username、password 必填"}), 400
++    if role not in _PLATFORM_ROLES:
++        return jsonify({"error": f"role 必须是 {', '.join(_PLATFORM_ROLES)} 之一"}), 400
++    if role in ("admin", "consultant", "store_manager") and not advisor_name:
++        advisor_name = "管理员" if role == "admin" else username
++
++    # company：支持 company_id 或 company_name（不存在则新建）；super 可不填
++    cid, err = _platform_resolve_company(data)
++    if err:
++        return err
++    if role != "super" and cid is None:
++        return jsonify({"error": "该角色必须指定公司"}), 400
++
++    # store：支持 store_id 或 store_name（不存在则在该公司下新建）
++    store_id, err = _platform_resolve_store(data, cid)
++    if err:
++        return err
++
++    # 录音权限：默认两种都开通(1)，显式传 0/false 才关闭
++    allow_phone_rec = 0 if (("allow_phone_rec" in data) and not data.get("allow_phone_rec")) else 1
++    allow_pen_rec = 0 if (("allow_pen_rec" in data) and not data.get("allow_pen_rec")) else 1
++
++    try:
++        uid = db_write(
++            """INSERT INTO users (username, password_hash, role, company_id,
++                                  advisor_name, employee_id, phone, store_id,
++                                  allow_phone_rec, allow_pen_rec)
++               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
++            (username, _hash_pw(password), role, cid,
++             advisor_name or None, employee_id or None, phone or None, store_id,
++             allow_phone_rec, allow_pen_rec),
++        )
++    except sqlite3.IntegrityError:
++        return jsonify({"error": f"用户名 {username} 已存在"}), 409
++    return jsonify({"id": uid, "username": username, "role": role,
++                    "company_id": cid, "store_id": store_id})
++
++
++@app.route("/platform/users/<int:uid>", methods=["PATCH"])
++def platform_users_update(uid):
++    auth = _require_platform_token()
++    if auth:
++        return auth
++    row = db_fetchone("SELECT id, role, company_id FROM users WHERE id=?", (uid,))
++    if not row:
++        return jsonify({"error": "账号不存在"}), 404
++    data = request.get_json(silent=True) or {}
++    sets, params = [], []
++    effective_cid = row["company_id"]
++
++    # 公司变更（先于门店校验）：支持 company_id 或 company_name（取或建）
++    if "company_id" in data or "company_name" in data:
++        new_cid, err = _platform_resolve_company(data)
++        if err:
++            return err
++        sets.append("company_id=?"); params.append(new_cid)
++        effective_cid = new_cid
++
++    if "store_id" in data or "store_name" in data:
++        sv, err = _platform_resolve_store(data, effective_cid)
++        if err:
++            return err
++        sets.append("store_id=?"); params.append(sv)
++
++    if data.get("password"):
++        sets.append("password_hash=?"); params.append(_hash_pw(data["password"]))
++
++    if "role" in data:
++        nr = (data["role"] or "").strip()
++        if nr not in _PLATFORM_ROLES:
++            return jsonify({"error": f"role 必须是 {', '.join(_PLATFORM_ROLES)} 之一"}), 400
++        if row["role"] == "admin" and nr != "admin":
++            n = db_fetchone("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND company_id=?",
++                            (row["company_id"],))["n"]
++            if n <= 1:
++                return jsonify({"error": "这是该公司最后一个管理员，不能降级"}), 400
++        sets.append("role=?"); params.append(nr)
++
++    if "username" in data:
++        nu = (data["username"] or "").strip()
++        if not nu:
++            return jsonify({"error": "username 不能为空"}), 400
++        sets.append("username=?"); params.append(nu)
++
++    for f in ("advisor_name", "employee_id", "phone", "pen_sn"):
++        if f in data:
++            sets.append(f"{f}=?"); params.append((data[f] or "").strip() or None)
++
++    for f in ("allow_phone_rec", "allow_pen_rec"):
++        if f in data:
++            sets.append(f"{f}=?"); params.append(1 if data[f] else 0)
++
++    if not sets:
++        return jsonify({"error": "无修改字段"}), 400
++    params.append(uid)
++    try:
++        db_write(f"UPDATE users SET {', '.join(sets)} WHERE id=?", tuple(params))
++    except sqlite3.IntegrityError:
++        return jsonify({"error": "用户名已存在"}), 409
++    return jsonify({"ok": True})
++
++
++@app.route("/platform/users/<int:uid>", methods=["DELETE"])
++def platform_users_delete(uid):
++    auth = _require_platform_token()
++    if auth:
++        return auth
++    row = db_fetchone("SELECT id, role, company_id FROM users WHERE id=?", (uid,))
++    if not row:
++        return jsonify({"error": "账号不存在"}), 404
++    if row["role"] == "admin":
++        n = db_fetchone("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND company_id=?",
++                        (row["company_id"],))["n"]
++        if n <= 1:
++            return jsonify({"error": "这是该公司最后一个管理员，不能删除"}), 400
++    if row["role"] == "super":
++        n = db_fetchone("SELECT COUNT(*) AS n FROM users WHERE role='super'")["n"]
++        if n <= 1:
++            return jsonify({"error": "这是系统最后一个超级管理员，不能删除"}), 400
++    db_write("DELETE FROM users WHERE id=?", (uid,))
++    return jsonify({"ok": True})
++# ============ /中央平台账号管理适配器 ============
++
++
+ if __name__ == "__main__":
+     app.run(host="0.0.0.0", port=5058, debug=True)

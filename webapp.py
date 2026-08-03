@@ -7219,7 +7219,28 @@ def api_admin_high_risk_sessions():
         d["deal_amount"] = diag.get("deal_amount") or ""
         d["unread"] = d.get("viewed_at") is None
         out.append(d)
-    return jsonify({"sessions": out, "total": len(out)})
+
+    # ★2026-07-21 分页（20/页）。风险等级要解析 analysis_result JSON 才知道，
+    #   所以只能取回后在 Python 端切；SQL 侧仍有 LIMIT 500 兜底。
+    total_rows = len(out)
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except ValueError:
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", "20"))
+    except ValueError:
+        page_size = 20
+    if page_size > 0:
+        page_size = min(page_size, 200)
+        pages = max(1, (total_rows + page_size - 1) // page_size)
+        page = min(page, pages)
+        out = out[(page - 1) * page_size: page * page_size]
+    else:
+        pages, page = 1, 1
+
+    return jsonify({"sessions": out, "total": total_rows,
+                    "page": page, "page_size": page_size, "pages": pages})
 
 
 @app.route("/api/admin/high_risk_sessions/<int:sid>/view", methods=["POST"])
@@ -7369,6 +7390,27 @@ def api_admin_report_view_stats():
     """
     rows = db_fetchall(sql, tuple(EXPANDABLE_PARTS) + tuple(params))
 
+    # ★2026-07-21 分页：原来一次吐全部行（近30天已有几百条），页面又长又慢。
+    #   GROUP BY 后的总行数只能在 Python 端切——SQL 里加 LIMIT 会让总数算不准。
+    #   page_size=0 表示不分页（保留给导出等场景）。
+    total_rows = len(rows)
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except ValueError:
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", "30"))
+    except ValueError:
+        page_size = 30
+    if page_size > 0:
+        page_size = min(page_size, 200)          # 上限防一次拉爆
+        pages = max(1, (total_rows + page_size - 1) // page_size)
+        page = min(page, pages)                   # 越界翻页夹回最后一页
+        rows = rows[(page - 1) * page_size: page * page_size]
+    else:
+        pages = 1
+        page = 1
+
     out = []
     for r in rows:
         total_ms = int(r["total_ms"] or 0)
@@ -7397,6 +7439,10 @@ def api_admin_report_view_stats():
     return jsonify({
         "days": days,
         "rows": out,
+        "total": total_rows,      # 分页用：满足条件的总行数
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
         "total_expandable": total_expandable,
         "expandable_parts": EXPANDABLE_PARTS,
     })
@@ -7455,7 +7501,13 @@ def _overview_metrics(cid, sid, d_from, d_to, n_days):
         "study_min_per_day": pcd(study_sec / 60.0),
         "customers_per_day": pcd(receptions),
         "intake_avg_min": round(intake_avg_sec / 60.0, 1),
+        # ★2026-07-21 平均每天录音总时长：只除天数、不除人数（全店合计的日均产出）
+        "daily_rec_min": round(companion_sec / 60.0 / n_days, 1),
     }
+
+
+# 经营总览自定义区间的天数上限（老板 2026-07-21 拍板：最多 180 天）
+OVERVIEW_MAX_DAYS = 180
 
 
 @app.route("/api/admin/overview_kpis")
@@ -7475,8 +7527,21 @@ def api_admin_overview_kpis():
     default_to = now.strftime("%Y-%m-%d")
     d_from = (request.args.get("from") or default_from).strip()
     d_to = (request.args.get("to") or default_to).strip()
+    # ★2026-07-21 自定义区间：老板要求可自选起止日期，上限 180 天。
+    #   上限是性能闸——四项指标都要全表扫 recordings/sessions 再 Python 端求和，
+    #   区间越长越慢；180 天覆盖半年复盘足够，再长应该走离线报表。
+    #   起止写反自动对调；超限截断为「以结束日往前推 180 天」，并回传 clamped 让前端提示。
+    range_clamped = False
     try:
-        n_days = (datetime.strptime(d_to, "%Y-%m-%d") - datetime.strptime(d_from, "%Y-%m-%d")).days + 1
+        dt_from = datetime.strptime(d_from, "%Y-%m-%d")
+        dt_to = datetime.strptime(d_to, "%Y-%m-%d")
+        if dt_from > dt_to:
+            dt_from, dt_to = dt_to, dt_from
+        if (dt_to - dt_from).days + 1 > OVERVIEW_MAX_DAYS:
+            dt_from = dt_to - timedelta(days=OVERVIEW_MAX_DAYS - 1)
+            range_clamped = True
+        d_from, d_to = dt_from.strftime("%Y-%m-%d"), dt_to.strftime("%Y-%m-%d")
+        n_days = (dt_to - dt_from).days + 1
     except ValueError:
         d_from, d_to, n_days = default_from, default_to, 1
     n_days = max(1, n_days)
@@ -7575,12 +7640,15 @@ def api_admin_overview_kpis():
         app.logger.info("[overview] by_store 跳过: %s", e)
 
     return jsonify({
-        "range": {"from": d_from, "to": d_to, "days": n_days},
+        "range": {"from": d_from, "to": d_to, "days": n_days,
+                  "max_days": OVERVIEW_MAX_DAYS, "clamped": range_clamped},
         "advisors": advisors,
         "companion_min_per_day": per_cap_day(companion_sec / 60.0),  # 人均陪伴时长 分钟/人·日
         "study_min_per_day": per_cap_day(study_sec / 60.0),          # 人均学习时长 分钟/人·日
         "customers_per_day": per_cap_day(receptions),                # 人均接待客人 位/人·日
         "intake_avg_min": round(intake_avg_sec / 60.0, 1),           # 人均接诊时长 分钟/单
+        # ★2026-07-21 平均每天录音总时长：全员录音时长 ÷ 天数（不除人数），看整体日均产出
+        "daily_rec_min": round(companion_sec / 60.0 / n_days, 1),
         "leaderboard": leaderboard,
         "by_store": by_store,
     })
@@ -7623,6 +7691,33 @@ def api_admin_ops_dashboard():
     today = datetime.now().strftime("%Y-%m-%d")
     week_start = (datetime.now() - timedelta(days=datetime.now().weekday())).strftime("%Y-%m-%d")
 
+    # ★2026-07-21 自定义统计区间（上限 180 天，与经营总览同一常量）。
+    #   不传 from/to 时保持原行为：起点=本周一、终点不设上限（未来日期的接诊也计入）。
+    #   传了就按 BETWEEN 卡两头；起止写反自动对调，超限截断并回传 clamped。
+    q_from = (request.args.get("from") or "").strip()
+    q_to = (request.args.get("to") or "").strip()
+    range_from, range_to, range_clamped = week_start, "9999-12-31", False
+    range_custom = False
+    if q_from and q_to:
+        try:
+            a = datetime.strptime(q_from, "%Y-%m-%d")
+            b = datetime.strptime(q_to, "%Y-%m-%d")
+            if a > b:
+                a, b = b, a
+            if (b - a).days + 1 > OVERVIEW_MAX_DAYS:
+                a = b - timedelta(days=OVERVIEW_MAX_DAYS - 1)
+                range_clamped = True
+            range_from = a.strftime("%Y-%m-%d")
+            range_to = b.strftime("%Y-%m-%d")
+            range_custom = True
+        except ValueError:
+            pass  # 日期非法 → 回退默认本周口径
+    range_days = ((datetime.strptime(range_to, "%Y-%m-%d")
+                   - datetime.strptime(range_from, "%Y-%m-%d")).days + 1) if range_custom else None
+    # 区间条件：两端都卡（默认上限 9999-12-31 等价于原来的「>=」）
+    RANGE_COND = ("REPLACE(service_date,'-','') BETWEEN REPLACE(?,'-','') "
+                  "AND REPLACE(?,'-','')")
+
     def _session_stats(where_extra, params_today, params_week, params_fail):
         def _counts(date_cond, p):
             rows = db_fetchall(f"""
@@ -7654,7 +7749,7 @@ def api_admin_ops_dashboard():
             return out
 
         today_stats = _counts("REPLACE(service_date,'-','') >= REPLACE(?,'-','')", params_today)
-        week_stats  = _counts("REPLACE(service_date,'-','') >= REPLACE(?,'-','')", params_week)
+        week_stats  = _counts(RANGE_COND, params_week)   # 默认=本周至今；带 from/to 时=自定义区间
 
         failures = db_fetchall(f"""
             SELECT id, advisor, customer, service_date, analysis_error
@@ -7673,7 +7768,7 @@ def api_admin_ops_dashboard():
             co_id = co["id"]
             today_s, week_s, fails = _session_stats(
                 "AND company_id=?",
-                (today, co_id), (week_start, co_id), (co_id,)
+                (today, co_id), (range_from, range_to, co_id), (co_id,)
             )
             advisors_rows = db_fetchall("""
                 SELECT
@@ -7687,10 +7782,10 @@ def api_admin_ops_dashboard():
                         ELSE NULL END) AS avg_min
                 FROM sessions
                 WHERE company_id=?
-                  AND REPLACE(service_date,'-','') >= REPLACE(?,'-','')
+                  AND {RANGE_COND}
                 GROUP BY advisor
                 ORDER BY total DESC
-            """, (co_id, week_start))
+            """.replace("{RANGE_COND}", RANGE_COND), (co_id, range_from, range_to))
             advisors = []
             for a in advisors_rows:
                 total = a["total"] or 0
@@ -7713,7 +7808,11 @@ def api_admin_ops_dashboard():
                 "advisors": advisors,
                 "recent_failures": fails,
             })
-        return jsonify({"is_super": True, "today": today, "week_start": week_start, "companies": result})
+        return jsonify({"is_super": True, "today": today, "week_start": week_start,
+                        "range": {"from": range_from, "to": range_to, "days": range_days,
+                                  "custom": range_custom, "clamped": range_clamped,
+                                  "max_days": OVERVIEW_MAX_DAYS},
+                        "companies": result})
     else:
         # 店长/按门店筛选：在公司过滤基础上再叠加 store_id 条件
         store_cond = " AND store_id=?" if _sf is not None else ""
@@ -7721,7 +7820,7 @@ def api_admin_ops_dashboard():
         today_s, week_s, fails = _session_stats(
             "AND (company_id IS NULL OR company_id=?)" + store_cond,
             tuple([today, cid] + store_p),
-            tuple([week_start, cid] + store_p),
+            tuple([range_from, range_to, cid] + store_p),
             tuple([cid] + store_p),
         )
         advisors_rows = db_fetchall(f"""
@@ -7736,10 +7835,10 @@ def api_admin_ops_dashboard():
                     ELSE NULL END) AS avg_min
             FROM sessions
             WHERE (company_id IS NULL OR company_id=?){store_cond}
-              AND REPLACE(service_date,'-','') >= REPLACE(?,'-','')
+              AND {RANGE_COND}
             GROUP BY advisor
             ORDER BY total DESC
-        """, tuple([cid] + store_p + [week_start]))
+        """, tuple([cid] + store_p + [range_from, range_to]))
         advisors = []
         for a in advisors_rows:
             total = a["total"] or 0
@@ -7758,6 +7857,9 @@ def api_admin_ops_dashboard():
             "is_super": False,
             "today": today,
             "week_start": week_start,
+            "range": {"from": range_from, "to": range_to, "days": range_days,
+                      "custom": range_custom, "clamped": range_clamped,
+                      "max_days": OVERVIEW_MAX_DAYS},
             "today_stats": today_s,
             "week_stats": week_s,
             "advisors": advisors,
@@ -14492,10 +14594,35 @@ def api_admin_pipeline_status():
             })
     stuck.sort(key=lambda x: x["hours"], reverse=True)
 
+    # ★2026-07-21 「卡住的项」分页（20/页）。分桶数字是聚合值，不分页；
+    #   这里只切明细列表。原来固定 stuck[:200]，超出部分看不到也翻不到。
+    stuck_total = len(stuck)
+    # 红色告警数必须按【全量】算——前端角标原来是数当前渲染行得来的，
+    # 分页后只数一页会让角标虚低，所以这里给出全量值。
+    stuck_red_total = sum(1 for x in stuck if x.get("red"))
+    try:
+        page = max(1, int(request.args.get("page", "1")))
+    except ValueError:
+        page = 1
+    try:
+        page_size = int(request.args.get("page_size", "20"))
+    except ValueError:
+        page_size = 20
+    if page_size > 0:
+        page_size = min(page_size, 200)
+        pages = max(1, (stuck_total + page_size - 1) // page_size)
+        page = min(page, pages)
+        stuck_page = stuck[(page - 1) * page_size: page * page_size]
+    else:
+        pages, page, stuck_page = 1, 1, stuck[:500]
+
     return jsonify({
         "buckets": [{"key": k, "label": PIPELINE_STATE_LABELS[k], "count": buckets[k]}
                     for k in PIPELINE_STATES],
-        "stuck": stuck[:200],
+        "stuck": stuck_page,
+        "stuck_total": stuck_total,
+        "stuck_red_total": stuck_red_total,
+        "page": page, "page_size": page_size, "pages": pages,
         "labels": PIPELINE_STATE_LABELS,
     })
 

@@ -103,7 +103,6 @@ a{text-decoration:none}
 .kpi .lbl{font-size:13px;color:var(--muted)}
 .kpi .num{font-family:var(--serif);font-size:32px;line-height:1.1}
 .kpi .unit{font-size:13px;color:var(--faint);margin-left:5px}
-.kpi .khint{font-size:11.5px;color:var(--faint);line-height:1.55;margin-top:10px;padding-top:8px;border-top:1px dashed var(--line)}
 .grid2{display:grid;grid-template-columns:1.6fr 1fr;gap:18px;margin-bottom:22px}
 .lb-row{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px dashed var(--line)}
 .lb-row:last-child{border-bottom:0}
@@ -189,24 +188,9 @@ a{text-decoration:none}
   <div class="me">
     <div class="av">{{ (username or '管')[0] }}</div>
     <div><div class="nm">{{ username or '管理员' }}</div><div class="rl">{{ {'super':'超级管理员','admin':'管理员','store_manager':'店长'}.get(role, role) }}</div></div>
-    <a class="out" href="javascript:void(0)" onclick="openChangePwd()">改密码</a>
     <a class="out" href="{{ url_for('logout') }}">退出</a>
   </div>
 </aside>
-
-<div id="cpwdMask" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;align-items:center;justify-content:center;">
-  <div style="background:#fff;padding:24px;border-radius:12px;width:90%;max-width:340px;box-shadow:0 10px 40px rgba(0,0,0,.3);color:#1f2937;">
-    <h3 style="margin:0 0 16px;font-size:16px;">修改密码</h3>
-    <input id="cpwdOld" type="password" placeholder="当前密码" autocomplete="current-password" style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;">
-    <input id="cpwdNew" type="password" placeholder="新密码（至少6位）" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;">
-    <input id="cpwdNew2" type="password" placeholder="确认新密码" autocomplete="new-password" style="width:100%;box-sizing:border-box;padding:10px 12px;margin-bottom:10px;border:1px solid #d1d5db;border-radius:8px;font-size:14px;">
-    <div id="cpwdErr" style="color:#dc2626;font-size:12px;min-height:16px;margin-bottom:8px;"></div>
-    <div style="display:flex;gap:10px;justify-content:flex-end;">
-      <button onclick="closeChangePwd()" style="padding:8px 18px;border:1px solid #d1d5db;background:#fff;color:#374151;border-radius:8px;cursor:pointer;font-size:14px;">取消</button>
-      <button id="cpwdSubmit" onclick="submitChangePwd()" style="padding:8px 18px;border:none;background:#2563eb;color:#fff;border-radius:8px;cursor:pointer;font-size:14px;">确定</button>
-    </div>
-  </div>
-</div>
 
 <div class="main">
   <div class="topbar">
@@ -214,16 +198,6 @@ a{text-decoration:none}
     <div class="right"><a class="back" href="{{ url_for('index') }}">← 接诊列表</a></div>
   </div>
   <div class="wrap">
-
-  <!-- ★2026-07-14 AI 余额预警：余额耗尽会让全公司分析静默停摆（顾问只看到"分析失败"），必须让老板看见 -->
-  <div id="balanceBar" style="display:none;margin:0 0 14px;padding:11px 16px;border-radius:8px;
-       background:#fdecea;border:1px solid #f5c6c2;color:#a03830;font-size:13.5px;line-height:1.6">
-    <b>⚠ AI 分析余额不足</b>
-    <span id="balanceText"></span>
-    —— 余额用完后<b>所有接诊分析都会失败</b>，顾问只会看到「分析失败」。
-    请尽快到 <a href="https://platform.deepseek.com/top_up" target="_blank" rel="noopener"
-       style="color:#a03830;font-weight:700">DeepSeek 平台充值</a>。
-  </div>
 
   <!-- 隐藏计数容器：原来这些 id 在顶部 tab 里，改侧栏后保留它们让既有计数/徽标逻辑不报错 -->
   <div style="display:none">
@@ -233,31 +207,16 @@ a{text-decoration:none}
   <!-- 经营总览（新）-->
   <div id="tab-overview" class="panel">
     <div class="h1">经营总览</div>
-    <!-- ★2026-07-21 自定义统计区间（上限 180 天，后端 OVERVIEW_MAX_DAYS 同步校验） -->
-    <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-      <button class="btn sec ov-quick" data-days="7" onclick="ovQuick(7)">近7天</button>
-      <button class="btn sec ov-quick" data-days="30" onclick="ovQuick(30)">近30天</button>
-      <button class="btn sec ov-quick" data-days="90" onclick="ovQuick(90)">近90天</button>
-      <button class="btn sec ov-quick" data-days="180" onclick="ovQuick(180)">近180天</button>
-      <span style="color:var(--muted);font-size:13px;margin-left:4px">自定义</span>
-      <input id="ovFrom" type="date" style="width:150px" onchange="ovMarkCustom()">
-      <span style="color:var(--muted)">至</span>
-      <input id="ovTo" type="date" style="width:150px" onchange="ovMarkCustom()">
-      <button class="btn" onclick="ovApply()">查询</button>
-      <button class="btn sec" onclick="ovReset()">本周</button>
-    </div>
     <div class="sub-note" id="ov-range">加载中…</div>
     <div class="kpis">
-      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v10M12 21a4 4 0 004-4V7a4 4 0 00-8 0v10a4 4 0 004 4z"/></svg></div><div class="lbl">人均陪伴时长</div></div><div class="num"><span id="ov-companion">—</span><span class="unit">分钟/人·日</span></div><div class="khint">工牌录了多少音：把大家传完的录音时长全加起来，÷ 顾问人数 ÷ 天数</div></div>
-      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v12H4zM9 9h6M9 12h4"/></svg></div><div class="lbl">人均学习时长</div></div><div class="num"><span id="ov-study">—</span><span class="unit">分钟/人·日</span></div><div class="khint">看报告花了多久：顾问打开 AI 分析报告的停留时间全加起来，÷ 顾问人数 ÷ 天数</div></div>
-      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.3 3-5.6 7-5.6s7 2.3 7 5.6"/></svg></div><div class="lbl">人均接待客人</div></div><div class="num"><span id="ov-customers">—</span><span class="unit">位/人·日</span></div><div class="khint">录音绑定一位客人 = 接待 1 次：接待总次数 ÷ 顾问人数 ÷ 天数</div></div>
-      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div><div class="lbl">人均接诊时长</div></div><div class="num"><span id="ov-intake">—</span><span class="unit">分钟/单</span></div><div class="khint">平均一单聊多久：每单接诊的录音时长加总，再对有录音的单取平均（这项不除人数和天数）</div></div>
-      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 19V9M9 19V5M14 19v-7M19 19v-4"/></svg></div><div class="lbl">平均每天录音总时长</div></div><div class="num"><span id="ov-dailyrec">—</span><span class="unit">分钟/日</span></div><div class="khint">全店一天录多少：把大家传完的录音时长全加起来 ÷ 天数（这项不除人数，看整体产出）</div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3v10M12 21a4 4 0 004-4V7a4 4 0 00-8 0v10a4 4 0 004 4z"/></svg></div><div class="lbl">人均陪伴时长</div></div><div class="num"><span id="ov-companion">—</span><span class="unit">分钟/人·日</span></div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16v12H4zM9 9h6M9 12h4"/></svg></div><div class="lbl">人均学习时长</div></div><div class="num"><span id="ov-study">—</span><span class="unit">分钟/人·日</span></div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="3.2"/><path d="M5 20c0-3.3 3-5.6 7-5.6s7 2.3 7 5.6"/></svg></div><div class="lbl">人均接待客人</div></div><div class="num"><span id="ov-customers">—</span><span class="unit">位/人·日</span></div></div>
+      <div class="kpi"><div class="krow"><div class="badge"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div><div class="lbl">人均接诊时长</div></div><div class="num"><span id="ov-intake">—</span><span class="unit">分钟/单</span></div></div>
     </div>
-    <div class="sub-note" style="margin-top:10px">＊“顾问人数”按系统里全部在岗顾问账号算（没在用工牌的账号也在分母里）；录音要上传完成才计入时长。</div>
     <div class="grid2">
       <div class="card"><h3 style="margin-bottom:12px">各门店经营概览</h3>
-        <table class="tbl"><thead><tr><th>门店</th><th>在岗顾问</th><th>人均陪伴</th><th>人均学习</th><th>人均接待</th><th>人均接诊</th><th>日均录音</th></tr></thead><tbody id="ov-stores"><tr><td colspan="7" class="empty">加载中…</td></tr></tbody></table>
+        <table class="tbl"><thead><tr><th>门店</th><th>在岗顾问</th><th>人均陪伴</th><th>人均学习</th><th>人均接待</th><th>人均接诊</th></tr></thead><tbody id="ov-stores"><tr><td colspan="6" class="empty">加载中…</td></tr></tbody></table>
       </div>
       <div class="card"><h3 style="margin-bottom:6px">顾问陪伴时长排行</h3><div id="ov-leaders"><div class="empty">加载中…</div></div></div>
     </div>
@@ -304,10 +263,7 @@ a{text-decoration:none}
       </div>
     </div>
   </div>
-  <style>
-  /* ★2026-07-21 经营总览快捷区间按钮选中态 */
-  .btn.sec.ov-quick.active{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:600}
-  .tab-count{font-size:11px;color:#888;font-weight:normal;margin-left:2px}
+  <style>.tab-count{font-size:11px;color:#888;font-weight:normal;margin-left:2px}
   .subtabs{display:flex;gap:6px;margin-bottom:16px}
   .subtabs button{background:#f4f6fa;border:1px solid var(--border);border-radius:5px;padding:7px 18px;font-size:13.5px;cursor:pointer;color:var(--text-mid);font-family:inherit}
   .subtabs button.active{background:var(--navy);color:#fff;border-color:var(--navy);font-weight:600}
@@ -487,45 +443,22 @@ a{text-decoration:none}
       </div>
       <div class="tip"><b>接诊次数</b> = 有多少次接诊提到该标签（去重接诊）；<b>客人数</b> = 涉及多少位不同客人（优先按客户号去重）。两个口径都看：接诊次数反映被提及的频次，客人数反映覆盖的人群。竞品行可一键拉黑，拉黑后不再统计、不再出现在竞品分析里。</div>
     </div>
-    <!-- ★2026-07-13 门店弹药库：顾问接诊时手里能打的牌（替代原「当月主推项目清单」） -->
+    {% if role != 'store_manager' %}
     <div class="card">
-      <h3>门店弹药库 · 顾问手里能打的牌</h3>
-      <div class="tip">
-        把店里<b>真实存在</b>的项目、权益、回店礼配在这里。分析报告会用它做两件事：①老客评分「3.3 门店弹药触达」判断<b>该讲的牌讲了没有</b>（漏讲会点名）；②「下一步动作/黄金窗口」只从这份清单里推荐，不再让 AI 编造店里没有的项目。<br>
-        <b>过期自动失效</b>：填了有效期止，过了那天就不再进报告（例：专车接送只在 7–8 月，9 月自动不提）。<b>不同门店可以配不同的牌</b>，留空=全公司通用。<br>
-        <b>分组 = N 选 1</b>：填了同一个组名的牌是互相替代的选项（例：容大霜体 / indiba / mivo 填同一组「主推项目」）——顾问<b>讲了其中任意一个就算讲到</b>，报告推荐时也<b>只挑最适合这位顾客的一个</b>，不会三个并列硬塞。留空=独立的牌，各算各的。
-        {% if role == 'store_manager' %}<br><span style="color:#c0392b">你是店长，只能查看，不能修改。</span>{% endif %}
+      <h3>当月主推项目清单 · <span id="mpMonth"></span></h3>
+      <div class="tip">设置本月主推的活动/项目 + 命中关键词，系统按录音转写检测客人是否提及，结果显示在「顾客档案」的服务时间线上。不填关键词则默认用项目名。</div>
+      <div class="row">
+        <input id="mpName" placeholder="项目名 *">
+        <input id="mpKw" placeholder="命中关键词（顿号、或逗号分隔）" style="min-width:240px">
+        <button class="btn" onclick="createMonthlyProject()">添加</button>
       </div>
-      {% if role != 'store_manager' %}
-      <div class="row" style="flex-wrap:wrap;gap:6px">
-        <select id="amKind" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
-          <option value="product">项目/产品</option>
-          <option value="perk">权益</option>
-          <option value="return_gift">回店阶梯礼</option>
-          <option value="campaign">当月活动</option>
-        </select>
-        <input id="amName" placeholder="名称 *（如 容大霜体 / 专车接送）" style="min-width:190px">
-        <input id="amKw" placeholder="顾问会怎么说它（顿号分隔，选填）" style="min-width:200px">
-        <select id="amStore" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px"></select>
-        <select id="amCond" onchange="onAmmoCondChange()" style="border:1px solid var(--border);border-radius:4px;padding:6px 10px;font-size:13px">
-          <option value="">无触发条件</option>
-          <option value="min_ticket">客单价满 …</option>
-          <option value="visit_nth">第 … 次到店送</option>
-        </select>
-        <input id="amCondVal" placeholder="数值" style="width:90px;display:none">
-        <input id="amFrom" type="date" title="生效开始（选填）" style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:13px">
-        <input id="amTo" type="date" title="生效截止（选填，过期自动失效）" style="border:1px solid var(--border);border-radius:4px;padding:5px 8px;font-size:13px">
-        <input id="amGrp" placeholder="分组（选填，同组=N选1）" title="填了同一个组名的牌互为替代：讲了任一个就算讲到，推荐时只挑最合适的一个" style="min-width:150px">
-        <input id="amNote" placeholder="话术备注（选填，给AI参考怎么讲）" style="min-width:180px">
-        <button class="btn" onclick="createAmmo()">添加</button>
-      </div>
-      {% endif %}
       <table class="tbl">
-        <thead><tr><th>类型</th><th>名称</th><th>触发条件</th><th>有效期</th><th>适用门店</th><th>顾问会怎么说</th><th>状态</th>{% if role != 'store_manager' %}<th>操作</th>{% endif %}</tr></thead>
-        <tbody id="amBody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
+        <thead><tr><th>项目名</th><th>命中关键词</th><th>操作</th></tr></thead>
+        <tbody id="mpBody"><tr><td colspan="3" class="muted">加载中…</td></tr></tbody>
       </table>
-      <div class="msg" id="amMsg"></div>
+      <div class="msg" id="mpMsg"></div>
     </div>
+    {% endif %}
     <div class="card">
       <h3>顾客标签统计 · 店里在流行什么 <span id="tsCustCount" style="font-size:12px;color:#666;font-weight:normal"></span></h3>
       <table class="tbl">
@@ -723,13 +656,7 @@ a{text-decoration:none}
     </style>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
       <span style="font-size:13px;color:#666" id="opsGenTime"></span>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <!-- ★2026-07-21 统计区间（上限 180 天）：留空=默认本周至今 -->
-        <input id="opsFrom" type="date" title="统计起始日" style="border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px">
-        <span style="color:#999;font-size:12px">至</span>
-        <input id="opsTo" type="date" title="统计结束日" style="border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px">
-        <button class="btn sec" style="padding:4px 12px;font-size:12px" onclick="opsApplyRange()">查询</button>
-        <button class="btn sec" style="padding:4px 12px;font-size:12px" onclick="opsResetRange()">本周</button>
+      <div style="display:flex;align-items:center;gap:8px">
         {% if role in ('admin','super') %}<select id="opsStore" onchange="loadOpsDashboard(true)" title="按门店筛选看板" style="border:1px solid var(--border);border-radius:4px;padding:4px 10px;font-size:12px"><option value="">全部门店</option></select>{% endif %}
         <button class="btn sec" style="padding:4px 12px;font-size:12px" onclick="loadOpsDashboard(true)">↻ 刷新</button>
       </div>
@@ -763,7 +690,6 @@ a{text-decoration:none}
         </tr></thead>
         <tbody id="hrBody"><tr><td colspan="8" class="muted">加载中…</td></tr></tbody>
       </table>
-      <div id="hrPager" class="pager" style="margin-top:12px"></div>
       <div class="msg" id="hrMsg"></div>
     </div>
   </div>
@@ -781,7 +707,6 @@ a{text-decoration:none}
         <thead><tr><th>类型</th><th>顾问</th><th>对象</th><th>已卡(小时)</th><th>时间</th></tr></thead>
         <tbody id="pipelineStuckBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
       </table>
-      <div id="pipelineStuckPager" class="pager" style="margin-top:12px"></div>
     </div>
     <div class="card">
       <h3>提醒日志 <button class="btn sec" style="float:right;padding:3px 10px;font-size:12px" onclick="loadReminderLog()">刷新</button></h3>
@@ -931,42 +856,6 @@ a{text-decoration:none}
 const BASE = {{ request.script_root|tojson }};
 const ROLE = {{ role|tojson }};
 let _custCache = [];
-
-function openChangePwd() {
-  ['cpwdOld','cpwdNew','cpwdNew2'].forEach(function(id){ document.getElementById(id).value = ''; });
-  document.getElementById('cpwdErr').textContent = '';
-  document.getElementById('cpwdMask').style.display = 'flex';
-}
-function closeChangePwd() {
-  document.getElementById('cpwdMask').style.display = 'none';
-}
-async function submitChangePwd() {
-  var oldp = document.getElementById('cpwdOld').value;
-  var newp = document.getElementById('cpwdNew').value;
-  var newp2 = document.getElementById('cpwdNew2').value;
-  var err = document.getElementById('cpwdErr');
-  var btn = document.getElementById('cpwdSubmit');
-  err.textContent = '';
-  if (!oldp || !newp) { err.textContent = '请填写完整'; return; }
-  if (newp.length < 6) { err.textContent = '新密码至少 6 位'; return; }
-  if (newp === oldp) { err.textContent = '新密码不能与当前密码相同'; return; }
-  if (newp !== newp2) { err.textContent = '两次输入的新密码不一致'; return; }
-  btn.disabled = true; btn.textContent = '提交中…';
-  try {
-    var res = await fetch(BASE + '/api/consultant/change-password', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ old_password: oldp, new_password: newp })
-    });
-    var data = await res.json();
-    if (!res.ok || !data.ok) { err.textContent = data.error || '修改失败'; return; }
-    closeChangePwd();
-    alert('密码已修改，下次登录请使用新密码');
-  } catch (e) {
-    err.textContent = '网络错误，请重试';
-  } finally {
-    btn.disabled = false; btn.textContent = '确定';
-  }
-}
 
 // tab switch — 切换是纯 CSS 操作（瞬时），首次进入该 tab 时才懒加载该列表
 const _tabLoaders = {
@@ -1609,7 +1498,7 @@ function tsQuick(days) {
   loadTagStats();
 }
 function loadTagStats() {
-  loadStoreAmmo();   // ★门店弹药库(原「当月主推项目」)
+  loadMonthlyProjects();
   // 门店下拉（仅 admin/super）首次填充
   const st = document.getElementById('tsStore');
   if (st && !_tsStoreFilled) {
@@ -1639,87 +1528,35 @@ function loadTagStats() {
       : '<tr><td colspan="5" class="muted">暂无竞品标签（随接诊分析积累）</td></tr>';
   });
 }
-// ★2026-07-13 门店弹药库（替代原「当月主推项目」，统一一处配置）
-let _amCanEdit = false;
-function onAmmoCondChange() {
-  const c = document.getElementById('amCond').value;
-  const v = document.getElementById('amCondVal');
-  v.style.display = c ? '' : 'none';
-  v.placeholder = c === 'min_ticket' ? '如 3000' : (c === 'visit_nth' ? '如 1' : '数值');
-}
-function loadStoreAmmo() {
-  if (!document.getElementById('amBody')) return;
-  fetch(BASE + '/api/admin/store_ammo').then(r=>r.json()).then(d=>{
-    _amCanEdit = !!d.can_edit;
-    const sel = document.getElementById('amStore');
-    if (sel && !sel.dataset.filled) {
-      sel.innerHTML = '<option value="">全公司通用</option>' +
-        (d.stores||[]).map(s=>`<option value="${s.id}">仅 ${_esc(s.name)}</option>`).join('');
-      sel.dataset.filled = '1';
-    }
-    const items = d.items || [];
-    const tb = document.getElementById('amBody');
-    const cols = _amCanEdit ? 8 : 7;
-    tb.innerHTML = items.length ? items.map(a => {
-      let cond = '—';
-      if (a.condition_type === 'min_ticket') cond = `客单价 ≥ ${Math.round(a.condition_value)} 元`;
-      else if (a.condition_type === 'visit_nth') cond = `第 ${Math.round(a.condition_value)} 次到店`;
-      const period = (a.valid_from || a.valid_to)
-        ? `${a.valid_from || '不限'} ~ ${a.valid_to || '长期'}` : '长期有效';
-      let state = '<span style="color:#16a085;font-weight:600">生效中</span>';
-      if (!a.active) state = '<span class="muted">已停用</span>';
-      else if (a.expired) state = '<span style="color:#c0392b;font-weight:600">已过期</span>';
-      else if (a.not_started) state = '<span style="color:#e67e22">未开始</span>';
-      const ops = _amCanEdit ? `<td>
-          <button class="btn sec" style="padding:3px 8px;font-size:12px" onclick="toggleAmmo(${a.id},${a.active?0:1})">${a.active?'停用':'启用'}</button>
-          <button class="btn danger" style="padding:3px 8px;font-size:12px" onclick="delAmmo(${a.id})">删除</button></td>` : '';
-      return `<tr${a.active&&!a.expired?'':' style="opacity:.55"'}>
-        <td><span class="muted" style="font-size:12px">${_esc(a.kind_label)}</span></td>
-        <td><b>${_esc(a.name)}</b>${a.grp?`<span title="同组N选1：讲了任一个就算讲到，推荐只挑一个" style="margin-left:6px;font-size:11px;padding:1px 6px;border-radius:3px;background:#eef3f7;color:#3f6376;border:1px solid #c7d8e1">${_esc(a.grp)}·N选1</span>`:''}${a.note?`<div style="font-size:11.5px;color:#888">${_esc(a.note)}</div>`:''}</td>
-        <td style="font-size:12px">${cond}</td>
-        <td style="font-size:12px">${_esc(period)}</td>
-        <td style="font-size:12px">${a.store_name ? _esc(a.store_name) : '<span class="muted">全公司</span>'}</td>
-        <td style="font-size:12px;color:#555">${_esc((a.keywords||[]).join('、'))}</td>
-        <td>${state}</td>${ops}</tr>`;
-    }).join('') : `<tr><td colspan="${cols}" class="muted">还没配置任何牌。先把店里真实有的项目、权益、回店礼加进来。</td></tr>`;
+// 当月主推项目
+function loadMonthlyProjects() {
+  if (!document.getElementById('mpBody')) return;  // 店长无此卡片
+  fetch(BASE + '/api/admin/monthly_projects').then(r=>r.json()).then(d=>{
+    const ml = document.getElementById('mpMonth'); if (ml) ml.textContent = d.month || '';
+    const tb = document.getElementById('mpBody');
+    const ps = d.projects || [];
+    tb.innerHTML = ps.length ? ps.map(p=>`
+      <tr><td><b>${_esc(p.name)}</b></td><td style="font-size:12px;color:#555">${_esc((p.keywords||[]).join('、'))}</td>
+      <td><button class="btn danger" style="padding:3px 8px;font-size:12px" onclick="delMonthlyProject(${p.id})">删除</button></td></tr>`).join('')
+      : '<tr><td colspan="3" class="muted">本月还没设置主推项目</td></tr>';
   });
 }
-function createAmmo() {
-  const name = document.getElementById('amName').value.trim();
-  if (!name) { showMsg('amMsg','名称必填',true); return; }
-  const cond = document.getElementById('amCond').value;
-  const cval = document.getElementById('amCondVal').value.trim();
-  if (cond && !cval) { showMsg('amMsg','选了触发条件就要填数值',true); return; }
-  const body = {
-    name,
-    kind: document.getElementById('amKind').value,
-    keywords: document.getElementById('amKw').value.split(/[、,，]/).map(s=>s.trim()).filter(Boolean),
-    store_id: document.getElementById('amStore').value || null,
-    condition_type: cond || null,
-    condition_value: cond ? cval : null,
-    valid_from: document.getElementById('amFrom').value || null,
-    valid_to: document.getElementById('amTo').value || null,
-    grp: document.getElementById('amGrp').value.trim() || null,
-    note: document.getElementById('amNote').value.trim() || null,
-  };
-  fetch(BASE + '/api/admin/store_ammo', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body),
+function createMonthlyProject() {
+  const name = document.getElementById('mpName').value.trim();
+  const kw = document.getElementById('mpKw').value.split(/[、,，]/).map(s=>s.trim()).filter(Boolean);
+  if (!name) { showMsg('mpMsg','项目名必填',true); return; }
+  fetch(BASE + '/api/admin/monthly_projects', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name, keywords: kw}),
   }).then(r=>r.json()).then(d=>{
-    if (d.error) { showMsg('amMsg', d.error, true); return; }
-    showMsg('amMsg','已添加');
-    ['amName','amKw','amCondVal','amFrom','amTo','amNote','amGrp'].forEach(i=>document.getElementById(i).value='');
-    loadStoreAmmo();
+    if (d.error) showMsg('mpMsg', d.error, true);
+    else { showMsg('mpMsg','已添加'); document.getElementById('mpName').value=''; document.getElementById('mpKw').value=''; loadMonthlyProjects(); }
   });
 }
-function toggleAmmo(id, active) {
-  fetch(BASE + '/api/admin/store_ammo/' + id, {
-    method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({active}),
-  }).then(r=>r.json()).then(d=>{ if(d.error) alert(d.error); else loadStoreAmmo(); });
-}
-function delAmmo(id) {
-  if (!confirm('删除这张牌？删了以后报告里不再出现。（只想暂时不用可以点「停用」）')) return;
-  fetch(BASE + '/api/admin/store_ammo/' + id, {method:'DELETE'})
-    .then(r=>r.json()).then(d=>{ if(d.error) alert(d.error); else loadStoreAmmo(); });
+function delMonthlyProject(id) {
+  if (!confirm('删除该主推项目？')) return;
+  fetch(BASE + '/api/admin/monthly_projects/' + id, {method:'DELETE'})
+    .then(r=>r.json()).then(d=>{ if(d.error) alert(d.error); else loadMonthlyProjects(); });
 }
 function blacklistComp(btn) {
   const tag = btn.closest('tr').dataset.tag;
@@ -2239,29 +2076,6 @@ async function loadRebindRequests() {
 }
 
 // ---- 运营看板 ----
-// ★2026-07-21 自定义统计区间（上限 180 天，与经营总览同口径）
-const OPS_MAX_DAYS = 180;
-function opsApplyRange() {
-  const fi = document.getElementById('opsFrom'), ti = document.getElementById('opsTo');
-  const f = fi.value, t = ti.value;
-  if (!f || !t) { alert('请选择开始和结束日期（两个都要填）'); return; }
-  let a = new Date(f), b = new Date(t);
-  if (a > b) {   // 写反了自动对调，省得用户自己改
-    const tmp = fi.value; fi.value = ti.value; ti.value = tmp;
-    const c = a; a = b; b = c;
-  }
-  const days = Math.round((b - a) / 86400000) + 1;
-  if (days > OPS_MAX_DAYS) {
-    alert('统计区间最长 ' + OPS_MAX_DAYS + ' 天，当前选了 ' + days + ' 天，请缩短范围。');
-    return;
-  }
-  loadOpsDashboard(true);
-}
-function opsResetRange() {
-  document.getElementById('opsFrom').value = '';
-  document.getElementById('opsTo').value = '';
-  loadOpsDashboard(true);   // 回默认：今日 + 本周至今
-}
 let _opsLoaded = false;
 function loadOpsDashboard(force) {
   if (_opsLoaded && !force) return;
@@ -2277,25 +2091,14 @@ function loadOpsDashboard(force) {
       stSel.value = cur;
     });
   }
-  const qp = [];
-  if (stSel && stSel.value) qp.push('store_id=' + stSel.value);
-  const _of = (document.getElementById('opsFrom') || {}).value || '';
-  const _ot = (document.getElementById('opsTo') || {}).value || '';
-  if (_of && _ot) { qp.push('from=' + _of); qp.push('to=' + _ot); }  // 两端都填才生效
-  const opsSid = qp.length ? ('?' + qp.join('&')) : '';
+  const opsSid = stSel && stSel.value ? ('?store_id=' + stSel.value) : '';
   fetch(BASE + '/api/admin/ops_dashboard' + opsSid).then(r => {
     if (!r.ok) return r.text().then(t => { throw new Error('HTTP ' + r.status + ': ' + t.slice(0,100)); });
     return r.json();
   }).then(d => {
     _opsLoaded = true;
     const gt = document.getElementById('opsGenTime');
-    if (gt) {
-      const rg = d.range || {};
-      gt.textContent = rg.custom
-        ? ('今日 ' + d.today + '  |  统计区间 ' + rg.from + ' 至 ' + rg.to + '（共 ' + rg.days + ' 天）'
-           + (rg.clamped ? ' ⚠️ 已按上限 ' + (rg.max_days || 180) + ' 天截断' : ''))
-        : ('今日 ' + d.today + '  |  本周自 ' + d.week_start);
-    }
+    if (gt) gt.textContent = '今日 ' + d.today + '  |  本周自 ' + d.week_start;
     box.innerHTML = (d.is_super ? renderOpsSuper(d) : renderOpsAdmin(d))
       + `<div class="card ops-block">
            <div class="ops-block-title" style="display:flex;align-items:center;gap:10px">
@@ -2313,31 +2116,17 @@ function loadOpsDashboard(force) {
   }).catch(e => { box.innerHTML = '<div class="muted">加载失败：' + e + '</div>'; });
 }
 
-// ★2026-07-21 报告查看列表分页（原来一次铺几百行，页面又长又卡）
-let _vsPage = 1, _vsPages = 1;
-function vsGo(delta) {
-  const n = _vsPage + delta;
-  if (n >= 1 && n <= _vsPages) loadViewStats(n);
-}
-function loadViewStats(page) {
+function loadViewStats() {
   const sel = document.getElementById('viewStatsDays');
   const days = sel ? sel.value : '30';
   const box = document.getElementById('viewStatsBox');
   if (!box) return;
-  _vsPage = page || 1;   // 切天数/切门店时不传 page → 回到第 1 页
   box.innerHTML = '<div class="muted">加载中…</div>';
   const _opsSt = document.getElementById('opsStore');
   const vsSid = _opsSt && _opsSt.value ? ('&store_id=' + _opsSt.value) : '';
-  fetch(BASE + '/api/admin/report_view_stats?days=' + days + vsSid + '&page=' + _vsPage + '&page_size=30')
-    .then(r => r.json()).then(d => {
+  fetch(BASE + '/api/admin/report_view_stats?days=' + days + vsSid).then(r => r.json()).then(d => {
     const rows = d.rows || [];
     if (!rows.length) { box.innerHTML = '<p class="muted">该时段无查看记录</p>'; return; }
-    _vsPage = d.page || 1; _vsPages = d.pages || 1;
-    const pager = _vsPages > 1 ? `<div class="pager" style="margin-top:12px">
-      <button onclick="vsGo(-1)" ${_vsPage <= 1 ? 'disabled' : ''}>上一页</button>
-      <span style="color:var(--muted);font-size:13px">第 ${_vsPage} / ${_vsPages} 页（共 ${d.total || 0} 条）</span>
-      <button onclick="vsGo(1)" ${_vsPage >= _vsPages ? 'disabled' : ''}>下一页</button>
-    </div>` : `<div class="muted" style="margin-top:10px;font-size:12px">共 ${d.total || rows.length} 条</div>`;
     box.innerHTML = `<table class="tbl" style="font-size:12px">
       <thead><tr><th>顾客姓名</th><th>顾问姓名</th><th>服务日期</th><th>最近浏览时间</th><th>展开章节</th><th>总时长（分钟）</th></tr></thead>
       <tbody>${rows.map(r => `<tr>
@@ -2347,7 +2136,7 @@ function loadViewStats(page) {
         <td>${r.last_view || '-'}</td>
         <td>${r.expanded_chapters != null ? r.expanded_chapters : 0}/${r.total_expandable != null ? r.total_expandable : (d.total_expandable != null ? d.total_expandable : 11)}</td>
         <td><strong>${r.total_minutes}</strong></td>
-      </tr>`).join('')}</tbody></table>${pager}`;
+      </tr>`).join('')}</tbody></table>`;
   }).catch(e => { box.innerHTML = '<p class="muted">加载失败：' + e + '</p>'; });
 }
 
@@ -2365,11 +2154,10 @@ function _kpiCards(s, label) {
   </div>`;
 }
 
-function _advisorTable(advisors, rangeLabel) {
-  const rl = rangeLabel || '本周';
-  if (!advisors || !advisors.length) return `<p class="muted">${rl}暂无数据</p>`;
+function _advisorTable(advisors) {
+  if (!advisors || !advisors.length) return '<p class="muted">本周暂无数据</p>';
   return `<table class="tbl" style="font-size:12px">
-    <thead><tr><th>顾问</th><th>${rl === '本周' ? '本周接诊' : '区间接诊'}</th><th>完成</th><th>失败</th><th>待分析</th><th>完成率</th><th>平均耗时</th></tr></thead>
+    <thead><tr><th>顾问</th><th>本周接诊</th><th>完成</th><th>失败</th><th>待分析</th><th>完成率</th><th>平均耗时</th></tr></thead>
     <tbody>${advisors.map(a => `<tr>
       <td>${a.name}</td><td>${a.week_total}</td>
       <td style="color:#22c55e">${a.week_done}</td>
@@ -2389,53 +2177,28 @@ function _failList(fails) {
   </li>`).join('')}</ul>`;
 }
 
-// 区间块的标题：默认叫「本周」，选了自定义区间就叫「所选区间 x/x ~ x/x」
-function _opsRangeLabel(d) {
-  const rg = d.range || {};
-  if (!rg.custom) return '本周';
-  return '所选区间 ' + String(rg.from).slice(5) + ' ~ ' + String(rg.to).slice(5);
-}
-
 function renderOpsAdmin(d) {
-  const rl = _opsRangeLabel(d);
   return `<div class="card ops-block">
     <div class="ops-block-title">今日</div>${_kpiCards(d.today_stats, '今日')}
-    <div class="ops-block-title">${rl}</div>${_kpiCards(d.week_stats, rl)}
-    <div class="ops-block-title">顾问明细（${rl}）</div>${_advisorTable(d.advisors, rl)}
+    <div class="ops-block-title">本周</div>${_kpiCards(d.week_stats, '本周')}
+    <div class="ops-block-title">顾问明细（本周）</div>${_advisorTable(d.advisors)}
     <div class="ops-block-title">近期失败</div>${_failList(d.recent_failures)}
   </div>`;
 }
 
 function renderOpsSuper(d) {
-  const rl = _opsRangeLabel(d);
   return d.companies.map(co => `<div class="card ops-block">
     <div class="ops-co-name">🏢 ${co.company_name}</div>
     <div class="ops-block-title">今日</div>${_kpiCards(co.today, '今日')}
-    <div class="ops-block-title">${rl}</div>${_kpiCards(co.week, rl)}
-    <div class="ops-block-title">顾问明细（${rl}）</div>${_advisorTable(co.advisors, rl)}
+    <div class="ops-block-title">本周</div>${_kpiCards(co.week, '本周')}
+    <div class="ops-block-title">顾问明细（本周）</div>${_advisorTable(co.advisors)}
     <div class="ops-block-title">近期失败</div>${_failList(co.recent_failures)}
   </div>`).join('');
 }
 
 // 页面初始化：只拉一次轻量统计，更新 tab 标签和待审批 badge；
 // 顾问/顾客列表懒加载（首次进入对应 tab 时才请求）
-// ★2026-07-14 AI 余额预警：低于阈值(默认100元)或服务商已停用 → 后台顶部挂红条
-function checkAiBalance() {
-  fetch(BASE + '/api/admin/ai_balance').then(r => r.json()).then(b => {
-    const bar = document.getElementById('balanceBar');
-    if (!bar || !b || b.unknown || b.error) return;   // 查不到就不打扰
-    const bad = b.low || b.available === false;
-    if (!bad) { bar.style.display = 'none'; return; }
-    document.getElementById('balanceText').textContent =
-      b.available === false
-        ? `（服务商已暂停调用，当前余额 ${b.balance} 元）`
-        : `（当前余额 ${b.balance} 元，低于 ${b.warn_at} 元预警线）`;
-    bar.style.display = '';
-  }).catch(() => {});
-}
-
 function refreshAdminStats() {
-  checkAiBalance();
   fetch(BASE + '/api/admin/stats').then(r => r.json()).then(d => {
     if (d.error) return;
     const fmt = n => (typeof n === 'number') ? `(${n})` : '';
@@ -2462,31 +2225,14 @@ function _escHtml(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
-// ★2026-07-21 差评预警分页（20/页）
-let _hrPage = 1, _hrPages = 1;
-function hrGo(delta) {
-  const n = _hrPage + delta;
-  if (n >= 1 && n <= _hrPages) loadHighRisk(n);
-}
-function loadHighRisk(page) {
+function loadHighRisk() {
   const unread = document.getElementById('hrFilter').value === '1' ? '1' : '0';
   const level = document.getElementById('hrLevel').value || '';
   const tb = document.getElementById('hrBody');
-  _hrPage = page || 1;   // 切筛选条件时不传 page → 回第 1 页
   tb.innerHTML = '<tr><td colspan="8" class="muted">加载中…</td></tr>';
-  fetch(BASE + '/api/admin/high_risk_sessions?unread=' + unread + (level ? '&level=' + level : '')
-        + '&page=' + _hrPage + '&page_size=20')
+  fetch(BASE + '/api/admin/high_risk_sessions?unread=' + unread + (level ? '&level=' + level : ''))
     .then(r => r.json()).then(d => {
       const list = d.sessions || [];
-      const pg = document.getElementById('hrPager');
-      _hrPage = d.page || 1; _hrPages = d.pages || 1;
-      if (pg) {
-        pg.innerHTML = (_hrPages > 1)
-          ? `<button onclick="hrGo(-1)" ${_hrPage <= 1 ? 'disabled' : ''}>上一页</button>
-             <span style="color:var(--muted);font-size:13px">第 ${_hrPage} / ${_hrPages} 页（共 ${d.total || 0} 条）</span>
-             <button onclick="hrGo(1)" ${_hrPage >= _hrPages ? 'disabled' : ''}>下一页</button>`
-          : (d.total ? `<span style="color:var(--muted);font-size:12px">共 ${d.total} 条</span>` : '');
-      }
       if (!list.length) {
         tb.innerHTML = '<tr><td colspan="8" class="muted">暂无高风险接诊</td></tr>';
         return;
@@ -2530,7 +2276,7 @@ function loadHighRisk(page) {
 function markHrViewed(sid) {
   fetch(BASE + '/api/admin/high_risk_sessions/' + sid + '/view', {method: 'POST'})
     .then(r => r.json()).then(() => {
-      loadHighRisk(_hrPage);   // 停在当前页，不跳回第 1 页
+      loadHighRisk();
       refreshAdminStats();
     });
 }
@@ -2702,16 +2448,8 @@ function abSubmit() {
 // ============ 模块4：接诊卡点 + 提醒设置 ============
 const _PIPE_COLORS = {orphan:'#e67e22', bound_unanalyzed:'#7f8c8d', analyzing:'#3498db',
   done_unviewed:'#e74c3c', viewed:'#27ae60', error:'#c0392b'};
-// ★2026-07-21 「卡住的项」分页（20/页）；分桶数字是聚合值不分页
-let _plPage = 1, _plPages = 1;
-function plGo(delta) {
-  const n = _plPage + delta;
-  if (n >= 1 && n <= _plPages) loadPipeline(n);
-}
-function loadPipeline(page) {
-  _plPage = page || 1;   // 点「刷新」不传 page → 回第 1 页
-  fetch(BASE + '/api/admin/pipeline_status?page=' + _plPage + '&page_size=20')
-    .then(r => r.json()).then(d => {
+function loadPipeline() {
+  fetch(BASE + '/api/admin/pipeline_status').then(r => r.json()).then(d => {
     if (d.error) { return; }
     const wrap = document.getElementById('pipelineBuckets');
     wrap.innerHTML = (d.buckets || []).map(b =>
@@ -2721,20 +2459,11 @@ function loadPipeline(page) {
        </div>`).join('');
     const tb = document.getElementById('pipelineStuckBody');
     const stuck = d.stuck || [];
-    _plPage = d.page || 1; _plPages = d.pages || 1;
-    // 角标用后端给的【全量】红色数；分页后数当前页会虚低
-    const redCount = (d.stuck_red_total != null) ? d.stuck_red_total : stuck.filter(s => s.red).length;
-    const plp = document.getElementById('pipelineStuckPager');
-    if (plp) {
-      plp.innerHTML = (_plPages > 1)
-        ? `<button onclick="plGo(-1)" ${_plPage <= 1 ? 'disabled' : ''}>上一页</button>
-           <span style="color:var(--muted);font-size:13px">第 ${_plPage} / ${_plPages} 页（共 ${d.stuck_total || 0} 项）</span>
-           <button onclick="plGo(1)" ${_plPage >= _plPages ? 'disabled' : ''}>下一页</button>`
-        : (d.stuck_total ? `<span style="color:var(--muted);font-size:12px">共 ${d.stuck_total} 项</span>` : '');
-    }
+    let redCount = 0;
     if (!stuck.length) { tb.innerHTML = '<tr><td colspan="5" class="muted">暂无卡住的项 🎉</td></tr>'; }
     else {
       tb.innerHTML = stuck.map(s => {
+        if (s.red) redCount++;
         const kindTxt = s.kind === 'unbound' ? '未绑定录音' : '完成未查看';
         const obj = s.ref_type === 'recording' ? ('录音#' + s.ref_id) : ('接诊#' + s.ref_id);
         const style = s.red ? 'background:#fdecea' : '';
@@ -2843,61 +2572,20 @@ function saveReminderConfig() {
 // ===== 新版：经营总览 / 操作日志 加载器 =====
 function _esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 const _ROLE_CN = {super:'超管', admin:'管理员', store_manager:'店长', consultant:'顾问'};
-// ===== 经营总览：自定义统计区间（★2026-07-21，上限 180 天）=====
-const OV_MAX_DAYS = 180;
-function _ovYmd(dt){ return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0'); }
-// 快捷区间：近 N 天 = 含今天往前推 N-1 天
-function ovQuick(days){
-  const to=new Date(), from=new Date();
-  from.setDate(from.getDate()-(days-1));
-  document.getElementById('ovFrom').value=_ovYmd(from);
-  document.getElementById('ovTo').value=_ovYmd(to);
-  document.querySelectorAll('.ov-quick').forEach(b=>b.classList.toggle('active', +b.dataset.days===days));
-  loadOverview();
-}
-// 手动改日期即脱离快捷档，去掉高亮（避免显示与实际区间不符）
-function ovMarkCustom(){ document.querySelectorAll('.ov-quick').forEach(b=>b.classList.remove('active')); }
-function ovApply(){
-  const f=document.getElementById('ovFrom').value, t=document.getElementById('ovTo').value;
-  if(!f||!t){ alert('请选择开始和结束日期'); return; }
-  let a=new Date(f), b=new Date(t);
-  if(a>b){ [a,b]=[b,a]; document.getElementById('ovFrom').value=_ovYmd(a); document.getElementById('ovTo').value=_ovYmd(b); }
-  const days=Math.round((b-a)/86400000)+1;
-  if(days>OV_MAX_DAYS){ alert('统计区间最长 '+OV_MAX_DAYS+' 天，当前选了 '+days+' 天，请缩短范围。'); return; }
-  loadOverview();
-}
-// 重置回默认（本周一→今天，与后端默认口径一致）
-function ovReset(){
-  document.getElementById('ovFrom').value='';
-  document.getElementById('ovTo').value='';
-  ovMarkCustom();
-  loadOverview();
-}
 function loadOverview(){
-  const f=(document.getElementById('ovFrom')||{}).value||'';
-  const t=(document.getElementById('ovTo')||{}).value||'';
-  const qs=(f&&t)?('?from='+f+'&to='+t):'';   // 只有两端都填才带参数，否则用后端默认区间
-  fetch(BASE + '/api/admin/overview_kpis'+qs, {headers:{'Accept':'application/json'}})
+  fetch(BASE + '/api/admin/overview_kpis', {headers:{'Accept':'application/json'}})
     .then(r=>r.json()).then(d=>{
       const f=v=>(v==null?'—':v);
       document.getElementById('ov-companion').textContent=f(d.companion_min_per_day);
       document.getElementById('ov-study').textContent=f(d.study_min_per_day);
       document.getElementById('ov-customers').textContent=f(d.customers_per_day);
       document.getElementById('ov-intake').textContent=f(d.intake_avg_min);
-      document.getElementById('ov-dailyrec').textContent=f(d.daily_rec_min);
-      // 日期框空着时（默认区间/重置后）回填后端实际用的区间，避免框里空白但数据有区间
-      const fi=document.getElementById('ovFrom'), ti=document.getElementById('ovTo');
-      if(fi&&!fi.value) fi.value=d.range.from;
-      if(ti&&!ti.value) ti.value=d.range.to;
-      const days=d.range.days||1;
-      const clamped=d.range.clamped
-        ? ` ⚠️ 已按上限 ${d.range.max_days||OV_MAX_DAYS} 天截断` : '';
       document.getElementById('ov-range').textContent=
-        `${d.range.from} 至 ${d.range.to}（共 ${days} 天）· 在岗顾问 ${d.advisors} 人 · 人均 = 总量 ÷ 顾问数 ÷ 天数${clamped}`;
+        `${d.range.from} 至 ${d.range.to} · 在岗顾问 ${d.advisors} 人 · 人均 = 总量 ÷ 顾问数 ÷ 天数`;
       const tb=document.getElementById('ov-stores');
       tb.innerHTML=(d.by_store&&d.by_store.length)
-        ? d.by_store.map(s=>`<tr><td>${_esc(s.store)}</td><td>${s.advisors}</td><td>${s.companion_min_per_day} 分</td><td>${s.study_min_per_day} 分</td><td>${s.customers_per_day} 位</td><td>${s.intake_avg_min} 分</td><td>${s.daily_rec_min!=null?s.daily_rec_min:'—'} 分</td></tr>`).join('')
-        : '<tr><td colspan="7" class="empty">本区间暂无门店数据</td></tr>';
+        ? d.by_store.map(s=>`<tr><td>${_esc(s.store)}</td><td>${s.advisors}</td><td>${s.companion_min_per_day} 分</td><td>${s.study_min_per_day} 分</td><td>${s.customers_per_day} 位</td><td>${s.intake_avg_min} 分</td></tr>`).join('')
+        : '<tr><td colspan="6" class="empty">本区间暂无门店数据</td></tr>';
       const lb=document.getElementById('ov-leaders');
       if(d.leaderboard&&d.leaderboard.length){
         const mx=Math.max.apply(null, d.leaderboard.map(x=>x.minutes).concat([1]));
